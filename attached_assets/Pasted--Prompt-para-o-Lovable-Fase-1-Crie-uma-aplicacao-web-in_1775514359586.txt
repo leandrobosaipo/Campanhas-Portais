@@ -1,0 +1,289 @@
+# Prompt para o Lovable - Fase 1
+
+Crie uma aplicacao web interna para operacao e gestao de anuncios de uma agencia que administra varios portais. O produto deve substituir uma planilha operacional mensal, mantendo a entrada manual, mas tornando o processo muito mais simples, rastreavel e visual.
+
+## Objetivo do produto
+
+A aplicacao deve controlar campanhas e insercoes publicitarias em varios sites/portais, desde o recebimento da demanda ate a publicacao, comprovacao por print, envio para agencia e acompanhamento gerencial.
+
+O sistema deve ser pensado como um MVP visual e funcional, mas ja com estrutura suficiente para evolucao posterior em codigo local. Portanto, use uma arquitetura clara, componentes reutilizaveis e modelo de dados consistente.
+
+## Contexto operacional real
+
+Hoje a operacao acontece em uma planilha Excel com abas mensais e blocos por site. As demandas chegam por email e WhatsApp e sao registradas manualmente. Isso deve continuar manual no MVP, mas com melhor UX.
+
+A planilha historica usa as seguintes abas mensais:
+- JULHO
+- AGOSTO
+- SETEMBRO
+- OUTUBRO
+- NOVEMBRO
+- DEZEMBRO
+- JANEIRO
+- FEVEREIRO
+- MARÇO26
+- ABRIL 2026
+
+Sites/portais identificados:
+- OMT
+- ROO
+- PERRENGUE
+- AFL
+- PNMT
+- PPMT
+
+Campos operacionais identificados no historico:
+- PECA: PI + CLIENTE
+- AGENCIA + VALOR LIQUIDO
+- CAMPANHA
+- PERIODO
+- LOCAL
+- STATUS
+- PROCESSO REALIZADO?
+- PROCESSO ENVIADO?
+- DATA DE ENVIO P/ AGENCIA
+- DOCS ENVIADOS?
+
+## Regras de negocio confirmadas
+
+Use exatamente estas interpretacoes:
+
+- o status legado `V` deve ser tratado como `concluido`
+- `processo enviado?` significa que o banner foi cadastrado/publicado no site
+- `processo realizado?` significa que o material/processo foi enviado para a agencia ou cliente
+- `docs enviados?` e uma etapa adicional apos o envio principal
+- `print` e obrigatorio para toda insercao
+- atraso principal e definido pela data de inicio da campanha
+- o gestor precisa acompanhar por site e tambem por cliente/agencia
+
+## Unidade principal do sistema
+
+A entidade central deve ser a `insercao publicitaria`.
+
+Uma insercao representa:
+- uma campanha
+- em um site
+- em um local/formato
+- com periodo de inicio e fim
+- com status operacional
+- com print obrigatorio
+- com marcos de publicacao, envio e documentos
+
+## O que o MVP da Fase 1 precisa ter
+
+Este MVP ja deve nascer com dashboard gerencial completo e com importacao inicial dos dados extraidos do Excel.
+
+### 1. Importacao inicial
+Crie uma forma de carregar dados historicos extraidos do Excel para popular o sistema inicialmente.
+
+A importacao pode ser simulada com seed data local ou upload de arquivo estruturado, mas precisa contemplar:
+- competencia mensal
+- site
+- cliente
+- agencia
+- PI
+- valor liquido
+- campanha
+- periodo
+- local/formato
+- status legado e status normalizado
+- processo enviado?
+- processo realizado?
+- data de envio p/ agencia
+- docs enviados?
+
+Crie mapeamento de normalizacao para:
+- status variados como FINALIZADA, FINALIZADO, Finalizada, finalizada, V, ATIVA
+- formatos/locais variados como MEGA BANNER TOPO, MEGABANNER TOPO, MEGABANNER TPO, HOME 1, HOME 2, VIDEO, INSTAGRAM, INTERNO DE NOTICIAS, INTERNO NOTICIA, PRIMEIRA DOBRA, SEGUNDA DOBRA, TOPO LATERAL
+
+### 2. Cadastros principais
+Crie estrutura para:
+- sites
+- clientes
+- agencias
+- campanhas
+- insercoes
+- evidencias
+
+### 3. Formulario rapido de nova campanha
+O usuario deve conseguir:
+- criar campanha manualmente
+- adicionar varias insercoes na mesma tela
+- duplicar insercoes
+- preencher site, local, periodo e status
+- registrar PI, cliente, agencia e valor liquido
+- salvar rascunho
+
+### 4. Fila operacional
+Criar listas operacionais com filtros por:
+- competencia
+- site
+- cliente
+- agencia
+- campanha
+- status
+- atraso
+
+Cada item deve permitir:
+- marcar banner publicado no site
+- marcar print gerado
+- anexar ou referenciar evidencia
+- marcar processo enviado para agencia
+- marcar docs enviados
+- registrar observacoes
+
+### 5. Dashboard gerencial completo
+A home precisa ter visao executiva desde o primeiro MVP.
+
+Incluir:
+- total de insercoes no periodo
+- insercoes ativas
+- insercoes concluidas
+- insercoes atrasadas
+- aguardando publicacao
+- aguardando print
+- aguardando envio
+- aguardando docs
+- resumo por site
+- resumo por cliente
+- resumo por agencia
+- resumo por competencia
+- lista de itens criticos
+
+### 6. Regras de status sugeridas
+Crie status normalizados como:
+- rascunho
+- aguardando_publicacao
+- publicado_no_site
+- aguardando_print
+- print_gerado
+- enviado_para_agencia
+- docs_enviados
+- concluido
+- atrasado
+- bloqueado
+- cancelado
+
+## Regras de UX
+
+A interface deve ser forte em operacao e leitura rapida. Evite visual genérico.
+
+Direcao visual:
+- design profissional e operacional, com ar de ferramenta interna premium
+- foco em densidade de informacao com boa legibilidade
+- visual marcante, sem parecer planilha crua nem dashboard genérico de SaaS
+- usar tipografia com personalidade, mas muito legivel
+- usar cores sem depender de roxo; prefira uma linha mais editorial/operacional
+- criar hierarquia visual clara para atrasos, riscos e conclusoes
+- manter excelente uso em desktop e bom uso em tablet
+
+Componentes importantes:
+- tabela densa com filtros poderosos
+- cards gerenciais
+- badges de status
+- semaforo de prazo
+- drawer ou modal lateral para detalhe da insercao
+- timeline do item
+- acoes rapidas em lote
+
+## Estrutura de dados sugerida
+
+### Site
+- id
+- nome
+- sigla
+- aliases
+- ativo
+
+### Cliente
+- id
+- nome
+- ativo
+
+### Agencia
+- id
+- nome
+- ativo
+
+### Campanha
+- id
+- nome
+- cliente_id
+- agencia_id
+- pi_codigo
+- valor_liquido
+- competencia
+- origem
+- observacoes
+
+### Insercao
+- id
+- campanha_id
+- site_id
+- local_formato
+- local_formato_normalizado
+- periodo_inicio
+- periodo_fim
+- periodo_original
+- status_legado
+- status_normalizado
+- banner_publicado_no_site
+- print_gerado
+- processo_enviado_agencia
+- docs_enviados
+- data_envio_agencia
+- atrasado
+- observacoes
+
+### Evidencia
+- id
+- insercao_id
+- tipo
+- arquivo_url
+- titulo
+- criado_em
+
+## Comportamentos esperados
+
+- atraso deve ser calculado principalmente pela data de inicio da campanha
+- se a data de inicio passou e a insercao nao foi publicada, marcar como atrasada
+- se foi publicada mas nao tem print, marcar pendencia de print
+- se tem print mas nao foi enviada para agencia, marcar pendencia de envio
+- se envio foi feito mas docs enviados nao, marcar pendencia documental
+- toda insercao deve exigir print antes de concluir
+
+## Seed data / importacao inicial
+
+Monte dados de exemplo inspirados em campanhas reais da operacao, incluindo exemplos como:
+- FILA ZERO
+- HOSPITAL CENTRAL
+- DENGUE - PREF CBA
+- RADAR
+- OBRAS - GOV
+- TRANSITO - FASE 2
+- IPTU 2026
+
+Distribua os exemplos entre sites como:
+- OMT
+- ROO
+- PERRENGUE
+- PNMT
+- PPMT
+- AFL
+
+Use tambem competencias diferentes para que a dashboard mostre historico e comparacao mensal.
+
+## Entrega esperada
+
+Quero uma aplicacao navegavel com:
+- dashboard home
+- tela de campanhas
+- tela de insercoes
+- fluxo de nova campanha
+- detalhe da insercao
+- importacao inicial ou seed historica
+- filtros funcionando
+- status e badges consistentes
+- visual forte e pronto para evolucao posterior em codigo local
+
+Construa como um produto real de operacao de midia interna, nao como uma demo genérica.

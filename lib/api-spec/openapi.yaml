@@ -3,13 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: AdOps Manager API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: sites
+    description: Portal/site management
+  - name: clients
+    description: Client management
+  - name: agencies
+    description: Agency management
+  - name: campaigns
+    description: Campaign management
+  - name: insertions
+    description: Insertion management
+  - name: evidences
+    description: Evidence/print management
+  - name: dashboard
+    description: Dashboard & analytics
+
 paths:
   /healthz:
     get:
@@ -24,6 +39,606 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # Sites
+  /sites:
+    get:
+      operationId: listSites
+      tags: [sites]
+      summary: List all sites
+      responses:
+        "200":
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Site"
+    post:
+      operationId: createSite
+      tags: [sites]
+      summary: Create a site
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSiteBody"
+      responses:
+        "201":
+          description: Created site
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+
+  /sites/{id}:
+    get:
+      operationId: getSite
+      tags: [sites]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Site
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateSite
+      tags: [sites]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSiteBody"
+      responses:
+        "200":
+          description: Updated site
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # Clients
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List all clients
+      responses:
+        "200":
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+    post:
+      operationId: createClient
+      tags: [clients]
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientBody"
+      responses:
+        "201":
+          description: Created client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+
+  /clients/{id}:
+    patch:
+      operationId: updateClient
+      tags: [clients]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClientBody"
+      responses:
+        "200":
+          description: Updated client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+
+  # Agencies
+  /agencies:
+    get:
+      operationId: listAgencies
+      tags: [agencies]
+      summary: List all agencies
+      responses:
+        "200":
+          description: List of agencies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agency"
+    post:
+      operationId: createAgency
+      tags: [agencies]
+      summary: Create an agency
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgencyBody"
+      responses:
+        "201":
+          description: Created agency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agency"
+
+  /agencies/{id}:
+    patch:
+      operationId: updateAgency
+      tags: [agencies]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgencyBody"
+      responses:
+        "200":
+          description: Updated agency
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agency"
+
+  # Campaigns
+  /campaigns:
+    get:
+      operationId: listCampaigns
+      tags: [campaigns]
+      summary: List campaigns
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: clienteId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: agenciaId
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: List of campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Campaign"
+    post:
+      operationId: createCampaign
+      tags: [campaigns]
+      summary: Create a campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCampaignBody"
+      responses:
+        "201":
+          description: Created campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+
+  /campaigns/{id}:
+    get:
+      operationId: getCampaign
+      tags: [campaigns]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Campaign with insertions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateCampaign
+      tags: [campaigns]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCampaignBody"
+      responses:
+        "200":
+          description: Updated campaign
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Campaign"
+    delete:
+      operationId: deleteCampaign
+      tags: [campaigns]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # Insertions
+  /insertions:
+    get:
+      operationId: listInsertions
+      tags: [insertions]
+      summary: List insertions with filters
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: siteId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: clienteId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: agenciaId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: campanhaId
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: status
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: atrasado
+          in: query
+          schema:
+            type: ["boolean", "null"]
+      responses:
+        "200":
+          description: List of insertions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InsertionWithRelations"
+    post:
+      operationId: createInsertion
+      tags: [insertions]
+      summary: Create an insertion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInsertionBody"
+      responses:
+        "201":
+          description: Created insertion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertionWithRelations"
+
+  /insertions/{id}:
+    get:
+      operationId: getInsertion
+      tags: [insertions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Insertion detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertionDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      operationId: updateInsertion
+      tags: [insertions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInsertionBody"
+      responses:
+        "200":
+          description: Updated insertion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertionWithRelations"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteInsertion
+      tags: [insertions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /insertions/bulk-update:
+    post:
+      operationId: bulkUpdateInsertions
+      tags: [insertions]
+      summary: Bulk update multiple insertions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkUpdateInsertionsBody"
+      responses:
+        "200":
+          description: Updated count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkUpdateResult"
+
+  # Evidences
+  /insertions/{insertionId}/evidences:
+    get:
+      operationId: listEvidences
+      tags: [evidences]
+      parameters:
+        - name: insertionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of evidences
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Evidence"
+    post:
+      operationId: createEvidence
+      tags: [evidences]
+      parameters:
+        - name: insertionId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEvidenceBody"
+      responses:
+        "201":
+          description: Created evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Evidence"
+
+  /evidences/{id}:
+    delete:
+      operationId: deleteEvidence
+      tags: [evidences]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # Dashboard
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Executive dashboard summary
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+
+  /dashboard/by-site:
+    get:
+      operationId: getDashboardBySite
+      tags: [dashboard]
+      summary: Insertion counts grouped by site
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: By-site breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SiteBreakdown"
+
+  /dashboard/by-client:
+    get:
+      operationId: getDashboardByClient
+      tags: [dashboard]
+      summary: Insertion counts grouped by client
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: By-client breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClientBreakdown"
+
+  /dashboard/by-competencia:
+    get:
+      operationId: getDashboardByCompetencia
+      tags: [dashboard]
+      summary: Monthly competencia breakdown
+      responses:
+        "200":
+          description: By-competencia breakdown
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CompetenciaBreakdown"
+
+  /dashboard/critical:
+    get:
+      operationId: getDashboardCritical
+      tags: [dashboard]
+      summary: Critical items (delayed, missing prints, pending send)
+      parameters:
+        - name: competencia
+          in: query
+          schema:
+            type: ["string", "null"]
+      responses:
+        "200":
+          description: Critical items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InsertionWithRelations"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +649,659 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Site:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        sigla:
+          type: string
+        ativo:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - nome
+        - sigla
+        - ativo
+        - createdAt
+
+    CreateSiteBody:
+      type: object
+      properties:
+        nome:
+          type: string
+        sigla:
+          type: string
+        ativo:
+          type: boolean
+      required:
+        - nome
+        - sigla
+
+    UpdateSiteBody:
+      type: object
+      properties:
+        nome:
+          type: ["string", "null"]
+        sigla:
+          type: ["string", "null"]
+        ativo:
+          type: ["boolean", "null"]
+
+    Client:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        ativo:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - nome
+        - ativo
+        - createdAt
+
+    CreateClientBody:
+      type: object
+      properties:
+        nome:
+          type: string
+        ativo:
+          type: boolean
+      required:
+        - nome
+
+    UpdateClientBody:
+      type: object
+      properties:
+        nome:
+          type: ["string", "null"]
+        ativo:
+          type: ["boolean", "null"]
+
+    Agency:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        ativo:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - nome
+        - ativo
+        - createdAt
+
+    CreateAgencyBody:
+      type: object
+      properties:
+        nome:
+          type: string
+        ativo:
+          type: boolean
+      required:
+        - nome
+
+    UpdateAgencyBody:
+      type: object
+      properties:
+        nome:
+          type: ["string", "null"]
+        ativo:
+          type: ["boolean", "null"]
+
+    Campaign:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        clienteId:
+          type: ["integer", "null"]
+        agenciaId:
+          type: ["integer", "null"]
+        piCodigo:
+          type: ["string", "null"]
+        valorLiquido:
+          type: ["number", "null"]
+        competencia:
+          type: ["string", "null"]
+        origem:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        clienteNome:
+          type: ["string", "null"]
+        agenciaNome:
+          type: ["string", "null"]
+        totalInsercoes:
+          type: integer
+      required:
+        - id
+        - nome
+        - createdAt
+        - totalInsercoes
+
+    CreateCampaignBody:
+      type: object
+      properties:
+        nome:
+          type: string
+        clienteId:
+          type: ["integer", "null"]
+        agenciaId:
+          type: ["integer", "null"]
+        piCodigo:
+          type: ["string", "null"]
+        valorLiquido:
+          type: ["number", "null"]
+        competencia:
+          type: ["string", "null"]
+        origem:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+      required:
+        - nome
+
+    UpdateCampaignBody:
+      type: object
+      properties:
+        nome:
+          type: ["string", "null"]
+        clienteId:
+          type: ["integer", "null"]
+        agenciaId:
+          type: ["integer", "null"]
+        piCodigo:
+          type: ["string", "null"]
+        valorLiquido:
+          type: ["number", "null"]
+        competencia:
+          type: ["string", "null"]
+        origem:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+
+    CampaignDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        clienteId:
+          type: ["integer", "null"]
+        agenciaId:
+          type: ["integer", "null"]
+        piCodigo:
+          type: ["string", "null"]
+        valorLiquido:
+          type: ["number", "null"]
+        competencia:
+          type: ["string", "null"]
+        origem:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        clienteNome:
+          type: ["string", "null"]
+        agenciaNome:
+          type: ["string", "null"]
+        totalInsercoes:
+          type: integer
+        insertions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsertionWithRelations"
+      required:
+        - id
+        - nome
+        - createdAt
+        - totalInsercoes
+        - insertions
+
+    Insertion:
+      type: object
+      properties:
+        id:
+          type: integer
+        campanhaId:
+          type: integer
+        siteId:
+          type: ["integer", "null"]
+        localFormato:
+          type: ["string", "null"]
+        localFormatoNormalizado:
+          type: ["string", "null"]
+        periodoInicio:
+          type: ["string", "null"]
+        periodoFim:
+          type: ["string", "null"]
+        periodoOriginal:
+          type: ["string", "null"]
+        statusLegado:
+          type: ["string", "null"]
+        statusNormalizado:
+          type: string
+        bannerPublicadoNoSite:
+          type: boolean
+        printGerado:
+          type: boolean
+        processoEnviadoAgencia:
+          type: boolean
+        docsEnviados:
+          type: boolean
+        dataEnvioAgencia:
+          type: ["string", "null"]
+        atrasado:
+          type: boolean
+        observacoes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - campanhaId
+        - statusNormalizado
+        - bannerPublicadoNoSite
+        - printGerado
+        - processoEnviadoAgencia
+        - docsEnviados
+        - atrasado
+        - createdAt
+        - updatedAt
+
+    InsertionWithRelations:
+      type: object
+      properties:
+        id:
+          type: integer
+        campanhaId:
+          type: integer
+        siteId:
+          type: ["integer", "null"]
+        localFormato:
+          type: ["string", "null"]
+        localFormatoNormalizado:
+          type: ["string", "null"]
+        periodoInicio:
+          type: ["string", "null"]
+        periodoFim:
+          type: ["string", "null"]
+        periodoOriginal:
+          type: ["string", "null"]
+        statusLegado:
+          type: ["string", "null"]
+        statusNormalizado:
+          type: string
+        bannerPublicadoNoSite:
+          type: boolean
+        printGerado:
+          type: boolean
+        processoEnviadoAgencia:
+          type: boolean
+        docsEnviados:
+          type: boolean
+        dataEnvioAgencia:
+          type: ["string", "null"]
+        atrasado:
+          type: boolean
+        observacoes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        campanhaName:
+          type: ["string", "null"]
+        siteNome:
+          type: ["string", "null"]
+        siteSigla:
+          type: ["string", "null"]
+        clienteNome:
+          type: ["string", "null"]
+        agenciaNome:
+          type: ["string", "null"]
+        competencia:
+          type: ["string", "null"]
+        totalEvidencias:
+          type: integer
+      required:
+        - id
+        - campanhaId
+        - statusNormalizado
+        - bannerPublicadoNoSite
+        - printGerado
+        - processoEnviadoAgencia
+        - docsEnviados
+        - atrasado
+        - createdAt
+        - updatedAt
+        - totalEvidencias
+
+    InsertionDetail:
+      type: object
+      properties:
+        id:
+          type: integer
+        campanhaId:
+          type: integer
+        siteId:
+          type: ["integer", "null"]
+        localFormato:
+          type: ["string", "null"]
+        localFormatoNormalizado:
+          type: ["string", "null"]
+        periodoInicio:
+          type: ["string", "null"]
+        periodoFim:
+          type: ["string", "null"]
+        periodoOriginal:
+          type: ["string", "null"]
+        statusLegado:
+          type: ["string", "null"]
+        statusNormalizado:
+          type: string
+        bannerPublicadoNoSite:
+          type: boolean
+        printGerado:
+          type: boolean
+        processoEnviadoAgencia:
+          type: boolean
+        docsEnviados:
+          type: boolean
+        dataEnvioAgencia:
+          type: ["string", "null"]
+        atrasado:
+          type: boolean
+        observacoes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        campanhaName:
+          type: ["string", "null"]
+        siteNome:
+          type: ["string", "null"]
+        siteSigla:
+          type: ["string", "null"]
+        clienteNome:
+          type: ["string", "null"]
+        agenciaNome:
+          type: ["string", "null"]
+        competencia:
+          type: ["string", "null"]
+        totalEvidencias:
+          type: integer
+        evidences:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
+      required:
+        - id
+        - campanhaId
+        - statusNormalizado
+        - bannerPublicadoNoSite
+        - printGerado
+        - processoEnviadoAgencia
+        - docsEnviados
+        - atrasado
+        - createdAt
+        - updatedAt
+        - totalEvidencias
+        - evidences
+
+    CreateInsertionBody:
+      type: object
+      properties:
+        campanhaId:
+          type: integer
+        siteId:
+          type: ["integer", "null"]
+        localFormato:
+          type: ["string", "null"]
+        localFormatoNormalizado:
+          type: ["string", "null"]
+        periodoInicio:
+          type: ["string", "null"]
+        periodoFim:
+          type: ["string", "null"]
+        periodoOriginal:
+          type: ["string", "null"]
+        statusLegado:
+          type: ["string", "null"]
+        statusNormalizado:
+          type: string
+        bannerPublicadoNoSite:
+          type: boolean
+        printGerado:
+          type: boolean
+        processoEnviadoAgencia:
+          type: boolean
+        docsEnviados:
+          type: boolean
+        dataEnvioAgencia:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+      required:
+        - campanhaId
+        - statusNormalizado
+
+    UpdateInsertionBody:
+      type: object
+      properties:
+        siteId:
+          type: ["integer", "null"]
+        localFormato:
+          type: ["string", "null"]
+        localFormatoNormalizado:
+          type: ["string", "null"]
+        periodoInicio:
+          type: ["string", "null"]
+        periodoFim:
+          type: ["string", "null"]
+        periodoOriginal:
+          type: ["string", "null"]
+        statusNormalizado:
+          type: ["string", "null"]
+        bannerPublicadoNoSite:
+          type: ["boolean", "null"]
+        printGerado:
+          type: ["boolean", "null"]
+        processoEnviadoAgencia:
+          type: ["boolean", "null"]
+        docsEnviados:
+          type: ["boolean", "null"]
+        dataEnvioAgencia:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+
+    BulkUpdateInsertionsBody:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: integer
+        updates:
+          $ref: "#/components/schemas/UpdateInsertionBody"
+      required:
+        - ids
+        - updates
+
+    BulkUpdateResult:
+      type: object
+      properties:
+        updated:
+          type: integer
+      required:
+        - updated
+
+    Evidence:
+      type: object
+      properties:
+        id:
+          type: integer
+        insercaoId:
+          type: integer
+        tipo:
+          type: string
+        arquivoUrl:
+          type: ["string", "null"]
+        titulo:
+          type: ["string", "null"]
+        criadoEm:
+          type: string
+      required:
+        - id
+        - insercaoId
+        - tipo
+        - criadoEm
+
+    CreateEvidenceBody:
+      type: object
+      properties:
+        tipo:
+          type: string
+        arquivoUrl:
+          type: ["string", "null"]
+        titulo:
+          type: ["string", "null"]
+      required:
+        - tipo
+
+    DashboardSummary:
+      type: object
+      properties:
+        totalInsercoes:
+          type: integer
+        ativas:
+          type: integer
+        concluidas:
+          type: integer
+        atrasadas:
+          type: integer
+        aguardandoPublicacao:
+          type: integer
+        aguardandoPrint:
+          type: integer
+        aguardandoEnvio:
+          type: integer
+        aguardandoDocs:
+          type: integer
+        valorTotalLiquido:
+          type: number
+        totalCampanhas:
+          type: integer
+      required:
+        - totalInsercoes
+        - ativas
+        - concluidas
+        - atrasadas
+        - aguardandoPublicacao
+        - aguardandoPrint
+        - aguardandoEnvio
+        - aguardandoDocs
+        - valorTotalLiquido
+        - totalCampanhas
+
+    SiteBreakdown:
+      type: object
+      properties:
+        siteId:
+          type: integer
+        siteNome:
+          type: string
+        siteSigla:
+          type: string
+        total:
+          type: integer
+        ativas:
+          type: integer
+        concluidas:
+          type: integer
+        atrasadas:
+          type: integer
+      required:
+        - siteId
+        - siteNome
+        - siteSigla
+        - total
+        - ativas
+        - concluidas
+        - atrasadas
+
+    ClientBreakdown:
+      type: object
+      properties:
+        clienteId:
+          type: integer
+        clienteNome:
+          type: string
+        total:
+          type: integer
+        ativas:
+          type: integer
+        concluidas:
+          type: integer
+        valorLiquido:
+          type: number
+      required:
+        - clienteId
+        - clienteNome
+        - total
+        - ativas
+        - concluidas
+        - valorLiquido
+
+    CompetenciaBreakdown:
+      type: object
+      properties:
+        competencia:
+          type: string
+        total:
+          type: integer
+        ativas:
+          type: integer
+        concluidas:
+          type: integer
+        atrasadas:
+          type: integer
+      required:
+        - competencia
+        - total
+        - ativas
+        - concluidas
+        - atrasadas
