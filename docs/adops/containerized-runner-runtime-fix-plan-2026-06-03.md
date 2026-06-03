@@ -557,3 +557,86 @@ Esperado:
 - pacote incompleto termina em `needs_review`;
 - Telegram mostra proxima acao e motivo objetivo;
 - nenhuma campanha/insercao nova aparece sem PI completa.
+
+## Deploy incremental Safe PI Intake
+
+Atualizado em 2026-06-03.
+
+Publicacao aplicada:
+
+- Branch: `codex/adops-safe-pi-intake`.
+- Commit: `36fc1da feat: harden safe PI intake flow`.
+- Rota: deploy parcial por Portainer API no volume `adops_app_source`.
+- Script usado: `ops/portainer/adops-stack/scripts/deploy-safe-pi-intake-partial.sh`.
+- Motivo: evitar `upload-runtime-volumes.sh` ou build completo enquanto o worktree local contem mudancas alheias.
+
+Arquivos enviados para `/app`:
+
+- `ops/cloudflare-remote-runner/src/runner.mjs`.
+- `ops/telegram-adapter/server.mjs`.
+- `ops/cloudflare-telegram-bot/src/index.ts`.
+- `scripts/src/harness-drive-pi-monitor-first-v4.mjs`.
+- `scripts/src/create-spm-whatsapp-print-intakes-2026-06-03.mjs`.
+- `scripts/package.json`.
+- `docs/adops/pi-automation-v4-monitor-first-ai-gate.md`.
+- `docs/adops/pi-automation-v3/runbook.md`.
+- `docs/adops/containerized-runner-runtime-fix-plan-2026-06-03.md`.
+- `docs/harness-reports/drive-pi-monitor-first-v4/2026-06-03T21-33-07-815Z/summary.md`.
+- `docs/harness-reports/drive-pi-monitor-first-v4/2026-06-03T21-33-07-815Z/results.json`.
+- `docs/harness-reports/pi-automation-v3/2026-06-03T21-33-18-249Z/summary.md`.
+- `docs/harness-reports/pi-automation-v3/2026-06-03T21-33-18-249Z/results.json`.
+
+Backup preservado:
+
+- Arquivo local gerado pelo deploy parcial: `/var/folders/2b/r3j9swtn7vv8vp7sqf1nj1h00000gn/T/adops-safe-pi-intake-backup-36fc1da-20260603-181326.tar`.
+- Conteudo: backup dos mesmos caminhos alterados no volume `adops_app_source`.
+- Uso: restaurar esse tar no volume e reiniciar os mesmos containers se o smoke vivo falhar.
+
+Containers reiniciados:
+
+- `adops-runner`.
+- `adops-telegram`.
+
+Containers nao recriados:
+
+- `adops-api`.
+- `adops-web`.
+- Banco.
+- Volumes persistentes.
+- Monitor Drive.
+
+Validacao pre-deploy:
+
+- `node --check ops/cloudflare-remote-runner/src/runner.mjs`: OK.
+- `node --check ops/telegram-adapter/server.mjs`: OK.
+- `pnpm --dir ops/cloudflare-telegram-bot run typecheck`: OK.
+- `pnpm --dir scripts run harness:drive-pi-monitor-first-v4`: OK, 10 checks.
+- `pnpm --dir scripts run harness:pi-automation-v3`: OK, 11 checks.
+- `pnpm --dir scripts run audit:capture-rules-integrity`: `ok=true`, `errors=0`, `warnings=9`.
+
+Validacao pos-deploy:
+
+- `https://adops-api.codigo5.com.br/api/healthz`: HTTP 200.
+- `https://adops-api-public.leandro471.workers.dev/api/healthz`: HTTP 200.
+- `adops-runner`: `running`.
+- `adops-telegram`: `running`.
+- Logs do runner: inicio limpo com `kinds=sync-planilha,print-batch,print-backfill,drive-pi-ingest,analytics-report,pi-site-export,operational-documents`.
+- Logs do Telegram adapter: `listening on 4022`.
+
+Smoke vivo:
+
+- Comando: `ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado: `ok=true`.
+- Job: `f9b546f1-4f47-4ce8-af48-22defc5de43c`.
+- Evento: `drive:cod5synthetic1780524952210:2026-06-03T22:15:52.209Z`.
+- Status: `completed`.
+- Stage final: `needs_review`.
+- Replay: `duplicate=true`.
+- Runner que consumiu a fila: `runner-vps-1`.
+
+Observacao operacional:
+
+- O runtime do Mac Mini foi atualizado e os containers `adops-runner`/`adops-telegram` foram reiniciados com logs saudaveis.
+- O smoke vivo foi aceito e fechado em `needs_review`, mas foi consumido por `runner-vps-1`.
+- Enquanto houver runner legado concorrente na mesma fila, o teste vivo valida o contrato do fluxo, mas nao prova exclusividade de consumo pelo Mac Mini.
+- Para provar consumo exclusivo do Mac Mini, pausar o runner legado ou segmentar a fila por `runnerId` antes de um novo smoke.
