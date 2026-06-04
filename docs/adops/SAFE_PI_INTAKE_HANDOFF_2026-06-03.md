@@ -140,6 +140,56 @@ Regra para proximas sessoes:
 - Para validar Safe PI Intake no Mac Mini, usar sempre a API `https://adops-api.codigo5.com.br`.
 - Nao usar o Worker publico como default para esse smoke.
 - Se aparecer `runner-vps-1`, o teste caiu no control plane legado.
+- O smoke agora falha se `runnerId` for diferente de `ADOPS_EXPECTED_RUNNER_ID`.
+- Default esperado: `ADOPS_EXPECTED_RUNNER_ID=runner-1`.
+- Evidencias locais sao criadas em `docs/harness-reports/drive-pi-live-smoke/<timestamp>/`.
+
+Teste negativo controlado:
+
+```bash
+ADOPS_EXPECTED_RUNNER_ID=runner-inexistente \
+ADOPS_DRIVE_PI_LIVE_SMOKE=true \
+pnpm --dir scripts run test:drive-pi-event-flow
+```
+
+Esperado:
+
+- comando falha;
+- erro mostra runner esperado e runner observado;
+- pacote sintetico continua em `needs_review`;
+- nenhuma campanha/insercao e criada.
+
+## Trava de runner e evidencia versionada
+
+Atualizado em 2026-06-04.
+
+O smoke passou a validar obrigatoriamente:
+
+- `status=completed`;
+- `stageKey=needs_review`;
+- `runnerId=runner-1`.
+
+Variavel de controle:
+
+- `ADOPS_EXPECTED_RUNNER_ID`;
+- default: `runner-1`.
+
+Smoke positivo final:
+
+- Comando: `ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado: `ok=true`.
+- Job: `dcb1d6ae-ecad-4ecb-90f6-f0ae3fd7537a`.
+- Evento: `drive:cod5synthetic1780607264723:2026-06-04T21:07:44.722Z`.
+- Final: `completed / needs_review`.
+- Replay: `duplicate=true`.
+- Runner: `runner-1`.
+- Evidencia: `docs/harness-reports/drive-pi-live-smoke/2026-06-04T21-07-57-149Z/`.
+
+Teste negativo controlado:
+
+- Comando: `ADOPS_EXPECTED_RUNNER_ID=runner-inexistente ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado esperado: falha.
+- Resultado observado: falhou com `runner esperado runner-inexistente, veio runner-1`.
 
 Aceite:
 
@@ -147,6 +197,8 @@ Aceite:
 - `adops-runner` e `adops-telegram` em `running`.
 - Smoke vivo fecha `completed`.
 - Stage final sintético fica `needs_review`.
+- Runner final fica `runner-1`.
+- Relatorio local e gerado em `docs/harness-reports/drive-pi-live-smoke/<timestamp>/`.
 - Telegram mostra motivo de revisão.
 - Nenhuma campanha/inserção nasce sem PI completa.
 

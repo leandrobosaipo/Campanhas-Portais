@@ -12,6 +12,8 @@ const envCandidates = [
   path.join(repoRoot, "ops/cloudflare-public-api/.env.ops.local"),
 ];
 const API_BASE = process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api.codigo5.com.br";
+const EXPECTED_RUNNER_ID = process.env.ADOPS_EXPECTED_RUNNER_ID || "runner-1";
+const liveSmokeReportRoot = path.join(repoRoot, "docs/harness-reports/drive-pi-live-smoke");
 const results = [];
 
 function read(filePath) {
@@ -57,6 +59,38 @@ function assert(condition, message) {
 function assertIncludes(content, markers, label) {
   const missing = markers.filter((marker) => !content.includes(marker));
   assert(missing.length === 0, `${label} sem marcador(es): ${missing.join(", ")}`);
+}
+
+function timestampForPath(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function writeLiveSmokeReport(evidence) {
+  const reportDir = path.join(liveSmokeReportRoot, timestampForPath(new Date(evidence.createdAt)));
+  fs.mkdirSync(reportDir, { recursive: true });
+  fs.writeFileSync(path.join(reportDir, "results.json"), `${JSON.stringify(evidence, null, 2)}\n`);
+
+  const statusLine = evidence.ok ? "PASS" : "FAIL";
+  const conclusion = evidence.ok
+    ? "Smoke validou o Safe PI Intake no Mac Mini."
+    : "Smoke nao validou o Mac Mini; conferir API alvo e runner concorrente.";
+  const summary = [
+    "# Drive PI Live Smoke",
+    "",
+    `- Resultado: ${statusLine}`,
+    `- Gerado em: ${evidence.createdAt}`,
+    `- API usada: ${evidence.apiBase}`,
+    `- Runner esperado: ${evidence.expectedRunnerId}`,
+    `- Runner observado: ${evidence.runnerId || "ausente"}`,
+    `- Job: ${evidence.jobId || "ausente"}`,
+    `- Stage: ${evidence.stageKey || "ausente"}`,
+    `- Status: ${evidence.status || "ausente"}`,
+    `- Replay duplicado: ${evidence.duplicate === true ? "sim" : "nao"}`,
+    `- Conclusao: ${conclusion}`,
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(reportDir, "summary.md"), summary);
+  return reportDir;
 }
 
 async function fetchJson(url, init = {}) {
@@ -173,10 +207,32 @@ await check("live-smoke-drive-pi-event-duplicate-progress", async () => {
     : null;
   assert(listedJob, "listagem /api/ops/jobs?kind=drive-pi-ingest deveria incluir o job sintetico");
 
+  const runnerOk = progressPayload.runnerId === EXPECTED_RUNNER_ID;
+  const evidence = {
+    ok: runnerOk,
+    apiBase: API_BASE,
+    expectedRunnerId: EXPECTED_RUNNER_ID,
+    eventId: event.eventId,
+    jobId: first.payload.jobId,
+    duplicate: duplicate.payload.duplicate,
+    status: progressPayload.status,
+    stageKey: progressPayload.stageKey,
+    runnerId: progressPayload.runnerId,
+    createdAt: new Date().toISOString(),
+  };
+  const reportDir = writeLiveSmokeReport(evidence);
+  assert(
+    runnerOk,
+    `runner esperado ${EXPECTED_RUNNER_ID}, veio ${progressPayload.runnerId || "ausente"}. Se veio runner-vps-1, provavel uso do control plane legado.`,
+  );
+
   return {
     eventId: event.eventId,
     jobId: first.payload.jobId,
     duplicate: duplicate.payload.duplicate,
+    apiBase: API_BASE,
+    expectedRunnerId: EXPECTED_RUNNER_ID,
+    reportDir,
     progress: {
       status: progressPayload.status,
       stageKey: progressPayload.stageKey,

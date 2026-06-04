@@ -690,3 +690,32 @@ Regra:
 - `runner-1` confirma consumo pelo Mac Mini.
 - `runner-vps-1` indica que o smoke foi para o control plane legado.
 - O smoke do Safe PI Intake deve validar o Mac Mini, nao o Worker antigo.
+- O smoke falha quando `runnerId` e diferente de `ADOPS_EXPECTED_RUNNER_ID`.
+- Default esperado: `ADOPS_EXPECTED_RUNNER_ID=runner-1`.
+- Cada smoke vivo gera evidencia local em `docs/harness-reports/drive-pi-live-smoke/<timestamp>/`.
+
+Teste negativo controlado:
+
+```bash
+ADOPS_EXPECTED_RUNNER_ID=runner-inexistente \
+ADOPS_DRIVE_PI_LIVE_SMOKE=true \
+pnpm --dir scripts run test:drive-pi-event-flow
+```
+
+Esperado:
+
+- falha intencional;
+- erro informa runner esperado e runner recebido;
+- job sintetico segue `completed / needs_review`;
+- nenhuma campanha ou insercao e criada.
+
+Validacao final da trava:
+
+- Comando positivo: `ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado positivo: `ok=true`.
+- Job positivo: `dcb1d6ae-ecad-4ecb-90f6-f0ae3fd7537a`.
+- Evento positivo: `drive:cod5synthetic1780607264723:2026-06-04T21:07:44.722Z`.
+- Runner positivo: `runner-1`.
+- Evidencia positiva: `docs/harness-reports/drive-pi-live-smoke/2026-06-04T21-07-57-149Z/`.
+- Comando negativo: `ADOPS_EXPECTED_RUNNER_ID=runner-inexistente ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado negativo: falha intencional com `runner esperado runner-inexistente, veio runner-1`.
