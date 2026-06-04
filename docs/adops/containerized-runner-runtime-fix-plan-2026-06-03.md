@@ -640,3 +640,53 @@ Observacao operacional:
 - O smoke vivo foi aceito e fechado em `needs_review`, mas foi consumido por `runner-vps-1`.
 - Enquanto houver runner legado concorrente na mesma fila, o teste vivo valida o contrato do fluxo, mas nao prova exclusividade de consumo pelo Mac Mini.
 - Para provar consumo exclusivo do Mac Mini, pausar o runner legado ou segmentar a fila por `runnerId` antes de um novo smoke.
+
+## Correcao do smoke Safe PI Intake no Mac Mini
+
+Atualizado em 2026-06-04.
+
+Causa do falso negativo parcial:
+
+- O script `scripts/src/test-drive-pi-event-flow.mjs` usava o Worker publico como default.
+- O Worker publico ainda tem runner legado ativo.
+- Por isso o smoke anterior terminou em `runnerId=runner-vps-1`.
+
+Correcao aplicada:
+
+- O default do script passou para `https://adops-api.codigo5.com.br`.
+- O comando operacional tambem deve informar `ADOPS_PUBLIC_API_BASE_URL=https://adops-api.codigo5.com.br`.
+
+Comando correto:
+
+```bash
+ADOPS_PUBLIC_API_BASE_URL=https://adops-api.codigo5.com.br \
+ADOPS_DRIVE_PI_LIVE_SMOKE=true \
+pnpm --dir scripts run test:drive-pi-event-flow
+```
+
+Resultado corrigido:
+
+- Resultado: `ok=true`.
+- Job: `54d3c86d-2544-41ab-a8a4-bca5d396a86f`.
+- Evento: `drive:cod5synthetic1780602528715:2026-06-04T19:48:48.714Z`.
+- Status: `completed`.
+- Stage final: `needs_review`.
+- Replay: `duplicate=true`.
+- Runner: `runner-1`.
+
+Confirmacao com default novo:
+
+- Comando: `ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado: `ok=true`.
+- Job: `a88de0f4-4694-4ef0-b863-9d0dc10146ae`.
+- Evento: `drive:cod5synthetic1780602615895:2026-06-04T19:50:15.895Z`.
+- Status: `completed`.
+- Stage final: `needs_review`.
+- Replay: `duplicate=true`.
+- Runner: `runner-1`.
+
+Regra:
+
+- `runner-1` confirma consumo pelo Mac Mini.
+- `runner-vps-1` indica que o smoke foi para o control plane legado.
+- O smoke do Safe PI Intake deve validar o Mac Mini, nao o Worker antigo.

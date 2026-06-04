@@ -77,7 +77,9 @@ Depois do deploy:
 ```bash
 curl -fsS https://adops-api.codigo5.com.br/api/healthz
 bash /Users/leandrobosaipo/.agents/skills/portainer/portainer.sh containers --endpoint 3 --filter adops
-ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow
+ADOPS_PUBLIC_API_BASE_URL=https://adops-api.codigo5.com.br \
+ADOPS_DRIVE_PI_LIVE_SMOKE=true \
+pnpm --dir scripts run test:drive-pi-event-flow
 ```
 
 Resultado observado em 2026-06-03:
@@ -95,6 +97,49 @@ Resultado observado em 2026-06-03:
 - Runner que consumiu o smoke: `runner-vps-1`.
 
 Nota: o runner do Mac Mini foi atualizado e ficou saudavel, mas a fila viva ainda pode ser consumida pelo runner legado. Para provar consumo exclusivo do Mac Mini, pausar o runner legado ou segmentar o teste por runner antes de novo smoke.
+
+## Correcao do smoke Mac Mini
+
+Atualizado em 2026-06-04.
+
+O smoke anterior usou o default antigo do script:
+
+- API: `https://adops-api-public.leandro471.workers.dev`.
+- Resultado: `completed / needs_review`.
+- Runner: `runner-vps-1`.
+
+Isso validou o contrato do fluxo, mas nao validou consumo pelo Mac Mini.
+
+Correcao aplicada:
+
+- O script `scripts/src/test-drive-pi-event-flow.mjs` agora usa `https://adops-api.codigo5.com.br` como default.
+- O comando de handoff tambem define `ADOPS_PUBLIC_API_BASE_URL=https://adops-api.codigo5.com.br` explicitamente.
+
+Smoke corrigido:
+
+- Comando: `ADOPS_PUBLIC_API_BASE_URL=https://adops-api.codigo5.com.br ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado: `ok=true`.
+- Job: `54d3c86d-2544-41ab-a8a4-bca5d396a86f`.
+- Evento: `drive:cod5synthetic1780602528715:2026-06-04T19:48:48.714Z`.
+- Final: `completed / needs_review`.
+- Replay: `duplicate=true`.
+- Runner: `runner-1`.
+
+Smoke de confirmacao usando o default novo:
+
+- Comando: `ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow`.
+- Resultado: `ok=true`.
+- Job: `a88de0f4-4694-4ef0-b863-9d0dc10146ae`.
+- Evento: `drive:cod5synthetic1780602615895:2026-06-04T19:50:15.895Z`.
+- Final: `completed / needs_review`.
+- Replay: `duplicate=true`.
+- Runner: `runner-1`.
+
+Regra para proximas sessoes:
+
+- Para validar Safe PI Intake no Mac Mini, usar sempre a API `https://adops-api.codigo5.com.br`.
+- Nao usar o Worker publico como default para esse smoke.
+- Se aparecer `runner-vps-1`, o teste caiu no control plane legado.
 
 Aceite:
 
