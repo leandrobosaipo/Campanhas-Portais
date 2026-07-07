@@ -1,0 +1,24 @@
+{
+  "name": "adops-telegram-bot",
+  "account_id": "ca779f0cfa7041ec67b7d61cc8f10acd",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-18",
+  "workers_dev": true,
+  "triggers": {
+    "crons": ["45 22 * * *"]
+  },
+  "services": [
+    {
+      "binding": "ADOPS_PUBLIC_API_SERVICE",
+      "service": "adops-api-public"
+    }
+  ],
+  "vars": {
+    "TELEGRAM_BOT_USERNAME": "adops_codigo5_bot",
+    "TELEGRAM_WEBHOOK_BASE_URL": "https://adops-telegram-bot.leandro471.workers.dev",
+    "ADOPS_PUBLIC_API_BASE_URL": "https://adops-api-public.leandro471.workers.dev",
+    "ADOPS_EXPORT_BASE_URL": "https://adops-campanhas-portais.pages.dev",
+    "TELEGRAM_NOTIFICATIONS_ENABLED": "true",
+    "TELEGRAM_TIMEZONE": "America/Cuiaba"
+  }
+}

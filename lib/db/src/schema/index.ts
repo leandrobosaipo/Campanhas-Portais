@@ -4,3 +4,7 @@ export * from "./agencies";
 export * from "./campaigns";
 export * from "./insertions";
 export * from "./evidences";
+export * from "./print-jobs";
+export * from "./operational-document-states";
+export * from "./capture-proof-logs";
+export * from "./capture-rules";

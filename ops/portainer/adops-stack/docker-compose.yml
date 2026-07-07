@@ -1,0 +1,212 @@
+name: adops
+
+services:
+  adops-postgres:
+    image: postgres:16-alpine
+    container_name: adops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ADOPS_POSTGRES_DB:-adops}
+      POSTGRES_USER: ${ADOPS_POSTGRES_USER:-adops}
+      POSTGRES_PASSWORD: ${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}
+      TZ: America/Cuiaba
+    volumes:
+      - adops_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${ADOPS_POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adops_internal
+
+  adops-api:
+    image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-api
+    restart: unless-stopped
+    depends_on:
+      adops-postgres:
+        condition: service_healthy
+    environment:
+      PORT: "4011"
+      NODE_ENV: production
+      TZ: America/Cuiaba
+      DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
+      ADOPS_PROJECT_ROOT: /app
+      ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
+      ADOPS_GENERATED_PRINTS_ROOT: /app/tmp/generated-prints
+      ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
+      DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:?DO_SPACES_ACCESS_KEY_ID is required}
+      DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:?DO_SPACES_SECRET_ACCESS_KEY is required}
+      DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
+      DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
+      ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
+      ADOPS_SPACES_BASE_PATH: ${ADOPS_SPACES_BASE_PATH:-adops-prints}
+      ADOPS_PERRENGUE_SSH_HOST: ${ADOPS_PERRENGUE_SSH_HOST:-}
+      ADOPS_PERRENGUE_SSH_PORT: ${ADOPS_PERRENGUE_SSH_PORT:-}
+      ADOPS_PERRENGUE_SSH_USER: ${ADOPS_PERRENGUE_SSH_USER:-}
+      ADOPS_PERRENGUE_WP_PATH: ${ADOPS_PERRENGUE_WP_PATH:-}
+      ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
+      ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
+    volumes:
+      - adops_generated_prints:/app/tmp/generated-prints
+      - adops_ssh:/root/.ssh:ro
+    ports:
+      - "127.0.0.1:${ADOPS_API_HOST_PORT:-4011}:4011"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4011/api/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adops_internal
+      - adops_public
+
+  adops-runner:
+    image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-runner
+    restart: unless-stopped
+    depends_on:
+      adops-api:
+        condition: service_healthy
+    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    environment:
+      TZ: America/Cuiaba
+      DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
+      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api.codigo5.com.br}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
+      PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
+      CAMPANHAS_PORTAIS_ROOT: /app
+      OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
+      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents}
+      DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
+      DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
+      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
+      DRIVE_PI_MONITOR_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
+      DRIVE_PI_MONITOR_STATE_FILE: /var/lib/adops/drive-pi-monitor-state.json
+      DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      GOOGLE_DRIVE_ACCESS_TOKEN: ${GOOGLE_DRIVE_ACCESS_TOKEN:-}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-/data/secrets/google-drive-service-account.json}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:-}
+      ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ADOPS_PI_AGENT_ENABLED: ${ADOPS_PI_AGENT_ENABLED:-true}
+      ADOPS_PI_AGENT_AUTO_APPLY: ${ADOPS_PI_AGENT_AUTO_APPLY:-false}
+      ADOPS_PI_AGENT_MODEL: ${ADOPS_PI_AGENT_MODEL:-gpt-4.1-mini}
+      ADOPS_PI_AGENT_MIN_CONFIDENCE: ${ADOPS_PI_AGENT_MIN_CONFIDENCE:-0.85}
+      ADOPS_PI_AGENT_KNOWLEDGE_FILE: ${ADOPS_PI_AGENT_KNOWLEDGE_FILE:-docs/adops/pi-automation-v3/spm-agent-knowledge.md}
+      ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS: ${ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS:-}
+      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-http://adops-telegram:4022}
+    volumes:
+      - adops_runner_state:/var/lib/adops
+      - adops_pnpm_store:/var/lib/adops/.pnpm-store
+      - adops_ssh:/root/.ssh:ro
+      - adops_drive_pi_monitor_data:/data:ro
+    networks:
+      - adops_internal
+
+  # Phase 2: only enable after the standalone adops-drive-pi-monitor state is migrated.
+  # Keeping it in a profile avoids duplicate Drive processing during the 72h rollback window.
+  adops-drive-pi-monitor:
+    image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-drive-pi-monitor-stack
+    profiles: ["phase2-drive-monitor"]
+    restart: unless-stopped
+    depends_on:
+      adops-api:
+        condition: service_healthy
+    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    environment:
+      TZ: America/Cuiaba
+      DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
+      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api.codigo5.com.br}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
+      PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
+      CAMPANHAS_PORTAIS_ROOT: /app
+      OPS_POLL_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
+      OPS_JOB_KINDS: drive-pi-ingest
+      DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
+      DRIVE_PI_MONITOR_ENABLED: "true"
+      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:?DRIVE_PI_MONITOR_ROOT_FOLDER_ID is required}
+      DRIVE_PI_MONITOR_STATE_FILE: /var/lib/adops/drive-pi-monitor-state.json
+      DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
+      GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
+      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
+      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
+      GOOGLE_DRIVE_ACCESS_TOKEN: ${GOOGLE_DRIVE_ACCESS_TOKEN:-}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:-}
+      ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ADOPS_PI_AGENT_ENABLED: ${ADOPS_PI_AGENT_ENABLED:-false}
+      ADOPS_PI_AGENT_AUTO_APPLY: ${ADOPS_PI_AGENT_AUTO_APPLY:-false}
+      ADOPS_PI_AGENT_MODEL: ${ADOPS_PI_AGENT_MODEL:-gpt-4.1-mini}
+      ADOPS_PI_AGENT_MIN_CONFIDENCE: ${ADOPS_PI_AGENT_MIN_CONFIDENCE:-0.85}
+      ADOPS_PI_AGENT_KNOWLEDGE_FILE: ${ADOPS_PI_AGENT_KNOWLEDGE_FILE:-docs/adops/pi-automation-v3/spm-agent-knowledge.md}
+      ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS: ${ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS:-}
+      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-http://adops-telegram:4022}
+    volumes:
+      - adops_drive_pi_monitor_state:/var/lib/adops
+    networks:
+      - adops_internal
+
+  adops-web:
+    image: cod5/adops-web:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ADOPS_WEB_HOST_PORT:-4175}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adops_public
+
+  adops-telegram:
+    image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-telegram
+    profiles: ["phase2-telegram"]
+    restart: unless-stopped
+    command:
+      - sh
+      - -lc
+      - node ops/telegram-adapter/server.mjs
+    environment:
+      PORT: "4022"
+      TZ: America/Cuiaba
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+      TELEGRAM_DEFAULT_GROUP_ID: ${TELEGRAM_DEFAULT_GROUP_ID:?TELEGRAM_DEFAULT_GROUP_ID is required}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4022/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adops_internal
+
+volumes:
+  adops_postgres_data:
+  adops_generated_prints:
+  adops_runner_state:
+  adops_pnpm_store:
+  adops_drive_pi_monitor_state:
+  adops_drive_pi_monitor_data:
+    external: true
+    name: adops-drive-pi-monitor-data
+  adops_ssh:
+
+networks:
+  adops_internal:
+    name: adops_internal
+  adops_public:
+    name: adops_public

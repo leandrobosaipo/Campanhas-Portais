@@ -17,6 +17,48 @@ export interface Site {
   id: number;
   nome: string;
   sigla: string;
+  /** @nullable */
+  dominio?: string | null;
+  /** @nullable */
+  siteUrl?: string | null;
+  /** @nullable */
+  artigoExemploUrl?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
+  serverLabel?: string | null;
+  /** @nullable */
+  sshHost?: string | null;
+  /** @nullable */
+  sshPort?: string | null;
+  /** @nullable */
+  sshUser?: string | null;
+  /** @nullable */
+  webrootPath?: string | null;
+  /** @nullable */
+  wpPath?: string | null;
+  /** @nullable */
+  wpCliPath?: string | null;
+  /** @nullable */
+  phpBin?: string | null;
+  /** @nullable */
+  tablePrefix?: string | null;
+  /** @nullable */
+  adrotateVersao?: string | null;
+  /** @nullable */
+  cloudflareZoneId?: string | null;
+  /** @nullable */
+  cloudflareProjectName?: string | null;
+  /** @nullable */
+  pagesSubdomain?: string | null;
+  /** @nullable */
+  spacesBucket?: string | null;
+  /** @nullable */
+  spacesBasePath?: string | null;
+  /** @nullable */
+  maintenanceWorkspacePath?: string | null;
+  /** @nullable */
+  deploymentNotes?: string | null;
   ativo: boolean;
   createdAt: string;
 }
@@ -24,6 +66,48 @@ export interface Site {
 export interface CreateSiteBody {
   nome: string;
   sigla: string;
+  /** @nullable */
+  dominio?: string | null;
+  /** @nullable */
+  siteUrl?: string | null;
+  /** @nullable */
+  artigoExemploUrl?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
+  serverLabel?: string | null;
+  /** @nullable */
+  sshHost?: string | null;
+  /** @nullable */
+  sshPort?: string | null;
+  /** @nullable */
+  sshUser?: string | null;
+  /** @nullable */
+  webrootPath?: string | null;
+  /** @nullable */
+  wpPath?: string | null;
+  /** @nullable */
+  wpCliPath?: string | null;
+  /** @nullable */
+  phpBin?: string | null;
+  /** @nullable */
+  tablePrefix?: string | null;
+  /** @nullable */
+  adrotateVersao?: string | null;
+  /** @nullable */
+  cloudflareZoneId?: string | null;
+  /** @nullable */
+  cloudflareProjectName?: string | null;
+  /** @nullable */
+  pagesSubdomain?: string | null;
+  /** @nullable */
+  spacesBucket?: string | null;
+  /** @nullable */
+  spacesBasePath?: string | null;
+  /** @nullable */
+  maintenanceWorkspacePath?: string | null;
+  /** @nullable */
+  deploymentNotes?: string | null;
   ativo?: boolean;
 }
 
@@ -33,18 +117,138 @@ export interface UpdateSiteBody {
   /** @nullable */
   sigla?: string | null;
   /** @nullable */
+  dominio?: string | null;
+  /** @nullable */
+  siteUrl?: string | null;
+  /** @nullable */
+  artigoExemploUrl?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
+  serverLabel?: string | null;
+  /** @nullable */
+  sshHost?: string | null;
+  /** @nullable */
+  sshPort?: string | null;
+  /** @nullable */
+  sshUser?: string | null;
+  /** @nullable */
+  webrootPath?: string | null;
+  /** @nullable */
+  wpPath?: string | null;
+  /** @nullable */
+  wpCliPath?: string | null;
+  /** @nullable */
+  phpBin?: string | null;
+  /** @nullable */
+  tablePrefix?: string | null;
+  /** @nullable */
+  adrotateVersao?: string | null;
+  /** @nullable */
+  cloudflareZoneId?: string | null;
+  /** @nullable */
+  cloudflareProjectName?: string | null;
+  /** @nullable */
+  pagesSubdomain?: string | null;
+  /** @nullable */
+  spacesBucket?: string | null;
+  /** @nullable */
+  spacesBasePath?: string | null;
+  /** @nullable */
+  maintenanceWorkspacePath?: string | null;
+  /** @nullable */
+  deploymentNotes?: string | null;
+  /** @nullable */
   ativo?: boolean | null;
 }
 
 export interface Client {
   id: number;
   nome: string;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  contatoResponsavel?: string | null;
+  /** @nullable */
+  cargoResponsavel?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  faturamentoTipoPadrao?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  observacoes?: string | null;
+  exigeAceiteFormal?: boolean;
+  exigeNotaFiscalDetalhada?: boolean;
+  exigeDeclaracaoArt299?: boolean;
+  exigeComprovanteAssinado?: boolean;
+  exigePrintDiario?: boolean;
   ativo: boolean;
   createdAt: string;
 }
 
 export interface CreateClientBody {
   nome: string;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  contatoResponsavel?: string | null;
+  /** @nullable */
+  cargoResponsavel?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  faturamentoTipoPadrao?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  observacoes?: string | null;
+  exigeAceiteFormal?: boolean;
+  exigeNotaFiscalDetalhada?: boolean;
+  exigeDeclaracaoArt299?: boolean;
+  exigeComprovanteAssinado?: boolean;
+  exigePrintDiario?: boolean;
   ativo?: boolean;
 }
 
@@ -52,24 +256,182 @@ export interface UpdateClientBody {
   /** @nullable */
   nome?: string | null;
   /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  contatoResponsavel?: string | null;
+  /** @nullable */
+  cargoResponsavel?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  faturamentoTipoPadrao?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  observacoes?: string | null;
+  /** @nullable */
+  exigeAceiteFormal?: boolean | null;
+  /** @nullable */
+  exigeNotaFiscalDetalhada?: boolean | null;
+  /** @nullable */
+  exigeDeclaracaoArt299?: boolean | null;
+  /** @nullable */
+  exigeComprovanteAssinado?: boolean | null;
+  /** @nullable */
+  exigePrintDiario?: boolean | null;
+  /** @nullable */
   ativo?: boolean | null;
 }
 
 export interface Agency {
   id: number;
   nome: string;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  descontoPadraoPercentual?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  exigeAceiteFormal?: boolean | null;
+  /** @nullable */
+  exigeNotaFiscalDetalhada?: boolean | null;
+  /** @nullable */
+  exigeDeclaracaoArt299?: boolean | null;
+  /** @nullable */
+  exigeComprovanteAssinado?: boolean | null;
+  /** @nullable */
+  exigePrintDiario?: boolean | null;
   ativo: boolean;
   createdAt: string;
 }
 
 export interface CreateAgencyBody {
   nome: string;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  descontoPadraoPercentual?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  exigeAceiteFormal?: boolean | null;
+  /** @nullable */
+  exigeNotaFiscalDetalhada?: boolean | null;
+  /** @nullable */
+  exigeDeclaracaoArt299?: boolean | null;
+  /** @nullable */
+  exigeComprovanteAssinado?: boolean | null;
+  /** @nullable */
+  exigePrintDiario?: boolean | null;
   ativo?: boolean;
 }
 
 export interface UpdateAgencyBody {
   /** @nullable */
   nome?: string | null;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  descontoPadraoPercentual?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  /** @nullable */
+  exigeAceiteFormal?: boolean | null;
+  /** @nullable */
+  exigeNotaFiscalDetalhada?: boolean | null;
+  /** @nullable */
+  exigeDeclaracaoArt299?: boolean | null;
+  /** @nullable */
+  exigeComprovanteAssinado?: boolean | null;
+  /** @nullable */
+  exigePrintDiario?: boolean | null;
   /** @nullable */
   ativo?: boolean | null;
 }
@@ -171,6 +533,8 @@ export interface InsertionWithRelations {
   siteNome?: string | null;
   /** @nullable */
   siteSigla?: string | null;
+  /** @nullable */
+  siteLogoUrl?: string | null;
   /** @nullable */
   clienteNome?: string | null;
   /** @nullable */
@@ -283,6 +647,8 @@ export interface InsertionDetail {
   siteNome?: string | null;
   /** @nullable */
   siteSigla?: string | null;
+  /** @nullable */
+  siteLogoUrl?: string | null;
   /** @nullable */
   clienteNome?: string | null;
   /** @nullable */

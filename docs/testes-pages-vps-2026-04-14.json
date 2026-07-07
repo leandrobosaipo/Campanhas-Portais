@@ -1,0 +1,120 @@
+{
+  "generatedAt": "2026-04-14T16:29:31.483Z",
+  "baseUrl": "https://adops-campanhas-portais.pages.dev",
+  "apiBase": "https://adops-api-public.leandro471.workers.dev",
+  "total": 22,
+  "passed": 22,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Health da API pública",
+      "status": "passed",
+      "detail": "cloudflare-public-live-proxy"
+    },
+    {
+      "name": "Dashboard carrega estrutura principal",
+      "status": "passed",
+      "detail": "dashboard ok"
+    },
+    {
+      "name": "API pública entrega resumo do dashboard",
+      "status": "passed",
+      "detail": "24 inserções"
+    },
+    {
+      "name": "Dashboard mostra ações principais",
+      "status": "passed",
+      "detail": "ações visíveis"
+    },
+    {
+      "name": "Campanhas carrega estrutura da listagem",
+      "status": "passed",
+      "detail": "campanhas ok"
+    },
+    {
+      "name": "Filtro de campanhas recebe entrada",
+      "status": "passed",
+      "detail": "filtro ok"
+    },
+    {
+      "name": "API pública entrega campanha 840",
+      "status": "passed",
+      "detail": "HANSENIASE"
+    },
+    {
+      "name": "Detalhe da campanha 840 carrega estrutura",
+      "status": "passed",
+      "detail": "detalhe ok"
+    },
+    {
+      "name": "Inserções carrega estrutura da fila operacional",
+      "status": "passed",
+      "detail": "inserções ok"
+    },
+    {
+      "name": "Filtro de inserções recebe entrada",
+      "status": "passed",
+      "detail": "filtro ok"
+    },
+    {
+      "name": "API pública entrega inserção 857",
+      "status": "passed",
+      "detail": "DENGUE / OMT"
+    },
+    {
+      "name": "Detalhe da inserção 857 carrega estrutura",
+      "status": "passed",
+      "detail": "inserção 857 ok"
+    },
+    {
+      "name": "Sincronização carrega jobs operacionais",
+      "status": "passed",
+      "detail": "sync center ok"
+    },
+    {
+      "name": "Fila de falhas carrega",
+      "status": "passed",
+      "detail": "auditoria acessível"
+    },
+    {
+      "name": "Configurações carrega",
+      "status": "passed",
+      "detail": "config ok"
+    },
+    {
+      "name": "Nova campanha carrega",
+      "status": "passed",
+      "detail": "nova campanha ok"
+    },
+    {
+      "name": "API protegida cria job de sync",
+      "status": "passed",
+      "detail": "4678e80a-5a54-4c22-9996-d9fcd8e5cd2f"
+    },
+    {
+      "name": "API protegida cria job de prints do dia",
+      "status": "passed",
+      "detail": "d4e143b9-8fce-4bd7-b4ce-1cd3760a5f00"
+    },
+    {
+      "name": "API protegida cria retroativo por inserção",
+      "status": "passed",
+      "detail": "1776184151552-6vkxmk"
+    },
+    {
+      "name": "API protegida cria job de print individual",
+      "status": "passed",
+      "detail": "5701b46e-fbba-470e-aaf2-c32e00807690"
+    },
+    {
+      "name": "API pública responde status da inserção 857",
+      "status": "passed",
+      "detail": "invalid_audit"
+    },
+    {
+      "name": "API pública exporta ZIP da inserção 857",
+      "status": "passed",
+      "detail": "application/zip"
+    }
+  ]
+}

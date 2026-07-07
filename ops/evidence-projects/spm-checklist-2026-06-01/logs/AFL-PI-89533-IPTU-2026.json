@@ -1,0 +1,166 @@
+{
+  "summary": {
+    "label": "AFL-PI-89533-IPTU-2026",
+    "insertionId": 1325,
+    "piCodigo": "PI 89533- PREF ROO",
+    "siteSigla": "AFL",
+    "periodoInicio": "2026-05-05",
+    "periodoFim": "2026-05-14",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "em_veiculacao",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 10,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/AFL-PI-89533-IPTU-2026",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/AFL-PI-89533-IPTU-2026.zip",
+    "checkedAt": "2026-06-01T09:29:31.766Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-05",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-05_MEGA_TOPO.png?v=1778564302616"
+      },
+      {
+        "date": "2026-05-06",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-06_MEGA_TOPO.png?v=1778564333637"
+      },
+      {
+        "date": "2026-05-07",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-07_MEGA_TOPO.png?v=1778564364029"
+      },
+      {
+        "date": "2026-05-08",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-08_MEGA_TOPO.png?v=1778564394898"
+      },
+      {
+        "date": "2026-05-09",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-09_MEGA_TOPO.png?v=1778564428329"
+      },
+      {
+        "date": "2026-05-10",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-10_MEGA_TOPO.png?v=1778564459488"
+      },
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-11_MEGA_TOPO.png?v=1778564494571"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-12_MEGA_TOPO.png?v=1778641586202"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-13_MEGA_TOPO.png?v=1778702843217"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-14_MEGA_TOPO.png?v=1778789108774"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-05",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-05_MEGA_TOPO.png?v=1778564302616"
+      },
+      {
+        "date": "2026-05-06",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-06_MEGA_TOPO.png?v=1778564333637"
+      },
+      {
+        "date": "2026-05-07",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-07_MEGA_TOPO.png?v=1778564364029"
+      },
+      {
+        "date": "2026-05-08",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-08_MEGA_TOPO.png?v=1778564394898"
+      },
+      {
+        "date": "2026-05-09",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-09_MEGA_TOPO.png?v=1778564428329"
+      },
+      {
+        "date": "2026-05-10",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-10_MEGA_TOPO.png?v=1778564459488"
+      },
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-11_MEGA_TOPO.png?v=1778564494571"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-12_MEGA_TOPO.png?v=1778641586202"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-13_MEGA_TOPO.png?v=1778702843217"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/870/1325/AFL_IPTU2026_IPTU2026_PI89533_2026-05-14_MEGA_TOPO.png?v=1778789108774"
+      }
+    ]
+  }
+}

@@ -7,6 +7,7 @@ export type ErrorType<T = unknown> = ApiError<T>;
 export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
+export type ClientBuildGetter = () => Promise<string | null> | string | null;
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
@@ -17,6 +18,9 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _clientBuildGetter: ClientBuildGetter | null = null;
+const PROTECTED_MUTATION_MESSAGE =
+  "Acao operacional protegida. Informe o token do operador nesta sessao antes de tentar novamente.";
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +46,10 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+export function setClientBuildGetter(getter: ClientBuildGetter | null): void {
+  _clientBuildGetter = getter;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -78,6 +86,14 @@ function resolveUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+function isApiLikeUrl(url: string): boolean {
+  return /\/api(\/|$)/i.test(url);
+}
+
+function isAdopsPublicApiUrl(url: string): boolean {
+  return /https:\/\/adops-api-public\.leandro471\.workers\.dev/i.test(url);
+}
+
 function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   const headers = new Headers();
 
@@ -89,6 +105,13 @@ function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   }
 
   return headers;
+}
+
+function normalizeAuthToken(candidate: unknown): string | null {
+  if (typeof candidate !== "string") return null;
+  const trimmed = candidate.trim();
+  if (!trimmed || trimmed === '""' || trimmed === "''") return null;
+  return trimmed;
 }
 
 function getMediaType(headers: Headers): string | null {
@@ -345,26 +368,79 @@ export async function customFetch<T = unknown>(
     headers.set("content-type", "application/json");
   }
 
-  if (responseType === "json" && !headers.has("accept")) {
+  const requestUrl = resolveUrl(input);
+  const expectsJson = responseType === "json" || isApiLikeUrl(requestUrl);
+
+  if (expectsJson && !headers.has("accept")) {
     headers.set("accept", DEFAULT_JSON_ACCEPT);
   }
 
   // Attach bearer token when an auth getter is configured and no
   // Authorization header has been explicitly provided.
-  if (_authTokenGetter && !headers.has("authorization")) {
-    const token = await _authTokenGetter();
-    if (token) {
-      headers.set("authorization", `Bearer ${token}`);
+  const existingAuthorization = headers.get("authorization") ?? headers.get("Authorization");
+  const hasEmptyBearer =
+    typeof existingAuthorization === "string" &&
+    (/^Bearer\s*$/i.test(existingAuthorization.trim()) || /^Bearer\s+""$/i.test(existingAuthorization.trim()));
+
+  if (hasEmptyBearer) {
+    headers.delete("authorization");
+    headers.delete("Authorization");
+  }
+
+  let authToken: string | null = null;
+  if (_authTokenGetter) {
+    const candidate = await _authTokenGetter();
+    authToken = normalizeAuthToken(candidate);
+  }
+
+  const authState =
+    hasEmptyBearer ? "empty_bearer_sanitized" : authToken ? "present" : "missing";
+
+  let clientBuild: string | null = null;
+  if (_clientBuildGetter) {
+    const candidate = await _clientBuildGetter();
+    clientBuild = typeof candidate === "string" ? candidate.trim() || null : null;
+  }
+
+  if (_authTokenGetter && !headers.has("authorization") && authToken) {
+    headers.set("authorization", `Bearer ${authToken}`);
+  }
+
+  if (["POST", "PATCH", "DELETE"].includes(method)) {
+    if (!headers.has("x-adops-auth-state")) {
+      headers.set("x-adops-auth-state", authState);
+    }
+    if (clientBuild && !headers.has("x-adops-client-build")) {
+      headers.set("x-adops-client-build", clientBuild);
     }
   }
 
-  const requestInfo = { method, url: resolveUrl(input) };
+  if (
+    ["POST", "PATCH", "DELETE"].includes(method) &&
+    isAdopsPublicApiUrl(requestUrl) &&
+    !headers.has("authorization") &&
+    !authToken
+  ) {
+    throw new Error(PROTECTED_MUTATION_MESSAGE);
+  }
+
+  const requestInfo = { method, url: requestUrl };
 
   const response = await fetch(input, { ...init, method, headers });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
+  }
+
+  if (expectsJson && !isJsonMediaType(getMediaType(response.headers))) {
+    const rawBody = await response.text();
+    throw new ResponseParseError(
+      response,
+      rawBody,
+      new Error(`Expected JSON response for API request, received ${response.headers.get("content-type") || "unknown content-type"}`),
+      requestInfo,
+    );
   }
 
   return (await parseSuccessBody(response, responseType, requestInfo)) as T;

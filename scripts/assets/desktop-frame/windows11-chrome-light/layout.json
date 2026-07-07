@@ -1,0 +1,67 @@
+{
+  "version": "windows11-chrome-light-similar-v4",
+  "referenceWidth": 1280,
+  "chromeTopHeight": 102,
+  "taskbarHeight": 42,
+  "viewport": {
+    "x": 0,
+    "y": 102,
+    "width": 1280
+  },
+  "dynamicFields": {
+    "addressText": {
+      "target": "chrome-top",
+      "rect": [88, 40, 1118, 66],
+      "clearFill": [245, 247, 250, 255],
+      "fontSize": 15,
+      "fill": [33, 37, 41, 255],
+      "paddingX": 34,
+      "paddingY": 5
+    },
+    "tabSurface": {
+      "target": "chrome-top",
+      "rect": [90, 6, 326, 34],
+      "clearFill": [255, 255, 255, 255],
+      "outlineFill": [218, 224, 232, 255],
+      "radius": 10
+    },
+    "tabIcon": {
+      "target": "chrome-top",
+      "rect": [104, 11, 122, 29],
+      "clearFill": [255, 255, 255, 255],
+      "fallbackFill": [66, 133, 244, 255],
+      "fallbackTextFill": [255, 255, 255, 255],
+      "fontSize": 11
+    },
+    "tabTitle": {
+      "target": "chrome-top",
+      "rect": [130, 8, 294, 32],
+      "clearFill": [255, 255, 255, 255],
+      "fontSize": 14,
+      "fill": [42, 48, 56, 255],
+      "paddingX": 0,
+      "paddingY": 3
+    },
+    "chromeDateTime": {
+      "target": "chrome-top",
+      "rect": [128, 113, 248, 136],
+      "disabled": true
+    },
+    "systemDateTimeInline": {
+      "target": "taskbar",
+      "rect": [1030, 7, 1274, 33],
+      "clearFill": [239, 245, 253, 255],
+      "fontSize": 11,
+      "fill": [28, 32, 38, 255],
+      "paddingX": 4,
+      "paddingY": 2
+    }
+  },
+  "scrollbar": {
+    "width": 12,
+    "trackFill": [246, 247, 249, 230],
+    "thumbFill": [127, 132, 142, 235],
+    "minThumbHeight": 44,
+    "rightInset": 0
+  }
+}

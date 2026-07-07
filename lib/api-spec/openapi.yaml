@@ -666,6 +666,48 @@ components:
           type: string
         sigla:
           type: string
+        dominio:
+          type: ["string", "null"]
+        siteUrl:
+          type: ["string", "null"]
+        artigoExemploUrl:
+          type: ["string", "null"]
+        logoUrl:
+          type: ["string", "null"]
+        serverLabel:
+          type: ["string", "null"]
+        sshHost:
+          type: ["string", "null"]
+        sshPort:
+          type: ["string", "null"]
+        sshUser:
+          type: ["string", "null"]
+        webrootPath:
+          type: ["string", "null"]
+        wpPath:
+          type: ["string", "null"]
+        wpCliPath:
+          type: ["string", "null"]
+        phpBin:
+          type: ["string", "null"]
+        tablePrefix:
+          type: ["string", "null"]
+        adrotateVersao:
+          type: ["string", "null"]
+        cloudflareZoneId:
+          type: ["string", "null"]
+        cloudflareProjectName:
+          type: ["string", "null"]
+        pagesSubdomain:
+          type: ["string", "null"]
+        spacesBucket:
+          type: ["string", "null"]
+        spacesBasePath:
+          type: ["string", "null"]
+        maintenanceWorkspacePath:
+          type: ["string", "null"]
+        deploymentNotes:
+          type: ["string", "null"]
         ativo:
           type: boolean
         createdAt:
@@ -684,6 +726,48 @@ components:
           type: string
         sigla:
           type: string
+        dominio:
+          type: ["string", "null"]
+        siteUrl:
+          type: ["string", "null"]
+        artigoExemploUrl:
+          type: ["string", "null"]
+        logoUrl:
+          type: ["string", "null"]
+        serverLabel:
+          type: ["string", "null"]
+        sshHost:
+          type: ["string", "null"]
+        sshPort:
+          type: ["string", "null"]
+        sshUser:
+          type: ["string", "null"]
+        webrootPath:
+          type: ["string", "null"]
+        wpPath:
+          type: ["string", "null"]
+        wpCliPath:
+          type: ["string", "null"]
+        phpBin:
+          type: ["string", "null"]
+        tablePrefix:
+          type: ["string", "null"]
+        adrotateVersao:
+          type: ["string", "null"]
+        cloudflareZoneId:
+          type: ["string", "null"]
+        cloudflareProjectName:
+          type: ["string", "null"]
+        pagesSubdomain:
+          type: ["string", "null"]
+        spacesBucket:
+          type: ["string", "null"]
+        spacesBasePath:
+          type: ["string", "null"]
+        maintenanceWorkspacePath:
+          type: ["string", "null"]
+        deploymentNotes:
+          type: ["string", "null"]
         ativo:
           type: boolean
       required:
@@ -697,6 +781,48 @@ components:
           type: ["string", "null"]
         sigla:
           type: ["string", "null"]
+        dominio:
+          type: ["string", "null"]
+        siteUrl:
+          type: ["string", "null"]
+        artigoExemploUrl:
+          type: ["string", "null"]
+        logoUrl:
+          type: ["string", "null"]
+        serverLabel:
+          type: ["string", "null"]
+        sshHost:
+          type: ["string", "null"]
+        sshPort:
+          type: ["string", "null"]
+        sshUser:
+          type: ["string", "null"]
+        webrootPath:
+          type: ["string", "null"]
+        wpPath:
+          type: ["string", "null"]
+        wpCliPath:
+          type: ["string", "null"]
+        phpBin:
+          type: ["string", "null"]
+        tablePrefix:
+          type: ["string", "null"]
+        adrotateVersao:
+          type: ["string", "null"]
+        cloudflareZoneId:
+          type: ["string", "null"]
+        cloudflareProjectName:
+          type: ["string", "null"]
+        pagesSubdomain:
+          type: ["string", "null"]
+        spacesBucket:
+          type: ["string", "null"]
+        spacesBasePath:
+          type: ["string", "null"]
+        maintenanceWorkspacePath:
+          type: ["string", "null"]
+        deploymentNotes:
+          type: ["string", "null"]
         ativo:
           type: ["boolean", "null"]
 
@@ -707,6 +833,50 @@ components:
           type: integer
         nome:
           type: string
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        contatoResponsavel:
+          type: ["string", "null"]
+        cargoResponsavel:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        faturamentoTipoPadrao:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: boolean
+        exigeNotaFiscalDetalhada:
+          type: boolean
+        exigeDeclaracaoArt299:
+          type: boolean
+        exigeComprovanteAssinado:
+          type: boolean
+        exigePrintDiario:
+          type: boolean
         ativo:
           type: boolean
         createdAt:
@@ -722,6 +892,50 @@ components:
       properties:
         nome:
           type: string
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        contatoResponsavel:
+          type: ["string", "null"]
+        cargoResponsavel:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        faturamentoTipoPadrao:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: boolean
+        exigeNotaFiscalDetalhada:
+          type: boolean
+        exigeDeclaracaoArt299:
+          type: boolean
+        exigeComprovanteAssinado:
+          type: boolean
+        exigePrintDiario:
+          type: boolean
         ativo:
           type: boolean
       required:
@@ -732,6 +946,50 @@ components:
       properties:
         nome:
           type: ["string", "null"]
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        contatoResponsavel:
+          type: ["string", "null"]
+        cargoResponsavel:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        faturamentoTipoPadrao:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        observacoes:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: ["boolean", "null"]
+        exigeNotaFiscalDetalhada:
+          type: ["boolean", "null"]
+        exigeDeclaracaoArt299:
+          type: ["boolean", "null"]
+        exigeComprovanteAssinado:
+          type: ["boolean", "null"]
+        exigePrintDiario:
+          type: ["boolean", "null"]
         ativo:
           type: ["boolean", "null"]
 
@@ -742,6 +1000,44 @@ components:
           type: integer
         nome:
           type: string
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        descontoPadraoPercentual:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: boolean
+        exigeNotaFiscalDetalhada:
+          type: boolean
+        exigeDeclaracaoArt299:
+          type: boolean
+        exigeComprovanteAssinado:
+          type: boolean
+        exigePrintDiario:
+          type: boolean
         ativo:
           type: boolean
         createdAt:
@@ -757,6 +1053,44 @@ components:
       properties:
         nome:
           type: string
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        descontoPadraoPercentual:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: boolean
+        exigeNotaFiscalDetalhada:
+          type: boolean
+        exigeDeclaracaoArt299:
+          type: boolean
+        exigeComprovanteAssinado:
+          type: boolean
+        exigePrintDiario:
+          type: boolean
         ativo:
           type: boolean
       required:
@@ -767,6 +1101,44 @@ components:
       properties:
         nome:
           type: ["string", "null"]
+        razaoSocial:
+          type: ["string", "null"]
+        cnpj:
+          type: ["string", "null"]
+        telefone:
+          type: ["string", "null"]
+        whatsapp:
+          type: ["string", "null"]
+        email:
+          type: ["string", "null"]
+        emailFaturamento:
+          type: ["string", "null"]
+        endereco:
+          type: ["string", "null"]
+        cidade:
+          type: ["string", "null"]
+        uf:
+          type: ["string", "null"]
+        cep:
+          type: ["string", "null"]
+        prazoPagamento:
+          type: ["string", "null"]
+        prazoEnvioDocs:
+          type: ["string", "null"]
+        descontoPadraoPercentual:
+          type: ["string", "null"]
+        instrucoesFaturamento:
+          type: ["string", "null"]
+        exigeAceiteFormal:
+          type: ["boolean", "null"]
+        exigeNotaFiscalDetalhada:
+          type: ["boolean", "null"]
+        exigeDeclaracaoArt299:
+          type: ["boolean", "null"]
+        exigeComprovanteAssinado:
+          type: ["boolean", "null"]
+        exigePrintDiario:
+          type: ["boolean", "null"]
         ativo:
           type: ["boolean", "null"]
 
@@ -987,6 +1359,8 @@ components:
           type: ["string", "null"]
         siteSigla:
           type: ["string", "null"]
+        siteLogoUrl:
+          type: ["string", "null"]
         clienteNome:
           type: ["string", "null"]
         agenciaNome:
@@ -1054,6 +1428,8 @@ components:
         siteNome:
           type: ["string", "null"]
         siteSigla:
+          type: ["string", "null"]
+        siteLogoUrl:
           type: ["string", "null"]
         clienteNome:
           type: ["string", "null"]
@@ -1144,6 +1520,8 @@ components:
         docsEnviados:
           type: ["boolean", "null"]
         dataEnvioAgencia:
+          type: ["string", "null"]
+        mediaUrl:
           type: ["string", "null"]
         observacoes:
           type: ["string", "null"]

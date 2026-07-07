@@ -194,6 +194,7 @@ function normalizeCompetenciaKey(value) {
 
 function normalizeSlotKey(value) {
   return normalizeText(value)
+    .replace(/\b\d+\s*x\s*\d+\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\b(banner|px|pixel|pixels|diaria|diario)\b/g, " ")
     .replace(/\s+/g, " ")
@@ -1621,6 +1622,16 @@ async function findOrCreateDrivePiCampaign(fields, payload) {
     : null;
   if (broaderExisting?.id) return { campaign: broaderExisting, created: false, dedupedBy: "pi_campaign_competencia" };
 
+  const singlePiCompetencia = Array.isArray(allCampaigns)
+    ? allCampaigns.filter((item) =>
+        (normalizePiDigits(item?.piCodigo) || normalizeText(item?.piCodigo)) === (piKey || normalizeText(fields.piCodigo)) &&
+        normalizeCompetenciaKey(item?.competencia) === competenciaKey
+      )
+    : [];
+  if (singlePiCompetencia.length === 1 && singlePiCompetencia[0]?.id) {
+    return { campaign: singlePiCompetencia[0], created: false, dedupedBy: "pi_competencia_single" };
+  }
+
   const campaign = await privateApi("/api/campaigns", {
     nome: fields.campaignName,
     clienteId: fields.clienteId,
@@ -1905,17 +1916,35 @@ async function executeDrivePiIngest(payload) {
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
   const mutationEnabled = ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY;
+  let preApplySyncPlanilha = { skipped: true, reason: "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
+  if (canApply && mutationEnabled) {
+    try {
+      preApplySyncPlanilha = await executeSyncPlanilha({ mode: "pre-apply-latest" });
+    } catch (error) {
+      preApplySyncPlanilha = {
+        ok: false,
+        mode: "pre-apply-latest",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  const preApplySyncOk = !(canApply && mutationEnabled) || preApplySyncPlanilha.ok !== false;
+  const preApplyDedupe = canApply && mutationEnabled && preApplySyncOk
+    ? await validateDrivePiDedupeSafety(fields)
+    : dedupe;
+  const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;
   const reviewReasons = buildDrivePiReviewReasons({
     packageClassification,
     packageReadiness,
     validation,
     rollout,
-    dedupe,
+    dedupe: preApplyDedupe,
     mutationEnabled,
-    canApply,
+    canApply: finalCanApply,
   });
-  const parseStatus = canApply ? "parsed" : "needs_review";
-  await updateDrivePiState(payload, canApply ? "validated" : parseStatus, {
+  if (!preApplySyncOk) reviewReasons.push("sync_planilha_failed");
+  const parseStatus = finalCanApply ? "parsed" : "needs_review";
+  await updateDrivePiState(payload, finalCanApply ? "validated" : parseStatus, {
     contentSha256: archived?.sha256 ?? null,
     parseRun: {
       fields: {
@@ -1938,15 +1967,18 @@ async function executeDrivePiIngest(payload) {
           classification: packageClassification,
         },
         packageReadiness,
-        dedupe,
+        dedupe: preApplyDedupe,
+        preApplySyncPlanilha,
         reviewReasons,
       },
       alerts: validation.ok
         ? packageReadiness.ok
           ? rollout.ok
-            ? dedupe.ok
+            ? !preApplySyncOk
+              ? [`PI exige revisão porque o sync da planilha falhou antes da mutação: ${preApplySyncPlanilha.error}`]
+              : preApplyDedupe.ok
               ? ["PI possui campos mínimos e pacote completo para aplicação segura."]
-              : ["PI exige revisão por conflito de deduplicação.", ...dedupe.conflicts]
+              : ["PI exige revisão por conflito de deduplicação apos sincronizar a planilha.", ...preApplyDedupe.conflicts]
             : [`Portal fora do rollout atual: ${JSON.stringify(rollout.blockedSites)}`]
           : ["PI exige revisão porque o pacote ainda não tem PDF e mídia suficientes.", ...packageReadiness.issues]
         : [
@@ -1958,7 +1990,7 @@ async function executeDrivePiIngest(payload) {
       rawTextExcerpt: `${payload?.name ?? ""}\n${payload?.path ?? ""}`.slice(0, 1000),
     },
   });
-  await notifyDrivePiStageTelegram(payload, canApply ? "validated" : "needs_review", {
+  await notifyDrivePiStageTelegram(payload, finalCanApply ? "validated" : "needs_review", {
     piCodigo: fields.piCodigo,
     campaignName: fields.campaignName,
     packageClass: packageClassification?.class,
@@ -1967,14 +1999,14 @@ async function executeDrivePiIngest(payload) {
     invalidInsertions: validation.invalidInsertions,
     reviewReasons,
     packageReadiness,
-    dedupe,
+    dedupe: preApplyDedupe,
     rollout,
     agentAnalysis: fields.agentAnalysis || agentResult,
   });
 
   let applied = null;
   let evidenceCoverage = null;
-  if (canApply && mutationEnabled) {
+  if (finalCanApply && mutationEnabled) {
     await updateDrivePiState(payload, "applying", {
       parseRun: {
         fields,
@@ -2031,7 +2063,7 @@ async function executeDrivePiIngest(payload) {
   }
   const syncPlanilha = hasAdOpsChanges
     ? await executeSyncPlanilha({ mode: "latest" })
-    : { skipped: true, reason: "Nenhuma alteração nova aplicada no AdOps." };
+    : preApplySyncPlanilha;
   let reconcile = { skipped: true, reason: "Nenhuma alteração nova aplicada no AdOps." };
   if (hasAdOpsChanges) {
     try {
@@ -2066,9 +2098,9 @@ async function executeDrivePiIngest(payload) {
     packageReadiness,
     validation,
     rollout,
-    dedupe,
+    dedupe: preApplyDedupe,
     mutationEnabled,
-    canApply,
+    canApply: finalCanApply,
     evidenceCoverage,
     postApplyWarnings,
   });
@@ -2078,7 +2110,8 @@ async function executeDrivePiIngest(payload) {
       fields: {
         ...fields,
         packageReadiness,
-        dedupe,
+        dedupe: preApplyDedupe,
+        preApplySyncPlanilha,
         reviewReasons: finalReviewReasons,
       },
       alerts: applied
@@ -2090,6 +2123,7 @@ async function executeDrivePiIngest(payload) {
         : [
             "Fluxo seguro bloqueou mutação automática; revisar campos antes de publicar.",
             ...(canApply && !mutationEnabled ? ["Campos validos, mas flags de auto-apply nao estao ambas habilitadas."] : []),
+            ...(canApply && mutationEnabled && !finalCanApply ? ["Planilha sincronizada antes da mutacao revelou conflito de deduplicacao."] : []),
           ],
     },
   });
@@ -2110,7 +2144,7 @@ async function executeDrivePiIngest(payload) {
     invalidInsertions: validation.invalidInsertions,
     reviewReasons: finalReviewReasons,
     packageReadiness,
-    dedupe,
+    dedupe: preApplyDedupe,
     applied,
     evidenceCoverage,
     rollout,
@@ -2137,7 +2171,7 @@ async function executeDrivePiIngest(payload) {
     packageClassification,
     packageReadiness,
     reviewReasons: finalReviewReasons,
-    dedupe,
+    dedupe: preApplyDedupe,
     rollout,
     mutationEnabled,
     driveMutationEnabled: ADOPS_DRIVE_PI_ALLOW_MUTATION,

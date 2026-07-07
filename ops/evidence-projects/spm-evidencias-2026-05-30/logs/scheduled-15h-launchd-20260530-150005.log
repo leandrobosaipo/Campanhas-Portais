@@ -1,0 +1,50 @@
+date: invalid argument 's' for -I
+[spm-evidencias] started_at=
+target_start {"label":"OMT-PI-14414-vacina","insertionId":1390,"periodoInicio":"2026-05-25","periodoFim":"2026-05-31","targetDate":"2026-05-30","dates":6}
+node:internal/deps/undici/undici:14976
+      Error.captureStackTrace(err);
+            ^
+
+TypeError: fetch failed
+    at node:internal/deps/undici/undici:14976:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async sendDocument (file:///Users/leandrobosaipo/Projetos/AdOps/ops/evidence-projects/spm-evidencias-2026-05-30/run.mjs:219:20)
+    at async sendEvidenceDocuments (file:///Users/leandrobosaipo/Projetos/AdOps/ops/evidence-projects/spm-evidencias-2026-05-30/run.mjs:233:23)
+    at async runTarget (file:///Users/leandrobosaipo/Projetos/AdOps/ops/evidence-projects/spm-evidencias-2026-05-30/run.mjs:251:7)
+    at async main (file:///Users/leandrobosaipo/Projetos/AdOps/ops/evidence-projects/spm-evidencias-2026-05-30/run.mjs:285:20)
+    at async file:///Users/leandrobosaipo/Projetos/AdOps/ops/evidence-projects/spm-evidencias-2026-05-30/run.mjs:291:3 {
+  [cause]: AggregateError [ETIMEDOUT]: 
+      at internalConnectMultiple (node:net:1134:18)
+      at internalConnectMultiple (node:net:1210:5)
+      at Timeout.internalConnectMultipleTimeout (node:net:1742:5)
+      at listOnTimeout (node:internal/timers:587:11)
+      at process.processTimers (node:internal/timers:521:7) {
+    code: 'ETIMEDOUT',
+    [errors]: [
+      Error: connect ETIMEDOUT 149.154.166.110:443
+          at createConnectionError (node:net:1678:14)
+          at Timeout.internalConnectMultipleTimeout (node:net:1737:38)
+          at listOnTimeout (node:internal/timers:587:11)
+          at process.processTimers (node:internal/timers:521:7) {
+        errno: -60,
+        code: 'ETIMEDOUT',
+        syscall: 'connect',
+        address: '149.154.166.110',
+        port: 443
+      },
+      Error: connect EHOSTUNREACH 2001:67c:4e8:f004::9:443 - Local (:::54863)
+          at internalConnectMultiple (node:net:1206:16)
+          at Timeout.internalConnectMultipleTimeout (node:net:1742:5)
+          at listOnTimeout (node:internal/timers:587:11)
+          at process.processTimers (node:internal/timers:521:7) {
+        errno: -65,
+        code: 'EHOSTUNREACH',
+        syscall: 'connect',
+        address: '2001:67c:4e8:f004::9',
+        port: 443
+      }
+    ]
+  }
+}
+
+Node.js v22.22.3

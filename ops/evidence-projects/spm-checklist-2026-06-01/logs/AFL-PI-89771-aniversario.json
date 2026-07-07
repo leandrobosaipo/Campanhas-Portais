@@ -1,0 +1,18 @@
+{
+  "summary": {
+    "label": "AFL-PI-89771-aniversario",
+    "insertionId": 1361,
+    "piCodigo": "PI 89771- PREF PVA",
+    "siteSigla": "AFL",
+    "periodoInicio": "2026-05-14",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "rascunho",
+    "mediaUrlPresent": false,
+    "bannerPublicadoNoSite": false,
+    "ok": false,
+    "skipped": true,
+    "reason": "Nao publicavel: mediaUrl=false bannerPublicadoNoSite=false"
+  },
+  "audit": null
+}

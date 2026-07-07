@@ -98,6 +98,29 @@ await check("runner-bloqueia-auto-apply-incompleto-e-dedupe-conflitante", async 
   ], "Runner safe apply gate");
 });
 
+await check("runner-sincroniza-planilha-antes-de-mutacao", async () => {
+  const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
+  return requireIncludes(source, [
+    "pre-apply-latest",
+    "preApplySyncPlanilha",
+    "preApplyDedupe",
+    "finalCanApply",
+    "pi_competencia_single",
+    ".replace(/\\b\\d+\\s*x\\s*\\d+\\b/g, \" \")",
+  ], "Runner pre-apply sync gate");
+});
+
+await check("monitor-nao-emite-evidencias-como-pi", async () => {
+  const source = await readProjectFile("ops/portainer/deploy-drive-pi-monitor.mjs");
+  return requireIncludes(source, [
+    "function shouldEmitDrivePiEvent",
+    "isEvidenceAsset",
+    "evidencias",
+    "evidence_asset_not_pi_intake",
+    "skipped",
+  ], "Drive PI monitor evidence filter");
+});
+
 await check("ia-recebe-classificacao-sem-mutacao", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
   return requireIncludes(source, [

@@ -1,0 +1,9 @@
+{
+  "name": "cloudflare-remote-runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "claim-once": "node ./src/runner.mjs --once",
+    "start": "node ./src/runner.mjs"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-04-20T02:35:08.370Z",
+  "baseUrl": "https://adops-campanhas-portais.pages.dev",
+  "apiBase": "https://adops-api-public.leandro471.workers.dev",
+  "total": 16,
+  "passed": 16,
+  "failed": 0,
+  "results": [
+    {
+      "name": "Health da API pública",
+      "status": "passed",
+      "detail": "cloudflare-public-live-proxy"
+    },
+    {
+      "name": "Dashboard carrega estrutura principal",
+      "status": "passed",
+      "detail": "dashboard ok"
+    },
+    {
+      "name": "API pública entrega resumo do dashboard",
+      "status": "passed",
+      "detail": "33 inserções"
+    },
+    {
+      "name": "Dashboard mostra ações principais",
+      "status": "passed",
+      "detail": "ações visíveis"
+    },
+    {
+      "name": "Campanhas carrega estrutura da listagem",
+      "status": "passed",
+      "detail": "campanhas ok"
+    },
+    {
+      "name": "Filtro de campanhas recebe entrada",
+      "status": "passed",
+      "detail": "filtro ok"
+    },
+    {
+      "name": "API pública entrega campanha 840",
+      "status": "passed",
+      "detail": "HANSENIASE"
+    },
+    {
+      "name": "Detalhe da campanha 840 carrega estrutura",
+      "status": "passed",
+      "detail": "detalhe ok"
+    },
+    {
+      "name": "Inserções carrega estrutura da fila operacional",
+      "status": "passed",
+      "detail": "inserções ok"
+    },
+    {
+      "name": "Filtro de inserções recebe entrada",
+      "status": "passed",
+      "detail": "filtro ok"
+    },
+    {
+      "name": "API pública entrega inserção 857",
+      "status": "passed",
+      "detail": "DENGUE / OMT"
+    },
+    {
+      "name": "Detalhe da inserção 857 carrega estrutura",
+      "status": "passed",
+      "detail": "inserção 857 ok"
+    },
+    {
+      "name": "Sincronização carrega jobs operacionais",
+      "status": "passed",
+      "detail": "sync center ok"
+    },
+    {
+      "name": "Fila de falhas carrega",
+      "status": "passed",
+      "detail": "auditoria acessível"
+    },
+    {
+      "name": "Configurações carrega",
+      "status": "passed",
+      "detail": "config ok"
+    },
+    {
+      "name": "Nova campanha carrega",
+      "status": "passed",
+      "detail": "nova campanha ok"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Plano - Drive PI monitor-first com agente IA
 
-Atualizado em: 2026-06-03
+Atualizado em: 2026-06-12
 
 ## Status de rollout em 2026-06-03
 
@@ -11,6 +11,8 @@ Implementado localmente:
 - Runner marca `intake_locked`, envia Telegram inicial e classifica pacote antes da IA.
 - Runner bloqueia auto-apply quando o pacote nao tem PDF e midia suficientes.
 - Runner retorna `reviewReasons`, `packageReadiness` e `dedupe` para deixar a revisao acionavel.
+- Runner sincroniza a planilha oficial antes de aplicar mutacao automatica, para que a dedupe use a fonte canônica mais recente.
+- Monitor ignora assets de evidencias retroativas para nao transformar PNG/ZIP/MP4 em intake de PI.
 - Harness read-only `harness:drive-pi-monitor-first-v4` passa.
 
 Validado vivo no fluxo legado:
@@ -66,6 +68,16 @@ O problema operacional e o timing:
 6. Evidencia/captura bloqueando fechamento.
    - Sintomas: `slot_position_mismatch`, `capture_legibility_failed`, timeout em selector.
    - Decisao correta: cadastro pode ser preservado, mas evidencia fica `needs_review` quando midia/publicacao/capture rule nao convergem.
+
+7. Monitor emitindo evidencias como PI nova.
+   - Caso real: 2026-06-12, pasta de evidencias retroativas do PERRENGUE gerou fila de `drive-pi-ingest` e consumo de quota do Drive.
+   - Sintoma: dezenas de PNG/ZIP de evidencia ficaram `ready_for_runner` antes da PI real do OMT ser processada.
+   - Decisao correta: monitor deve ignorar assets dentro de paths de `evidencias`, exceto PDF ou pasta.
+
+8. Auto-apply antes da planilha oficial.
+   - Caso real: 2026-06-12, OMT PI 14589.
+   - Sintoma: agente criou insercao #1616, depois a planilha sincronizou a canônica #1622.
+   - Decisao correta: antes de mutar, rodar sync da planilha e repetir dedupe. Se a planilha já tiver uma campanha/insercao unica para PI+competencia, ela ganha.
 
 ## Acao recomendada
 
@@ -155,6 +167,8 @@ Auto-cadastro so quando todos passarem:
 - midia existe no pacote ou ja existe anuncio/midia vinculavel no AdRotate;
 - `piCodigo`, cliente/agencia/site/formato/periodo com citacao;
 - dedupe sem conflito;
+- sync da planilha oficial executado antes da mutacao;
+- dedupe repetida depois do sync da planilha;
 - rollout do site permitido;
 - flags `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` e `ADOPS_PI_AGENT_AUTO_APPLY=true`;
 - preflight de banco/API/planilha ok.
@@ -168,6 +182,8 @@ rollout.ok=true
 dedupe.ok=true
 ADOPS_DRIVE_PI_ALLOW_MUTATION=true
 ADOPS_PI_AGENT_AUTO_APPLY=true
+syncPlanilha(mode=pre-apply-latest) ok
+preApplyDedupe.ok=true
   -> applying
 
 qualquer falha
@@ -187,7 +203,22 @@ Motivos padronizados em `reviewReasons`:
 
 `dedupe_conflict` deve bloquear mutacao quando houver campanhas ou insercoes concorrentes para a mesma PI/competencia/slot. Nao resolver criando nova campanha.
 
-### 6. Fallback sem travar
+Quando houver uma unica campanha na planilha/AdOps para a mesma PI+competencia, o runner deve reutilizar essa campanha mesmo se o nome da campanha vier diferente no PDF. Nomes comerciais como `FEMINICIDIO` e nomes editoriais completos podem divergir; a fonte canônica continua sendo PI+competencia+planilha.
+
+### 6. Monitor nao e fila de evidencias
+
+O monitor do Drive PI observa a raiz operacional, mas nao deve enfileirar evidencia ja gerada como PI nova.
+
+Regras:
+
+- pasta pode gerar evento;
+- PDF pode gerar evento;
+- midia de pacote de PI pode gerar evento;
+- PNG/JPG/WEBP/GIF/MP4/ZIP dentro de path de `evidencias` deve ser ignorado;
+- item ignorado entra no log como `evidence_asset_not_pi_intake`;
+- nenhum arquivo ignorado deve abrir `intake_locked`.
+
+### 7. Fallback sem travar
 
 Se faltar PI ou midia:
 
@@ -221,6 +252,8 @@ Regras:
 ## Riscos
 
 - Auto-publicar sem PI completa duplica campanha e gera retrabalho.
+- Auto-publicar antes do sync da planilha duplica campanha/insercao.
+- Tratar evidencia retroativa como PI consome quota do Drive e atrasa PI real.
 - Telegram cedo demais pode gerar ruido se nao houver dedupe de evento.
 - IA sem schema estrito volta a inventar campo.
 - Se o lock nao expirar, pode bloquear uma PI legitima.
@@ -247,6 +280,9 @@ pnpm --dir scripts run harness:pi-automation-v3
 - OpenAI retorna campo sem citacao;
 - auto-apply desligado;
 - auto-apply ligado em fixture read-only.
+- sync da planilha antes de mutar;
+- dedupe repetida depois da planilha;
+- monitor ignorando assets de evidencias.
 
 3. Rodar smoke vivo opcional:
 
@@ -265,9 +301,34 @@ ADOPS_DRIVE_PI_LIVE_SMOKE=true pnpm --dir scripts run test:drive-pi-event-flow
 
 - Custo: baixo a medio. A maior parte do fluxo ja existe.
 - Performance: melhor, porque notifica no inicio e evita trabalho manual duplicado.
+- Performance operacional: melhor, porque evidencia retroativa deixa de competir com PI real na mesma fila.
 - Manutencao: melhora se o classificador for deterministico e pequeno.
 - Seguranca: mantem IA sem poder de mutacao.
 - ROI: alto. Reduz o principal gargalo humano: o usuario cadastrar manualmente porque nao sabe que o processo automatico ja comecou.
+
+## Incidente OMT PI 14589 - 2026-06-12
+
+Resumo:
+
+- fonte oficial: PDF no Drive `PI 14589`, veiculo `SITE O MATOGROSSENSE`, periodo `13/06/2026` a `27/06/2026`;
+- runner processou a PI e enviou Telegram;
+- planilha sincronizada criou/revelou a insercao canônica #1622;
+- insercao #1616 criada pelo agente antes da planilha foi cancelada como duplicidade;
+- evidencia ficou pendente porque a insercao canônica ainda estava sem `mediaUrl` e a data de inicio era futura.
+
+Regra permanente:
+
+```text
+Drive PI -> sync planilha -> dedupe com fonte oficial -> aplicar ou needs_review
+```
+
+Nao enviar confirmacao de "tudo certo" quando:
+
+- `mediaUrl` estiver ausente;
+- AdRotate ainda nao tiver publicacao;
+- audit de capture rules estiver divergente;
+- periodo ainda nao tiver iniciado;
+- evidencia estiver `needs_media` ou `needs_review`.
 
 ## Implementacao minima
 

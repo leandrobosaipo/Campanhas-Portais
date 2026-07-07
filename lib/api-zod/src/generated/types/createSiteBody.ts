@@ -9,5 +9,47 @@
 export interface CreateSiteBody {
   nome: string;
   sigla: string;
+  /** @nullable */
+  dominio?: string | null;
+  /** @nullable */
+  siteUrl?: string | null;
+  /** @nullable */
+  artigoExemploUrl?: string | null;
+  /** @nullable */
+  logoUrl?: string | null;
+  /** @nullable */
+  serverLabel?: string | null;
+  /** @nullable */
+  sshHost?: string | null;
+  /** @nullable */
+  sshPort?: string | null;
+  /** @nullable */
+  sshUser?: string | null;
+  /** @nullable */
+  webrootPath?: string | null;
+  /** @nullable */
+  wpPath?: string | null;
+  /** @nullable */
+  wpCliPath?: string | null;
+  /** @nullable */
+  phpBin?: string | null;
+  /** @nullable */
+  tablePrefix?: string | null;
+  /** @nullable */
+  adrotateVersao?: string | null;
+  /** @nullable */
+  cloudflareZoneId?: string | null;
+  /** @nullable */
+  cloudflareProjectName?: string | null;
+  /** @nullable */
+  pagesSubdomain?: string | null;
+  /** @nullable */
+  spacesBucket?: string | null;
+  /** @nullable */
+  spacesBasePath?: string | null;
+  /** @nullable */
+  maintenanceWorkspacePath?: string | null;
+  /** @nullable */
+  deploymentNotes?: string | null;
   ativo?: boolean;
 }

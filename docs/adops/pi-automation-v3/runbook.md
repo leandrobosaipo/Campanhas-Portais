@@ -40,7 +40,15 @@ missing_pi_pdf_and_media
 
 A IA/OpenAI ajuda a compatibilizar PI com layout ruim, nomes de pasta, nomes de mídia e campos difíceis. Mesmo assim, ela não faz mutação. A decisão de criar/atualizar campanha, inserção, planilha e AdRotate continua determinística.
 
-O auto-apply so pode continuar quando `packageReadiness`, validacao, rollout e dedupe estiverem todos `ok=true`. Se faltar PDF, midia ou houver conflito de duplicidade, o job termina em `needs_review` com `reviewReasons` acionavel.
+O auto-apply so pode continuar quando `packageReadiness`, validacao, rollout, sync da planilha e dedupe estiverem todos `ok=true`. Se faltar PDF, midia ou houver conflito de duplicidade, o job termina em `needs_review` com `reviewReasons` acionavel.
+
+Antes de qualquer mutacao:
+
+```text
+syncPlanilha(mode=pre-apply-latest) -> preApplyDedupe -> applying
+```
+
+A planilha oficial ganha quando houver divergencia entre nome de campanha extraido do PDF e campanha ja sincronizada para a mesma PI+competencia.
 
 ## Agente IA no Drive PI
 
@@ -160,6 +168,36 @@ Ele consolida:
 3. Confirmar se a pasta tem PDF e midia.
 4. Verificar dedupe de evento por `fileId` e `modifiedTime`.
 5. Se a PI chegou fora do Drive, registrar intake manual.
+
+## Quando o monitor enfileira evidencias como PI
+
+1. Identificar se o path contem `evidencia`, `evidencias` ou pacote de provas ja geradas.
+2. Se for PNG/JPG/WEBP/GIF/MP4/ZIP de evidencia, nao processar como PI.
+3. Marcar o job operacionalmente como falha ignorada, sem apagar arquivo do Drive.
+4. Confirmar que o monitor registra `evidence_asset_not_pi_intake`.
+5. Reprocessar apenas a pasta/PDF real da PI.
+
+Esse caso ocorreu em 2026-06-12 com evidencias retroativas do PERRENGUE competindo com OMT PI 14589 na fila `drive-pi-ingest`.
+
+## Quando a planilha cria/revela duplicidade
+
+1. Conferir a PI e competencia na planilha oficial.
+2. Conferir campanhas e insercoes no AdOps pela mesma PI+competencia.
+3. A insercao sincronizada da planilha e canônica quando os dados baterem com a PI.
+4. Cancelar a insercao criada pelo agente com observacao apontando a canônica.
+5. Nao apagar campanha/insercao automaticamente.
+6. Rodar reconcile antes de publicar no AdRotate.
+
+Caso real:
+
+```text
+OMT PI 14589
+insercao agente: #1616 -> cancelada
+insercao canônica planilha: #1622
+campanha canônica: #929
+```
+
+Nao enviar "tudo certo" enquanto a canônica estiver sem `mediaUrl`, sem publicacao no AdRotate ou sem evidencia auditada.
 
 ## Quando a evidencia nao aparece
 
