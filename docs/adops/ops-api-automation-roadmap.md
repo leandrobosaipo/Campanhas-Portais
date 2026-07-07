@@ -52,6 +52,7 @@ Validacao feita em `2026-07-07`:
 - `POST /api/ops/jobs/print-single`: criou job;
 - runner `runner-print-single`: consumiu job;
 - resultado: `completed`, sem escrita direta no banco pelo operador.
+- `POST /api/ops/jobs/telegram-send-evidence`: job de reenvio Telegram via API, com checklist antes do envio.
 
 ## Principio obrigatorio
 
@@ -138,6 +139,23 @@ Esse fluxo deve:
 7. validar checklist;
 8. so entao gerar lote/retroativos.
 
+### 5. Reenviar evidencia no Telegram
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/telegram-send-evidence" \
+  -d '{"insertionId":1663,"date":"2026-07-01"}'
+```
+
+Esse job:
+
+1. valida `/api/audit-checklists/validate-proof`;
+2. bloqueia se `approved=false`;
+3. chama o bot Telegram para reenviar a imagem auditada;
+4. registra o resultado em `ops_jobs`.
+
 ## Checklist central
 
 Resolver contrato:
@@ -182,13 +200,14 @@ Entregas:
 - runner consumindo API nova;
 - checklist central publicado;
 - documentacao de uso por cURL.
+- reenvio Telegram por API, sem expor token do bot ao operador.
 
 Faltas:
 
 - testes automatizados dos wrappers `/api/ops/jobs/*`;
 - endpoint de preflight de PI que retorne divergencias antes de criar job;
 - endpoint dedicado para republicar/sincronizar AdRotate sem acesso manual;
-- endpoint para reenviar evidencia no Telegram por `insertionId + date`.
+- endpoint dedicado para republicar/sincronizar AdRotate sem acesso manual.
 
 ## Fase 2 — Telegram e WhatsApp
 
@@ -276,4 +295,3 @@ ops/telegram-bot/.env
 ```
 
 Publicar segredo no Git, chat ou issue e incidente de seguranca.
-

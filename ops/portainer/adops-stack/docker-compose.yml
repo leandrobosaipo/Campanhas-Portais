@@ -81,7 +81,7 @@ services:
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents}
+      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,telegram-send-evidence}
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
@@ -102,7 +102,9 @@ services:
       ADOPS_PI_AGENT_MIN_CONFIDENCE: ${ADOPS_PI_AGENT_MIN_CONFIDENCE:-0.85}
       ADOPS_PI_AGENT_KNOWLEDGE_FILE: ${ADOPS_PI_AGENT_KNOWLEDGE_FILE:-docs/adops/pi-automation-v3/spm-agent-knowledge.md}
       ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS: ${ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS:-}
-      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-http://adops-telegram:4022}
+      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-https://adops-telegram-bot.leandro471.workers.dev}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_GROUP_ID: ${TELEGRAM_DEFAULT_GROUP_ID:-}
     volumes:
       - adops_runner_state:/var/lib/adops
       - adops_pnpm_store:/var/lib/adops/.pnpm-store
@@ -151,7 +153,7 @@ services:
       ADOPS_PI_AGENT_MIN_CONFIDENCE: ${ADOPS_PI_AGENT_MIN_CONFIDENCE:-0.85}
       ADOPS_PI_AGENT_KNOWLEDGE_FILE: ${ADOPS_PI_AGENT_KNOWLEDGE_FILE:-docs/adops/pi-automation-v3/spm-agent-knowledge.md}
       ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS: ${ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS:-}
-      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-http://adops-telegram:4022}
+      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-https://adops-telegram-bot.leandro471.workers.dev}
     volumes:
       - adops_drive_pi_monitor_state:/var/lib/adops
     networks:

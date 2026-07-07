@@ -197,6 +197,31 @@ curl -fsSL -X POST \
   -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'
 ```
 
+## Reenviar evidência auditada no Telegram
+
+Use quando o print já existe e precisa ser enviado novamente no grupo.
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/telegram-send-evidence" \
+  -d '{"insertionId":1663,"date":"2026-07-01"}'
+```
+
+O runner faz duas validações antes de enviar:
+
+1. chama `/api/audit-checklists/validate-proof`;
+2. só chama o bot Telegram se `approved=true`.
+
+Se o checklist recusar, o job falha com `blockingIssues` no resultado.
+
+Credenciais:
+
+- o operador usa apenas `OPS_API_TOKEN`;
+- `TELEGRAM_BOT_TOKEN` e `TELEGRAM_DEFAULT_GROUP_ID` ficam no ambiente do runner/Portainer;
+- se o Worker do bot estiver indisponível, o runner pode enviar direto pela API do Telegram usando essas variáveis.
+
 ## Intake de nova PI por pasta do Drive
 
 Use quando a pasta do Drive já contém PI e mídia.

@@ -10,7 +10,8 @@ type JobKind =
   | "analytics-report"
   | "pi-site-export"
   | "drive-pi-ingest"
-  | "operational-documents";
+  | "operational-documents"
+  | "telegram-send-evidence";
 
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
 
@@ -54,6 +55,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "pi-site-export",
   "drive-pi-ingest",
   "operational-documents",
+  "telegram-send-evidence",
 ];
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
@@ -115,6 +117,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
     running: "Gerando documentos",
+    completed: "Concluido",
+    failed: "Falhou",
+  },
+  "telegram-send-evidence": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Enviando evidencia no Telegram",
     completed: "Concluido",
     failed: "Falhou",
   },
@@ -779,6 +788,21 @@ function buildOpsApiCatalog() {
       },
       ],
     },
+    {
+      id: "notifications",
+      title: "Telegram e Notificações",
+      description: "Reenvio de evidências já auditadas sem expor token do Telegram ao operador.",
+      endpoints: [
+      {
+        id: "telegram-send-evidence",
+        method: "POST",
+        path: "/api/ops/jobs/telegram-send-evidence",
+        purpose: "Validar checklist e reenviar a evidência de uma inserção/data no Telegram.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/telegram-send-evidence -d '{"insertionId":1663,"date":"2026-07-01"}'`,
+      },
+      ],
+    },
   ];
   const endpoints = sections.flatMap((section) => section.endpoints.map((endpoint) => ({
     ...endpoint,
@@ -1062,6 +1086,25 @@ router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
   }
   const result = await createDrivePiEventJob(validated, "ops-api");
   res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "drive-pi-ingest", ...result });
+});
+
+router.post("/ops/jobs/telegram-send-evidence", async (req, res): Promise<void> => {
+  const insertionId = readOptionalNumber(req.body?.insertionId);
+  const date = parseIsoDate(req.body?.date);
+  if (!insertionId || !date) {
+    res.status(400).json({
+      error: "bad_request",
+      details: "Informe insertionId e date=YYYY-MM-DD.",
+    });
+    return;
+  }
+  const jobId = await createOpsJob("telegram-send-evidence", {
+    insertionId,
+    date,
+    chatId: readOptionalString(req.body?.chatId),
+    source: "macmini-api",
+  }, "ops-api");
+  res.status(202).json({ ok: true, jobId, kind: "telegram-send-evidence", status: "ready_for_runner" });
 });
 
 export default router;

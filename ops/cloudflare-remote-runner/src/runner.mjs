@@ -44,7 +44,9 @@ const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_S
   .split(",")
   .map((item) => item.trim().toUpperCase())
   .filter(Boolean);
-const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "http://adops-telegram:4022").replace(/\/$/, "");
+const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "https://adops-telegram-bot.leandro471.workers.dev").replace(/\/$/, "");
+const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const TELEGRAM_DEFAULT_GROUP_ID = (process.env.TELEGRAM_DEFAULT_GROUP_ID || "").trim();
 const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest")
   .split(",")
   .map((item) => item.trim())
@@ -2217,6 +2219,96 @@ async function executePrintSingle(payload) {
   });
 }
 
+async function executeTelegramSendEvidence(payload) {
+  const insertionId = Number(payload?.insertionId || 0);
+  const date = String(payload?.date || "").trim();
+  if (!insertionId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("telegram-send-evidence exige insertionId e date=YYYY-MM-DD.");
+  }
+
+  const checklist = await privateApi("/api/audit-checklists/validate-proof", {
+    insertionId,
+    date,
+  });
+  if (!checklist?.approved) {
+    throw new Error(`Checklist recusou evidencia #${insertionId} em ${date}: ${JSON.stringify(checklist?.blockingIssues || checklist?.issues || [])}`);
+  }
+
+  const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`);
+  if (!status?.arquivoUrl) {
+    throw new Error(`Evidencia #${insertionId} em ${date} sem arquivoUrl para Telegram.`);
+  }
+
+  let result = null;
+  if (TELEGRAM_BOT_TOKEN) {
+    const chatId = String(payload?.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim();
+    if (!chatId) throw new Error("TELEGRAM_DEFAULT_GROUP_ID ausente para envio direto.");
+    result = await sendTelegramPhotoDirect({
+      chatId,
+      photo: String(status.arquivoUrl),
+      caption: `AdOps evidencia auditada\nInsercao: #${insertionId}\nData: ${date}\nChecklist: aprovado`,
+    });
+  } else {
+    const response = await fetch(`${ADOPS_TELEGRAM_BOT_URL}/ops/resend-print`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPS_API_TOKEN}`,
+      },
+      body: JSON.stringify({
+        insertionId,
+        date,
+        ...(payload?.chatId ? { chatId: payload.chatId } : {}),
+      }),
+    });
+    result = await response.json().catch(() => null);
+    if (!response.ok || result?.ok === false) {
+      throw new Error(result?.details || result?.error || `Telegram resend-print falhou: ${response.status}`);
+    }
+  }
+  return {
+    ok: true,
+    stage: "completed",
+    insertionId,
+    date,
+    checklist: {
+      approved: checklist.approved,
+      evidenceStatus: checklist.evidenceStatus,
+      blockingIssues: checklist.blockingIssues || [],
+      warnings: checklist.warnings || [],
+    },
+    evidence: {
+      arquivoUrl: status.arquivoUrl,
+      status: status.status,
+    },
+    telegram: result,
+  };
+}
+
+async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+      photo,
+      caption,
+    }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.description || `Telegram sendPhoto falhou: ${response.status}`);
+  }
+  return {
+    ok: true,
+    mode: "direct",
+    messageId: payload?.result?.message_id ?? null,
+    date: payload?.result?.date ?? null,
+  };
+}
+
 function resolveAnalyticsConfig(payload) {
   const propertyKey = String(payload?.propertyKey || "").trim().toLowerCase();
   const reportConfigName = String(payload?.reportConfigName || ANALYTICS_SITE_CONFIGS[propertyKey] || "").trim();
@@ -2657,6 +2749,9 @@ async function handleJob(job) {
   }
   if (job.kind === "print-single") {
     return executePrintSingle(payload);
+  }
+  if (job.kind === "telegram-send-evidence") {
+    return executeTelegramSendEvidence(payload);
   }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);
