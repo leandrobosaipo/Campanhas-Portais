@@ -100,7 +100,9 @@ Aceite:
 - `validate-proof.approved=true`;
 - `blockingIssues=[]`.
 
-### 2. Gerar retroativos de uma insercao
+### 2. Gerar retroativos
+
+Por insercao:
 
 ```bash
 curl -fsSL -X POST \
@@ -109,6 +111,29 @@ curl -fsSL -X POST \
   "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
   -d '{"insertionId":1663}'
 ```
+
+Por campanha inteira:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
+  -d '{"campaignId":944}'
+```
+
+Por PI + site:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
+  -d '{"piCodigo":"4500152231","siteSigla":"PERRENGUE","fromDate":"2026-07-01","toDate":"2026-07-07"}'
+```
+
+Regra: `campaignId` e `piCodigo + siteSigla` validam cada data pela API central
+de checklist. Evidencia ja auditada nao e sobrescrita, salvo `replace=true`.
 
 ### 3. Exportar pacote por PI + site
 

@@ -13,6 +13,17 @@ Este runbook consolida os endpoints que outro agente, terminal, Telegram, WhatsA
 - resolver e validar checklist de auditoria;
 - acompanhar fila e progresso.
 
+## Glossário rápido
+
+- `PI`: identificação comercial da campanha enviada pela agência ou cliente.
+  Exemplo: `4500152231`, `25206089`, `14589`.
+- `API`: endpoint HTTP da ferramenta AdOps para operar sem escrita direta no
+  banco. Exemplo: `POST /api/ops/jobs/print-backfill`.
+- `campanha`: registro do AdOps que agrupa uma ou mais inserções da mesma PI.
+- `inserção`: veiculação específica da campanha em portal, posição e período.
+- `print/evidência`: imagem auditada gerada pelo runner oficial e validada pelo
+  checklist central.
+
 ## Variáveis locais
 
 Use sempre variável de ambiente para token. Nunca cole token em comando salvo, Git ou chat.
@@ -153,6 +164,26 @@ curl -fsSL -X POST \
   -d '{"insertionId":1663}'
 ```
 
+Por campanha:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
+  -d '{"campaignId":944}'
+```
+
+Por PI + site:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
+  -d '{"piCodigo":"4500152231","siteSigla":"PERRENGUE","fromDate":"2026-07-01","toDate":"2026-07-07"}'
+```
+
 Por site:
 
 ```bash
@@ -170,8 +201,17 @@ curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
   -H "Content-Type: application/json" \
   "$ADOPS_API_BASE_URL/api/ops/jobs/print-backfill" \
-  -d '{"competencia":"JULHO/2026"}'
+-d '{"competencia":"JULHO/2026"}'
 ```
+
+Comportamento do backfill por `campaignId` ou `piCodigo + siteSigla`:
+
+- resolve automaticamente as inserções da campanha/PI;
+- usa o período oficial de cada inserção;
+- aceita `fromDate` e `toDate` para limitar a janela;
+- se o print já estiver `audited` e aprovado, não sobrescreve;
+- se faltar print ou o checklist reprovar, recaptura e revalida;
+- `replace=true` força regeração mesmo quando já existe evidência aprovada.
 
 ## Gerar lote de uma data
 
@@ -431,7 +471,7 @@ O `.env` privado deve ficar fora do Git. Use:
 
 1. Criar testes de API para os wrappers `/ops/jobs/*`.
 2. Garantir que o deploy público use `OPS_JOB_KINDS` com todos os jobs:
-   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,telegram-send-evidence`.
+   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.

@@ -1941,10 +1941,31 @@ export default {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
+        const insertionId = readOptionalNumber(body.insertionId);
+        const campaignId = readOptionalNumber(body.campaignId);
+        const siteId = readOptionalNumber(body.siteId);
+        const competencia = typeof body.competencia === "string" && body.competencia.trim() ? body.competencia.trim() : null;
+        const piCodigo = typeof body.piCodigo === "string" && body.piCodigo.trim() ? body.piCodigo.trim() : null;
+        const siteSigla = typeof body.siteSigla === "string" && body.siteSigla.trim() ? body.siteSigla.trim().toUpperCase() : null;
+        const fromDate = typeof body.fromDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.fromDate) ? body.fromDate : null;
+        const toDate = typeof body.toDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.toDate) ? body.toDate : null;
+        if (body.fromDate != null && !fromDate) return badRequest("fromDate deve estar no formato YYYY-MM-DD.");
+        if (body.toDate != null && !toDate) return badRequest("toDate deve estar no formato YYYY-MM-DD.");
+        if ((piCodigo && !siteSigla) || (!piCodigo && siteSigla)) return badRequest("Informe piCodigo e siteSigla juntos.");
+        if (!insertionId && !campaignId && !siteId && !competencia && !piCodigo) {
+          return badRequest("Informe insertionId, campaignId, piCodigo+siteSigla, siteId ou competencia para limitar o backfill.");
+        }
         const jobId = await createOpsJob(env, "print-backfill", {
-          competencia: typeof body.competencia === "string" ? body.competencia : null,
-          siteId: typeof body.siteId === "number" ? body.siteId : null,
-          insertionId: typeof body.insertionId === "number" ? body.insertionId : null,
+          competencia,
+          siteId,
+          insertionId,
+          campaignId,
+          piCodigo,
+          siteSigla,
+          fromDate,
+          toDate,
+          replace: body.replace === true,
+          force: body.force === true,
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "print-backfill", status: "queued" }, { status: 202 });

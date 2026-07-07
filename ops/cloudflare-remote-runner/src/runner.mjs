@@ -2400,12 +2400,144 @@ async function executePrintBatch(payload) {
   });
 }
 
+function isAuditApprovedStatus(status) {
+  if (!status || typeof status !== "object") return false;
+  const approved = status?.checklistValidation?.approved ?? status?.auditChecklist?.approved ?? status?.approved ?? null;
+  const issues = Array.isArray(status?.issues) ? status.issues : [];
+  return status.status === "audited" && approved === true && issues.length === 0;
+}
+
+function clampDateRange(startDate, endDate, fromDate, toDate) {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  if (!start || !end) return [];
+  const today = parseIsoDate(formatIsoDate(new Date()));
+  const requestedStart = parseIsoDate(fromDate);
+  const requestedEnd = parseIsoDate(toDate);
+  let effectiveStart = requestedStart && requestedStart > start ? requestedStart : start;
+  let effectiveEnd = requestedEnd && requestedEnd < end ? requestedEnd : end;
+  if (today && effectiveEnd > today) effectiveEnd = today;
+  if (effectiveEnd < effectiveStart) return [];
+  return eachIsoDay(effectiveStart, effectiveEnd);
+}
+
+async function resolveBackfillInsertionIds(payload) {
+  const insertionId = readPositiveInteger(payload?.insertionId);
+  if (insertionId) return { mode: "insertion", insertionIds: [insertionId] };
+
+  const campaignId = readPositiveInteger(payload?.campaignId);
+  if (campaignId) {
+    const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
+    const insertions = Array.isArray(campaign?.insertions) ? campaign.insertions : [];
+    return {
+      mode: "campaign",
+      campaignId,
+      insertionIds: insertions
+        .map((item) => readPositiveInteger(item?.id))
+        .filter(Boolean),
+    };
+  }
+
+  const piCodigo = normalizePiDigits(payload?.piCodigo);
+  const siteSigla = String(payload?.siteSigla || "").trim().toUpperCase();
+  if (piCodigo && siteSigla) {
+    const descriptor = await privateApiGet(`/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}`);
+    const insertionIds = Array.isArray(descriptor?.insertionIds) ? descriptor.insertionIds : [];
+    return {
+      mode: "pi-site",
+      piCodigo,
+      siteSigla,
+      insertionIds: insertionIds
+        .map((item) => readPositiveInteger(item))
+        .filter(Boolean),
+    };
+  }
+
+  return { mode: "legacy-filters", insertionIds: null };
+}
+
 async function executePrintBackfill(payload) {
-  return privateApi("/api/insertions/capture-proof/backfill-overdue", {
-    competencia: payload?.competencia ?? undefined,
-    siteId: payload?.siteId ?? undefined,
-    insertionId: payload?.insertionId ?? undefined,
-  });
+  const resolved = await resolveBackfillInsertionIds(payload);
+  if (!resolved.insertionIds) {
+    return privateApi("/api/insertions/capture-proof/backfill-overdue", {
+      competencia: payload?.competencia ?? undefined,
+      siteId: payload?.siteId ?? undefined,
+      insertionId: payload?.insertionId ?? undefined,
+    });
+  }
+
+  const replaceRequested = payload?.replace === true;
+  const force = payload?.force === true;
+  const items = [];
+  const skipped = [];
+  let totalDates = 0;
+
+  for (const insertionId of resolved.insertionIds) {
+    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+    const dates = clampDateRange(insertion?.periodoInicio, insertion?.periodoFim, payload?.fromDate, payload?.toDate);
+    if (!dates.length) {
+      skipped.push({ insertionId, reason: "sem_periodo_valido_ou_fora_do_intervalo" });
+      continue;
+    }
+
+    for (const date of dates) {
+      totalDates += 1;
+      const before = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
+        status: "status_error",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      if (!replaceRequested && isAuditApprovedStatus(before)) {
+        items.push({
+          insertionId,
+          date,
+          status: "skipped",
+          reason: "already_audited",
+          approved: true,
+        });
+        continue;
+      }
+
+      const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
+        date,
+        replace: replaceRequested || !isAuditApprovedStatus(before),
+        force,
+      });
+      const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
+        status: "status_error",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      items.push({
+        insertionId,
+        date,
+        status: isAuditApprovedStatus(after) ? "ok" : "error",
+        approved: isAuditApprovedStatus(after),
+        captureSkipped: Boolean(capture?.skipped),
+        evidenceUrl: after?.arquivoUrl ?? capture?.capture?.uploadedUrl ?? null,
+        checklistStatus: after?.status ?? null,
+        error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
+      });
+    }
+  }
+
+  const errors = items.filter((item) => item.status === "error");
+  return {
+    ok: errors.length === 0,
+    mode: resolved.mode,
+    campaignId: resolved.campaignId ?? null,
+    piCodigo: resolved.piCodigo ?? null,
+    siteSigla: resolved.siteSigla ?? null,
+    insertionIds: resolved.insertionIds,
+    fromDate: payload?.fromDate ?? null,
+    toDate: payload?.toDate ?? null,
+    replace: replaceRequested,
+    force,
+    totalInsertions: resolved.insertionIds.length,
+    totalDates,
+    generatedOrValidated: items.filter((item) => item.status === "ok" || item.status === "skipped").length,
+    errors: errors.length,
+    skipped,
+    items,
+  };
 }
 
 async function executePrintSingle(payload) {

@@ -786,9 +786,9 @@ function buildOpsApiCatalog() {
         id: "print-backfill",
         method: "POST",
         path: "/api/ops/jobs/print-backfill",
-        purpose: "Gerar retroativos pendentes por inserção, site ou competência, usando o runner oficial.",
+        purpose: "Gerar retroativos pendentes por inserção, campanha, PI+site, site ou competência, usando o runner oficial e checklist central.",
         authRequired: true,
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-backfill -d '{"insertionId":1663}'`,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-backfill -d '{"piCodigo":"4500152231","siteSigla":"PERRENGUE","fromDate":"2026-07-01","toDate":"2026-07-07"}'`,
       },
       {
         id: "print-batch",
@@ -892,6 +892,13 @@ function buildOpsApiCatalog() {
       type: "bearer",
       env: "OPS_API_TOKEN",
       note: "Nunca coloque o token em documentação, Git ou chat. Use variável de ambiente no terminal.",
+    },
+    glossary: {
+      pi: "Identificação comercial da campanha enviada pela agência ou cliente.",
+      api: "Endpoint HTTP da ferramenta AdOps para operar sem escrita direta no banco.",
+      campanha: "Registro do AdOps que agrupa uma ou mais inserções da mesma PI.",
+      insercao: "Veiculação específica da campanha em portal, posição e período.",
+      evidencia: "Print auditado pelo runner oficial e checklist central.",
     },
     sections,
     endpoints,
@@ -1071,19 +1078,43 @@ router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
 
 router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
   const insertionId = readOptionalNumber(req.body?.insertionId);
+  const campaignId = readOptionalNumber(req.body?.campaignId);
   const siteId = readOptionalNumber(req.body?.siteId);
   const competencia = readOptionalString(req.body?.competencia);
-  if (!insertionId && !siteId && !competencia) {
+  const piCodigo = readOptionalString(req.body?.piCodigo);
+  const siteSigla = readOptionalString(req.body?.siteSigla)?.toUpperCase() ?? null;
+  const fromDate = parseIsoDate(req.body?.fromDate);
+  const toDate = parseIsoDate(req.body?.toDate);
+  if (req.body?.fromDate != null && !fromDate) {
+    res.status(400).json({ error: "bad_request", details: "fromDate deve estar no formato YYYY-MM-DD." });
+    return;
+  }
+  if (req.body?.toDate != null && !toDate) {
+    res.status(400).json({ error: "bad_request", details: "toDate deve estar no formato YYYY-MM-DD." });
+    return;
+  }
+  if ((piCodigo && !siteSigla) || (!piCodigo && siteSigla)) {
+    res.status(400).json({ error: "bad_request", details: "Informe piCodigo e siteSigla juntos." });
+    return;
+  }
+  if (!insertionId && !campaignId && !siteId && !competencia && !piCodigo) {
     res.status(400).json({
       error: "bad_request",
-      details: "Informe insertionId, siteId ou competencia para limitar o backfill.",
+      details: "Informe insertionId, campaignId, piCodigo+siteSigla, siteId ou competencia para limitar o backfill.",
     });
     return;
   }
   const jobId = await createOpsJob("print-backfill", {
     insertionId,
+    campaignId,
     siteId,
     competencia,
+    piCodigo,
+    siteSigla,
+    fromDate,
+    toDate,
+    replace: typeof req.body?.replace === "boolean" ? req.body.replace : false,
+    force: typeof req.body?.force === "boolean" ? req.body.force : false,
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" });
