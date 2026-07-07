@@ -88,6 +88,18 @@ Conferir fila:
 curl -fsSL "$ADOPS_API_BASE_URL/api/ops/queue/overview"
 ```
 
+Conferir prontidão de integrações sem expor segredos:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/runtime-readiness"
+```
+
+Esse endpoint responde apenas nomes e presença/ausência de variáveis de
+ambiente. Ele serve para saber se o runtime atual consegue operar API, Drive,
+Telegram, runner e política de mutação. Ele nunca deve retornar valores de
+tokens, chaves, URLs privadas com credenciais ou paths sensíveis além dos nomes
+das variáveis.
+
 Consultar job:
 
 ```bash

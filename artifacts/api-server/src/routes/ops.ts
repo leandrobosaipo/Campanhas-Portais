@@ -67,6 +67,105 @@ const OPS_JOB_KINDS: JobKind[] = [
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
 
+type RuntimeEnvCheck = {
+  name: string;
+  present: boolean;
+  requiredFor: string;
+};
+
+function envIsPresent(name: string) {
+  return Boolean(process.env[name]?.trim());
+}
+
+function buildEnvChecks(items: Array<{ name: string; requiredFor: string }>): RuntimeEnvCheck[] {
+  return items.map((item) => ({
+    name: item.name,
+    present: envIsPresent(item.name),
+    requiredFor: item.requiredFor,
+  }));
+}
+
+function anyEnvPresent(names: string[]) {
+  return names.some((name) => envIsPresent(name));
+}
+
+function allEnvPresent(names: string[]) {
+  return names.every((name) => envIsPresent(name));
+}
+
+function buildOpsRuntimeReadiness() {
+  const driveChecks = buildEnvChecks([
+    { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Ler PI e mídia do Google Drive via service account inline." },
+    { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Ler PI e mídia do Google Drive via arquivo service account." },
+    { name: "GOOGLE_DRIVE_ACCESS_TOKEN", requiredFor: "Ler PI e mídia do Google Drive via access token." },
+    { name: "GOOGLE_DRIVE_REFRESH_TOKEN", requiredFor: "Renovar OAuth do Google Drive." },
+    { name: "GOOGLE_DRIVE_CLIENT_ID", requiredFor: "Renovar OAuth do Google Drive." },
+    { name: "GOOGLE_DRIVE_CLIENT_SECRET", requiredFor: "Renovar OAuth do Google Drive." },
+  ]);
+  const telegramChecks = buildEnvChecks([
+    { name: "ADOPS_TELEGRAM_BOT_URL", requiredFor: "Enviar evidência pelo bridge/bot interno." },
+    { name: "TELEGRAM_BOT_TOKEN", requiredFor: "Enviar evidência direto pela API do Telegram." },
+    { name: "TELEGRAM_DEFAULT_GROUP_ID", requiredFor: "Enviar evidência no grupo padrão do Telegram." },
+  ]);
+  const authChecks = buildEnvChecks([
+    { name: "OPS_API_TOKEN", requiredFor: "Autorizar jobs operacionais pela API." },
+    { name: "PRIVATE_ADOPS_API_TOKEN", requiredFor: "Permitir runner chamar API privada." },
+    { name: "ADOPS_INTERNAL_API_TOKEN", requiredFor: "Permitir integrações internas autenticadas." },
+  ]);
+  const runnerChecks = buildEnvChecks([
+    { name: "PRIVATE_ADOPS_API_BASE_URL", requiredFor: "Runner chamar API privada." },
+    { name: "OPS_JOB_KINDS", requiredFor: "Runner limitar tipos de job aceitos." },
+    { name: "ADOPS_PERRENGUE_SSH_KEY_PATH", requiredFor: "Runner corrigir/publicar AdRotate do Perrengue por SSH/WP-CLI." },
+  ]);
+  const mutationChecks = buildEnvChecks([
+    { name: "ADOPS_DRIVE_PI_ALLOW_MUTATION", requiredFor: "Permitir intake de PI aplicar cadastro em vez de apenas diagnosticar." },
+    { name: "ADOPS_PI_AGENT_ENABLED", requiredFor: "Permitir análise assistida de PI." },
+    { name: "ADOPS_PI_AGENT_AUTO_APPLY", requiredFor: "Permitir auto-aplicação quando a análise aprovar." },
+    { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
+  ]);
+  const driveOAuthReady = allEnvPresent(["GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET"]);
+  const googleDriveReady = anyEnvPresent(["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", "GOOGLE_DRIVE_ACCESS_TOKEN"]) || driveOAuthReady;
+  const telegramDirectReady = allEnvPresent(["TELEGRAM_BOT_TOKEN", "TELEGRAM_DEFAULT_GROUP_ID"]);
+  const telegramBridgeConfigured = envIsPresent("ADOPS_TELEGRAM_BOT_URL");
+  const mutationAllowed = process.env.ADOPS_DRIVE_PI_ALLOW_MUTATION === "true";
+  const warnings: string[] = [];
+  if (!googleDriveReady) warnings.push("Google Drive nao esta pronto neste runtime; intake por pasta pode virar diagnostico bloqueado.");
+  if (!telegramBridgeConfigured && !telegramDirectReady) warnings.push("Telegram nao esta pronto neste runtime; envio de evidencia pode falhar.");
+  if (!mutationAllowed) warnings.push("Mutacao de PI por Drive esta desabilitada; intake nao deve publicar automaticamente.");
+  return {
+    ok: true,
+    version: "adops-runtime-readiness-v1",
+    generatedAt: nowIso(),
+    runtime: {
+      service: "adops-api",
+      nodeEnv: process.env.NODE_ENV || "unknown",
+      timezone: process.env.TZ || "runtime-default",
+      noSecretValues: true,
+      note: "Este endpoint retorna somente nomes e presença/ausência de variáveis. Valores de segredo nunca são expostos.",
+    },
+    capabilities: {
+      opsApiAuthReady: envIsPresent("OPS_API_TOKEN"),
+      privateApiAuthReady: anyEnvPresent(["PRIVATE_ADOPS_API_TOKEN", "ADOPS_INTERNAL_API_TOKEN"]),
+      googleDriveReady,
+      telegramReady: telegramBridgeConfigured || telegramDirectReady,
+      telegramBridgeConfigured,
+      telegramDirectReady,
+      drivePiMutationAllowed: mutationAllowed,
+      piAgentEnabled: process.env.ADOPS_PI_AGENT_ENABLED === "true",
+      piAgentAutoApply: process.env.ADOPS_PI_AGENT_AUTO_APPLY === "true",
+      adrotateSshConfigured: envIsPresent("ADOPS_PERRENGUE_SSH_KEY_PATH"),
+    },
+    categories: [
+      { id: "auth", title: "Autenticacao da API", checks: authChecks },
+      { id: "google-drive", title: "Google Drive e PI", checks: driveChecks },
+      { id: "telegram", title: "Telegram", checks: telegramChecks },
+      { id: "runner", title: "Runner e Jobs", checks: runnerChecks },
+      { id: "mutation-policy", title: "Politica de Mutacao", checks: mutationChecks },
+    ],
+    warnings,
+  };
+}
+
 const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
   "print-batch": {
     queued: "Na fila",
@@ -691,6 +790,10 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
   });
 });
 
+router.get("/ops/runtime-readiness", (_req, res): void => {
+  res.json(buildOpsRuntimeReadiness());
+});
+
 router.get("/ops/api-catalog", (_req, res): void => {
   res.json(buildOpsApiCatalog());
 });
@@ -766,6 +869,14 @@ function buildOpsApiCatalog() {
         purpose: "Ver jobs ativos, fila e totais do dia.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/queue/overview`,
+      },
+      {
+        id: "runtime-readiness",
+        method: "GET",
+        path: "/api/ops/runtime-readiness",
+        purpose: "Conferir prontidao de API, Drive, Telegram, runner e politica de mutacao sem expor valores de segredo.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/runtime-readiness`,
       },
       {
         id: "job-status",

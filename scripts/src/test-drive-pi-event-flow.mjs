@@ -138,6 +138,20 @@ await check("ops-api-catalog-expõe-openapi", async () => {
   return { ok: true };
 });
 
+await check("ops-api-expõe-runtime-readiness-sem-segredos", async () => {
+  const source = read(apiOpsRoutePath);
+  assertIncludes(source, [
+    'router.get("/ops/runtime-readiness"',
+    "buildOpsRuntimeReadiness",
+    "noSecretValues: true",
+    "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON",
+    "TELEGRAM_BOT_TOKEN",
+    "ADOPS_DRIVE_PI_ALLOW_MUTATION",
+    'id: "runtime-readiness"',
+  ], "Ops API runtime readiness");
+  return { ok: true };
+});
+
 await check("monitor-nao-aborta-varredura-por-um-evento-ruim", async () => {
   const source = read(monitorDeployPath);
   assertIncludes(source, [
