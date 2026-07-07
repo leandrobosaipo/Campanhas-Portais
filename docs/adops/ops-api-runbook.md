@@ -113,6 +113,28 @@ Se `hasRecentRunner=false`, ainda pode ser apenas fila ociosa, mas jobs novos
 devem ser acompanhados por `/api/ops/jobs/JOB_ID/progress` até aparecer
 `runnerId`.
 
+Quando precisar conferir as credenciais/capacidades de dentro do runner, rode o
+probe assíncrono:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/runtime-readiness-probe" \
+  -d '{}'
+```
+
+Depois acompanhe o job:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/jobs/JOB_ID/progress"
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/jobs/JOB_ID"
+```
+
+O resultado esperado fica em `result.execution.runnerRuntimeReadiness`. Ele
+também só retorna nomes e presença/ausência de variáveis, nunca valores de
+segredo.
+
 Consultar job:
 
 ```bash
@@ -508,7 +530,7 @@ O `.env` privado deve ficar fora do Git. Use:
 
 1. Criar testes de API para os wrappers `/ops/jobs/*`.
 2. Garantir que o deploy público use `OPS_JOB_KINDS` com todos os jobs:
-   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence`.
+   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.

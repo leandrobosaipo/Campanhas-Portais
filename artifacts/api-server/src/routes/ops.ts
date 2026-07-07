@@ -13,7 +13,8 @@ type JobKind =
   | "operational-documents"
   | "reconcile-adrotate"
   | "adrotate-link"
-  | "telegram-send-evidence";
+  | "telegram-send-evidence"
+  | "runtime-readiness-probe";
 
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
 
@@ -63,6 +64,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "reconcile-adrotate",
   "adrotate-link",
   "telegram-send-evidence",
+  "runtime-readiness-probe",
 ];
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
@@ -311,6 +313,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Enviando evidencia no Telegram",
     completed: "Concluido",
     failed: "Falhou",
+  },
+  "runtime-readiness-probe": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Conferindo prontidao do runner",
+    completed: "Prontidao do runner conferida",
+    failed: "Falha na prontidao do runner",
   },
 };
 
@@ -1098,6 +1107,14 @@ function buildOpsApiCatalog() {
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/telegram-send-evidence -d '{"insertionId":1663,"date":"2026-07-01"}'`,
       },
+      {
+        id: "runtime-readiness-probe",
+        method: "POST",
+        path: "/api/ops/jobs/runtime-readiness-probe",
+        purpose: "Executar um probe dentro do runner para conferir Drive, Telegram, SSH/WP-CLI e política de mutação sem expor segredos.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/runtime-readiness-probe -d '{}'`,
+      },
       ],
     },
   ];
@@ -1573,6 +1590,14 @@ router.post("/ops/jobs/telegram-send-evidence", async (req, res): Promise<void> 
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "telegram-send-evidence", status: "ready_for_runner" });
+});
+
+router.post("/ops/jobs/runtime-readiness-probe", async (req, res): Promise<void> => {
+  const jobId = await createOpsJob("runtime-readiness-probe", {
+    includeChecks: Array.isArray(req.body?.includeChecks) ? req.body.includeChecks.filter((item: unknown) => typeof item === "string") : [],
+    source: "macmini-api",
+  }, "ops-api");
+  res.status(202).json({ ok: true, jobId, kind: "runtime-readiness-probe", status: "ready_for_runner" });
 });
 
 export default router;

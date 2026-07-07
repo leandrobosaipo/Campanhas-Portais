@@ -119,10 +119,25 @@ await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
     "reconcile-adrotate",
     "adrotate-link",
     "telegram-send-evidence",
+    "runtime-readiness-probe",
     "const OPS_JOB_KINDS",
     "OPS_JOB_KINDS.includes",
     'if (path === "/api/ops/drive-pi-events")',
   ], "Worker Drive PI");
+  return { ok: true };
+});
+
+await check("runner-executa-runtime-readiness-probe", async () => {
+  const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  assertIncludes(source, [
+    "runtime-readiness-probe",
+    "executeRuntimeReadinessProbe",
+    "runnerRuntimeReadiness",
+    "noSecretValues: true",
+    "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON",
+    "TELEGRAM_BOT_TOKEN",
+    "ADOPS_PERRENGUE_SSH_KEY_PATH",
+  ], "Runner runtime readiness probe");
   return { ok: true };
 });
 
@@ -141,6 +156,8 @@ await check("ops-api-catalog-expõe-openapi", async () => {
 await check("ops-api-expõe-runtime-readiness-sem-segredos", async () => {
   const source = read(apiOpsRoutePath);
   assertIncludes(source, [
+    "runtime-readiness-probe",
+    'router.post("/ops/jobs/runtime-readiness-probe"',
     'router.get("/ops/runtime-readiness"',
     "buildOpsRuntimeReadiness",
     "readRunnerLiveness",

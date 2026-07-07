@@ -83,7 +83,7 @@ services:
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,telegram-send-evidence}
+      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe}
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
@@ -138,7 +138,7 @@ services:
       OPS_JOB_KINDS: drive-pi-ingest
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: "true"
-      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:?DRIVE_PI_MONITOR_ROOT_FOLDER_ID is required}
+      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
       DRIVE_PI_MONITOR_STATE_FILE: /var/lib/adops/drive-pi-monitor-state.json
       DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
       GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
@@ -188,8 +188,8 @@ services:
       PORT: "4022"
       TZ: America/Cuiaba
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
-      TELEGRAM_DEFAULT_GROUP_ID: ${TELEGRAM_DEFAULT_GROUP_ID:?TELEGRAM_DEFAULT_GROUP_ID is required}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_GROUP_ID: ${TELEGRAM_DEFAULT_GROUP_ID:-}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4022/healthz >/dev/null"]
       interval: 20s

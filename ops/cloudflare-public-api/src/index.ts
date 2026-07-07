@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "telegram-send-evidence";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "telegram-send-evidence"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -622,6 +622,14 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Enviando evidência no Telegram",
     completed: "Evidência enviada",
     failed: "Falha no envio Telegram",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
+  "runtime-readiness-probe": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Conferindo prontidão do runner",
+    completed: "Prontidão do runner conferida",
+    failed: "Falha na prontidão do runner",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
 };
@@ -2100,6 +2108,18 @@ export default {
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "telegram-send-evidence", status: "queued" }, { status: 202 });
+      }
+
+      if (path === "/api/ops/jobs/runtime-readiness-probe") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const includeChecks = Array.isArray(body.includeChecks) ? body.includeChecks.filter((item) => typeof item === "string") : [];
+        const jobId = await createOpsJob(env, "runtime-readiness-probe", {
+          includeChecks,
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return json({ ok: true, jobId, kind: "runtime-readiness-probe", status: "queued" }, { status: 202 });
       }
 
       if (path === "/api/ops/drive-pi-events/status") {

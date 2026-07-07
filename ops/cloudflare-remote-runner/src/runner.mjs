@@ -47,7 +47,7 @@ const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_S
 const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "https://adops-telegram-bot.leandro471.workers.dev").replace(/\/$/, "");
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TELEGRAM_DEFAULT_GROUP_ID = (process.env.TELEGRAM_DEFAULT_GROUP_ID || "").trim();
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -2618,6 +2618,98 @@ async function executeTelegramSendEvidence(payload) {
   };
 }
 
+function envPresent(name) {
+  return Boolean(String(process.env[name] || "").trim());
+}
+
+function namedChecks(items) {
+  return items.map((item) => ({
+    name: item.name,
+    present: envPresent(item.name),
+    requiredFor: item.requiredFor,
+  }));
+}
+
+async function executeRuntimeReadinessProbe() {
+  const driveOAuthReady = Boolean(GOOGLE_DRIVE_REFRESH_TOKEN && GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET);
+  const googleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const telegramDirectReady = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_DEFAULT_GROUP_ID);
+  const telegramBridgeConfigured = Boolean(ADOPS_TELEGRAM_BOT_URL);
+  const perrengueSshEnvName = "ADOPS_PERRENGUE_SSH_KEY_PATH";
+  const runnerRuntimeReadiness = {
+    ok: true,
+    version: "adops-runner-runtime-readiness-v1",
+    runnerId: RUNNER_ID,
+    generatedAt: new Date().toISOString(),
+    noSecretValues: true,
+    capabilities: {
+      privateApiReady: Boolean(PRIVATE_ADOPS_API_BASE_URL && PRIVATE_ADOPS_API_TOKEN),
+      opsApiReady: Boolean(OPS_API_BASE_URL && OPS_API_TOKEN),
+      googleDriveReady,
+      telegramReady: telegramBridgeConfigured || telegramDirectReady,
+      telegramBridgeConfigured,
+      telegramDirectReady,
+      drivePiMutationAllowed: ADOPS_DRIVE_PI_ALLOW_MUTATION,
+      piAgentEnabled: ADOPS_PI_AGENT_ENABLED,
+      piAgentAutoApply: ADOPS_PI_AGENT_AUTO_APPLY,
+      perrengueSshConfigured: envPresent(perrengueSshEnvName),
+      jobKindAllowed: kinds.includes("runtime-readiness-probe"),
+    },
+    categories: [
+      {
+        id: "api",
+        title: "APIs usadas pelo runner",
+        checks: namedChecks([
+          { name: "OPS_API_BASE_URL", requiredFor: "Runner consumir fila operacional." },
+          { name: "OPS_API_TOKEN", requiredFor: "Runner autenticar na API operacional." },
+          { name: "PRIVATE_ADOPS_API_BASE_URL", requiredFor: "Runner consultar/corrigir dados pela API privada." },
+          { name: "PRIVATE_ADOPS_API_TOKEN", requiredFor: "Runner autenticar na API privada." },
+          { name: "OPS_JOB_KINDS", requiredFor: "Runner declarar quais jobs executa." },
+        ]),
+      },
+      {
+        id: "google-drive",
+        title: "Google Drive e PI",
+        checks: namedChecks([
+          { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Ler PI e mídia do Google Drive via service account inline." },
+          { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Ler PI e mídia do Google Drive via arquivo service account." },
+          { name: "GOOGLE_DRIVE_ACCESS_TOKEN", requiredFor: "Ler PI e mídia do Google Drive via access token." },
+          { name: "GOOGLE_DRIVE_REFRESH_TOKEN", requiredFor: "Renovar OAuth do Google Drive." },
+          { name: "GOOGLE_DRIVE_CLIENT_ID", requiredFor: "Renovar OAuth do Google Drive." },
+          { name: "GOOGLE_DRIVE_CLIENT_SECRET", requiredFor: "Renovar OAuth do Google Drive." },
+        ]),
+      },
+      {
+        id: "telegram",
+        title: "Telegram",
+        checks: namedChecks([
+          { name: "ADOPS_TELEGRAM_BOT_URL", requiredFor: "Enviar evidência pelo bridge/bot interno." },
+          { name: "TELEGRAM_BOT_TOKEN", requiredFor: "Enviar evidência direto pela API do Telegram." },
+          { name: "TELEGRAM_DEFAULT_GROUP_ID", requiredFor: "Enviar evidência no grupo padrão do Telegram." },
+        ]),
+      },
+      {
+        id: "mutation-policy",
+        title: "Política de mutação e IA",
+        checks: namedChecks([
+          { name: "ADOPS_DRIVE_PI_ALLOW_MUTATION", requiredFor: "Permitir intake aplicar cadastro." },
+          { name: "ADOPS_PI_AGENT_ENABLED", requiredFor: "Permitir análise assistida de PI." },
+          { name: "ADOPS_PI_AGENT_AUTO_APPLY", requiredFor: "Permitir auto-aplicação quando aprovado." },
+          { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
+        ]),
+      },
+      {
+        id: "adrotate",
+        title: "AdRotate e WordPress",
+        checks: namedChecks([
+          { name: perrengueSshEnvName, requiredFor: "Corrigir/publicar AdRotate do Perrengue via SSH/WP-CLI." },
+        ]),
+      },
+    ],
+  };
+  return { stage: "completed", runnerRuntimeReadiness };
+}
+
 async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
     method: "POST",
@@ -3085,6 +3177,9 @@ async function handleJob(job) {
   }
   if (job.kind === "telegram-send-evidence") {
     return executeTelegramSendEvidence(payload);
+  }
+  if (job.kind === "runtime-readiness-probe") {
+    return executeRuntimeReadinessProbe(payload);
   }
   if (job.kind === "reconcile-adrotate") {
     return executeReconcileAdrotateJob(payload);

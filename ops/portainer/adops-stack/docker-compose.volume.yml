@@ -97,7 +97,7 @@ services:
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,telegram-send-evidence
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
