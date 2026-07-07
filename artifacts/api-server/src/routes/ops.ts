@@ -953,6 +953,14 @@ function buildOpsApiCatalog() {
         curl: `curl -fsSL ${base}/api/ops/runtime-readiness`,
       },
       {
+        id: "ops-quickstart",
+        method: "GET",
+        path: "/api/ops/quickstart",
+        purpose: "Obter glossário PI/API e fluxos cURL recomendados para operar o AdOps sem banco direto.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/quickstart`,
+      },
+      {
         id: "job-status",
         method: "GET",
         path: "/api/ops/jobs/{jobId}",
@@ -1142,6 +1150,94 @@ function buildOpsApiCatalog() {
     },
     sections,
     endpoints,
+  };
+}
+
+function buildOpsQuickstart() {
+  const catalog = buildOpsApiCatalog();
+  const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
+  const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
+  const byId = new Map(catalog.endpoints.map((endpoint) => [endpoint.id, endpoint]));
+  const command = (id: string) => byId.get(id)?.curl ?? null;
+  const workflows = [
+    {
+      id: "gerar-print-data-especifica",
+      title: "Gerar print retroativo de uma data",
+      when: "Use quando a inserção já existe no AdOps e você precisa corrigir ou gerar uma data específica.",
+      steps: [
+        { label: "Resolver checklist antes da captura", command: command("resolve-audit-checklist") },
+        { label: "Criar job de print", command: command("print-single") },
+        { label: "Acompanhar progresso", command: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress` },
+        { label: "Validar evidência final", command: command("validate-proof") },
+        { label: "Enviar no Telegram depois de aprovado", command: command("telegram-send-evidence") },
+      ],
+      acceptance: ["validate-proof.approved=true", "blockingIssues=[]", "status final audited"],
+    },
+    {
+      id: "gerar-retroativos-campanha",
+      title: "Gerar retroativos de uma campanha ou PI/site",
+      when: "Use quando precisa cobrir um intervalo, uma PI inteira ou uma campanha já cadastrada.",
+      steps: [
+        { label: "Conferir fila e runner", command: command("queue-overview") },
+        { label: "Criar backfill controlado", command: command("print-backfill") },
+        { label: "Acompanhar progresso", command: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress` },
+        { label: "Validar datas críticas pelo checklist", command: command("validate-proof") },
+      ],
+      acceptance: ["cada data necessária audited", "nenhum blockingIssue", "ZIP/pacote só depois da validação"],
+    },
+    {
+      id: "cadastrar-campanha-drive",
+      title: "Cadastrar campanha a partir de pasta do Google Drive",
+      when: "Use quando a PI/PDF e a mídia estão em uma pasta Drive.",
+      steps: [
+        { label: "Rodar diagnóstico sem mutação", command: command("drive-pi-preflight") },
+        { label: "Acompanhar job de diagnóstico", command: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress` },
+        { label: "Aplicar intake/cadastro somente se o preflight estiver completo", command: command("drive-pi-folder") },
+        { label: "Conferir relação PI + site", command: command("pi-site-export") },
+        { label: "Gerar evidência canário", command: command("print-single") },
+      ],
+      acceptance: ["PDF e mídia detectados", "período/formato/portal resolvidos", "sem duplicidade", "canário aprovado pela API de checklist"],
+    },
+    {
+      id: "corrigir-adrotate",
+      title: "Conferir ou corrigir AdRotate sem duplicar campanha",
+      when: "Use quando a mídia, link, grupo ou posição divergem entre AdOps, planilha e site.",
+      steps: [
+        { label: "Auditar reconciliação sem aplicar", command: command("reconcile-adrotate") },
+        { label: "Vincular anúncio existente em modo dry-run", command: command("adrotate-link") },
+        { label: "Só repetir com apply=true depois de revisar o diagnóstico", command: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-link -d '{"insertionId":1663,"adId":160,"apply":true}'` },
+      ],
+      acceptance: ["sem nova inserção duplicada", "grupo/slot resolvido pelo checklist", "HTML público confere mídia e link"],
+    },
+  ];
+  return {
+    ok: true,
+    version: "adops-ops-quickstart-v1",
+    generatedAt: nowIso(),
+    baseUrlEnv: "ADOPS_API_BASE_URL",
+    tokenEnv: "OPS_API_TOKEN",
+    rule: "PI é dado comercial da campanha; API é endpoint/ferramenta do AdOps. Operador não escreve direto no banco.",
+    glossary: catalog.glossary,
+    setup: [
+      `export ADOPS_API_BASE_URL="${base}"`,
+      'export OPS_API_TOKEN="..."',
+    ],
+    links: {
+      quickstartHtml: "/api/ops/quickstart.html",
+      catalogJson: "/api/ops/api-catalog",
+      catalogHtml: "/api/ops/api-catalog.html",
+      swaggerUi: "/api/ops/docs",
+      openApiJson: "/api/ops/openapi.json",
+      runtimeReadiness: "/api/ops/runtime-readiness",
+    },
+    safety: [
+      "Nunca colocar token em Git, chat ou documentação.",
+      "Usar drive-pi-preflight antes de cadastrar a partir do Drive.",
+      "Aceitar print somente com validate-proof.approved=true.",
+      "Se regra de slot, período, mídia ou checklist falhar, corrigir a fonte antes do lote.",
+      "Em divergência de fonte, prioridade: PDF/email da PI, planilha, AdOps, AdRotate, HTML público.",
+    ],
+    workflows,
   };
 }
 
@@ -1386,12 +1482,80 @@ router.get("/ops/api-catalog.html", (_req, res): void => {
       <span class="pill">Versão: ${escapeHtml(catalog.version)}</span>
       <span class="pill">Endpoints: ${catalog.endpoints.length}</span>
       <span class="pill">Auth: Bearer OPS_API_TOKEN para mutações</span>
+      <span class="pill"><a href="/api/ops/quickstart.html">Quickstart</a></span>
       <span class="pill"><a href="/api/ops/api-catalog">JSON</a></span>
       <span class="pill"><a href="/api/ops/openapi.json">OpenAPI</a></span>
       <span class="pill"><a href="/api/ops/docs">Swagger UI</a></span>
     </div>
   </header>
   <main>${rows}</main>
+</body>
+</html>`);
+});
+
+router.get("/ops/quickstart", (_req, res): void => {
+  res.json(buildOpsQuickstart());
+});
+
+router.get("/ops/quickstart.html", (_req, res): void => {
+  const quickstart = buildOpsQuickstart();
+  const workflows = quickstart.workflows.map((workflow) => `
+    <section class="workflow">
+      <h2>${escapeHtml(workflow.title)}</h2>
+      <p>${escapeHtml(workflow.when)}</p>
+      ${workflow.steps.map((step, index) => `
+        <div class="step">
+          <strong>${index + 1}. ${escapeHtml(step.label)}</strong>
+          ${step.command ? `<pre><code>${escapeHtml(step.command)}</code></pre>` : "<p>Comando indisponível no catálogo.</p>"}
+        </div>
+      `).join("\n")}
+      <h3>Aceite</h3>
+      <ul>${workflow.acceptance.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    </section>
+  `).join("\n");
+
+  res.type("html").send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AdOps Ops API Quickstart</title>
+  <style>
+    :root { color-scheme: light; --bg:#f7f3ec; --ink:#1f2933; --muted:#667085; --line:#ded7cc; --card:#fffaf2; --accent:#7c3aed; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); line-height:1.5; }
+    header { padding:48px max(24px, calc((100vw - 1040px) / 2)) 28px; border-bottom:1px solid var(--line); background:#fffdf8; }
+    main { max-width:1040px; margin:0 auto; padding:28px 24px 56px; display:grid; gap:18px; }
+    h1 { margin:0 0 10px; font-size:clamp(2rem, 4vw, 3rem); line-height:1.05; }
+    h2 { margin:0 0 6px; font-size:1.35rem; }
+    h3 { margin:16px 0 6px; font-size:1rem; }
+    p { margin:0; color:var(--muted); }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-top:20px; }
+    .card, .workflow { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:18px; }
+    .step { margin-top:14px; }
+    pre { margin:8px 0 0; padding:14px; overflow:auto; border-radius:8px; background:#172033; color:#f8fafc; }
+    code { font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size:.9rem; }
+    a { color:var(--accent); }
+    ul { margin:8px 0 0; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AdOps Ops API Quickstart</h1>
+    <p>${escapeHtml(quickstart.rule)}</p>
+    <div class="cards">
+      <div class="card"><strong>Token</strong><p>Use <code>${escapeHtml(quickstart.tokenEnv)}</code>. Nunca cole o valor em Git ou chat.</p></div>
+      <div class="card"><strong>Catálogo</strong><p><a href="/api/ops/api-catalog.html">HTML</a> · <a href="/api/ops/docs">Swagger</a> · <a href="/api/ops/openapi.json">OpenAPI</a></p></div>
+      <div class="card"><strong>Checklist</strong><p>Print só é aceito com <code>validate-proof.approved=true</code>.</p></div>
+    </div>
+  </header>
+  <main>
+    <section class="workflow">
+      <h2>Setup no terminal</h2>
+      ${quickstart.setup.map((line) => `<pre><code>${escapeHtml(line)}</code></pre>`).join("\n")}
+    </section>
+    ${workflows}
+  </main>
 </body>
 </html>`);
 });

@@ -41,6 +41,31 @@ Comandos `GET` públicos podem funcionar sem token, mas toda mutação exige:
 
 ## Catálogo vivo da API
 
+A primeira entrada para outro agente ou operador humano é o quickstart:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/quickstart"
+```
+
+Ele separa os conceitos:
+
+- `PI`: dado comercial da campanha;
+- `API`: endpoint/ferramenta para operar o AdOps.
+
+Também traz os fluxos recomendados para:
+
+- gerar print de uma data;
+- gerar retroativos de uma campanha;
+- cadastrar campanha a partir do Drive;
+- corrigir AdRotate;
+- validar checklist antes de entregar.
+
+Para leitura humana:
+
+```text
+https://adops-api.codigo5.com.br/api/ops/quickstart.html
+```
+
 A própria API expõe o catálogo operacional:
 
 ```bash

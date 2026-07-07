@@ -166,11 +166,16 @@ await check("compose-volume-monta-credencial-drive-no-runner", async () => {
 await check("ops-api-catalog-expõe-openapi", async () => {
   const source = read(apiOpsRoutePath);
   assertIncludes(source, [
+    "buildOpsQuickstart",
+    'router.get("/ops/quickstart"',
+    'router.get("/ops/quickstart.html"',
     'router.get("/ops/openapi.json"',
     'router.get("/ops/docs"',
     "buildOpsOpenApiDocument",
+    '<a href="/api/ops/quickstart.html">Quickstart</a>',
     '<a href="/api/ops/openapi.json">OpenAPI</a>',
     '<a href="/api/ops/docs">Swagger UI</a>',
+    "PI é dado comercial da campanha; API é endpoint/ferramenta do AdOps.",
   ], "Ops API OpenAPI catalog");
   return { ok: true };
 });
