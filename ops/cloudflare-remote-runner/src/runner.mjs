@@ -624,6 +624,27 @@ function inferCompetenciaFromInsertionPeriod(insertions) {
   return unique.length === 1 ? unique[0] : null;
 }
 
+function buildDrivePiTextHints(payload, archived, packageContext) {
+  const primaryArchive = packageContext?.primaryArchive || archived || null;
+  const mediaNames = Array.isArray(packageContext?.media)
+    ? packageContext.media.map((item) => `${item?.name || ""} ${item?.path || ""}`).filter(Boolean)
+    : [];
+  const itemNames = Array.isArray(packageContext?.items)
+    ? packageContext.items.map((item) => `${item?.name || ""} ${item?.path || ""}`).filter(Boolean)
+    : [];
+  return [
+    payload?.name,
+    payload?.path,
+    primaryArchive?.sourceName,
+    primaryArchive?.filePath,
+    packageContext?.pdf?.sourceName,
+    packageContext?.folder?.name,
+    packageContext?.folder?.path,
+    ...mediaNames,
+    ...itemNames,
+  ].filter(Boolean).join(" ");
+}
+
 async function resolveDrivePiPackageFolder(payload) {
   if (!payload?.driveFileId) return null;
   const mimeType = String(payload.mimeType || "");
@@ -1132,14 +1153,14 @@ function mergeDrivePiFields(parsed, parsedFromPdf) {
   };
 }
 
-async function extractDrivePiFields(payload, archived, agentParsedPi = null) {
+async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {
   const hasPayloadParsedPi = payload?.parsedPi && typeof payload.parsedPi === "object" && !Array.isArray(payload.parsedPi);
   const parsed = hasPayloadParsedPi
     ? payload.parsedPi
     : agentParsedPi && typeof agentParsedPi === "object" && !Array.isArray(agentParsedPi)
       ? await normalizeAgentParsedPi(agentParsedPi)
       : {};
-  const nameAndPath = `${payload?.name ?? ""} ${payload?.path ?? ""}`;
+  const nameAndPath = buildDrivePiTextHints(payload, archived, packageContext);
   const piMatch = nameAndPath.match(/\bPI[\s_-]*(\d{3,})\b/i) || nameAndPath.match(/\b(\d{5,})\b/);
   const piCodigo = readStringRecord(parsed, ["piCodigo", "pi", "codigoPi"]) ?? (piMatch ? `PI ${piMatch[1]}` : null);
   const campaignName = readStringRecord(parsed, ["campanhaNome", "campaignName", "nome"]);
@@ -2105,11 +2126,9 @@ async function executeDrivePiIngest(payload) {
     };
   }
 
-  const fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null);
+  const fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
   const validation = validateDrivePiApplyFields(fields);
-  const packageReadiness = validation.ok
-    ? validateDrivePiPackageReadiness(packageClassification, fields)
-    : { ok: true, issues: [], hasPdf: false, hasMedia: false };
+  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields);
   const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
   const dedupe = validation.ok && packageReadiness.ok && rollout.ok
     ? await validateDrivePiDedupeSafety(fields)

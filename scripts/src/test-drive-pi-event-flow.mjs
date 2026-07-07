@@ -142,6 +142,18 @@ await check("runner-executa-runtime-readiness-probe", async () => {
   return { ok: true };
 });
 
+await check("drive-pi-preflight-preserva-pacote-e-fallback-pi-sem-ia", async () => {
+  const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  assertIncludes(source, [
+    "buildDrivePiTextHints",
+    "primaryArchive?.sourceName",
+    "packageContext?.media",
+    "const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields);",
+  ], "Drive PI preflight deterministic fallback");
+  assert(!source.includes("const packageReadiness = validation.ok\n    ? validateDrivePiPackageReadiness"), "packageReadiness nao deve depender de validation.ok");
+  return { ok: true };
+});
+
 await check("compose-volume-monta-credencial-drive-no-runner", async () => {
   const source = read(portainerVolumeComposePath);
   assertIncludes(source, [
