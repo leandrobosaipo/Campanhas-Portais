@@ -640,78 +640,40 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {
+  res.json(buildOpsApiCatalog());
+});
+
+function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
-  res.json({
-    ok: true,
-    version: "adops-ops-api-catalog-v1",
-    auth: {
-      type: "bearer",
-      env: "OPS_API_TOKEN",
-      note: "Nunca coloque o token em documentação, Git ou chat. Use variável de ambiente no terminal.",
-    },
-    endpoints: [
+  const sections = [
+    {
+      id: "health-and-queue",
+      title: "Saúde, Fila e Progresso",
+      description: "Leitura operacional sem mutação. Use antes e depois de qualquer job.",
+      endpoints: [
       {
         id: "health",
         method: "GET",
         path: "/api/healthz",
         purpose: "Conferir se a API está viva.",
+        authRequired: false,
         curl: `curl -fsSL ${base}/api/healthz`,
       },
       {
-        id: "resolve-audit-checklist",
+        id: "queue-overview",
         method: "GET",
-        path: "/api/audit-checklists/resolve?insertionId={id}&date=YYYY-MM-DD",
-        purpose: "Resolver período, mídia, slot, grupo, regra e gates antes de gerar print.",
-        curl: `curl -fsSL "${base}/api/audit-checklists/resolve?insertionId=1663&date=2026-07-01"`,
-      },
-      {
-        id: "validate-proof",
-        method: "POST",
-        path: "/api/audit-checklists/validate-proof",
-        purpose: "Validar a evidência final pela API central de checklist.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/audit-checklists/validate-proof -d '{"insertionId":1663,"date":"2026-07-01"}'`,
-      },
-      {
-        id: "print-single",
-        method: "POST",
-        path: "/api/ops/jobs/print-single",
-        purpose: "Gerar ou regerar uma evidência de uma inserção em uma data específica pela fila operacional.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-single -d '{"insertionId":1663,"date":"2026-07-01","replace":true}'`,
-      },
-      {
-        id: "print-backfill",
-        method: "POST",
-        path: "/api/ops/jobs/print-backfill",
-        purpose: "Gerar retroativos pendentes por inserção, site ou competência, usando o runner oficial.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-backfill -d '{"insertionId":1663}'`,
-      },
-      {
-        id: "print-batch",
-        method: "POST",
-        path: "/api/ops/jobs/print-batch",
-        purpose: "Gerar lote de uma data para site ou competência.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-batch -d '{"siteId":1,"date":"2026-07-01"}'`,
-      },
-      {
-        id: "pi-site-export",
-        method: "POST",
-        path: "/api/ops/jobs/pi-site-export",
-        purpose: "Garantir evidências retroativas, documentos operacionais e ZIP por PI + site.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/pi-site-export -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'`,
-      },
-      {
-        id: "drive-pi-folder",
-        method: "POST",
-        path: "/api/ops/jobs/drive-pi-folder",
-        purpose: "Iniciar intake/cadastro operacional a partir de uma pasta do Google Drive com PI e mídia.",
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-folder -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA"}'`,
+        path: "/api/ops/queue/overview",
+        purpose: "Ver jobs ativos, fila e totais do dia.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/queue/overview`,
       },
       {
         id: "job-status",
         method: "GET",
         path: "/api/ops/jobs/{jobId}",
         purpose: "Consultar resultado bruto do job.",
+        authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/jobs/JOB_ID`,
       },
       {
@@ -719,17 +681,277 @@ router.get("/ops/api-catalog", (_req, res): void => {
         method: "GET",
         path: "/api/ops/jobs/{jobId}/progress",
         purpose: "Consultar progresso resumido do job.",
+        authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress`,
+      },
+      ],
+    },
+    {
+      id: "audit-checklist",
+      title: "Checklist Central de Auditoria",
+      description: "Contrato obrigatório para impedir print com slot, período, mídia, frame ou checklist errado.",
+      endpoints: [
+      {
+        id: "resolve-audit-checklist",
+        method: "GET",
+        path: "/api/audit-checklists/resolve?insertionId={id}&date=YYYY-MM-DD",
+        purpose: "Resolver período, mídia, slot, grupo, regra e gates antes de gerar print.",
+        authRequired: false,
+        curl: `curl -fsSL "${base}/api/audit-checklists/resolve?insertionId=1663&date=2026-07-01"`,
+      },
+      {
+        id: "validate-proof",
+        method: "POST",
+        path: "/api/audit-checklists/validate-proof",
+        purpose: "Validar a evidência final pela API central de checklist.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/audit-checklists/validate-proof -d '{"insertionId":1663,"date":"2026-07-01"}'`,
       },
       {
         id: "capture-proof-status",
         method: "GET",
         path: "/api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD",
         purpose: "Status final da evidência, já integrado com validate-proof.",
+        authRequired: false,
         curl: `curl -fsSL "${base}/api/insertions/1663/capture-proof/status?date=2026-07-01"`,
       },
-    ],
-  });
+      ],
+    },
+    {
+      id: "evidence-generation",
+      title: "Geração de Prints e Retroativos",
+      description: "Cria jobs para o runner oficial. Não escreve direto no banco e não pula checklist.",
+      endpoints: [
+      {
+        id: "print-single",
+        method: "POST",
+        path: "/api/ops/jobs/print-single",
+        purpose: "Gerar ou regerar uma evidência de uma inserção em uma data específica pela fila operacional.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-single -d '{"insertionId":1663,"date":"2026-07-01","replace":true}'`,
+      },
+      {
+        id: "print-backfill",
+        method: "POST",
+        path: "/api/ops/jobs/print-backfill",
+        purpose: "Gerar retroativos pendentes por inserção, site ou competência, usando o runner oficial.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-backfill -d '{"insertionId":1663}'`,
+      },
+      {
+        id: "print-batch",
+        method: "POST",
+        path: "/api/ops/jobs/print-batch",
+        purpose: "Gerar lote de uma data para site ou competência.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-batch -d '{"siteId":1,"date":"2026-07-01"}'`,
+      },
+      ],
+    },
+    {
+      id: "pi-intake-and-export",
+      title: "Cadastro de PI, Drive e Entrega",
+      description: "Entrada operacional por Drive/PI e montagem de pacote final por PI + portal.",
+      endpoints: [
+      {
+        id: "pi-site-export",
+        method: "POST",
+        path: "/api/ops/jobs/pi-site-export",
+        purpose: "Garantir evidências retroativas, documentos operacionais e ZIP por PI + site.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/pi-site-export -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'`,
+      },
+      {
+        id: "drive-pi-folder",
+        method: "POST",
+        path: "/api/ops/jobs/drive-pi-folder",
+        purpose: "Iniciar intake/cadastro operacional a partir de uma pasta do Google Drive com PI e mídia.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-folder -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA"}'`,
+      },
+      {
+        id: "drive-pi-event",
+        method: "POST",
+        path: "/api/ops/drive-pi-events",
+        purpose: "Receber evento bruto do monitor do Google Drive.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/drive-pi-events -d '{"eventId":"drive:FILE_ID:2026-07-07T12:00:00Z","driveFileId":"FILE_ID","name":"Pasta PI","mimeType":"application/vnd.google-apps.folder","path":"/drive/FILE_ID","modifiedTime":"2026-07-07T12:00:00Z","eventType":"folder_updated"}'`,
+      },
+      ],
+    },
+  ];
+  const endpoints = sections.flatMap((section) => section.endpoints.map((endpoint) => ({
+    ...endpoint,
+    sectionId: section.id,
+    sectionTitle: section.title,
+  })));
+  return {
+    ok: true,
+    version: "adops-ops-api-catalog-v1",
+    generatedAt: nowIso(),
+    baseUrlEnv: "ADOPS_API_BASE_URL",
+    auth: {
+      type: "bearer",
+      env: "OPS_API_TOKEN",
+      note: "Nunca coloque o token em documentação, Git ou chat. Use variável de ambiente no terminal.",
+    },
+    sections,
+    endpoints,
+  };
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+router.get("/ops/api-catalog.html", (_req, res): void => {
+  const catalog = buildOpsApiCatalog();
+  const rows = catalog.sections.map((section) => `
+    <section class="group">
+      <h2>${escapeHtml(section.title)}</h2>
+      <p>${escapeHtml(section.description)}</p>
+    </section>
+    ${section.endpoints.map((endpoint) => `
+    <section class="endpoint">
+      <div class="meta">
+        <span class="method ${escapeHtml(endpoint.method.toLowerCase())}">${escapeHtml(endpoint.method)}</span>
+        <code>${escapeHtml(endpoint.path)}</code>
+        <span class="auth">${endpoint.authRequired ? "token obrigatório" : "sem token"}</span>
+      </div>
+      <h3>${escapeHtml(endpoint.id)}</h3>
+      <p>${escapeHtml(endpoint.purpose)}</p>
+      <pre><code>${escapeHtml(endpoint.curl)}</code></pre>
+    </section>
+    `).join("\n")}
+  `).join("\n");
+
+  res.type("html").send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AdOps Ops API</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f3ec;
+      --ink: #1f2933;
+      --muted: #667085;
+      --line: #ded7cc;
+      --card: #fffaf2;
+      --accent: #7c3aed;
+      --post: #0f766e;
+      --get: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+    header {
+      padding: 48px max(24px, calc((100vw - 1120px) / 2)) 28px;
+      border-bottom: 1px solid var(--line);
+      background: #fffdf8;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 24px 56px;
+      display: grid;
+      gap: 16px;
+    }
+    h1 { margin: 0 0 10px; font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; }
+    h2 { margin: 0 0 6px; font-size: 1.35rem; }
+    h3 { margin: 12px 0 6px; font-size: 1.1rem; }
+    p { margin: 0; color: var(--muted); }
+    .summary {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #fff;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    .endpoint {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .group {
+      margin-top: 18px;
+      padding-top: 8px;
+    }
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .method {
+      display: inline-flex;
+      align-items: center;
+      min-width: 56px;
+      justify-content: center;
+      border-radius: 6px;
+      color: white;
+      font-weight: 800;
+      font-size: .78rem;
+      padding: 4px 8px;
+      letter-spacing: 0;
+    }
+    .method.get { background: var(--get); }
+    .method.post { background: var(--post); }
+    .auth {
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: .78rem;
+      background: #fff;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .9rem;
+    }
+    pre {
+      margin: 14px 0 0;
+      padding: 14px;
+      overflow: auto;
+      border-radius: 8px;
+      background: #172033;
+      color: #f8fafc;
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AdOps Ops API</h1>
+    <p>Catálogo operacional para cadastrar PI, gerar prints, auditar evidências e acompanhar jobs sem escrita direta no banco.</p>
+    <div class="summary">
+      <span class="pill">Versão: ${escapeHtml(catalog.version)}</span>
+      <span class="pill">Endpoints: ${catalog.endpoints.length}</span>
+      <span class="pill">Auth: Bearer OPS_API_TOKEN para mutações</span>
+      <span class="pill"><a href="/api/ops/api-catalog">JSON</a></span>
+    </div>
+  </header>
+  <main>${rows}</main>
+</body>
+</html>`);
 });
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {

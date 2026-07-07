@@ -38,6 +38,19 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/ops/api-catalog"
 
 Esse endpoint é a fonte rápida para outro agente descobrir os comandos principais.
 
+Para uma leitura humana no navegador:
+
+```text
+https://adops-api.codigo5.com.br/api/ops/api-catalog.html
+```
+
+O JSON mantém duas visões:
+
+- `sections[]`: agrupado por objetivo operacional;
+- `endpoints[]`: lista plana para automações e agentes.
+
+Regra de arquitetura: o operador usa estes endpoints. A escrita direta no banco fica restrita ao runtime da API e às migrações controladas.
+
 ## Saúde e fila
 
 Conferir API:
@@ -115,6 +128,18 @@ Depois, acompanhe:
 ```bash
 curl -fsSL "$ADOPS_API_BASE_URL/api/ops/jobs/JOB_ID/progress"
 ```
+
+Antes de aceitar a imagem, valide o checklist:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/audit-checklists/validate-proof" \
+  -d '{"insertionId":1663,"date":"2026-07-01"}'
+```
+
+Aceite apenas `approved=true` e `blockingIssues=[]`.
 
 ## Gerar retroativos pendentes
 
@@ -204,6 +229,16 @@ Política segura:
 - sem `ADOPS_DRIVE_PI_ALLOW_MUTATION=true`: não aplicar cadastro;
 - sem `ADOPS_PI_AGENT_AUTO_APPLY=true`: analisar, mas não publicar automaticamente.
 
+O intake correto precisa registrar no job:
+
+- pasta Drive;
+- PDFs e mídias detectadas;
+- PI/campanha/cliente/agência/site/período/formato extraídos;
+- divergências contra planilha;
+- decisão `applied`, `needs_review` ou `failed`.
+
+O job não deve publicar quando faltar dado crítico, mídia pública ou posição resolvida sem ambiguidade.
+
 ## Regras de auditoria que a API deve bloquear
 
 O contrato real está em `GET /api/audit-checklists/resolve`.
@@ -227,6 +262,14 @@ Resumo dos gates:
 - vídeo com controles e progresso visíveis;
 - GIF em frame permitido quando configurado;
 - `finalPngSlotAudit.ok=true` quando exigido.
+
+Se qualquer item obrigatório falhar, o fluxo deve corrigir a origem antes de gerar lote:
+
+```text
+AdOps/planilha/PI -> AdRotate/portal -> HTML público -> captura -> checklist -> entrega
+```
+
+Não liberar exceção para slot errado. O caso Iguá provou o comportamento correto: a API recusou enquanto o criativo estava no grupo `3` e só aprovou quando a fonte foi corrigida para grupo `2`.
 
 ## Deploy no Mac Mini
 
@@ -258,5 +301,6 @@ O `.env` privado deve ficar fora do Git. Use:
    `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
+5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.
 5. Evoluir painel com login para usar a mesma API, sem rota paralela.
 6. Adicionar OpenAPI/Swagger gerado para estes endpoints.

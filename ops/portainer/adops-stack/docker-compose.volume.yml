@@ -89,7 +89,7 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api.codigo5.com.br}
+      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -137,7 +137,7 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api.codigo5.com.br}
+      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
