@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 
 type JobKind =
@@ -42,6 +42,9 @@ type DrivePiEventPayload = {
   eventType: DrivePiEventType;
   parsedPi?: unknown;
   simulation?: unknown;
+  preflightOnly?: boolean;
+  explicitFolder?: boolean;
+  source?: string;
 };
 
 const router: IRouter = Router();
@@ -343,6 +346,9 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     eventType,
     ...(body["parsedPi"] !== undefined ? { parsedPi: body["parsedPi"] } : {}),
     ...(body["simulation"] !== undefined ? { simulation: body["simulation"] } : {}),
+    ...(body["preflightOnly"] === true ? { preflightOnly: true } : {}),
+    ...(body["explicitFolder"] === true ? { explicitFolder: true } : {}),
+    ...(readOptionalString(body["source"]) ? { source: readOptionalString(body["source"]) as string } : {}),
   };
 }
 
@@ -398,7 +404,7 @@ async function createDrivePiEventJob(event: DrivePiEventPayload, requestedBy: st
 
   const documentId = randomUUID();
   const now = nowIso();
-  const jobId = await createOpsJob("drive-pi-ingest", { ...event, documentId, source: "google-drive-monitor" }, requestedBy);
+  const jobId = await createOpsJob("drive-pi-ingest", { ...event, documentId, source: event.source ?? "google-drive-monitor" }, requestedBy);
 
   await pool.query(
     `INSERT INTO cod5_drive_events
@@ -771,6 +777,14 @@ function buildOpsApiCatalog() {
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/pi-site-export -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'`,
       },
       {
+        id: "drive-pi-preflight",
+        method: "POST",
+        path: "/api/ops/jobs/drive-pi-preflight",
+        purpose: "Auditar pasta do Drive e retornar diagnóstico de PI sem aplicar cadastro ou publicar campanha.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-preflight -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA"}'`,
+      },
+      {
         id: "drive-pi-folder",
         method: "POST",
         path: "/api/ops/jobs/drive-pi-folder",
@@ -1057,6 +1071,14 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
 });
 
 router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
+  await createDrivePiFolderJob(req, res, { preflightOnly: false });
+});
+
+router.post("/ops/jobs/drive-pi-preflight", async (req, res): Promise<void> => {
+  await createDrivePiFolderJob(req, res, { preflightOnly: true });
+});
+
+async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean }) {
   const folderId = parseDriveFolderId(req.body?.folderUrl ?? req.body?.folderId ?? req.body?.driveFolderId);
   if (!folderId) {
     res.status(400).json({
@@ -1066,10 +1088,11 @@ router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
     return;
   }
   const now = nowIso();
+  const source = options.preflightOnly ? "macmini-api-preflight" : "macmini-api";
   const event = {
-    eventId: readOptionalString(req.body?.eventId) ?? `drive:${folderId}:${now}`,
+    eventId: readOptionalString(req.body?.eventId) ?? `drive:${options.preflightOnly ? "preflight:" : ""}${folderId}:${now}`,
     driveFileId: folderId,
-    name: readOptionalString(req.body?.name) ?? `Drive PI ${folderId}`,
+    name: readOptionalString(req.body?.name) ?? `${options.preflightOnly ? "Preflight Drive PI" : "Drive PI"} ${folderId}`,
     mimeType: "application/vnd.google-apps.folder",
     path: readOptionalString(req.body?.path) ?? `/drive/${folderId}`,
     parentFolderId: null,
@@ -1078,6 +1101,9 @@ router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
     eventType: "folder_updated" as const,
     simulation: req.body?.simulation,
     parsedPi: req.body?.parsedPi,
+    preflightOnly: options.preflightOnly,
+    explicitFolder: true,
+    source,
   };
   const validated = validateDrivePiEvent(event);
   if (!validated) {
@@ -1085,8 +1111,8 @@ router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
     return;
   }
   const result = await createDrivePiEventJob(validated, "ops-api");
-  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "drive-pi-ingest", ...result });
-});
+  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "drive-pi-ingest", preflightOnly: options.preflightOnly, ...result });
+}
 
 router.post("/ops/jobs/telegram-send-evidence", async (req, res): Promise<void> => {
   const insertionId = readOptionalNumber(req.body?.insertionId);

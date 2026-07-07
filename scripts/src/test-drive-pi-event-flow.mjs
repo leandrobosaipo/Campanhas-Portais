@@ -114,7 +114,8 @@ await check("worker-main-usa-typescript", async () => {
 await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
   const source = read(workerSourcePath);
   assertIncludes(source, [
-    'type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest"',
+    "drive-pi-ingest",
+    "telegram-send-evidence",
     "const OPS_JOB_KINDS",
     "OPS_JOB_KINDS.includes",
     'if (path === "/api/ops/drive-pi-events")',

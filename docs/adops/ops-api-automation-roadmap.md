@@ -53,6 +53,7 @@ Validacao feita em `2026-07-07`:
 - runner `runner-print-single`: consumiu job;
 - resultado: `completed`, sem escrita direta no banco pelo operador.
 - `POST /api/ops/jobs/telegram-send-evidence`: job de reenvio Telegram via API, com checklist antes do envio.
+- `POST /api/ops/jobs/drive-pi-preflight`: diagnostico de pasta Drive sem mutacao, antes de qualquer cadastro/publicacao.
 
 ## Principio obrigatorio
 
@@ -119,6 +120,19 @@ curl -fsSL -X POST \
 ```
 
 ### 4. Intake por pasta do Drive
+
+Preflight sem mutacao:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-preflight" \
+  -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA"}'
+```
+
+Se o preflight retornar campos, pacote, dedupe e rollout saudaveis, iniciar o
+cadastro operacional:
 
 ```bash
 curl -fsSL -X POST \
@@ -201,12 +215,11 @@ Entregas:
 - checklist central publicado;
 - documentacao de uso por cURL.
 - reenvio Telegram por API, sem expor token do bot ao operador.
+- preflight de PI por pasta Drive, sem mutacao, antes do cadastro/publicacao.
 
 Faltas:
 
 - testes automatizados dos wrappers `/api/ops/jobs/*`;
-- endpoint de preflight de PI que retorne divergencias antes de criar job;
-- endpoint dedicado para republicar/sincronizar AdRotate sem acesso manual;
 - endpoint dedicado para republicar/sincronizar AdRotate sem acesso manual.
 
 ## Fase 2 — Telegram e WhatsApp

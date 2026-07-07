@@ -627,7 +627,8 @@ function inferCompetenciaFromInsertionPeriod(insertions) {
 async function resolveDrivePiPackageFolder(payload) {
   if (!payload?.driveFileId) return null;
   const mimeType = String(payload.mimeType || "");
-  if (mimeType === "application/vnd.google-apps.folder" && /\bPI[\s_-]*\d{3,}\b/i.test(String(payload.name || payload.path || ""))) {
+  const isExplicitFolder = payload?.explicitFolder === true || payload?.preflightOnly === true;
+  if (mimeType === "application/vnd.google-apps.folder" && (isExplicitFolder || /\bPI[\s_-]*\d{3,}\b/i.test(String(payload.name || payload.path || "")))) {
     return {
       folderId: payload.driveFileId,
       path: payload.path || `/${payload.name}`,
@@ -1282,6 +1283,7 @@ function buildDrivePiReviewReasons({
   validation,
   rollout,
   dedupe,
+  preflightOnly = false,
   mutationEnabled,
   canApply,
   evidenceCoverage,
@@ -1289,6 +1291,7 @@ function buildDrivePiReviewReasons({
 }) {
   const reasons = [];
   const packageMissing = Array.isArray(packageClassification?.missing) ? packageClassification.missing : [];
+  if (packageClassification?.class === "folder_empty" && preflightOnly) reasons.push("drive_folder_empty_or_not_shared");
   if (packageMissing.includes("pi_pdf")) reasons.push("missing_pi_pdf");
   if (packageMissing.includes("media")) reasons.push("missing_media");
   for (const item of packageReadiness?.issues || []) reasons.push(item);
@@ -1297,6 +1300,7 @@ function buildDrivePiReviewReasons({
   if (validation?.agentQuality && !validation.agentQuality.ok) reasons.push("agent_quality");
   if (rollout && !rollout.ok) reasons.push("rollout_blocked");
   if (dedupe && !dedupe.ok) reasons.push("dedupe_conflict");
+  if (canApply && preflightOnly) reasons.push("preflight_only");
   if (canApply && !mutationEnabled) reasons.push("auto_apply_disabled");
   for (const result of evidenceCoverage?.results || []) {
     if (result?.status === "needs_media") reasons.push("needs_media");
@@ -1796,10 +1800,11 @@ async function notifyDrivePiErrorTelegram(payload, error) {
 }
 
 async function executeDrivePiIngest(payload) {
+  const preflightOnly = payload?.preflightOnly === true;
   await updateDrivePiState(payload, "received", {
     parseRun: {
       fields: null,
-      alerts: ["Evento recebido do monitor do Google Drive."],
+      alerts: [preflightOnly ? "Preflight de pasta Drive recebido pela API operacional." : "Evento recebido do monitor do Google Drive."],
     },
   });
   const intakeLock = {
@@ -1807,12 +1812,16 @@ async function executeDrivePiIngest(payload) {
     eventId: payload?.eventId || null,
     lockedAt: new Date().toISOString(),
     ttlHours: 24,
-    reason: "Nova entrada do Drive em processamento automatico. Evitar cadastro manual duplicado.",
+    reason: preflightOnly
+      ? "Preflight de PI em andamento. Diagnostico sem mutacao."
+      : "Nova entrada do Drive em processamento automatico. Evitar cadastro manual duplicado.",
   };
   await updateDrivePiState(payload, "intake_locked", {
     parseRun: {
       fields: { intakeLock },
-      alerts: ["Intake automatico iniciado; operador deve evitar cadastro manual ate o status final."],
+      alerts: [preflightOnly
+        ? "Preflight automatico iniciado; nenhuma campanha sera criada ou publicada por este job."
+        : "Intake automatico iniciado; operador deve evitar cadastro manual ate o status final."],
     },
   });
   const intakeTelegram = await notifyDrivePiTelegram({
@@ -1885,7 +1894,8 @@ async function executeDrivePiIngest(payload) {
     intakeLock: intakeLock.key,
   });
 
-  if (!payload?.parsedPi) {
+  const packageHasReadableContent = Boolean(packageContext?.pdf) || (Array.isArray(packageContext?.items) && packageContext.items.length > 0);
+  if (!payload?.parsedPi && packageHasReadableContent) {
     await updateDrivePiState(payload, "agent_analysis", {
       contentSha256: archived?.sha256 ?? null,
       parseRun: {
@@ -1905,6 +1915,13 @@ async function executeDrivePiIngest(payload) {
       agentAnalysis: agentResult,
       intakeLock: intakeLock.key,
     });
+  } else if (!payload?.parsedPi) {
+    agentResult = {
+      skipped: "package_without_readable_content",
+      reason: preflightOnly
+        ? "Preflight nao encontrou arquivos legiveis na pasta. Verifique se a pasta foi compartilhada com a credencial do runner."
+        : "Pacote Drive sem conteudo legivel para analise IA.",
+    };
   }
 
   const fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null);
@@ -1917,7 +1934,7 @@ async function executeDrivePiIngest(payload) {
     ? await validateDrivePiDedupeSafety(fields)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
-  const mutationEnabled = ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY;
+  const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY;
   let preApplySyncPlanilha = { skipped: true, reason: "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
   if (canApply && mutationEnabled) {
     try {
@@ -1941,6 +1958,7 @@ async function executeDrivePiIngest(payload) {
     validation,
     rollout,
     dedupe: preApplyDedupe,
+    preflightOnly,
     mutationEnabled,
     canApply: finalCanApply,
   });
@@ -2101,6 +2119,7 @@ async function executeDrivePiIngest(payload) {
     validation,
     rollout,
     dedupe: preApplyDedupe,
+    preflightOnly,
     mutationEnabled,
     canApply: finalCanApply,
     evidenceCoverage,
@@ -2124,7 +2143,7 @@ async function executeDrivePiIngest(payload) {
           ]
         : [
             "Fluxo seguro bloqueou mutação automática; revisar campos antes de publicar.",
-            ...(canApply && !mutationEnabled ? ["Campos validos, mas flags de auto-apply nao estao ambas habilitadas."] : []),
+            ...(canApply && !mutationEnabled ? [preflightOnly ? "Campos validos; preflight concluiu sem aplicar por desenho." : "Campos validos, mas flags de auto-apply nao estao ambas habilitadas."] : []),
             ...(canApply && mutationEnabled && !finalCanApply ? ["Planilha sincronizada antes da mutacao revelou conflito de deduplicacao."] : []),
           ],
     },
@@ -2175,6 +2194,7 @@ async function executeDrivePiIngest(payload) {
     reviewReasons: finalReviewReasons,
     dedupe: preApplyDedupe,
     rollout,
+    preflightOnly,
     mutationEnabled,
     driveMutationEnabled: ADOPS_DRIVE_PI_ALLOW_MUTATION,
     agentAutoApplyEnabled: ADOPS_PI_AGENT_AUTO_APPLY,

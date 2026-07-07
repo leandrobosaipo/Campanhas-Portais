@@ -224,6 +224,47 @@ Credenciais:
 
 ## Intake de nova PI por pasta do Drive
 
+### 1. Preflight sem mutação
+
+Use primeiro quando a pasta do Drive já contém PI e mídia, mas você ainda quer
+conferir período, formato, mídia, planilha, deduplicação e rollout antes de
+publicar.
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-preflight" \
+  -d '{
+    "folderUrl": "https://drive.google.com/drive/folders/ID_DA_PASTA"
+  }'
+```
+
+Esse job usa o mesmo parser, agente e validações do cadastro real, mas envia
+`preflightOnly=true` para o runner. Mesmo que o ambiente produtivo tenha flags
+de auto-apply ligadas, esse job não cria campanha, não cria inserção e não
+publica anúncio.
+
+Aceite do preflight:
+
+- job `completed`;
+- `result.execution.preflightOnly=true`;
+- campos de PI encontrados em `result.execution.fields`;
+- `validation.ok=true`;
+- `packageReadiness.ok=true`;
+- sem `dedupe_conflict`;
+- sem `rollout_blocked`;
+- `reviewReasons` contendo `preflight_only` quando tudo está pronto para aplicação.
+
+Pendência comum:
+
+- `drive_folder_empty_or_not_shared`: a API conseguiu receber a pasta, mas o
+  runner não listou PDF/mídia. Normalmente a pasta não está compartilhada com a
+  credencial Google Drive do runner/monitor. Corrija o compartilhamento da
+  pasta e rode o preflight novamente.
+
+### 2. Intake/cadastro operacional
+
 Use quando a pasta do Drive já contém PI e mídia.
 
 ```bash
@@ -237,6 +278,9 @@ curl -fsSL -X POST \
 ```
 
 Esse job usa o runner oficial.
+
+Regra operacional: só use este endpoint depois do preflight ou quando a PI já
+tiver sido conferida por outra fonte oficial.
 
 O comportamento depende das flags do `.env`:
 

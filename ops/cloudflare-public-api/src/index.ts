@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "telegram-send-evidence";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "telegram-send-evidence"];
 
 type JobProgress = {
   jobId: string;
@@ -91,6 +91,10 @@ type DrivePiEventPayload = {
   webViewLink: string | null;
   eventType: DrivePiEventType;
   parsedPi?: unknown;
+  simulation?: unknown;
+  preflightOnly?: boolean;
+  explicitFolder?: boolean;
+  source?: string;
 };
 
 type Env = {
@@ -577,6 +581,14 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha no processamento da PI",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "telegram-send-evidence": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Enviando evidência no Telegram",
+    completed: "Evidência enviada",
+    failed: "Falha no envio Telegram",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -950,6 +962,27 @@ function readOptionalString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function readOptionalNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function parseDriveFolderId(value: unknown) {
+  const raw = readOptionalString(value);
+  if (!raw) return null;
+  const folderUrlMatch = raw.match(/\/folders\/([A-Za-z0-9_-]+)/);
+  if (folderUrlMatch?.[1]) return folderUrlMatch[1];
+  const queryIdMatch = raw.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (queryIdMatch?.[1]) return queryIdMatch[1];
+  return /^[A-Za-z0-9_-]{10,}$/.test(raw) ? raw : null;
+}
+
+function parseIsoDateString(value: unknown) {
+  const raw = readOptionalString(value);
+  return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
 function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event: DrivePiEventPayload } | { ok: false; response: Response } {
   const driveFileId = readOptionalString(body.driveFileId);
   const name = readOptionalString(body.name);
@@ -983,6 +1016,10 @@ function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event:
       webViewLink: readOptionalString(body.webViewLink),
       eventType,
       ...(body.parsedPi !== undefined ? { parsedPi: body.parsedPi } : {}),
+      ...(body.simulation !== undefined ? { simulation: body.simulation } : {}),
+      ...(body.preflightOnly === true ? { preflightOnly: true } : {}),
+      ...(body.explicitFolder === true ? { explicitFolder: true } : {}),
+      ...(readOptionalString(body.source) ? { source: readOptionalString(body.source) as string } : {}),
     },
   };
 }
@@ -1030,7 +1067,7 @@ async function createDrivePiEventJob(env: Env, event: DrivePiEventPayload, reque
   const jobId = await createOpsJob(env, "drive-pi-ingest", {
     ...event,
     documentId,
-    source: "google-drive-monitor",
+    source: event.source ?? "google-drive-monitor",
   }, requestedBy);
 
   await env.adops_ops
@@ -1878,7 +1915,7 @@ export default {
         return json({ ok: true, jobId, kind: "print-backfill", status: "queued" }, { status: 202 });
       }
 
-    if (path === "/api/ops/jobs/print-single") {
+      if (path === "/api/ops/jobs/print-single") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
@@ -1895,6 +1932,36 @@ export default {
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "print-single", status: "queued" }, { status: 202 });
+      }
+
+      if (path === "/api/ops/jobs/drive-pi-preflight" || path === "/api/ops/jobs/drive-pi-folder") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const preflightOnly = path === "/api/ops/jobs/drive-pi-preflight";
+        const folderId = parseDriveFolderId(body.folderUrl ?? body.folderId ?? body.driveFolderId);
+        if (!folderId) return badRequest("Informe folderUrl, folderId ou driveFolderId válido do Google Drive.");
+        const now = nowIso();
+        const event = {
+          eventId: readOptionalString(body.eventId) ?? `drive:${preflightOnly ? "preflight:" : ""}${folderId}:${now}`,
+          driveFileId: folderId,
+          name: readOptionalString(body.name) ?? `${preflightOnly ? "Preflight Drive PI" : "Drive PI"} ${folderId}`,
+          mimeType: "application/vnd.google-apps.folder",
+          path: readOptionalString(body.path) ?? `/drive/${folderId}`,
+          parentFolderId: null,
+          modifiedTime: readOptionalString(body.modifiedTime) ?? now,
+          webViewLink: readOptionalString(body.folderUrl) ?? `https://drive.google.com/drive/folders/${folderId}`,
+          eventType: "folder_updated" as const,
+          simulation: body.simulation,
+          parsedPi: body.parsedPi,
+          preflightOnly,
+          explicitFolder: true,
+          source: preflightOnly ? "cloudflare-protected-api-preflight" : "cloudflare-protected-api",
+        };
+        const validated = validateDrivePiEvent(event);
+        if (validated.ok === false) return validated.response;
+        const result = await createDrivePiEventJob(env, validated.event, "ops-api");
+        return jsonNoStore({ ok: true, kind: "drive-pi-ingest", preflightOnly, ...result }, { status: result.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/watchdog") {
@@ -1925,9 +1992,25 @@ export default {
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
         const validated = validateDrivePiEvent(body);
-        if (!validated.ok) return validated.response;
+        if (validated.ok === false) return validated.response;
         const result = await createDrivePiEventJob(env, validated.event, "google-drive-monitor");
         return jsonNoStore({ ok: true, kind: "drive-pi-ingest", ...result }, { status: result.duplicate ? 200 : 202 });
+      }
+
+      if (path === "/api/ops/jobs/telegram-send-evidence") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const insertionId = readOptionalNumber(body.insertionId);
+        const date = parseIsoDateString(body.date);
+        if (!insertionId || !date) return badRequest("Informe insertionId e date=YYYY-MM-DD.");
+        const jobId = await createOpsJob(env, "telegram-send-evidence", {
+          insertionId,
+          date,
+          chatId: readOptionalString(body.chatId),
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return json({ ok: true, jobId, kind: "telegram-send-evidence", status: "queued" }, { status: 202 });
       }
 
       if (path === "/api/ops/drive-pi-events/status") {
