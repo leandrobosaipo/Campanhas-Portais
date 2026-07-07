@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const workerSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/index.ts");
+const apiOpsRoutePath = path.join(repoRoot, "artifacts/api-server/src/routes/ops.ts");
 const wranglerConfigPath = path.join(repoRoot, "ops/cloudflare-public-api/wrangler.jsonc");
 const monitorDeployPath = path.join(repoRoot, "ops/portainer/deploy-drive-pi-monitor.mjs");
 const envCandidates = [
@@ -122,6 +123,16 @@ await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
     "OPS_JOB_KINDS.includes",
     'if (path === "/api/ops/drive-pi-events")',
   ], "Worker Drive PI");
+  return { ok: true };
+});
+
+await check("ops-api-catalog-expõe-openapi", async () => {
+  const source = read(apiOpsRoutePath);
+  assertIncludes(source, [
+    'router.get("/ops/openapi.json"',
+    "buildOpsOpenApiDocument",
+    '<a href="/api/ops/openapi.json">OpenAPI</a>',
+  ], "Ops API OpenAPI catalog");
   return { ok: true };
 });
 

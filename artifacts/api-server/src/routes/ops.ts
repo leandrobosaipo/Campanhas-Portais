@@ -695,6 +695,10 @@ router.get("/ops/api-catalog", (_req, res): void => {
   res.json(buildOpsApiCatalog());
 });
 
+router.get("/ops/openapi.json", (_req, res): void => {
+  res.json(buildOpsOpenApiDocument());
+});
+
 function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
@@ -905,6 +909,101 @@ function buildOpsApiCatalog() {
   };
 }
 
+function parseCurlBodyExample(curl: string) {
+  const match = curl.match(/-d '([^']+)'/);
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function openApiSchemaForExample(value: unknown): Record<string, unknown> {
+  if (value === null) return { nullable: true };
+  if (Array.isArray(value)) return { type: "array", items: value.length ? openApiSchemaForExample(value[0]) : {} };
+  if (typeof value === "number") return { type: Number.isInteger(value) ? "integer" : "number", example: value };
+  if (typeof value === "boolean") return { type: "boolean", example: value };
+  if (typeof value === "string") return { type: "string", example: value };
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return {
+      type: "object",
+      properties: Object.fromEntries(entries.map(([key, item]) => [key, openApiSchemaForExample(item)])),
+    };
+  }
+  return {};
+}
+
+function buildOpsOpenApiDocument() {
+  const catalog = buildOpsApiCatalog();
+  const paths: Record<string, Record<string, unknown>> = {};
+  for (const endpoint of catalog.endpoints) {
+    const method = String(endpoint.method).toLowerCase();
+    const pathKey = endpoint.path.replace(/\{([^}]+)\}/g, "{$1}");
+    const pathParams = Array.from(endpoint.path.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
+    const bodyExample = method === "post" ? parseCurlBodyExample(endpoint.curl) : null;
+    paths[pathKey] ??= {};
+    paths[pathKey][method] = {
+      summary: endpoint.purpose,
+      description: `${endpoint.sectionTitle}. ${endpoint.purpose}`,
+      tags: [endpoint.sectionTitle],
+      security: endpoint.authRequired ? [{ bearerAuth: [] }] : [],
+      parameters: pathParams.map((name) => ({
+        name,
+        in: "path",
+        required: true,
+        schema: { type: "string" },
+      })),
+      ...(bodyExample ? {
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: openApiSchemaForExample(bodyExample),
+              example: bodyExample,
+            },
+          },
+        },
+      } : {}),
+      responses: {
+        "200": { description: "Resposta bem-sucedida." },
+        "202": { description: "Job criado para execução assíncrona." },
+        "400": { description: "Payload inválido." },
+        "401": { description: "Token operacional ausente ou inválido." },
+        "422": { description: "Checklist ou regra operacional recusou a operação." },
+      },
+      "x-curl": endpoint.curl,
+    };
+  }
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "AdOps Ops API",
+      version: catalog.version,
+      description: "API operacional para gerenciar campanhas, PI, prints retroativos, checklist e entrega sem escrita direta no banco pelo operador.",
+    },
+    servers: [
+      { url: "https://adops-api.codigo5.com.br", description: "Produção Mac Mini" },
+    ],
+    tags: catalog.sections.map((section) => ({
+      name: section.title,
+      description: section.description,
+    })),
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "OPS_API_TOKEN",
+        },
+      },
+    },
+    "x-glossary": catalog.glossary,
+    paths,
+  };
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -1052,6 +1151,7 @@ router.get("/ops/api-catalog.html", (_req, res): void => {
       <span class="pill">Endpoints: ${catalog.endpoints.length}</span>
       <span class="pill">Auth: Bearer OPS_API_TOKEN para mutações</span>
       <span class="pill"><a href="/api/ops/api-catalog">JSON</a></span>
+      <span class="pill"><a href="/api/ops/openapi.json">OpenAPI</a></span>
     </div>
   </header>
   <main>${rows}</main>

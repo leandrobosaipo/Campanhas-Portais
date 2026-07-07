@@ -55,6 +55,12 @@ Para uma leitura humana no navegador:
 https://adops-api.codigo5.com.br/api/ops/api-catalog.html
 ```
 
+Para ferramentas que leem padrão OpenAPI/Swagger:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/openapi.json"
+```
+
 O JSON mantém duas visões:
 
 - `sections[]`: agrupado por objetivo operacional;
