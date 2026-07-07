@@ -2629,9 +2629,12 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         box: toBox(node),
         className: node.className,
         inHeaderAdsRow: !!node.closest("#header-ads-row"),
+        inPopupRow: !!node.closest(".perrengue-popup-ads-row"),
+        isStaticRetroAd: !!node.closest("[data-adops-static-retro-ad]"),
         isTopGroup: node.classList.contains("g-1"),
         isPopupGroup: node.classList.contains("g-9"),
       }))
+      .filter((entry) => entry.inHeaderAdsRow || entry.inPopupRow || entry.isStaticRetroAd)
       .filter((entry) => Number(entry.box?.top ?? 999999) < headerTop);
 
     const popupRowsBeforeHeader = Array.from(document.querySelectorAll(".perrengue-popup-ads-row"))

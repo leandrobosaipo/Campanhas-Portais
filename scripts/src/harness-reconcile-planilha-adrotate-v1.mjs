@@ -27,15 +27,28 @@ async function exists(filePath) {
   return filePath;
 }
 
+async function optionalExists(filePath) {
+  try {
+    return { filePath: await exists(filePath), present: true };
+  } catch (error) {
+    return {
+      filePath,
+      present: false,
+      skipped: true,
+      reason: "Documento fora do pacote de runtime. A validacao bloqueante fica em codigo/config/API.",
+    };
+  }
+}
+
 await check("package-script-reconcile", async () => {
   const pkg = JSON.parse(await fs.readFile(path.resolve(repoRoot, "scripts/package.json"), "utf8"));
   if (!pkg.scripts?.["reconcile:planilha-adrotate"]) throw new Error("script reconcile:planilha-adrotate ausente");
   return pkg.scripts["reconcile:planilha-adrotate"];
 });
-await check("spec-reconcile", () => exists("docs/spec-reconcile-planilha-adrotate-v1.md"));
+await check("spec-reconcile", () => optionalExists("docs/spec-reconcile-planilha-adrotate-v1.md"));
 await check("config-portais", () => exists("config/adrotate-sites.json"));
 await check("capture-rules-audit", async () => {
-  const run = spawnSync("pnpm", ["--dir", "scripts", "run", "audit:capture-rules-integrity"], { cwd: repoRoot, encoding: "utf8", timeout: 1000 * 60 * 2 });
+  const run = spawnSync("node", ["scripts/src/audit-capture-rules-integrity.mjs"], { cwd: repoRoot, encoding: "utf8", timeout: 1000 * 60 * 2 });
   if (run.status !== 0) throw new Error((run.stderr || run.stdout || "audit falhou").slice(0, 2000));
   return { stdout: run.stdout.slice(-2000) };
 });

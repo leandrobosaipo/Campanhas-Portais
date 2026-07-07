@@ -95,7 +95,7 @@ services:
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,telegram-send-evidence
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,telegram-send-evidence
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}

@@ -54,6 +54,7 @@ Validacao feita em `2026-07-07`:
 - resultado: `completed`, sem escrita direta no banco pelo operador.
 - `POST /api/ops/jobs/telegram-send-evidence`: job de reenvio Telegram via API, com checklist antes do envio.
 - `POST /api/ops/jobs/drive-pi-preflight`: diagnostico de pasta Drive sem mutacao, antes de qualquer cadastro/publicacao.
+- `POST /api/ops/jobs/reconcile-adrotate`: auditoria/aplicação controlada de Planilha + AdRotate pelo runner.
 
 ## Principio obrigatorio
 
@@ -170,6 +171,32 @@ Esse job:
 3. chama o bot Telegram para reenviar a imagem auditada;
 4. registra o resultado em `ops_jobs`.
 
+### 6. Reconciliar Planilha + AdRotate
+
+Auditoria sem mutacao:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/reconcile-adrotate" \
+  -d '{"apply":false}'
+```
+
+Aplicacao controlada:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/reconcile-adrotate" \
+  -d '{"apply":true}'
+```
+
+Regra: `apply=false` é o padrão operacional para outro agente inspecionar
+divergencias. `apply=true` só deve ser usado quando a origem oficial já foi
+conferida, pois executa o script real de reconciliação.
+
 ## Checklist central
 
 Resolver contrato:
@@ -216,11 +243,12 @@ Entregas:
 - documentacao de uso por cURL.
 - reenvio Telegram por API, sem expor token do bot ao operador.
 - preflight de PI por pasta Drive, sem mutacao, antes do cadastro/publicacao.
+- reconcile Planilha + AdRotate por API, com modo auditoria sem mutação por padrão.
 
 Faltas:
 
 - testes automatizados dos wrappers `/api/ops/jobs/*`;
-- endpoint dedicado para republicar/sincronizar AdRotate sem acesso manual.
+- endpoint dedicado para republicar anúncio AdRotate quando a peça precisa ser criada/reativada no WordPress.
 
 ## Fase 2 — Telegram e WhatsApp
 

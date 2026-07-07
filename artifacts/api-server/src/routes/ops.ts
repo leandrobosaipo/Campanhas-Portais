@@ -11,6 +11,7 @@ type JobKind =
   | "pi-site-export"
   | "drive-pi-ingest"
   | "operational-documents"
+  | "reconcile-adrotate"
   | "telegram-send-evidence";
 
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
@@ -58,6 +59,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "pi-site-export",
   "drive-pi-ingest",
   "operational-documents",
+  "reconcile-adrotate",
   "telegram-send-evidence",
 ];
 
@@ -120,6 +122,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
     running: "Gerando documentos",
+    completed: "Concluido",
+    failed: "Falhou",
+  },
+  "reconcile-adrotate": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Conferindo planilha e AdRotate",
     completed: "Concluido",
     failed: "Falhou",
   },
@@ -803,6 +812,21 @@ function buildOpsApiCatalog() {
       ],
     },
     {
+      id: "adrotate-sync",
+      title: "Planilha, AdRotate e Publicação",
+      description: "Jobs para conciliar AdOps com planilha e AdRotate sem acesso direto ao banco pelo operador.",
+      endpoints: [
+      {
+        id: "reconcile-adrotate",
+        method: "POST",
+        path: "/api/ops/jobs/reconcile-adrotate",
+        purpose: "Auditar ou aplicar reconciliação Planilha + AdRotate pelo runner oficial. Por padrão não muta.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/reconcile-adrotate -d '{"apply":false}'`,
+      },
+      ],
+    },
+    {
       id: "notifications",
       title: "Telegram e Notificações",
       description: "Reenvio de evidências já auditadas sem expor token do Telegram ao operador.",
@@ -1068,6 +1092,16 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "pi-site-export", status: "ready_for_runner" });
+});
+
+router.post("/ops/jobs/reconcile-adrotate", async (req, res): Promise<void> => {
+  const apply = req.body?.apply === true;
+  const jobId = await createOpsJob("reconcile-adrotate", {
+    apply,
+    mode: apply ? "apply" : "audit",
+    source: "macmini-api",
+  }, "ops-api");
+  res.status(202).json({ ok: true, jobId, kind: "reconcile-adrotate", status: "ready_for_runner", apply });
 });
 
 router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {

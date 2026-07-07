@@ -197,6 +197,38 @@ curl -fsSL -X POST \
   -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'
 ```
 
+## Reconciliar Planilha + AdRotate
+
+Use para conferir divergências entre a planilha operacional, AdOps e AdRotate
+sem abrir painel nem escrever direto no banco.
+
+Auditoria sem mutação:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/reconcile-adrotate" \
+  -d '{"apply":false}'
+```
+
+Aplicar correções automáticas suportadas pelo script real:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/reconcile-adrotate" \
+  -d '{"apply":true}'
+```
+
+Política:
+
+- `apply=false` roda o harness sem mutação e gera diagnóstico.
+- `apply=true` roda `scripts/src/reconcile-planilha-adrotate.ts`.
+- O operador acompanha por `/api/ops/jobs/JOB_ID` e não acessa banco direto.
+- Se o job apontar pendência manual, corrigir origem oficial antes de gerar prints.
+
 ## Reenviar evidência auditada no Telegram
 
 Use quando o print já existe e precisa ser enviado novamente no grupo.
@@ -367,7 +399,7 @@ O `.env` privado deve ficar fora do Git. Use:
 
 1. Criar testes de API para os wrappers `/ops/jobs/*`.
 2. Garantir que o deploy público use `OPS_JOB_KINDS` com todos os jobs:
-   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest`.
+   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,telegram-send-evidence`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.

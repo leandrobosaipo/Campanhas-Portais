@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "telegram-send-evidence";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "telegram-send-evidence";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "telegram-send-evidence"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "telegram-send-evidence"];
 
 type JobProgress = {
   jobId: string;
@@ -579,6 +579,14 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     needs_review: "Precisa de revisão",
     completed: "PI processada",
     failed: "Falha no processamento da PI",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
+  "reconcile-adrotate": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Conferindo planilha e AdRotate",
+    completed: "Reconciliação concluída",
+    failed: "Falha na reconciliação",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
   "telegram-send-evidence": {
@@ -1962,6 +1970,19 @@ export default {
         if (validated.ok === false) return validated.response;
         const result = await createDrivePiEventJob(env, validated.event, "ops-api");
         return jsonNoStore({ ok: true, kind: "drive-pi-ingest", preflightOnly, ...result }, { status: result.duplicate ? 200 : 202 });
+      }
+
+      if (path === "/api/ops/jobs/reconcile-adrotate") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const apply = body.apply === true;
+        const jobId = await createOpsJob(env, "reconcile-adrotate", {
+          apply,
+          mode: apply ? "apply" : "audit",
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return json({ ok: true, jobId, kind: "reconcile-adrotate", status: "queued", apply }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/watchdog") {

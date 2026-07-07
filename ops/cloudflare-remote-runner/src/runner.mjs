@@ -47,7 +47,7 @@ const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_S
 const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "https://adops-telegram-bot.leandro471.workers.dev").replace(/\/$/, "");
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TELEGRAM_DEFAULT_GROUP_ID = (process.env.TELEGRAM_DEFAULT_GROUP_ID || "").trim();
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -1390,6 +1390,12 @@ async function runPnpm(args, options) {
   }
 }
 
+function safeProcessOutput(value, maxLength = 4000) {
+  return String(value || "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .slice(-maxLength);
+}
+
 async function readJsonFile(filePath, fallback) {
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
@@ -1724,8 +1730,8 @@ async function executeSyncPlanilha(payload) {
   });
   return {
     mode: payload?.mode || "latest",
-    stdout: String(stdout || "").slice(-4000),
-    stderr: String(stderr || "").slice(-4000),
+    stdout: safeProcessOutput(stdout),
+    stderr: safeProcessOutput(stderr),
   };
 }
 
@@ -1738,8 +1744,36 @@ async function executeReconcilePlanilhaAdrotate() {
     maxBuffer: 1024 * 1024 * 10,
   });
   return {
-    stdout: String(stdout || "").slice(-4000),
-    stderr: String(stderr || "").slice(-4000),
+    stdout: safeProcessOutput(stdout),
+    stderr: safeProcessOutput(stderr),
+  };
+}
+
+async function executeReconcileAdrotateJob(payload) {
+  await ensureRuntimeDirs();
+  const apply = payload?.apply === true;
+  if (!apply) {
+    const { stdout, stderr } = await execFileAsync("node", ["scripts/src/harness-reconcile-planilha-adrotate-v1.mjs"], {
+      cwd: PROJECT_ROOT,
+      env: {
+        ...process.env,
+        ADOPS_HARNESS_ALLOW_MUTATION: "false",
+        ADOPS_PUBLIC_API_BASE_URL: `${OPS_API_BASE_URL}/api`,
+      },
+      maxBuffer: 1024 * 1024 * 10,
+    });
+    return {
+      mode: "audit",
+      apply: false,
+      stdout: safeProcessOutput(stdout, 6000),
+      stderr: safeProcessOutput(stderr, 6000),
+    };
+  }
+  const result = await executeReconcilePlanilhaAdrotate();
+  return {
+    mode: "apply",
+    apply: true,
+    ...result,
   };
 }
 
@@ -2494,10 +2528,10 @@ async function executeAnalyticsReport(payload) {
     downloadUrl,
     previewUrl: downloadUrl,
     generatedAt: new Date().toISOString(),
-    stdout: String(stdout || "").slice(-4000),
-    stderr: String(stderr || "").slice(-4000),
-    publishStdout: String(publish.stdout || "").slice(-4000),
-    publishStderr: String(publish.stderr || "").slice(-4000),
+    stdout: safeProcessOutput(stdout),
+    stderr: safeProcessOutput(stderr),
+    publishStdout: safeProcessOutput(publish.stdout),
+    publishStderr: safeProcessOutput(publish.stderr),
   };
 }
 
@@ -2772,6 +2806,9 @@ async function handleJob(job) {
   }
   if (job.kind === "telegram-send-evidence") {
     return executeTelegramSendEvidence(payload);
+  }
+  if (job.kind === "reconcile-adrotate") {
+    return executeReconcileAdrotateJob(payload);
   }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);
