@@ -7,6 +7,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const workerSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/index.ts");
 const apiOpsRoutePath = path.join(repoRoot, "artifacts/api-server/src/routes/ops.ts");
 const wranglerConfigPath = path.join(repoRoot, "ops/cloudflare-public-api/wrangler.jsonc");
+const portainerVolumeComposePath = path.join(repoRoot, "ops/portainer/adops-stack/docker-compose.volume.yml");
 const monitorDeployPath = path.join(repoRoot, "ops/portainer/deploy-drive-pi-monitor.mjs");
 const envCandidates = [
   path.join(repoRoot, ".env.adops-operator.local"),
@@ -138,6 +139,15 @@ await check("runner-executa-runtime-readiness-probe", async () => {
     "TELEGRAM_BOT_TOKEN",
     "ADOPS_PERRENGUE_SSH_KEY_PATH",
   ], "Runner runtime readiness probe");
+  return { ok: true };
+});
+
+await check("compose-volume-monta-credencial-drive-no-runner", async () => {
+  const source = read(portainerVolumeComposePath);
+  assertIncludes(source, [
+    "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-/data/secrets/google-drive-service-account.json}",
+    "adops_drive_pi_monitor_data:/data:ro",
+  ], "Compose volume runner Google Drive");
   return { ok: true };
 });
 

@@ -135,6 +135,16 @@ O resultado esperado fica em `result.execution.runnerRuntimeReadiness`. Ele
 também só retorna nomes e presença/ausência de variáveis, nunca valores de
 segredo.
 
+No deploy por volume do Mac Mini, o runner principal deve montar o volume
+externo `adops-drive-pi-monitor-data` em `/data:ro` e usar, por padrão:
+
+```text
+GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE=/data/secrets/google-drive-service-account.json
+```
+
+Se `runnerRuntimeReadiness.capabilities.googleDriveReady=false`, confira esse
+mount antes de mexer em código ou banco.
+
 Consultar job:
 
 ```bash

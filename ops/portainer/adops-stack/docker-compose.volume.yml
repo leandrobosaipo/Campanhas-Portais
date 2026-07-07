@@ -108,7 +108,7 @@ services:
       GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
       GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
       GOOGLE_DRIVE_ACCESS_TOKEN: ${GOOGLE_DRIVE_ACCESS_TOKEN:-}
-      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-/data/secrets/google-drive-service-account.json}
       GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:-}
       ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -126,6 +126,7 @@ services:
       - adops_runner_state:/var/lib/adops
       - adops_pnpm_store:/var/lib/adops/.pnpm-store
       - adops_ssh:/root/.ssh:ro
+      - adops_drive_pi_monitor_data:/data:ro
     networks:
       - adops_internal
 
@@ -189,6 +190,9 @@ volumes:
     name: adops_pnpm_store
   adops_ssh:
     name: adops_ssh
+  adops_drive_pi_monitor_data:
+    external: true
+    name: adops-drive-pi-monitor-data
 
 networks:
   adops_internal:
