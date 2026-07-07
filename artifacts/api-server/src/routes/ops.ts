@@ -73,6 +73,22 @@ type RuntimeEnvCheck = {
   requiredFor: string;
 };
 
+type RunnerLiveness = {
+  ok: boolean;
+  recentRunnerWindowMinutes: number;
+  hasRecentRunner: boolean;
+  lastRunnerSeenAt: string | null;
+  lastRunnerId: string | null;
+  runners: Array<{
+    runnerId: string;
+    lastSeenAt: string;
+    lastSeenAgeMinutes: number | null;
+    recent: boolean;
+    totalJobsSeen: number;
+  }>;
+  error?: string;
+};
+
 function envIsPresent(name: string) {
   return Boolean(process.env[name]?.trim());
 }
@@ -93,7 +109,54 @@ function allEnvPresent(names: string[]) {
   return names.every((name) => envIsPresent(name));
 }
 
-function buildOpsRuntimeReadiness() {
+function minutesSince(value: string | null, nowMs = Date.now()) {
+  const ms = parseDateMs(value);
+  return ms === null ? null : Math.max(0, Math.round((nowMs - ms) / 60_000));
+}
+
+async function readRunnerLiveness(recentRunnerWindowMinutes = 30): Promise<RunnerLiveness> {
+  try {
+    const rows = await pool.query<{ runner_id: string; last_seen_at: string; total_jobs_seen: string | number }>(
+      `SELECT runner_id, MAX(updated_at)::text AS last_seen_at, COUNT(*) AS total_jobs_seen
+         FROM ops_jobs
+        WHERE runner_id IS NOT NULL AND runner_id <> ''
+        GROUP BY runner_id
+        ORDER BY MAX(updated_at) DESC
+        LIMIT 10`,
+    );
+    const nowMs = Date.now();
+    const runners = rows.rows.map((row) => {
+      const age = minutesSince(row.last_seen_at, nowMs);
+      return {
+        runnerId: row.runner_id,
+        lastSeenAt: row.last_seen_at,
+        lastSeenAgeMinutes: age,
+        recent: age !== null && age <= recentRunnerWindowMinutes,
+        totalJobsSeen: Number(row.total_jobs_seen ?? 0) || 0,
+      };
+    });
+    return {
+      ok: true,
+      recentRunnerWindowMinutes,
+      hasRecentRunner: runners.some((runner) => runner.recent),
+      lastRunnerSeenAt: runners[0]?.lastSeenAt ?? null,
+      lastRunnerId: runners[0]?.runnerId ?? null,
+      runners,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      recentRunnerWindowMinutes,
+      hasRecentRunner: false,
+      lastRunnerSeenAt: null,
+      lastRunnerId: null,
+      runners: [],
+      error: error instanceof Error ? sanitizeJobText(error.message, 2000) as string : "Falha ao consultar runner.",
+    };
+  }
+}
+
+function buildOpsRuntimeReadiness(runnerLiveness: RunnerLiveness) {
   const driveChecks = buildEnvChecks([
     { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Ler PI e mídia do Google Drive via service account inline." },
     { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Ler PI e mídia do Google Drive via arquivo service account." },
@@ -146,6 +209,7 @@ function buildOpsRuntimeReadiness() {
     capabilities: {
       opsApiAuthReady: envIsPresent("OPS_API_TOKEN"),
       privateApiAuthReady: anyEnvPresent(["PRIVATE_ADOPS_API_TOKEN", "ADOPS_INTERNAL_API_TOKEN"]),
+      runnerRecentlySeen: runnerLiveness.hasRecentRunner,
       googleDriveReady,
       telegramReady: telegramBridgeConfigured || telegramDirectReady,
       telegramBridgeConfigured,
@@ -162,6 +226,7 @@ function buildOpsRuntimeReadiness() {
       { id: "runner", title: "Runner e Jobs", checks: runnerChecks },
       { id: "mutation-policy", title: "Politica de Mutacao", checks: mutationChecks },
     ],
+    runnerLiveness,
     warnings,
   };
 }
@@ -790,8 +855,8 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
   });
 });
 
-router.get("/ops/runtime-readiness", (_req, res): void => {
-  res.json(buildOpsRuntimeReadiness());
+router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
+  res.json(buildOpsRuntimeReadiness(await readRunnerLiveness()));
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {

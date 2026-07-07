@@ -100,6 +100,19 @@ Telegram, runner e política de mutação. Ele nunca deve retornar valores de
 tokens, chaves, URLs privadas com credenciais ou paths sensíveis além dos nomes
 das variáveis.
 
+A resposta também inclui `runnerLiveness`, calculado pelos jobs executados
+recentemente. Use estes campos para separar "API online" de "API com runner
+ativo":
+
+- `runnerLiveness.hasRecentRunner`;
+- `runnerLiveness.lastRunnerId`;
+- `runnerLiveness.lastRunnerSeenAt`;
+- `runnerLiveness.recentRunnerWindowMinutes`.
+
+Se `hasRecentRunner=false`, ainda pode ser apenas fila ociosa, mas jobs novos
+devem ser acompanhados por `/api/ops/jobs/JOB_ID/progress` até aparecer
+`runnerId`.
+
 Consultar job:
 
 ```bash

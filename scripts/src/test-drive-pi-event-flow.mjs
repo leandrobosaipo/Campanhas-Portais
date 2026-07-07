@@ -143,6 +143,10 @@ await check("ops-api-expõe-runtime-readiness-sem-segredos", async () => {
   assertIncludes(source, [
     'router.get("/ops/runtime-readiness"',
     "buildOpsRuntimeReadiness",
+    "readRunnerLiveness",
+    "runnerLiveness",
+    "lastRunnerSeenAt",
+    "recentRunnerWindowMinutes",
     "noSecretValues: true",
     "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON",
     "TELEGRAM_BOT_TOKEN",
