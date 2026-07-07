@@ -130,8 +130,10 @@ await check("ops-api-catalog-expõe-openapi", async () => {
   const source = read(apiOpsRoutePath);
   assertIncludes(source, [
     'router.get("/ops/openapi.json"',
+    'router.get("/ops/docs"',
     "buildOpsOpenApiDocument",
     '<a href="/api/ops/openapi.json">OpenAPI</a>',
+    '<a href="/api/ops/docs">Swagger UI</a>',
   ], "Ops API OpenAPI catalog");
   return { ok: true };
 });

@@ -699,6 +699,49 @@ router.get("/ops/openapi.json", (_req, res): void => {
   res.json(buildOpsOpenApiDocument());
 });
 
+router.get("/ops/docs", (_req, res): void => {
+  res.type("html").send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AdOps Ops API Docs</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #f8fafc; }
+    .topbar { display: none; }
+    .cod5-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .cod5-header h1 { margin: 0 0 6px; font-size: 22px; color: #0f172a; }
+    .cod5-header p { margin: 0; color: #475569; }
+    .cod5-header a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <header class="cod5-header">
+    <h1>AdOps Ops API</h1>
+    <p>Swagger UI operacional. PI é identificação da campanha; API é o endpoint para operar sem escrita direta no banco. <a href="/api/ops/api-catalog.html">Catálogo HTML</a> · <a href="/api/ops/openapi.json">OpenAPI JSON</a></p>
+  </header>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "/api/ops/openapi.json",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      displayRequestDuration: true,
+      tryItOutEnabled: true,
+      persistAuthorization: true,
+    });
+  </script>
+</body>
+</html>`);
+});
+
 function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
@@ -1152,6 +1195,7 @@ router.get("/ops/api-catalog.html", (_req, res): void => {
       <span class="pill">Auth: Bearer OPS_API_TOKEN para mutações</span>
       <span class="pill"><a href="/api/ops/api-catalog">JSON</a></span>
       <span class="pill"><a href="/api/ops/openapi.json">OpenAPI</a></span>
+      <span class="pill"><a href="/api/ops/docs">Swagger UI</a></span>
     </div>
   </header>
   <main>${rows}</main>

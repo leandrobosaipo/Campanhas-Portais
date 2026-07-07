@@ -55,6 +55,12 @@ Para uma leitura humana no navegador:
 https://adops-api.codigo5.com.br/api/ops/api-catalog.html
 ```
 
+Para uma leitura visual em padrão Swagger/FastAPI:
+
+```text
+https://adops-api.codigo5.com.br/api/ops/docs
+```
+
 Para ferramentas que leem padrão OpenAPI/Swagger:
 
 ```bash
@@ -481,5 +487,4 @@ O `.env` privado deve ficar fora do Git. Use:
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.
-5. Evoluir painel com login para usar a mesma API, sem rota paralela.
-6. Adicionar OpenAPI/Swagger gerado para estes endpoints.
+6. Evoluir painel com login para usar a mesma API, sem rota paralela.
