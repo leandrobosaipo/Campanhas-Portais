@@ -229,6 +229,38 @@ Política:
 - O operador acompanha por `/api/ops/jobs/JOB_ID` e não acessa banco direto.
 - Se o job apontar pendência manual, corrigir origem oficial antes de gerar prints.
 
+## Vincular anúncio AdRotate existente
+
+Use quando a campanha/inserção já existe no AdOps e o anúncio já existe no
+WordPress/AdRotate, mas falta alinhar os campos técnicos de vínculo.
+
+Prévia sem mutação:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-link" \
+  -d '{"insertionId":1663,"adId":160,"apply":false}'
+```
+
+Aplicar vínculo:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-link" \
+  -d '{"insertionId":1663,"adId":160,"apply":true}'
+```
+
+Política:
+
+- `apply=false` é o padrão e chama o WP-CLI em modo preview.
+- `apply=true` chama `wp adrotate adops link ... --apply` no portal correto.
+- O job não cria anúncio novo e não escolhe posição sozinho.
+- Antes de gerar prints, validar relação AdOps x AdRotate e checklist central.
+
 ## Reenviar evidência auditada no Telegram
 
 Use quando o print já existe e precisa ser enviado novamente no grupo.

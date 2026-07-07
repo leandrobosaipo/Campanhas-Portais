@@ -197,6 +197,32 @@ Regra: `apply=false` é o padrão operacional para outro agente inspecionar
 divergencias. `apply=true` só deve ser usado quando a origem oficial já foi
 conferida, pois executa o script real de reconciliação.
 
+### 7. Vincular AdRotate existente
+
+Prévia sem mutação:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-link" \
+  -d '{"insertionId":1663,"adId":160,"apply":false}'
+```
+
+Aplicação controlada:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-link" \
+  -d '{"insertionId":1663,"adId":160,"apply":true}'
+```
+
+Regra: este job só corrige vínculo de anúncio existente via WP-CLI. Se não há
+anúncio correto, a automação deve bloquear a publicação e devolver diagnóstico
+em vez de inventar posição ou mídia.
+
 ## Checklist central
 
 Resolver contrato:

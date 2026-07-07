@@ -47,7 +47,7 @@ const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_S
 const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "https://adops-telegram-bot.leandro471.workers.dev").replace(/\/$/, "");
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TELEGRAM_DEFAULT_GROUP_ID = (process.env.TELEGRAM_DEFAULT_GROUP_ID || "").trim();
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -1396,6 +1396,55 @@ function safeProcessOutput(value, maxLength = 4000) {
     .slice(-maxLength);
 }
 
+function shellEscape(value) {
+  return `'${String(value ?? "").replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function mediaBasenameFromUrl(value) {
+  if (!value || typeof value !== "string") return null;
+  try {
+    const pathname = new URL(value).pathname;
+    return path.basename(decodeURIComponent(pathname)) || null;
+  } catch {
+    return path.basename(value.split("?")[0] || "") || null;
+  }
+}
+
+function readPositiveInteger(value) {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function compactAdrotateRelation(relation) {
+  if (!relation || typeof relation !== "object") return null;
+  const exactLiveMatches = Array.isArray(relation.exactLiveMatches) ? relation.exactLiveMatches : [];
+  const historicalAdminMatches = Array.isArray(relation.historicalAdminMatches) ? relation.historicalAdminMatches : [];
+  return {
+    plannedSelf: relation.plannedSelf ?? null,
+    exactLiveMatches: exactLiveMatches.map((item) => ({
+      adId: item?.adId ?? item?.id ?? null,
+      groupId: item?.groupId ?? item?.group_id ?? null,
+      title: item?.title ?? null,
+    })),
+    historicalAdminMatches: historicalAdminMatches.map((item) => ({
+      adId: item?.adId ?? item?.id ?? null,
+      groupId: item?.groupId ?? item?.group_id ?? null,
+      title: item?.title ?? null,
+      adopsInsertionId: item?.adopsInsertionId ?? null,
+      adopsExternalKey: item?.adopsExternalKey ?? null,
+      adopsMediaBasename: item?.adopsMediaBasename ?? null,
+    })),
+  };
+}
+
+function envNameForSite(prefix, siteSigla) {
+  const safeSigla = String(siteSigla || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return safeSigla ? `ADOPS_${safeSigla}_${prefix}` : null;
+}
+
 async function readJsonFile(filePath, fallback) {
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
@@ -1774,6 +1823,104 @@ async function executeReconcileAdrotateJob(payload) {
     mode: "apply",
     apply: true,
     ...result,
+  };
+}
+
+async function executeAdrotateLinkJob(payload) {
+  const insertionId = readPositiveInteger(payload?.insertionId);
+  const adId = readPositiveInteger(payload?.adId);
+  const apply = payload?.apply === true;
+  if (!insertionId || !adId) {
+    throw new Error("adrotate-link exige insertionId e adId positivos.");
+  }
+
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  if (!insertion?.id) {
+    throw new Error(`Inserção ${insertionId} não encontrada.`);
+  }
+  const siteId = readPositiveInteger(insertion.siteId ?? insertion.site?.id);
+  if (!siteId) {
+    throw new Error(`Inserção ${insertionId} sem siteId.`);
+  }
+  const site = await privateApiGet(`/api/sites/${siteId}`);
+  if (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath) {
+    throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
+  }
+
+  const campaignId = readPositiveInteger(insertion.campanhaId ?? insertion.campaignId ?? insertion.campanha?.id ?? insertion.campaign?.id);
+  const piCodigo = String(
+    insertion.piCodigo ??
+    insertion.campanha?.piCodigo ??
+    insertion.campaign?.piCodigo ??
+    insertion.campanhaPiCodigo ??
+    insertion.campaignPiCodigo ??
+    ""
+  ).trim();
+  const mediaBasename = mediaBasenameFromUrl(insertion.mediaUrl ?? insertion.midiaUrl ?? insertion.media?.url);
+  if (!campaignId) {
+    throw new Error(`Inserção ${insertionId} sem campanha vinculada.`);
+  }
+  if (!piCodigo) {
+    throw new Error(`Inserção ${insertionId} sem piCodigo resolvido.`);
+  }
+  const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? null;
+  const sshKeyEnvName = envNameForSite("SSH_KEY_PATH", siteSigla);
+  const sshKeyPath = sshKeyEnvName ? String(process.env[sshKeyEnvName] || "").trim() : "";
+
+  const args = [
+    shellEscape(site.phpBin ?? "php"),
+    shellEscape(site.wpCliPath ?? "wp"),
+    "--allow-root",
+    `--path=${shellEscape(site.wpPath)}`,
+    "adrotate",
+    "adops",
+    "link",
+    String(adId),
+    `--insertion=${String(insertionId)}`,
+    `--campaign=${String(campaignId)}`,
+    `--pi=${shellEscape(piCodigo)}`,
+    `--external-key=${shellEscape(`adops-${insertionId}`)}`,
+  ];
+  if (mediaBasename) args.push(`--media-basename=${shellEscape(mediaBasename)}`);
+  if (apply) args.push("--apply");
+  const remoteCommand = args.join(" ");
+
+  const { stdout, stderr } = await execFileAsync(
+    "ssh",
+    [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "StrictHostKeyChecking=accept-new",
+      "-o",
+      "UserKnownHostsFile=/tmp/adops-known-hosts",
+      ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+      "-p",
+      String(site.sshPort),
+      `${site.sshUser}@${site.sshHost}`,
+      remoteCommand,
+    ],
+    { maxBuffer: 2 * 1024 * 1024, timeout: 120000 },
+  );
+
+  const relationAfter = apply
+    ? compactAdrotateRelation(await privateApiGet(`/api/integrations/adrotate/insertions/${insertionId}/relation`).catch(() => null))
+    : null;
+
+  return {
+    mode: apply ? "apply" : "preview",
+    apply,
+    insertionId,
+    adId,
+    campaignId,
+    piCodigo,
+    siteId,
+    siteSigla,
+    mediaBasename,
+    sshKeyConfigured: Boolean(sshKeyPath),
+    stdout: safeProcessOutput(stdout, 6000),
+    stderr: safeProcessOutput(stderr, 6000),
+    relationAfter,
   };
 }
 
@@ -2809,6 +2956,9 @@ async function handleJob(job) {
   }
   if (job.kind === "reconcile-adrotate") {
     return executeReconcileAdrotateJob(payload);
+  }
+  if (job.kind === "adrotate-link") {
+    return executeAdrotateLinkJob(payload);
   }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);

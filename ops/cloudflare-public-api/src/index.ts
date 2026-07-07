@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "telegram-send-evidence";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "telegram-send-evidence";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "telegram-send-evidence"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "telegram-send-evidence"];
 
 type JobProgress = {
   jobId: string;
@@ -311,6 +311,25 @@ function parseJsonSafe(value: string | null | undefined) {
   }
 }
 
+function sanitizeJobText(value: unknown, maxLength = 12000) {
+  if (typeof value !== "string") return value;
+  return value
+    .replace(/\b[A-Za-z0-9._-]+@(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ssh-user-host]")
+    .replace(/\[(?:\d{1,3}\.){3}\d{1,3}\]:\d+/g, "[ssh-host-port]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .slice(-maxLength);
+}
+
+function sanitizeJobValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeJobText(value);
+  if (Array.isArray(value)) return value.map((item) => sanitizeJobValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJobValue(item)]));
+  }
+  return value;
+}
+
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .normalize("NFD")
@@ -483,9 +502,9 @@ function describeJob(record: OpsJobRecord) {
     id: record.id,
     kind: record.kind,
     status: record.status,
-    payload: parseJsonSafe(record.payload_json),
-    result: parseJsonSafe(record.result_json),
-    error: record.error_text,
+    payload: sanitizeJobValue(parseJsonSafe(record.payload_json)),
+    result: sanitizeJobValue(parseJsonSafe(record.result_json)),
+    error: sanitizeJobText(record.error_text),
     requestedBy: record.requested_by,
     runnerId: record.runner_id,
     createdAt: record.created_at,
@@ -587,6 +606,14 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Conferindo planilha e AdRotate",
     completed: "Reconciliação concluída",
     failed: "Falha na reconciliação",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
+  "adrotate-link": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Vinculando anúncio AdRotate",
+    completed: "Vínculo AdRotate concluído",
+    failed: "Falha no vínculo AdRotate",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
   "telegram-send-evidence": {
@@ -1983,6 +2010,26 @@ export default {
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "reconcile-adrotate", status: "queued", apply }, { status: 202 });
+      }
+
+      if (path === "/api/ops/jobs/adrotate-link") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const insertionId = readOptionalNumber(body.insertionId);
+        const adId = readOptionalNumber(body.adId);
+        const apply = body.apply === true;
+        if (!insertionId || insertionId <= 0 || !adId || adId <= 0) {
+          return json({ error: "bad_request", details: "Informe insertionId e adId positivos." }, { status: 400 });
+        }
+        const jobId = await createOpsJob(env, "adrotate-link", {
+          insertionId,
+          adId,
+          apply,
+          mode: apply ? "apply" : "preview",
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return json({ ok: true, jobId, kind: "adrotate-link", status: "queued", apply }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/watchdog") {

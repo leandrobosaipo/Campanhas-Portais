@@ -116,6 +116,7 @@ await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
   assertIncludes(source, [
     "drive-pi-ingest",
     "reconcile-adrotate",
+    "adrotate-link",
     "telegram-send-evidence",
     "const OPS_JOB_KINDS",
     "OPS_JOB_KINDS.includes",
