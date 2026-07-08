@@ -10,6 +10,7 @@ import dashboardRouter from "./dashboard";
 import syncRouter from "./sync";
 import captureRulesRouter from "./capture-rules";
 import auditChecklistsRouter from "./audit-checklists";
+import campaignOperationsRouter from "./campaign-operations";
 import opsRouter from "./ops";
 
 const router: IRouter = Router();
@@ -25,6 +26,7 @@ router.use(dashboardRouter);
 router.use(syncRouter);
 router.use(captureRulesRouter);
 router.use(auditChecklistsRouter);
+router.use(campaignOperationsRouter);
 router.use(opsRouter);
 
 export default router;
