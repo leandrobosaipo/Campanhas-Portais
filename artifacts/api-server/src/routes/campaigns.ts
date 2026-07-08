@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
-import { db, campaignsTable, clientsTable, agenciesTable, insertionsTable } from "@workspace/db";
+import { db, campaignsTable, clientsTable, agenciesTable, insertionsTable, evidencesTable } from "@workspace/db";
 import {
   CreateCampaignBody,
   GetCampaignParams,
@@ -10,6 +10,55 @@ import {
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+async function getCampaignDeletionGuard(id: number) {
+  const insertions = await db.select().from(insertionsTable).where(eq(insertionsTable.campanhaId, id));
+
+  if (!insertions.length) {
+    return {
+      canDelete: true,
+      reason: null,
+      insertions,
+      evidenceCount: 0,
+    };
+  }
+
+  const insertionIds = insertions.map((item) => item.id);
+  const evidenceRows = await Promise.all(
+    insertionIds.map((insertionId) =>
+      db.select({ count: sql<number>`count(*)` }).from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId)),
+    ),
+  );
+  const evidenceCount = evidenceRows.reduce((acc, rows) => acc + Number(rows[0]?.count ?? 0), 0);
+
+  const hasOperationalHistory = insertions.some((item) =>
+    item.bannerPublicadoNoSite ||
+    item.printGerado ||
+    item.processoEnviadoAgencia ||
+    item.docsEnviados ||
+    item.dataEnvioAgencia ||
+    item.statusNormalizado === "concluido" ||
+    item.statusNormalizado === "enviado_para_agencia" ||
+    item.statusNormalizado === "print_gerado" ||
+    item.statusNormalizado === "docs_enviados",
+  );
+
+  if (evidenceCount > 0 || hasOperationalHistory) {
+    return {
+      canDelete: false,
+      reason: "A campanha já possui histórico operacional. Para preservar auditoria, a exclusão foi bloqueada.",
+      insertions,
+      evidenceCount,
+    };
+  }
+
+  return {
+    canDelete: true,
+    reason: null,
+    insertions,
+    evidenceCount,
+  };
+}
 
 async function buildCampaignWithMeta(id: number) {
   const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, id));
@@ -91,6 +140,13 @@ router.post("/campaigns", async (req, res): Promise<void> => {
     clienteId: parsed.data.clienteId ?? null,
     agenciaId: parsed.data.agenciaId ?? null,
     piCodigo: parsed.data.piCodigo ?? null,
+    projeto: parsed.data.projeto ?? null,
+    plano: parsed.data.plano ?? null,
+    planilhaRef: parsed.data.planilhaRef ?? null,
+    produto: parsed.data.produto ?? null,
+    praca: parsed.data.praca ?? null,
+    condicaoPagamento: parsed.data.condicaoPagamento ?? null,
+    faturamentoTipo: parsed.data.faturamentoTipo ?? null,
     valorLiquido: parsed.data.valorLiquido != null ? String(parsed.data.valorLiquido) : null,
     competencia: parsed.data.competencia ?? null,
     origem: parsed.data.origem ?? null,
@@ -153,6 +209,13 @@ router.patch("/campaigns/:id", async (req, res): Promise<void> => {
   if (parsed.data.clienteId !== undefined) updateData.clienteId = parsed.data.clienteId;
   if (parsed.data.agenciaId !== undefined) updateData.agenciaId = parsed.data.agenciaId;
   if (parsed.data.piCodigo !== undefined) updateData.piCodigo = parsed.data.piCodigo;
+  if (parsed.data.projeto !== undefined) updateData.projeto = parsed.data.projeto;
+  if (parsed.data.plano !== undefined) updateData.plano = parsed.data.plano;
+  if (parsed.data.planilhaRef !== undefined) updateData.planilhaRef = parsed.data.planilhaRef;
+  if (parsed.data.produto !== undefined) updateData.produto = parsed.data.produto;
+  if (parsed.data.praca !== undefined) updateData.praca = parsed.data.praca;
+  if (parsed.data.condicaoPagamento !== undefined) updateData.condicaoPagamento = parsed.data.condicaoPagamento;
+  if (parsed.data.faturamentoTipo !== undefined) updateData.faturamentoTipo = parsed.data.faturamentoTipo;
   if (parsed.data.valorLiquido !== undefined) updateData.valorLiquido = parsed.data.valorLiquido != null ? String(parsed.data.valorLiquido) : null;
   if (parsed.data.competencia !== undefined) updateData.competencia = parsed.data.competencia;
   if (parsed.data.origem !== undefined) updateData.origem = parsed.data.origem;
@@ -174,6 +237,27 @@ router.delete("/campaigns/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
+
+  const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, params.data.id));
+  if (!campaign) {
+    res.status(404).json({ error: "Campaign not found" });
+    return;
+  }
+
+  const deletionGuard = await getCampaignDeletionGuard(params.data.id);
+  if (!deletionGuard.canDelete) {
+    res.status(409).json({
+      error: deletionGuard.reason,
+      totalInsercoes: deletionGuard.insertions.length,
+      totalEvidencias: deletionGuard.evidenceCount,
+    });
+    return;
+  }
+
+  for (const insertion of deletionGuard.insertions) {
+    await db.delete(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
+  }
+  await db.delete(insertionsTable).where(eq(insertionsTable.campanhaId, params.data.id));
   await db.delete(campaignsTable).where(eq(campaignsTable.id, params.data.id));
   res.sendStatus(204);
 });

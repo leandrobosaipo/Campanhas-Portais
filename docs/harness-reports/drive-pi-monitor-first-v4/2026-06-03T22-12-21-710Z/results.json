@@ -1,0 +1,182 @@
+{
+  "ok": true,
+  "generatedAt": "2026-06-03T22:12:21.717Z",
+  "reportDir": "/Users/leandrobosaipo/Projetos/AdOps/docs/harness-reports/drive-pi-monitor-first-v4/2026-06-03T22-12-21-710Z",
+  "results": [
+    {
+      "name": "worker-aceita-intake-locked",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "intake_locked",
+          "Intake travado",
+          "allowedStatuses"
+        ]
+      }
+    },
+    {
+      "name": "telegram-inicial-orienta-nao-cadastrar",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "Processo automático iniciado; não cadastre manualmente ainda",
+          "packageClass",
+          "intakeLock"
+        ]
+      }
+    },
+    {
+      "name": "runner-cria-lock-antes-do-packaging",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "const intakeLock =",
+          "Nova entrada do Drive em processamento automatico",
+          "notifyDrivePiTelegram({",
+          "status: \"intake_locked\""
+        ]
+      }
+    },
+    {
+      "name": "runner-classifica-pacote",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "function classifyDrivePiPackage",
+          "function validateDrivePiPackageReadiness",
+          "folder_empty",
+          "missing_pi_pdf",
+          "missing_media",
+          "pi_and_media_present",
+          "pdf_only",
+          "media_only",
+          "missing_pi_pdf_and_media",
+          "packageClassification"
+        ]
+      }
+    },
+    {
+      "name": "runner-bloqueia-auto-apply-incompleto-e-dedupe-conflitante",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "validateDrivePiPackageReadiness(packageClassification, fields)",
+          "validateDrivePiDedupeSafety(fields)",
+          "dedupe_conflict",
+          "missing_pi_pdf",
+          "missing_media",
+          "needs_media",
+          "reviewReasons",
+          "canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok"
+        ]
+      }
+    },
+    {
+      "name": "ia-recebe-classificacao-sem-mutacao",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "packageClassification: packageContext.packageClassification",
+          "A IA nao aplica mudancas",
+          "ADOPS_DRIVE_PI_ALLOW_MUTATION",
+          "ADOPS_PI_AGENT_AUTO_APPLY"
+        ]
+      }
+    },
+    {
+      "name": "competencia-e-inferida-por-periodo-seguro",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "runner": {
+          "markers": [
+            "function inferCompetenciaFromInsertionPeriod",
+            "periodoInicio",
+            "periodoFim",
+            "inicio.year !== fim.year || inicio.month !== fim.month",
+            "competenciaInference",
+            "periodoInicio/periodoFim no mesmo mes"
+          ]
+        },
+        "prompts": {
+          "markers": [
+            "Quando houver periodo de veiculacao com inicio e fim no mesmo mes",
+            "`competencia` como `MM/YYYY`"
+          ]
+        },
+        "knowledge": {
+          "markers": [
+            "inicio e fim no mesmo mes",
+            "formato `MM/YYYY`",
+            "periodo cruzar meses diferentes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "telegram-mostra-pendencias-objetivas",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "worker": {
+          "markers": [
+            "Motivos de revisão:",
+            "Conflitos de dedupe:",
+            "reviewReasons",
+            "dedupeConflicts"
+          ]
+        },
+        "adapter": {
+          "markers": [
+            "reviewReasons",
+            "dedupe_conflict",
+            "mídia pública",
+            "conflito de duplicidade"
+          ]
+        }
+      }
+    },
+    {
+      "name": "intakes-do-print-spm-sao-explicitos-e-travados",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "script": {
+          "markers": [
+            "ADOPS_CREATE_SPM_PRINT_INTAKE=true",
+            "PERR-ALMT-CIDADANIA-MEGABANNER-TOPO",
+            "PERR-ALMT-CIDADANIA-VIDEO",
+            "ROO-CAMPANHA-2026-06-05",
+            "AFL-CAMPANHA-2026-06-09",
+            "piCodigo: null",
+            "eventType: \"folder_created\""
+          ]
+        },
+        "packageJson": {
+          "markers": [
+            "intake:spm-whatsapp-print-2026-06-03"
+          ]
+        }
+      }
+    },
+    {
+      "name": "plano-v4-versionado",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "intake lock",
+          "Telegram no inicio",
+          "Classificador deterministico antes da IA",
+          "Gate de auto-apply"
+        ]
+      }
+    }
+  ]
+}

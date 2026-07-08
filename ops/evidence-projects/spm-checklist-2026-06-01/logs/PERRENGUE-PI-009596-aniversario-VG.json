@@ -1,0 +1,460 @@
+{
+  "summary": {
+    "label": "PERRENGUE-PI-009596-aniversario-VG",
+    "insertionId": 1256,
+    "piCodigo": "PI 009596 - PREF VG",
+    "siteSigla": "PERRENGUE",
+    "periodoInicio": "2026-05-01",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "aguardando_publicacao",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 31,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-009596-aniversario-VG",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-009596-aniversario-VG.zip",
+    "checkedAt": "2026-06-01T09:36:57.915Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-01",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-01_MEGA_TOPO.png?v=1777738990370"
+      },
+      {
+        "date": "2026-05-02",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-02_MEGA_TOPO.png?v=1777735796339"
+      },
+      {
+        "date": "2026-05-03",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-03_MEGA_TOPO.png?v=1777831457881"
+      },
+      {
+        "date": "2026-05-04",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-04_MEGA_TOPO.png?v=1777924857786"
+      },
+      {
+        "date": "2026-05-05",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-05_MEGA_TOPO.png?v=1778004309999"
+      },
+      {
+        "date": "2026-05-06",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-06_MEGA_TOPO.png?v=1778090692531"
+      },
+      {
+        "date": "2026-05-07",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-07_MEGA_TOPO.png?v=1778177168719"
+      },
+      {
+        "date": "2026-05-08",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-08_MEGA_TOPO.png?v=1778277755269"
+      },
+      {
+        "date": "2026-05-09",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-09_MEGA_TOPO.png?v=1778364170967"
+      },
+      {
+        "date": "2026-05-10",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-10_MEGA_TOPO.png?v=1778517408914"
+      },
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-11_MEGA_TOPO.png?v=1778516731562"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-12_MEGA_TOPO.png?v=1778628386992"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-13_MEGA_TOPO.png?v=1778702547151"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-14_MEGA_TOPO.png?v=1778788862172"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-15_MEGA_TOPO.png?v=1778868202217"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-16_MEGA_TOPO.png?v=1778954578169"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-17_MEGA_TOPO.png?v=1779040945724"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-19_MEGA_TOPO.png?v=1779213700615"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-20_MEGA_TOPO.png?v=1779300080287"
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-21_MEGA_TOPO.png?v=1779386495947"
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-22_MEGA_TOPO.png?v=1779480102299"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-23_MEGA_TOPO.png?v=1779566456657"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-24_MEGA_TOPO.png?v=1779652960810"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-25_MEGA_TOPO.png?v=1779739310587"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-26_MEGA_TOPO.png?v=1779818460959"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-27_MEGA_TOPO.png?v=1779904869354"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-28_MEGA_TOPO.png?v=1779991285534"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-29_MEGA_TOPO.png?v=1780092130535"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-30_MEGA_TOPO.png?v=1780164079606"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-31_MEGA_TOPO.png?v=1780257661342"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-01",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-01_MEGA_TOPO.png?v=1777738990370"
+      },
+      {
+        "date": "2026-05-02",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-02_MEGA_TOPO.png?v=1777735796339"
+      },
+      {
+        "date": "2026-05-03",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-03_MEGA_TOPO.png?v=1777831457881"
+      },
+      {
+        "date": "2026-05-04",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-04_MEGA_TOPO.png?v=1777924857786"
+      },
+      {
+        "date": "2026-05-05",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-05_MEGA_TOPO.png?v=1778004309999"
+      },
+      {
+        "date": "2026-05-06",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-06_MEGA_TOPO.png?v=1778090692531"
+      },
+      {
+        "date": "2026-05-07",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-07_MEGA_TOPO.png?v=1778177168719"
+      },
+      {
+        "date": "2026-05-08",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-08_MEGA_TOPO.png?v=1778277755269"
+      },
+      {
+        "date": "2026-05-09",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-09_MEGA_TOPO.png?v=1778364170967"
+      },
+      {
+        "date": "2026-05-10",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-10_MEGA_TOPO.png?v=1778517408914"
+      },
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-11_MEGA_TOPO.png?v=1778516731562"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-12_MEGA_TOPO.png?v=1778628386992"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-13_MEGA_TOPO.png?v=1778702547151"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-14_MEGA_TOPO.png?v=1778788862172"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-15_MEGA_TOPO.png?v=1778868202217"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-16_MEGA_TOPO.png?v=1778954578169"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-17_MEGA_TOPO.png?v=1779040945724"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-18_MEGA_TOPO.png?v=1780306404078"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-19_MEGA_TOPO.png?v=1779213700615"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-20_MEGA_TOPO.png?v=1779300080287"
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-21_MEGA_TOPO.png?v=1779386495947"
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-22_MEGA_TOPO.png?v=1779480102299"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-23_MEGA_TOPO.png?v=1779566456657"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-24_MEGA_TOPO.png?v=1779652960810"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-25_MEGA_TOPO.png?v=1779739310587"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-26_MEGA_TOPO.png?v=1779818460959"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-27_MEGA_TOPO.png?v=1779904869354"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-28_MEGA_TOPO.png?v=1779991285534"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-29_MEGA_TOPO.png?v=1780092130535"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-30_MEGA_TOPO.png?v=1780164079606"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/860/1256/PERRENGUE_ANIVERSARIO_PREFEITURADE_PI009596_2026-05-31_MEGA_TOPO.png?v=1780257661342"
+      }
+    ]
+  }
+}

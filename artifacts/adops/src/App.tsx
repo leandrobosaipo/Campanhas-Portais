@@ -9,6 +9,10 @@ import { NewCampaign } from "@/pages/NewCampaign";
 import { CampaignDetail } from "@/pages/CampaignDetail";
 import { Insertions } from "@/pages/Insertions";
 import { InsertionDetail } from "@/pages/InsertionDetail";
+import { Settings } from "@/pages/Settings";
+import { SyncCenter } from "@/pages/SyncCenter";
+import { CaptureAuditQueue } from "@/pages/CaptureAuditQueue";
+import { CaptureConfig } from "@/pages/CaptureConfig";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -28,6 +32,10 @@ function Router() {
         <Route path="/campanhas/nova" component={NewCampaign} />
         <Route path="/campanhas/:id" component={CampaignDetail} />
         <Route path="/campanhas" component={Campaigns} />
+        <Route path="/sincronizacao" component={SyncCenter} />
+        <Route path="/auditoria-prints" component={CaptureAuditQueue} />
+        <Route path="/captura-config" component={CaptureConfig} />
+        <Route path="/configuracoes" component={Settings} />
         <Route path="/insercoes/:id" component={InsertionDetail} />
         <Route path="/insercoes" component={Insertions} />
         <Route component={NotFound} />

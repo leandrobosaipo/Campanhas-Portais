@@ -1,0 +1,166 @@
+{
+  "summary": {
+    "label": "PERRENGUE-PI-89742-IPTU",
+    "insertionId": 1327,
+    "piCodigo": "PI 89742",
+    "siteSigla": "PERRENGUE",
+    "periodoInicio": "2026-05-11",
+    "periodoFim": "2026-05-20",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "em_veiculacao",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 10,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-89742-IPTU",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-89742-IPTU.zip",
+    "checkedAt": "2026-06-01T09:38:00.009Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-11_MEGA_TOPO.png?v=1778554528965"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-12_MEGA_TOPO.png?v=1778628528030"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-13_MEGA_TOPO.png?v=1778702890307"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-14_MEGA_TOPO.png?v=1778789152721"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-15_MEGA_TOPO.png?v=1779587472248"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-16_MEGA_TOPO.png?v=1778961802949"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-17_MEGA_TOPO.png?v=1779041103383"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-18_MEGA_TOPO.png?v=1779587506376"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-19_MEGA_TOPO.png?v=1779213816483"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-20_MEGA_TOPO.png?v=1779300199870"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-11_MEGA_TOPO.png?v=1778554528965"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-12_MEGA_TOPO.png?v=1778628528030"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-13_MEGA_TOPO.png?v=1778702890307"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-14_MEGA_TOPO.png?v=1778789152721"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-15_MEGA_TOPO.png?v=1779587472248"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-16_MEGA_TOPO.png?v=1778961802949"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-17_MEGA_TOPO.png?v=1779041103383"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-18_MEGA_TOPO.png?v=1779587506376"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-19_MEGA_TOPO.png?v=1779213816483"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/871/1327/PERRENGUE_IPTU2026PRORROGACAO_PREFEITURADE_PI89742_2026-05-20_MEGA_TOPO.png?v=1779300199870"
+      }
+    ]
+  }
+}

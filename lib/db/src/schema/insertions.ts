@@ -18,6 +18,7 @@ export const insertionsTable = pgTable("insertions", {
   processoEnviadoAgencia: boolean("processo_enviado_agencia").notNull().default(false),
   docsEnviados: boolean("docs_enviados").notNull().default(false),
   dataEnvioAgencia: text("data_envio_agencia"),
+  mediaUrl: text("media_url"),
   atrasado: boolean("atrasado").notNull().default(false),
   observacoes: text("observacoes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

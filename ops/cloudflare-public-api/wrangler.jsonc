@@ -1,0 +1,32 @@
+{
+  "name": "adops-api-public",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-13",
+  "workers_dev": true,
+  "triggers": {
+    "crons": ["0 22 * * *"]
+  },
+  "vars": {
+    "PRIVATE_ADOPS_API_BASE_URL": "http://adops-api.173.212.225.231.sslip.io:4011"
+  },
+  "d1_databases": [
+    {
+      "binding": "adops_ops",
+      "database_name": "adops-ops",
+      "database_id": "79b19c82-924b-4d90-8d33-f5d26aa2753d"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "queue": "adops-ops-queue",
+        "binding": "adops_ops_queue"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "adops-ops-queue"
+      }
+    ]
+  }
+}

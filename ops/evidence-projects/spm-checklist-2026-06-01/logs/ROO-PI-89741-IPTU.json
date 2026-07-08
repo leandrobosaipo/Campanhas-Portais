@@ -1,0 +1,166 @@
+{
+  "summary": {
+    "label": "ROO-PI-89741-IPTU",
+    "insertionId": 1264,
+    "piCodigo": "PI 89741",
+    "siteSigla": "ROO",
+    "periodoInicio": "2026-05-11",
+    "periodoFim": "2026-05-20",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "em_veiculacao",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 10,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/ROO-PI-89741-IPTU",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/ROO-PI-89741-IPTU.zip",
+    "checkedAt": "2026-06-01T09:32:15.804Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-11_MEGA_TOPO.png?v=1778538934569"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-12_MEGA_TOPO.png?v=1778552506558"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-13_MEGA_TOPO.png?v=1778702672195"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-14_MEGA_TOPO.png?v=1778788955683"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-15_MEGA_TOPO.png?v=1778868322739"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-16_MEGA_TOPO.png?v=1778961725525"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-17_MEGA_TOPO.png?v=1779040987874"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-19_MEGA_TOPO.png?v=1779213751764"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-20_MEGA_TOPO.png?v=1779300126020"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-11",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-11_MEGA_TOPO.png?v=1778538934569"
+      },
+      {
+        "date": "2026-05-12",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-12_MEGA_TOPO.png?v=1778552506558"
+      },
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-13_MEGA_TOPO.png?v=1778702672195"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-14_MEGA_TOPO.png?v=1778788955683"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-15_MEGA_TOPO.png?v=1778868322739"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-16_MEGA_TOPO.png?v=1778961725525"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-17_MEGA_TOPO.png?v=1779040987874"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-18_MEGA_TOPO.png?v=1780306241959"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-19_MEGA_TOPO.png?v=1779213751764"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/862/1264/ROO_IPTU2026PRORROGACAO_PREFEITURADE_PI89741_2026-05-20_MEGA_TOPO.png?v=1779300126020"
+      }
+    ]
+  }
+}

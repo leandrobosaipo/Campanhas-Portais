@@ -1,0 +1,256 @@
+{
+  "summary": {
+    "label": "AFL-PI-14354-feminicidio",
+    "insertionId": 1342,
+    "piCodigo": "PI 14354- GOV",
+    "siteSigla": "AFL",
+    "periodoInicio": "2026-05-13",
+    "periodoFim": "2026-05-30",
+    "targetDate": "2026-05-30",
+    "evidenceCount": 18,
+    "zipPath": "/Users/leandrobosaipo/Downloads/AFL-PI-14354-feminicidio.zip",
+    "telegramEvidenceMessages": [],
+    "telegramMessageId": null,
+    "checkedAt": "2026-05-30T13:07:44.897Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-13_MEGA_TOPO.png?v=1779582012685"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-14_MEGA_TOPO.png?v=1779582043613"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-15_MEGA_TOPO.png?v=1779582075207"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-16_MEGA_TOPO.png?v=1779582106416"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-17_MEGA_TOPO.png?v=1779582137790"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-18_MEGA_TOPO.png?v=1779582168484"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-19_MEGA_TOPO.png?v=1779582199557"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-20_MEGA_TOPO.png?v=1779582231406"
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-21_MEGA_TOPO.png?v=1779582267720"
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-22_MEGA_TOPO.png?v=1779582303922"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-23_MEGA_TOPO.png?v=1779583303835"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-24_MEGA_TOPO.png?v=1779660480253"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-25_MEGA_TOPO.png?v=1780141740189"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-26_MEGA_TOPO.png?v=1779818603418"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-27_MEGA_TOPO.png?v=1779905025761"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-28_MEGA_TOPO.png?v=1780005724653"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-29_MEGA_TOPO.png?v=1780092297797"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/876/1342/AFL_FEMINICIDIO_GOVMT_PI14354_2026-05-30_MEGA_TOPO.png?v=1780141471821"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "apiBase": "https://adops-api.codigo5.com.br",
+  "expectedRunnerId": "runner-1",
+  "eventId": "drive:cod5synthetic1780607264723:2026-06-04T21:07:44.722Z",
+  "jobId": "dcb1d6ae-ecad-4ecb-90f6-f0ae3fd7537a",
+  "duplicate": true,
+  "status": "completed",
+  "stageKey": "needs_review",
+  "runnerId": "runner-1",
+  "createdAt": "2026-06-04T21:07:57.149Z"
+}

@@ -7,6 +7,11 @@ import campaignsRouter from "./campaigns";
 import insertionsRouter from "./insertions";
 import evidencesRouter from "./evidences";
 import dashboardRouter from "./dashboard";
+import syncRouter from "./sync";
+import captureRulesRouter from "./capture-rules";
+import auditChecklistsRouter from "./audit-checklists";
+import campaignOperationsRouter from "./campaign-operations";
+import opsRouter from "./ops";
 
 const router: IRouter = Router();
 
@@ -18,5 +23,10 @@ router.use(campaignsRouter);
 router.use(insertionsRouter);
 router.use(evidencesRouter);
 router.use(dashboardRouter);
+router.use(syncRouter);
+router.use(captureRulesRouter);
+router.use(auditChecklistsRouter);
+router.use(campaignOperationsRouter);
+router.use(opsRouter);
 
 export default router;

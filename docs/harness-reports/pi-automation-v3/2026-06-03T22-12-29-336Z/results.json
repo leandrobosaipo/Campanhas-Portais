@@ -1,0 +1,161 @@
+{
+  "ok": true,
+  "generatedAt": "2026-06-03T22:12:29.342Z",
+  "reportDir": "/Users/leandrobosaipo/Projetos/AdOps/docs/harness-reports/pi-automation-v3/2026-06-03T22-12-29-336Z",
+  "results": [
+    {
+      "name": "docs-v3-existem",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "docs": [
+          "docs/README.md",
+          "docs/adops/pi-automation-v3/prd.md",
+          "docs/adops/pi-automation-v3/blueprint.md",
+          "docs/adops/pi-automation-v3/sdd.md",
+          "docs/adops/pi-automation-v3/spec.md",
+          "docs/adops/pi-automation-v3/harness.md",
+          "docs/adops/pi-automation-v3/tests.md",
+          "docs/adops/pi-automation-v3/playbook.md",
+          "docs/adops/pi-automation-v3/runbook.md",
+          "docs/adops/pi-automation-v3/prompts.md",
+          "docs/adops/pi-automation-v3/spm-agent-knowledge.md"
+        ]
+      }
+    },
+    {
+      "name": "hub-aponta-para-v3",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "ok": true
+      }
+    },
+    {
+      "name": "hierarquia-de-fonte-v3",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "PDF/e-mail",
+          "Pasta Drive",
+          "Planilha",
+          "AdOps",
+          "AdRotate",
+          "WhatsApp"
+        ]
+      }
+    },
+    {
+      "name": "gif-capture-only-no-capturador",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "captureOnlyFallbackAllowed",
+          "captureOnlyCandidate",
+          "originalGifUrl",
+          "frameSelectionReason",
+          "syntheticHoldMs",
+          "capture_only_short_frame_sequence",
+          "no_capture_only_gif_frame"
+        ]
+      }
+    },
+    {
+      "name": "testes-registrados",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "gifTest": "node ./src/test-gif-capture-only-short-frames.mjs",
+        "harness": "node ./src/harness-pi-automation-v3.mjs"
+      }
+    },
+    {
+      "name": "drive-worker-runner-guardrails",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "ok": true
+      }
+    },
+    {
+      "name": "prompt-ia-controla-somente-analise",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "ADOPS_PI_AGENT_AUTO_APPLY",
+          "confidence",
+          "source",
+          "conflicts",
+          "missingFields",
+          "Nunca chamar API de mutacao"
+        ]
+      }
+    },
+    {
+      "name": "conhecimento-spm-versionado",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "Papel do agente",
+          "Campos criticos",
+          "Regras de seguranca",
+          "Scripts deterministas"
+        ]
+      }
+    },
+    {
+      "name": "agent-guardrails-no-runner",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "ADOPS_PI_AGENT_MIN_CONFIDENCE",
+          "collectAgentQualityIssues",
+          "citacao ausente",
+          "confianca abaixo do minimo",
+          "agentQuality",
+          "AbortSignal.timeout"
+        ]
+      }
+    },
+    {
+      "name": "stack-expõe-configs-agent",
+      "ok": true,
+      "durationMs": 1,
+      "data": {
+        "markers": [
+          "OPENAI_API_KEY",
+          "ADOPS_PI_AGENT_ENABLED",
+          "ADOPS_PI_AGENT_AUTO_APPLY",
+          "ADOPS_PI_AGENT_MODEL",
+          "ADOPS_PI_AGENT_MIN_CONFIDENCE",
+          "ADOPS_PI_AGENT_KNOWLEDGE_FILE"
+        ]
+      }
+    },
+    {
+      "name": "matriz-cenarios-readonly",
+      "ok": true,
+      "durationMs": 0,
+      "data": {
+        "markers": [
+          "Drive com pasta completa",
+          "Drive com pasta vazia",
+          "WhatsApp com anexo local",
+          "E-mail com PDF/anexo simulado",
+          "Planilha com linha ja existente",
+          "AdRotate com anuncio ja publicado",
+          "PI duplicada",
+          "GIF com muitos frames curtos",
+          "Read-only",
+          "Drive com PI completa analisada por agente IA",
+          "Drive com PI incompleta bloqueada"
+        ]
+      }
+    }
+  ]
+}

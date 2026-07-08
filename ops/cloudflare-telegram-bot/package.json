@@ -1,0 +1,15 @@
+{
+  "name": "adops-cloudflare-telegram-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "bash ./scripts/deploy-and-configure.sh",
+    "deploy:raw": "wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2",
+    "wrangler": "^4.82.2"
+  }
+}

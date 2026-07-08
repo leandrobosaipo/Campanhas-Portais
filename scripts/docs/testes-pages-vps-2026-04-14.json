@@ -1,0 +1,100 @@
+{
+  "generatedAt": "2026-04-14T15:52:37.104Z",
+  "baseUrl": "https://adops-campanhas-portais.pages.dev",
+  "apiBase": "https://adops-api-public.leandro471.workers.dev",
+  "total": 18,
+  "passed": 6,
+  "failed": 12,
+  "results": [
+    {
+      "name": "Health da API pública",
+      "status": "passed",
+      "detail": "cloudflare-public-live-proxy"
+    },
+    {
+      "name": "Dashboard carrega métricas",
+      "status": "failed",
+      "detail": "locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('Resumo operacional') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Dashboard mostra token de operador",
+      "status": "failed",
+      "detail": "locator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByPlaceholder('Cole o token de operador') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Campanhas carrega listagem",
+      "status": "failed",
+      "detail": "locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('DENGUE') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Filtro de campanhas funciona",
+      "status": "failed",
+      "detail": "DENGUE não ficou visível após filtro"
+    },
+    {
+      "name": "Detalhe da campanha 840 carrega",
+      "status": "failed",
+      "detail": "locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('Campanha #840') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Inserções carrega listagem",
+      "status": "passed",
+      "detail": "inserções ok"
+    },
+    {
+      "name": "Filtro de inserções funciona",
+      "status": "passed",
+      "detail": "filtro ok"
+    },
+    {
+      "name": "Detalhe da inserção 857 carrega",
+      "status": "passed",
+      "detail": "inserção 857 ok"
+    },
+    {
+      "name": "Sincronização carrega jobs operacionais",
+      "status": "passed",
+      "detail": "sync center ok"
+    },
+    {
+      "name": "Fila de falhas carrega",
+      "status": "passed",
+      "detail": "auditoria acessível"
+    },
+    {
+      "name": "Configurações carrega",
+      "status": "failed",
+      "detail": "locator.waitFor: Error: strict mode violation: getByText('Configurações') resolved to 2 elements:\n    1) <a href=\"/configuracoes\" class=\"flex items-center gap-2.5 px-2.5 py-2 rounded text-sm transition-colors bg-sidebar-primary text-sidebar-primary-foreground font-semibold\">…</a> aka getByRole('link', { name: 'Configurações' })\n    2) <h1 class=\"text-lg font-bold text-foreground tracking-tight\">Configurações</h1> aka getByRole('heading', { name: 'Configurações' })\n\nCall log:\n\u001b[2m  - waiting for getByText('Configurações') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Nova campanha carrega",
+      "status": "failed",
+      "detail": "locator.waitFor: Error: strict mode violation: getByText('Nova campanha') resolved to 2 elements:\n    1) <a href=\"/campanhas/nova\" class=\"flex items-center gap-2 px-2.5 py-2 text-sm text-primary hover:bg-sidebar-accent rounded transition-colors font-medium\">…</a> aka getByRole('link', { name: 'Nova Campanha' })\n    2) <h1 class=\"text-lg font-bold text-foreground tracking-tight\">Nova Campanha</h1> aka getByRole('heading', { name: 'Nova Campanha' })\n\nCall log:\n\u001b[2m  - waiting for getByText('Nova campanha') to be visible\u001b[22m\n"
+    },
+    {
+      "name": "Dashboard > Prints do dia chama endpoint protegido",
+      "status": "failed",
+      "detail": "page.waitForTimeout: Target page, context or browser has been closed"
+    },
+    {
+      "name": "Dashboard > Retroativos vencidos chama endpoint protegido",
+      "status": "failed",
+      "detail": "page.goto: Target page, context or browser has been closed"
+    },
+    {
+      "name": "Sincronização > Aplicar sync chama endpoint protegido",
+      "status": "failed",
+      "detail": "page.goto: Target page, context or browser has been closed"
+    },
+    {
+      "name": "Inserção > Retroativos vencidos chama preview e job",
+      "status": "failed",
+      "detail": "page.goto: Target page, context or browser has been closed"
+    },
+    {
+      "name": "Inserção > ZIP acessível pela API pública",
+      "status": "failed",
+      "detail": "apiRequestContext.get: Target page, context or browser has been closed"
+    }
+  ]
+}
