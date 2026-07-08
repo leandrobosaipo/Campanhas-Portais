@@ -71,6 +71,7 @@ export type CurrentSheetCampaignResult = {
   date: string;
   sheetName: string;
   rows: CurrentSheetCampaignRow[];
+  upcomingRows: CurrentSheetCampaignRow[];
   source: {
     exportUrl: string;
     downloadedAt: string;
@@ -267,9 +268,13 @@ export async function loadCurrentSheetCampaigns(options: {
   date?: string;
   exportUrl?: string;
   siteSigla?: string | null;
+  includeUpcoming?: boolean;
+  upcomingDays?: number;
 } = {}): Promise<CurrentSheetCampaignResult> {
   const targetDate = options.date ?? todayInCuiaba();
   const expectedSheet = currentSheetNameForDate(targetDate);
+  const upcomingDays = Math.max(0, Math.min(options.upcomingDays ?? 45, 370));
+  const upcomingLimit = addDays(targetDate, upcomingDays);
   const exportUrl = options.exportUrl ?? process.env.PLANILHA_XLSX_URL ?? DEFAULT_EXPORT_URL;
   const response = await fetch(exportUrl);
   if (!response.ok) throw new Error(`Falha ao baixar planilha: HTTP ${response.status}`);
@@ -282,6 +287,7 @@ export async function loadCurrentSheetCampaigns(options: {
   const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, blankrows: false, raw: false }).map(rowToStrings);
 
   const parsedRows: CurrentSheetCampaignRow[] = [];
+  const upcomingRows: CurrentSheetCampaignRow[] = [];
   let siteRowCells: string[] | null = null;
   let blockStarts: number[] = [];
   let blockSites: Array<string | null> = [];
@@ -333,9 +339,8 @@ export async function loadCurrentSheetCampaigns(options: {
 
       const parsedPeriod = parsePeriodo(periodoOriginal, sheetName);
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;
-      if (!(parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate)) return;
 
-      parsedRows.push({
+      const parsedRow: CurrentSheetCampaignRow = {
         version: CAMPAIGN_SHEET_VERSION,
         sheetName,
         blockSite: site,
@@ -352,7 +357,13 @@ export async function loadCurrentSheetCampaigns(options: {
         processoRealizado,
         processoEnviado,
         dataEnvioAgencia,
-      });
+      };
+
+      if (parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
+        parsedRows.push(parsedRow);
+      } else if (options.includeUpcoming && parsedPeriod.inicio > targetDate && parsedPeriod.inicio <= upcomingLimit) {
+        upcomingRows.push(parsedRow);
+      }
     });
   }
 
@@ -361,11 +372,19 @@ export async function loadCurrentSheetCampaigns(options: {
     date: targetDate,
     sheetName,
     rows: parsedRows,
+    upcomingRows,
     source: {
       exportUrl,
       downloadedAt: new Date().toISOString(),
     },
   };
+}
+
+function addDays(dateKey: string, days: number) {
+  const parsed = parseDateOnly(dateKey);
+  if (!parsed) throw new Error(`Data inválida: ${dateKey}`);
+  const date = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day + days, 12));
+  return date.toISOString().slice(0, 10);
 }
 
 export function extractPiDigits(value: string | null | undefined) {

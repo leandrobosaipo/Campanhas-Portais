@@ -15,6 +15,11 @@ Parâmetros:
 - `refreshDrive=true|false`: quando `true`, tenta consultar Google Drive ao vivo. Padrão: `false`.
 - `includeEvidence=true|false`: quando `false`, não valida evidências por data. Padrão: `true`.
 
+A resposta sempre separa:
+
+- `items`: campanhas ativas na data consultada;
+- `upcomingItems`: campanhas da mesma aba que ainda vão entrar no ar, com início posterior à data consultada e horizonte padrão de 45 dias.
+
 Exemplos:
 
 ```bash
@@ -32,6 +37,7 @@ curl -fsSL "https://adops-api.codigo5.com.br/api/campaign-operations/active?date
 - Cada bloco começa no cabeçalho `PEÇA: (PI + CLIENTE)`.
 - O nome do portal pode estar acima do cabeçalho, na mesma coluna ou deslocado.
 - A linha entra no resultado quando o período contém a data consultada.
+- Linhas futuras entram em `upcomingItems` quando o início está dentro do horizonte da consulta.
 
 ## Regra de Drive
 
@@ -97,6 +103,41 @@ Exemplo:
 ```
 
 Use a ação sugerida somente depois de revisar `blockingIssues`.
+
+## Campanhas futuras
+
+`upcomingItems` usa a mesma base de dados da planilha e também cruza Drive e AdOps, mas não valida evidência, porque print só é exigível quando a campanha entra no período.
+
+Campos principais:
+
+```json
+{
+  "siteSigla": "PERRENGUE",
+  "piCodigo": "PI 000000",
+  "campaignName": "CAMPANHA",
+  "period": {
+    "start": "2026-07-20",
+    "end": "2026-07-30",
+    "original": "20/07-30/07"
+  },
+  "format": {
+    "sheet": "TOPO",
+    "adops": null,
+    "normalized": "TOPO"
+  },
+  "drive": {
+    "status": "found",
+    "mediaFiles": []
+  },
+  "adops": {
+    "status": "missing"
+  },
+  "requiredActions": [
+    "create_campaign_or_insertion",
+    "publish_on_site"
+  ]
+}
+```
 
 ## Caso de aceite: 08/07/2026
 

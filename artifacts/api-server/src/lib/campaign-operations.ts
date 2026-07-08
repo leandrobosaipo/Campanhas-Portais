@@ -123,6 +123,42 @@ export type CampaignOperationItem = {
   suggestedJobs: SuggestedJob[];
 };
 
+export type CampaignOperationUpcomingItem = {
+  version: typeof CAMPAIGN_OPERATIONS_VERSION;
+  siteSigla: string;
+  piCodigo: string;
+  campaignName: string;
+  period: {
+    start: string | null;
+    end: string | null;
+    original: string;
+  };
+  format: {
+    sheet: string;
+    adops: string | null;
+    normalized: string;
+  };
+  sheetSource: {
+    sheetName: string;
+    blockSite: string;
+    rowNumber: number;
+  };
+  drive: DriveCampaignMediaMatch & {
+    mediaMatchesFormat: boolean;
+  };
+  adops: {
+    status: "missing" | "matched" | "ambiguous";
+    campaignId: number | null;
+    insertionId: number | null;
+    mediaUrl: string | null;
+    bannerPublicadoNoSite: boolean | null;
+    statusNormalizado: string | null;
+    matchedBy: "pi_site" | "none";
+  };
+  requiredActions: RequiredAction[];
+  blockingIssues: string[];
+};
+
 export type CampaignOperationsActiveResult = {
   version: typeof CAMPAIGN_OPERATIONS_VERSION;
   date: string;
@@ -138,8 +174,10 @@ export type CampaignOperationsActiveResult = {
     needsPublication: number;
     needsEvidence: number;
     hasDivergence: number;
+    upcomingInSheet: number;
   };
   items: CampaignOperationItem[];
+  upcomingItems: CampaignOperationUpcomingItem[];
 };
 
 function eachIsoDay(start: string | null, end: string | null) {
@@ -328,7 +366,7 @@ export async function getActiveCampaignOperations(options: {
   const date = options.date ?? todayInCuiaba();
   const includeEvidence = options.includeEvidence !== false;
   const [sheet, insertions] = await Promise.all([
-    loadCurrentSheetCampaigns({ date, siteSigla: options.siteSigla ?? null }),
+    loadCurrentSheetCampaigns({ date, siteSigla: options.siteSigla ?? null, includeUpcoming: true }),
     loadEnrichedInsertions(),
   ]);
 
@@ -422,6 +460,77 @@ export async function getActiveCampaignOperations(options: {
     });
   }
 
+  const upcomingItems: CampaignOperationUpcomingItem[] = [];
+  for (const row of sheet.upcomingRows) {
+    const matches = findAdopsMatches(row, insertions);
+    const insertion = matches.length === 1 ? matches[0]! : null;
+    const drive = await findDriveCampaignMedia({
+      siteSigla: row.blockSite,
+      piCodigo: row.piCodigo,
+      campaignName: row.campaignName,
+      refreshDrive: options.refreshDrive === true,
+    });
+    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const requiredActions: RequiredAction[] = [];
+    const blockingIssues: string[] = [];
+
+    if (!insertion) requiredActions.push("create_campaign_or_insertion");
+    if (matches.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal.");
+    if (drive.status === "not_found" || drive.status === "unavailable") requiredActions.push("locate_or_upload_media");
+    if (drive.status === "ambiguous") {
+      requiredActions.push("review_drive_ambiguity");
+      blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
+    }
+    if (drive.mediaFiles.length && !mediaMatchesFormat) {
+      requiredActions.push("locate_or_upload_media");
+      blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
+    }
+    if (insertion && !insertion.mediaUrl) requiredActions.push("locate_or_upload_media");
+    if (!insertion || insertion.bannerPublicadoNoSite !== true) requiredActions.push("publish_on_site");
+
+    const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
+    const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
+    if (periodDivergent) requiredActions.push("review_period_divergence");
+    if (formatDivergent) requiredActions.push("review_format_divergence");
+
+    upcomingItems.push({
+      version: CAMPAIGN_OPERATIONS_VERSION,
+      siteSigla: row.blockSite,
+      piCodigo: row.piCodigo,
+      campaignName: row.campaignName,
+      period: {
+        start: row.periodoInicio,
+        end: row.periodoFim,
+        original: row.periodoOriginal,
+      },
+      format: {
+        sheet: row.localFormato,
+        adops: insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? null,
+        normalized: row.localFormatoNormalizado,
+      },
+      sheetSource: {
+        sheetName: row.sheetName,
+        blockSite: row.blockSite,
+        rowNumber: row.rowNumber,
+      },
+      drive: {
+        ...drive,
+        mediaMatchesFormat,
+      },
+      adops: {
+        status: matches.length === 0 ? "missing" : matches.length === 1 ? "matched" : "ambiguous",
+        campaignId: insertion?.campanhaId ?? null,
+        insertionId: insertion?.id ?? null,
+        mediaUrl: insertion?.mediaUrl ?? null,
+        bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
+        statusNormalizado: insertion?.statusNormalizado ?? null,
+        matchedBy: insertion ? "pi_site" : "none",
+      },
+      requiredActions: unique(requiredActions),
+      blockingIssues,
+    });
+  }
+
   return {
     version: CAMPAIGN_OPERATIONS_VERSION,
     date,
@@ -437,7 +546,9 @@ export async function getActiveCampaignOperations(options: {
       needsPublication: items.filter((item) => item.requiredActions.includes("publish_on_site")).length,
       needsEvidence: items.filter((item) => item.requiredActions.includes("generate_evidence")).length,
       hasDivergence: items.filter((item) => item.requiredActions.includes("review_period_divergence") || item.requiredActions.includes("review_format_divergence") || item.blockingIssues.length > 0).length,
+      upcomingInSheet: upcomingItems.length,
     },
     items,
+    upcomingItems,
   };
 }
