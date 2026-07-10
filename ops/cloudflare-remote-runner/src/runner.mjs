@@ -715,7 +715,7 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
       continue;
     }
     try {
-      await updateDrivePiState(payload, "compressing_video", {
+      await updateDrivePiState(payload, "packaging", {
         parseRun: {
           fields: {
             piCodigo: fields.piCodigo,
@@ -736,7 +736,7 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
         sourceName: archivedVideo.sourceName,
         idempotencyKey: buildVideoCompressorIdempotencyKey(payload, selected.mediaItem || observed.link, raw, fields),
       });
-      await updateDrivePiState(payload, "uploading_video", {
+      await updateDrivePiState(payload, "packaging", {
         parseRun: {
           fields: {
             piCodigo: fields.piCodigo,
@@ -1409,8 +1409,11 @@ function parseGoogleDriveFileId(value) {
 
 function mediaKindFromUrl(url, surroundingText = "") {
   const value = `${url} ${surroundingText}`;
-  if (/\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(url) || /\b(video|vt|download do video)\b/i.test(value)) return "video";
-  if (/\.(gif|png|jpe?g|webp)(?:[?#]|$)/i.test(url) || /\b(banner|arte|imagem|gif)\b/i.test(value)) return "image";
+  if (/\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(url)) return "video";
+  if (/\.(gif|png|jpe?g|webp)(?:[?#]|$)/i.test(url)) return "image";
+  if (/\b(direcion(?:ar|amento)|destino|landing|clique|saiba mais)\b/i.test(surroundingText)) return "unknown";
+  if (/\b(video|vt|download do video)\b/i.test(value)) return "video";
+  if (/\b(banner|arte|imagem|gif)\b/i.test(value)) return "image";
   return "unknown";
 }
 

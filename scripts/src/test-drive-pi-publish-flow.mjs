@@ -33,6 +33,8 @@ const links = runner.extractUrlsFromText(`Banner: https://cdn.example.com/banner
 assert.deepEqual(links, ["https://cdn.example.com/banner.gif", "https://files.example.com/vt.mp4"]);
 assert.equal(runner.mediaKindFromUrl(links[0]), "image");
 assert.equal(runner.mediaKindFromUrl(links[1]), "video");
+assert.equal(runner.mediaKindFromUrl("https://refis.example.com/", "Favor direcionar o banner para este link"), "unknown");
+assert.equal(runner.mediaKindFromUrl("https://cdn.example.com/banner.gif", "Link de direcionamento"), "image");
 assert.deepEqual(
   runner.extractMediaLinksFromText(`Banner: https://cdn.example.com/download\nDestino: https://cliente.example.com/landing\nVideo: https://files.example.com/download`),
   [
