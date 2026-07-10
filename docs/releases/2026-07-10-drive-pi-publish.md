@@ -30,7 +30,8 @@ campanhas vindas da planilha e de pastas do Google Drive.
 3. Campanhas futuras devem ser verificadas pelo anuncio administrativo,
    `adId`, `groupId` e periodo. Ausencia no HTML antes do inicio e correta.
 4. Em grupo com rotacao, uma unica resposta da home nao comprova ausencia.
-   Use a URL de verificacao do job e a captura individual.
+   Use a URL de verificacao do job e a captura individual. Evidencia aprovada
+   prevalece sobre uma amostra aleatoria do grupo no diagnostico consolidado.
 5. No PMT, publicar no WordPress nao basta: o rebuild headless precisa terminar
    com `lastStatus=ok` antes de gerar evidencia.
 6. O runner sincroniza o helper AdRotate canonico antes de publicar para evitar

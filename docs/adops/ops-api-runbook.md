@@ -708,7 +708,9 @@ Observacoes importantes:
   assincrona ou depender da rotacao do grupo.
 - Quando mais de uma campanha ativa ocupa o mesmo grupo, uma unica resposta da
   home nao prova conflito. Validar cada anuncio pelo modo de verificacao do job,
-  pela relacao administrativa e pela evidencia individual.
+  pela relacao administrativa e pela evidencia individual. Se a evidencia
+  individual do periodo estiver aprovada, `campaign-operations/active` nao deve
+  transformar outra resposta aleatoria da rotacao em bloqueio.
 - Arquivo Office `.xlsx` no Drive nao pode ser lido pela Google Sheets API.
   Baixe o arquivo bruto ou use `campaign-operations/active`, que aplica o
   parser canonico da planilha.

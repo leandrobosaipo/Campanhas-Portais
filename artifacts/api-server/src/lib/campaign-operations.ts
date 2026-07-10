@@ -508,7 +508,9 @@ export async function getActiveCampaignOperations(options: {
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
-    const liveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
+    const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
+    // An approved per-insertion proof is stronger than one random response from a rotating group.
+    const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
     if (!insertion) requiredActions.push("create_campaign_or_insertion");
     if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
@@ -603,7 +605,8 @@ export async function getActiveCampaignOperations(options: {
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
-    const liveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
+    // Future ads are intentionally not required to appear in public HTML before their start date.
+    const liveSlotIssues: string[] = [];
 
     if (!insertion) requiredActions.push("create_campaign_or_insertion");
     if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
