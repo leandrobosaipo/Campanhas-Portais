@@ -154,12 +154,18 @@ await check("drive-pi-preflight-preserva-pacote-e-fallback-pi-sem-ia", async () 
   return { ok: true };
 });
 
-await check("compose-volume-monta-credencial-drive-no-runner", async () => {
+await check("compose-volume-isola-credencial-drive-no-monitor", async () => {
   const source = read(portainerVolumeComposePath);
   assertIncludes(source, [
-    "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-/data/secrets/google-drive-service-account.json}",
-    "adops_drive_pi_monitor_data:/data:ro",
-  ], "Compose volume runner Google Drive");
+    "container_name: adops-drive-pi-monitor-stack",
+    "OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh",
+    "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: /data/secrets/google-drive-service-account.json",
+    "adops_drive_pi_monitor_data:/data",
+    "curl -fsS http://127.0.0.1:4012/healthz",
+  ], "Compose volume monitor Google Drive");
+  const generalRunner = source.split("  adops-runner:")[1].split("  adops-drive-pi-monitor:")[0];
+  assert(!generalRunner.includes("GOOGLE_DRIVE_"), "runner geral não pode receber credenciais do Drive");
+  assert(!generalRunner.includes("drive-inventory-refresh"), "runner geral não pode consumir refresh do Drive");
   return { ok: true };
 });
 

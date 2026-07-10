@@ -111,23 +111,8 @@ services:
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,drive-inventory-refresh,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
-      DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
-      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
-      DRIVE_PI_MONITOR_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
-      DRIVE_PI_MONITOR_STATE_FILE: /var/lib/adops/drive-pi-monitor-state.json
-      DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
-      ADOPS_DRIVE_REQUEST_TIMEOUT_MS: ${ADOPS_DRIVE_REQUEST_TIMEOUT_MS:-30000}
-      ADOPS_DRIVE_RETRY_MAX_ATTEMPTS: ${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS:-7}
-      ADOPS_DRIVE_RETRY_BASE_MS: ${ADOPS_DRIVE_RETRY_BASE_MS:-2000}
-      ADOPS_DRIVE_RETRY_MAX_MS: ${ADOPS_DRIVE_RETRY_MAX_MS:-30000}
-      GOOGLE_DRIVE_REFRESH_TOKEN: ${GOOGLE_DRIVE_REFRESH_TOKEN:-}
-      GOOGLE_DRIVE_CLIENT_ID: ${GOOGLE_DRIVE_CLIENT_ID:-}
-      GOOGLE_DRIVE_CLIENT_SECRET: ${GOOGLE_DRIVE_CLIENT_SECRET:-}
-      GOOGLE_DRIVE_ACCESS_TOKEN: ${GOOGLE_DRIVE_ACCESS_TOKEN:-}
-      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:-/data/secrets/google-drive-service-account.json}
-      GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON:-}
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
       COD5_VIDEO_COMPRESSOR_PROFILE: ${COD5_VIDEO_COMPRESSOR_PROFILE:-balanced-720p}
@@ -158,7 +143,90 @@ services:
       - adops_runner_state:/var/lib/adops
       - adops_pnpm_store:/var/lib/adops/.pnpm-store
       - adops_ssh:/root/.ssh:ro
-      - adops_drive_pi_monitor_data:/data:ro
+    networks:
+      - adops_internal
+
+  adops-drive-pi-monitor:
+    image: mcr.microsoft.com/playwright:v1.59.1-noble
+    container_name: adops-drive-pi-monitor-stack
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      adops-api:
+        condition: service_healthy
+    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    environment:
+      TZ: America/Cuiaba
+      DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
+      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
+      PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
+      CAMPANHAS_PORTAIS_ROOT: /app
+      RUNNER_ID: drive-pi-monitor
+      ADOPS_RUNNER_HEALTH_PORT: "4012"
+      OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
+      OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh
+      DRIVE_PI_ARCHIVE_DIR: /data/drive-pi-archive
+      DRIVE_PI_MONITOR_ENABLED: "true"
+      DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
+      DRIVE_PI_MONITOR_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
+      DRIVE_PI_MONITOR_STATE_FILE: /data/drive-pi-monitor-state.json
+      DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
+      ADOPS_DRIVE_REQUEST_TIMEOUT_MS: ${ADOPS_DRIVE_REQUEST_TIMEOUT_MS:-30000}
+      ADOPS_DRIVE_RETRY_MAX_ATTEMPTS: ${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS:-7}
+      ADOPS_DRIVE_RETRY_BASE_MS: ${ADOPS_DRIVE_RETRY_BASE_MS:-2000}
+      ADOPS_DRIVE_RETRY_MAX_MS: ${ADOPS_DRIVE_RETRY_MAX_MS:-30000}
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: /data/secrets/google-drive-service-account.json
+      PORTAINER_URL: ${PORTAINER_URL:-}
+      PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
+      PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-3}
+      ADOPS_PERRENGUE_ADROTATE_EXEC_MODE: ${ADOPS_PERRENGUE_ADROTATE_EXEC_MODE:-portainer}
+      ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID: ${ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID:-3}
+      ADOPS_PERRENGUE_WP_CONTAINER: ${ADOPS_PERRENGUE_WP_CONTAINER:-cod5-pro119-perrenguematogrosso-app}
+      ADOPS_PERRENGUE_CONTAINER_WP_PATH: ${ADOPS_PERRENGUE_CONTAINER_WP_PATH:-/app/web/wp}
+      ADOPS_PERRENGUE_CONTAINER_PHP_BIN: ${ADOPS_PERRENGUE_CONTAINER_PHP_BIN:-php}
+      ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH: ${ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH:-wp}
+      ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE: ${ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE:-true}
+      ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-600000}
+      ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS: ${ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS:-5000}
+      ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
+      ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
+      COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
+      COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
+      COD5_VIDEO_COMPRESSOR_PROFILE: ${COD5_VIDEO_COMPRESSOR_PROFILE:-balanced-720p}
+      DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:-}
+      DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:-}
+      DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
+      DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
+      ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
+      ADOPS_VIDEO_MEDIA_BUCKET: ${ADOPS_VIDEO_MEDIA_BUCKET:-cod5}
+      ADOPS_VIDEO_MEDIA_BASE_PATH: ${ADOPS_VIDEO_MEDIA_BASE_PATH:-adops-media}
+      ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE: ${ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE:-}
+      ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL: ${ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL:-}
+      ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE: ${ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE:-}
+      ADOPS_MEDIA_MAX_BYTES: ${ADOPS_MEDIA_MAX_BYTES:-268435456}
+      ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ADOPS_PI_AGENT_ENABLED: ${ADOPS_PI_AGENT_ENABLED:-true}
+      ADOPS_PI_AGENT_AUTO_APPLY: ${ADOPS_PI_AGENT_AUTO_APPLY:-false}
+      ADOPS_PI_AGENT_MODEL: ${ADOPS_PI_AGENT_MODEL:-gpt-4.1-mini}
+      ADOPS_PI_AGENT_MIN_CONFIDENCE: ${ADOPS_PI_AGENT_MIN_CONFIDENCE:-0.85}
+      ADOPS_PI_AGENT_KNOWLEDGE_FILE: ${ADOPS_PI_AGENT_KNOWLEDGE_FILE:-docs/adops/pi-automation-v3/spm-agent-knowledge.md}
+      ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS: ${ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS:-}
+      ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-https://adops-telegram-bot.leandro471.workers.dev}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEFAULT_GROUP_ID: ${TELEGRAM_DEFAULT_GROUP_ID:-}
+    volumes:
+      - adops_app_source:/app
+      - adops_pnpm_store:/var/lib/adops/.pnpm-store
+      - adops_ssh:/root/.ssh:ro
+      - adops_drive_pi_monitor_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4012/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
     networks:
       - adops_internal
 

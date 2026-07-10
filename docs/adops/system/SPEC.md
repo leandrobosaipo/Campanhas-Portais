@@ -74,4 +74,8 @@ O Telegram atual é Worker puro. O serviço `adops-telegram` fica em `profile: p
 
 ## Drive PI Monitor
 
-O container vivo `adops-drive-pi-monitor` não deve ser duplicado no corte inicial. O stack já possui o serviço `adops-drive-pi-monitor` em `profile: phase2-drive-monitor`; ativar apenas depois de migrar o estado atual e pausar o container standalone.
+O runtime por volumes usa `adops-drive-pi-monitor-stack` como único consumidor
+de `drive-pi-ingest` e `drive-inventory-refresh`. Ele reutiliza o volume privado
+`adops-drive-pi-monitor-data`, sem porta pública. O deploy pausa o monitor
+standalone legado e o reinicia automaticamente se o novo stack ou smoke falhar.
+A API e o runner geral não recebem credenciais nem volume do Google Drive.

@@ -14,7 +14,13 @@ load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
 DISCOVERED_ENV=""
 DEPLOY_ENV=""
+LEGACY_MONITOR_ID=""
+LEGACY_MONITOR_STOPPED="false"
+DEPLOY_COMPLETE="false"
 cleanup() {
+  if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
+    portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
+  fi
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
   [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
 }
@@ -56,6 +62,16 @@ export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
 VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
   bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
 
+CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+LEGACY_MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor") | .Id' | head -n 1)"
+if [[ -n "$LEGACY_MONITOR_ID" ]]; then
+  LEGACY_MONITOR_RUNNING="$(printf '%s' "$CONTAINERS" | jq -r --arg id "$LEGACY_MONITOR_ID" '.[] | select(.Id == $id) | .State == "running"')"
+  if [[ "$LEGACY_MONITOR_RUNNING" == "true" ]]; then
+    portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/stop?t=20" >/dev/null
+    LEGACY_MONITOR_STOPPED="true"
+  fi
+fi
+
 DEPLOY_ENV="$(mktemp)"
 grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\n' "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" >> "$DEPLOY_ENV"
@@ -72,4 +88,16 @@ for attempt in $(seq 1 30); do
 done
 
 curl -fsS --max-time 15 https://adops-api.codigo5.com.br/api/ops/drive-inventory/status >/dev/null
+
+CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-runner") | .Id' | head -n 1)"
+MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Id' | head -n 1)"
+[[ -n "$RUNNER_ID" && -n "$MONITOR_ID" ]] || { printf 'Dedicated Drive monitor containers not found.\n' >&2; exit 1; }
+
+RUNNER_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
+MONITOR_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
+printf '%s' "$RUNNER_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0] | select(startswith("GOOGLE_DRIVE_"))] | length == 0)' >/dev/null
+printf '%s' "$MONITOR_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0]] | index("GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE") != null) and (.HostConfig.PortBindings | length == 0)' >/dev/null
+
+DEPLOY_COMPLETE="true"
 printf 'AdOps deployed release=%s backup=%s runtime=volume\n' "$ADOPS_RELEASE_SHA" "$BACKUP_NAME"

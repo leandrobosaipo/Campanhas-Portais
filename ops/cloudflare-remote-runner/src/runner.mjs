@@ -16,6 +16,7 @@ const PRIVATE_ADOPS_API_TOKEN = process.env.PRIVATE_ADOPS_API_TOKEN || "";
 const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}`;
 const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
 const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
+const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
 const ANALYTICS_REPORT_PROJECT_ROOT = process.env.ANALYTICS_REPORT_PROJECT_ROOT || "/Users/leandrobosaipo/.openclaw/workspace-codigo5-manutencao/projects/perrengue-ga4-relatorio-analytics";
 const ANALYTICS_REPORT_PYTHON = process.env.ANALYTICS_REPORT_PYTHON || path.join(ANALYTICS_REPORT_PROJECT_ROOT, ".venv/bin/python");
@@ -98,6 +99,29 @@ const ANALYTICS_SITE_CONFIGS = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function startRunnerHealthServer() {
+  if (!Number.isInteger(RUNNER_HEALTH_PORT) || RUNNER_HEALTH_PORT <= 0) return null;
+  const server = http.createServer((req, res) => {
+    if (req.url !== "/healthz") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end('{"ok":false,"error":"not_found"}');
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true,
+      runnerId: RUNNER_ID,
+      driveMonitorEnabled: DRIVE_PI_MONITOR_ENABLED,
+      kinds,
+      uptimeSeconds: Math.floor(process.uptime()),
+    }));
+  });
+  server.listen(RUNNER_HEALTH_PORT, "0.0.0.0", () => {
+    console.log(`[runner] health interno em :${RUNNER_HEALTH_PORT}/healthz`);
+  });
+  return server;
 }
 
 async function request(pathname, init = {}) {
@@ -5076,6 +5100,7 @@ async function main() {
   console.log(`[runner] privateApi=${PRIVATE_ADOPS_API_BASE_URL}`);
   console.log(`[runner] kinds=${kinds.join(",")}`);
   console.log(`[runner] drivePiMonitor=${DRIVE_PI_MONITOR_ENABLED ? "enabled" : "disabled"}`);
+  startRunnerHealthServer();
 
   while (true) {
     try {
