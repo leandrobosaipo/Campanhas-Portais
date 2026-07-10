@@ -693,7 +693,7 @@
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
         "scrollMode": "top",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 3200,
           "postVisualWaitMs": 3800,
@@ -903,7 +903,15 @@
         "page": "home",
         "slotSelector": ".g.g-6",
         "contextSelector": ".g.g-6",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true
+        }
       },
       {
         "groupId": 8,

@@ -13,6 +13,41 @@ Comece por:
 - `docs/PROJECT_MAP_ADOPS.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
 
+Documentacao operacional publicada pela API:
+
+- [Quickstart](https://adops-api.codigo5.com.br/api/ops/quickstart.html)
+- [Catalogo de endpoints](https://adops-api.codigo5.com.br/api/ops/api-catalog.html)
+- [Swagger UI](https://adops-api.codigo5.com.br/api/ops/docs)
+- [OpenAPI JSON](https://adops-api.codigo5.com.br/api/ops/openapi.json)
+- [Campanhas ativas e proximas](https://adops-api.codigo5.com.br/api/campaign-operations/active?date=2026-07-10&includeEvidence=true)
+
+## Recursos operacionais atuais
+
+O fluxo hospedado cobre:
+
+- leitura da planilha mensal e separacao entre campanhas ativas e proximas;
+- descoberta de PDF, imagem, GIF, video e arquivos de texto em pastas do Google Drive;
+- preflight de PI sem mutacao;
+- cadastro idempotente de campanha e insercao por `parsedPi` explicito;
+- exclusao de formatos sociais (`INSTAGRAM`, `STORIES`, `REELS`, `SOCIAL` e bonificacoes) do inventario de site;
+- importacao de imagem/GIF para o WordPress do PMT e upload de video comprimido para CDN/Spaces;
+- preview e aplicacao de AdRotate por grupo, periodo e portal;
+- rebuild do PMT headless antes de validar HTML e gerar evidencia;
+- purge de cache e validacao de HTML publico;
+- prints individuais, retroativos e validacao por checklist;
+- fila assincrona com progresso e diagnostico de prontidao do runner.
+
+Fluxo recomendado para uma nova campanha:
+
+```text
+Drive/PDF/TXT -> preflight -> AdOps -> midia publica -> AdRotate
+-> cache/rebuild -> HTML publico -> evidencia -> checklist
+```
+
+Release operacional mais recente:
+
+- [2026-07-10 - Fluxo reutilizavel de PI, publicacao e auditoria](docs/releases/2026-07-10-drive-pi-publish.md)
+
 Observação: este projeto foi migrado de `/Users/leandrobosaipo/Projetos/AdOps`. A pasta antiga deve ser tratada como origem histórica, não como raiz operacional principal.
 
 Dashboard operacional para controle de campanhas e inserções publicitárias em múltiplos portais da agência.

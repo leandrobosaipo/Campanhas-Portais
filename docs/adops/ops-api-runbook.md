@@ -672,6 +672,72 @@ Regras:
 - no Perrengue, a evidência só roda depois do rebuild headless e da validação do HTML público;
 - `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` continua obrigatório.
 
+### 4. Como aceitar campanha ativa ou futura
+
+Nao use apenas `bannerPublicadoNoSite=true` como prova. A verificacao correta
+tem camadas diferentes para campanha ativa e campanha futura.
+
+Campanha ativa:
+
+1. `campaign-operations/active` deve encontrar planilha + AdOps.
+2. `adrotate-publish` em preview deve retornar `existing_ad_id` ou plano de
+   criacao, `group_id`, periodo e `bannercode_contains_asset=true`.
+3. Depois de `apply=true`, `publicHtmlValidation.mediaFound=true` e
+   `publicHtmlValidation.adFound=true` devem confirmar o criativo esperado.
+4. Em PMT/Perrengue, `headlessRebuild.completed=true` e
+   `headlessRebuild.health.lastStatus=ok` sao obrigatorios.
+5. A evidencia final precisa de `status=audited`, `approved=true` e
+   `blockingIssues=[]`.
+
+Campanha futura:
+
+1. A insercao deve existir no AdOps com inicio/fim e mídia publica.
+2. O preview deve localizar o anuncio administrativo no AdRotate.
+3. Reaplicar com `apply=true` e `date` igual ao inicio confirma `ad_id`,
+   `group_id`, periodos e vinculo sem antecipar a veiculacao.
+4. `exactLiveMatches=[]` e ausencia no HTML antes do inicio sao esperados em
+   portais dinamicos. Nao publicar print antecipado para compensar isso.
+5. No PMT headless, a mídia futura pode aparecer no bundle/HTML reconstruido
+   sem estar visivel. O aceite continua sendo o periodo salvo no AdRotate.
+
+Observacoes importantes:
+
+- `relationOk=false` imediatamente apos uma publicacao nao invalida o job
+  quando o proprio job confirma `ad_id/group_id` e o HTML de validacao encontra
+  `mediaFound=true` e `adFound=true`; a relacao publica pode ser uma fotografia
+  assincrona ou depender da rotacao do grupo.
+- Quando mais de uma campanha ativa ocupa o mesmo grupo, uma unica resposta da
+  home nao prova conflito. Validar cada anuncio pelo modo de verificacao do job,
+  pela relacao administrativa e pela evidencia individual.
+- Arquivo Office `.xlsx` no Drive nao pode ser lido pela Google Sheets API.
+  Baixe o arquivo bruto ou use `campaign-operations/active`, que aplica o
+  parser canonico da planilha.
+- Arquivos `.txt` e Google Docs devem ser lidos porque podem conter URL de
+  destino do banner ou link temporario para download do video.
+- URL de visualizacao do Google Drive nao deve ser salva como mídia publica.
+
+### 5. Auditoria diaria de todas as campanhas
+
+```bash
+curl -fsSL \
+  "$ADOPS_API_BASE_URL/api/campaign-operations/active?date=2026-07-10&includeEvidence=true&refreshDrive=false"
+```
+
+Para cada item ativo, conferir:
+
+```text
+planilha -> adops.matched -> relacao AdRotate -> HTML publico -> evidencia
+```
+
+Para cada item em `upcomingItems`, conferir:
+
+```text
+planilha -> adops.matched -> mediaUrl -> preview AdRotate -> apply programado
+```
+
+O status consolidado so pode ser chamado de pronto quando nao houver campanha
+ativa sem mídia publica, sem anuncio administrativo ou sem prova visual.
+
 ## Regras de auditoria que a API deve bloquear
 
 O contrato real está em `GET /api/audit-checklists/resolve`.

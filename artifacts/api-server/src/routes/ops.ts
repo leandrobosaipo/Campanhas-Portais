@@ -1170,6 +1170,14 @@ function buildOpsApiCatalog() {
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-publish -d '{"insertionId":1666,"apply":false,"replaceExisting":true,"purgeCache":true,"generateEvidence":false}'`,
       },
+      {
+        id: "adrotate-relation",
+        method: "GET",
+        path: "/api/integrations/adrotate/insertions/{id}/relation",
+        purpose: "Comparar a inserção planejada com anúncios AdRotate encontrados no HTML público e no inventário conhecido.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/integrations/adrotate/insertions/1666/relation`,
+      },
       ],
     },
     {
@@ -1203,7 +1211,7 @@ function buildOpsApiCatalog() {
   })));
   return {
     ok: true,
-    version: "adops-ops-api-catalog-v1",
+    version: "adops-ops-api-catalog-v2",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     auth: {
@@ -1257,16 +1265,24 @@ function buildOpsQuickstart() {
     },
     {
       id: "cadastrar-campanha-drive",
-      title: "Cadastrar campanha a partir de pasta do Google Drive",
-      when: "Use quando a PI/PDF e a mídia estão em uma pasta Drive.",
+      title: "Cadastrar e publicar campanha a partir do Google Drive",
+      when: "Use quando a PI/PDF, a mídia e possíveis instruções em TXT ou Google Docs estão em uma pasta Drive.",
       steps: [
         { label: "Rodar diagnóstico sem mutação", command: command("drive-pi-preflight") },
         { label: "Acompanhar job de diagnóstico", command: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress` },
-        { label: "Aplicar intake/cadastro somente se o preflight estiver completo", command: command("drive-pi-folder") },
-        { label: "Conferir relação PI + site", command: command("pi-site-export") },
-        { label: "Gerar evidência canário", command: command("print-single") },
+        { label: "Executar cadastro, mídia, publicação, cache/rebuild e evidência", command: command("drive-pi-publish") },
+        { label: "Conferir campanha ativa ou programada", command: command("active-campaign-operations") },
+        { label: "Conferir relação AdOps x AdRotate", command: command("adrotate-relation") },
+        { label: "Validar evidência somente depois da publicação pública", command: command("validate-proof") },
       ],
-      acceptance: ["PDF e mídia detectados", "período/formato/portal resolvidos", "sem duplicidade", "canário aprovado pela API de checklist"],
+      acceptance: [
+        "parsedPi.insertions define o escopo quando informado",
+        "formatos sociais não criam inserção de site",
+        "PDF, mídia e links de TXT/Docs foram avaliados",
+        "adId/groupId e período confirmados no AdRotate",
+        "PMT reconstruído antes da evidência",
+        "validate-proof.approved=true e blockingIssues=[]",
+      ],
     },
     {
       id: "corrigir-adrotate",
@@ -1283,7 +1299,7 @@ function buildOpsQuickstart() {
   ];
   return {
     ok: true,
-    version: "adops-ops-quickstart-v1",
+    version: "adops-ops-quickstart-v2",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     tokenEnv: "OPS_API_TOKEN",
@@ -1305,6 +1321,8 @@ function buildOpsQuickstart() {
     safety: [
       "Nunca colocar token em Git, chat ou documentação.",
       "Usar drive-pi-preflight antes de cadastrar a partir do Drive.",
+      "Usar drive-pi-publish para concluir mídia, AdRotate, cache/rebuild e evidência no mesmo fluxo idempotente.",
+      "Campanha futura é aceita por adId, groupId e período administrativo; não exigir HTML antes da data de início.",
       "Aceitar print somente com validate-proof.approved=true.",
       "Usar campaign-operations/active para saber o que está ativo, pendente de cadastro, publicação ou evidência antes de criar jobs.",
       "Se regra de slot, período, mídia ou checklist falhar, corrigir a fonte antes do lote.",
