@@ -2627,25 +2627,32 @@ function sitePublicHomeUrl(site) {
 async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename }) {
   const url = sitePublicHomeUrl(site);
   if (!url) return { ok: false, url: null, error: "site_public_url_missing" };
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
-    signal: AbortSignal.timeout(30000),
-  });
-  const html = await response.text();
-  const markers = [
-    mediaBasename && html.includes(mediaBasename),
-    html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`),
-    adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)),
-  ].filter(Boolean);
-  return {
-    ok: response.ok && markers.length > 0,
-    url: response.url,
-    status: response.status,
-    mediaFound: Boolean(mediaBasename && html.includes(mediaBasename)),
-    insertionFound: html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`),
-    adFound: Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`))),
-  };
+  let lastResult = null;
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const attemptUrl = new URL(url);
+    attemptUrl.searchParams.set("cod5_adops_verify", `${insertionId}-${attempt}-${Date.now()}`);
+    const response = await fetch(attemptUrl, {
+      redirect: "follow",
+      headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" },
+      signal: AbortSignal.timeout(30000),
+    });
+    const html = await response.text();
+    const mediaFound = Boolean(mediaBasename && html.includes(mediaBasename));
+    const insertionFound = html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`);
+    const adFound = Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)));
+    lastResult = {
+      ok: response.ok && (mediaFound || insertionFound || adFound),
+      url: response.url,
+      status: response.status,
+      mediaFound,
+      insertionFound,
+      adFound,
+      attempts: attempt,
+    };
+    if (lastResult.ok) return lastResult;
+    await sleep(750);
+  }
+  return lastResult;
 }
 
 async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
