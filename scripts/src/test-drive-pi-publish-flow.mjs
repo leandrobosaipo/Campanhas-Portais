@@ -69,11 +69,12 @@ const readiness = runner.validateDrivePiPackageReadiness(
 assert.equal(readiness.ok, false);
 assert(readiness.issues.includes("insertion_media_url_missing_after_processing"));
 
-const [publicApi, privateApi, capture, adrotatePlugin] = await Promise.all([
+const [publicApi, privateApi, capture, adrotatePlugin, perrenguePluginDeploy] = await Promise.all([
   readFile(path.join(root, "ops/cloudflare-public-api/src/index.ts"), "utf8"),
   readFile(path.join(root, "artifacts/api-server/src/routes/ops.ts"), "utf8"),
   readFile(path.join(root, "scripts/src/capture-insertion-proof.cjs"), "utf8"),
   readFile(path.join(root, "ops/wordpress/adrotate-adops.php"), "utf8"),
+  readFile(path.join(root, "ops/portainer/adops-stack/scripts/deploy-perrengue-adrotate-plugin.sh"), "utf8"),
 ]);
 const [sheetSync, currentSheetCampaigns] = await Promise.all([
   readFile(path.join(root, "scripts/src/sync-planilha-latest.ts"), "utf8"),
@@ -90,6 +91,8 @@ for (const source of [publicApi, privateApi]) {
 }
 assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
 assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");
+assert(perrenguePluginDeploy.includes("echo WP_CONTENT_DIR;"), "deploy PMT deve resolver o diretório de conteúdo ativo do Bedrock");
+assert(perrenguePluginDeploy.includes("legacy_target"), "deploy PMT deve remover a cópia-sombra no wp/wp-content");
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
