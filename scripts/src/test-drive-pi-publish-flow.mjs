@@ -97,6 +97,7 @@ for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadl
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
 }
 assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("echo WP_CONTENT_DIR;"));
+assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("staleMuPluginTargets"));
 for (const marker of ["application/vnd.google-apps.document", "/export?mimeType="]) {
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem suporte a observação Google Docs: ${marker}`);
 }
