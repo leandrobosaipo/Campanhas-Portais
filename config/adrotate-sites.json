@@ -149,7 +149,7 @@
           "stableFrameMinStddev": 18,
           "stableFrameMinEdgeMean": 8,
           "stableFrameMinMidtoneRatio": 0.02,
-          "finalPngSlotMinSimilarity": 0.78,
+          "finalPngSlotMinSimilarity": 0.74,
           "finalPngSlotMinContentStddev": 4,
           "requireStableFrame": false,
           "requireLegibleFrame": true
