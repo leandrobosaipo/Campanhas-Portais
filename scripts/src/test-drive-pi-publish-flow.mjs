@@ -78,5 +78,8 @@ for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perr
 for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date"]) {
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
 }
+for (const marker of ["application/vnd.google-apps.document", "/export?mimeType="]) {
+  assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem suporte a observação Google Docs: ${marker}`);
+}
 
 console.log("ok: drive-pi-publish contracts and deterministic scope/media rules");

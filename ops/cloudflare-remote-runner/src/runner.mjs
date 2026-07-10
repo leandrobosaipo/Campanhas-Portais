@@ -1343,7 +1343,11 @@ async function downloadDriveFileToArchive(file) {
   }
   if (Number(file.size || 0) > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const accessToken = await getGoogleDriveAccessToken();
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}?alt=media`, {
+  const isGoogleDocument = file.mimeType === "application/vnd.google-apps.document";
+  const downloadUrl = isGoogleDocument
+    ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}/export?mimeType=${encodeURIComponent("text/plain")}`
+    : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}?alt=media`;
+  const response = await fetch(downloadUrl, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
@@ -1358,7 +1362,8 @@ async function downloadDriveFileToArchive(file) {
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
   await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, `${sha256.slice(0, 12)}-${safeFileName(file.name)}`);
+  const archiveName = isGoogleDocument && !/\.txt$/i.test(String(file.name || "")) ? `${file.name || file.driveFileId}.txt` : file.name;
+  const filePath = path.join(dir, `${sha256.slice(0, 12)}-${safeFileName(archiveName)}`);
   await writeFile(filePath, bytes);
   return { filePath, sha256, bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
 }
@@ -1397,7 +1402,9 @@ function mediaKindFromUrl(url, surroundingText = "") {
 
 async function readDriveTextObservations(items) {
   const textItems = (Array.isArray(items) ? items : [])
-    .filter((item) => item?.mimeType === "text/plain" || /\.txt$/i.test(String(item?.name || "")))
+    .filter((item) => item?.mimeType === "text/plain"
+      || item?.mimeType === "application/vnd.google-apps.document"
+      || /\.txt$/i.test(String(item?.name || "")))
     .slice(0, 20);
   const observations = [];
   for (const item of textItems) {
