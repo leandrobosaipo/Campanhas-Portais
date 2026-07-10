@@ -19,7 +19,11 @@ LEGACY_MONITOR_STOPPED="false"
 DEPLOY_COMPLETE="false"
 cleanup() {
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
-    portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
+    NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+      | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Status' | head -n 1 || true)"
+    if [[ "$NEW_MONITOR_HEALTH" != *"(healthy)"* ]]; then
+      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
+    fi
   fi
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
   [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
@@ -78,16 +82,21 @@ printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\n' "$ADOPS_IMAGE_TAG" "${D
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
   bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
 
-for attempt in $(seq 1 30); do
+stable_checks=0
+for attempt in $(seq 1 60); do
   if curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/healthz >/dev/null && \
-     curl -fsS --max-time 10 https://adops.codigo5.com.br/ >/dev/null; then
-    break
+     curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/ops/drive-inventory/status >/dev/null && \
+     curl -fsS --max-time 10 https://adops.codigo5.com.br/ >/dev/null && \
+     curl -fsS --max-time 10 https://adops.codigo5.com.br/cod5-release.json \
+       | jq -e --arg sha "$ADOPS_RELEASE_SHA" '.sha == $sha' >/dev/null; then
+    stable_checks=$((stable_checks + 1))
+    [[ "$stable_checks" -ge 3 ]] && break
+  else
+    stable_checks=0
   fi
-  [[ "$attempt" == "30" ]] && { printf 'Production smoke timed out.\n' >&2; exit 1; }
+  [[ "$attempt" == "60" ]] && { printf 'Production smoke timed out.\n' >&2; exit 1; }
   sleep 5
 done
-
-curl -fsS --max-time 15 https://adops-api.codigo5.com.br/api/ops/drive-inventory/status >/dev/null
 
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-runner") | .Id' | head -n 1)"
