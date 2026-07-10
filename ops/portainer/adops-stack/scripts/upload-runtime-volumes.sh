@@ -13,6 +13,19 @@ ENDPOINT_ID="$(portainer_endpoint_id)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 APP_TAR="${TMPDIR:-/tmp}/adops-app-source-${STAMP}.tar"
 WEB_TAR="${TMPDIR:-/tmp}/adops-web-public-${STAMP}.tar"
+RELEASE_DIR="$(mktemp -d)"
+RELEASE_FILE="$RELEASE_DIR/cod5-release.json"
+
+cleanup() {
+  rm -f "$APP_TAR" "$WEB_TAR"
+  rm -rf "$RELEASE_DIR"
+}
+trap cleanup EXIT
+
+jq -n \
+  --arg sha "${ADOPS_RELEASE_SHA:-unknown}" \
+  --arg builtAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{sha:$sha,builtAt:$builtAt,runtime:"portainer-volume"}' > "$RELEASE_FILE"
 
 upload_to_volume() {
   local volume="$1"
@@ -96,12 +109,13 @@ COPYFILE_DISABLE=1 tar --no-xattrs \
   -cf "$APP_TAR" \
   package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.base.json .npmrc \
   lib artifacts scripts config ops attached_assets
+tar --no-xattrs -C "$RELEASE_DIR" -rf "$APP_TAR" cod5-release.json
 
 printf 'Creating clean web dist tar\n'
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_ROOT/artifacts/adops/dist/public" -cf "$WEB_TAR" .
+tar --no-xattrs -C "$RELEASE_DIR" -rf "$WEB_TAR" cod5-release.json
 
 upload_to_volume adops_app_source node:22-alpine /app "$APP_TAR"
 upload_to_volume adops_web_public nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR"
 
-rm -f "$APP_TAR" "$WEB_TAR"
 printf 'Runtime volumes are ready on endpoint %s\n' "$ENDPOINT_ID"

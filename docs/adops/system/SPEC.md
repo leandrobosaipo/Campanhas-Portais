@@ -35,7 +35,12 @@ Em 2026-05-19, o modo funcional publicado usa volumes Docker porque o build remo
 - `adops-web`: `nginx:1.27-alpine` com bundle em `adops_web_public`
 - upload: `scripts/upload-runtime-volumes.sh`
 
-O alvo de hardening continua sendo imagem imutável `cod5/adops-runtime:<tag>` e `cod5/adops-web:<tag>`.
+O build remoto síncrono continua disponível como fallback, mas não é usado pelo
+workflow de produção porque o proxy Cloudflare encerra a requisição com `524`
+antes de o Docker concluir. O workflow gera os bundles no GitHub Actions, envia
+o runtime para os volumes e grava `cod5-release.json` com o SHA em
+ambos os volumes. Assim, o release implantado continua rastreável sem expor o
+Docker do Mac Mini ou depender de um registry externo.
 
 ## Arquivos
 
