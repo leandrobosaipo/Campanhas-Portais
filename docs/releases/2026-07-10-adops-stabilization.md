@@ -29,7 +29,7 @@ O endpoint de campanhas inclui `snapshotStatus`, `snapshotAt`, `snapshotAgeSecon
 
 - A API pública não recebe conta de serviço, access token ou refresh token do Drive.
 - O monitor permanece na rede Docker interna.
-- O deploy exige CI verde e aprovação do ambiente GitHub `production`.
+- O deploy exige CI verde e disparo manual no ambiente GitHub `production`; required reviewers não está disponível no plano atual do repositório privado.
 - Secrets não são registrados em logs, documentação ou artefatos.
 
 ## Rollout

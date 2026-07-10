@@ -38,7 +38,7 @@ O fluxo hospedado cobre:
 - fila assincrona com progresso e diagnostico de prontidao do runner.
 - inventario persistido e idempotente do Google Drive, sem credencial na API publica;
 - CI com codegen, typecheck, builds, testes de Drive/captura e varredura de secrets;
-- deploy imutavel por SHA no Portainer, protegido pelo ambiente GitHub `production`.
+- deploy imutavel por SHA no Portainer, iniciado manualmente no ambiente GitHub `production`.
 
 Fluxo recomendado para uma nova campanha:
 
