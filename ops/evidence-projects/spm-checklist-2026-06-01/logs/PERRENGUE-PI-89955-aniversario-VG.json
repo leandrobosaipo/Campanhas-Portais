@@ -1,0 +1,166 @@
+{
+  "summary": {
+    "label": "PERRENGUE-PI-89955-aniversario-VG",
+    "insertionId": 1376,
+    "piCodigo": "PI 89955",
+    "siteSigla": "PERRENGUE",
+    "periodoInicio": "2026-05-22",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "em_veiculacao",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 10,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-89955-aniversario-VG",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-89955-aniversario-VG.zip",
+    "checkedAt": "2026-06-01T09:39:41.842Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-22_INTERNODENOTICIAS.png?v=1779569094480"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-23_INTERNODENOTICIAS.png?v=1779569129474"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-24_INTERNODENOTICIAS.png?v=1779660730065"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-26_INTERNODENOTICIAS.png?v=1779818721372"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-27_INTERNODENOTICIAS.png?v=1779905138640"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-28_INTERNODENOTICIAS.png?v=1780005807979"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-29_INTERNODENOTICIAS.png?v=1780092402173"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-30_INTERNODENOTICIAS.png?v=1780164263894"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-31_INTERNODENOTICIAS.png?v=1780257818192"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-22_INTERNODENOTICIAS.png?v=1779569094480"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-23_INTERNODENOTICIAS.png?v=1779569129474"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-24_INTERNODENOTICIAS.png?v=1779660730065"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-25_INTERNODENOTICIAS.png?v=1780306727362"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-26_INTERNODENOTICIAS.png?v=1779818721372"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-27_INTERNODENOTICIAS.png?v=1779905138640"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-28_INTERNODENOTICIAS.png?v=1780005807979"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-29_INTERNODENOTICIAS.png?v=1780092402173"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-30_INTERNODENOTICIAS.png?v=1780164263894"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/887/1376/PERRENGUE_ANIVERSARIO159ANOS_PREFEITURADE_PI89955_2026-05-31_INTERNODENOTICIAS.png?v=1780257818192"
+      }
+    ]
+  }
+}

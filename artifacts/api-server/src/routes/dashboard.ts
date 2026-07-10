@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
-import { db, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable } from "@workspace/db";
+import { db, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable } from "@workspace/db";
 import {
   GetDashboardSummaryQueryParams,
   GetDashboardBySiteQueryParams,
@@ -10,12 +10,18 @@ import {
 
 const router: IRouter = Router();
 
-function isAtrasado(ins: { periodoInicio: string | null; bannerPublicadoNoSite: boolean; statusNormalizado: string }): boolean {
-  if (ins.bannerPublicadoNoSite) return false;
-  if (['concluido', 'cancelado'].includes(ins.statusNormalizado)) return false;
-  if (!ins.periodoInicio) return false;
+function computeInsertionDelay(ins: {
+  periodoFim: string | null;
+  processoEnviadoAgencia: boolean;
+  statusNormalizado: string;
+}): boolean {
+  if (ins.processoEnviadoAgencia) return false;
+  if (["concluido", "cancelado"].includes(ins.statusNormalizado)) return false;
+  if (!ins.periodoFim) return false;
   try {
-    return new Date(ins.periodoInicio) < new Date();
+    const due = new Date(`${ins.periodoFim}T23:59:59`);
+    due.setDate(due.getDate() + 1);
+    return due < new Date();
   } catch {
     return false;
   }
@@ -42,7 +48,7 @@ router.get("/dashboard/summary", async (req, res): Promise<void> => {
 
   const ativas = insertions.filter(i => !['concluido', 'cancelado'].includes(i.statusNormalizado)).length;
   const concluidas = insertions.filter(i => i.statusNormalizado === 'concluido').length;
-  const atrasadas = insertions.filter(i => i.atrasado).length;
+  const atrasadas = insertions.filter(i => computeInsertionDelay(i)).length;
   const aguardandoPublicacao = insertions.filter(i =>
     !i.bannerPublicadoNoSite && !['concluido', 'cancelado'].includes(i.statusNormalizado)
   ).length;
@@ -100,9 +106,9 @@ router.get("/dashboard/by-site", async (req, res): Promise<void> => {
       total: siteInsertions.length,
       ativas: siteInsertions.filter(i => !['concluido', 'cancelado'].includes(i.statusNormalizado)).length,
       concluidas: siteInsertions.filter(i => i.statusNormalizado === 'concluido').length,
-      atrasadas: siteInsertions.filter(i => i.atrasado).length,
+      atrasadas: siteInsertions.filter(i => computeInsertionDelay(i)).length,
     };
-  }).filter(s => s.total > 0);
+  });
 
   res.json(result);
 });
@@ -139,7 +145,8 @@ router.get("/dashboard/by-client", async (req, res): Promise<void> => {
       concluidas: clientInsertions.filter(i => i.statusNormalizado === 'concluido').length,
       valorLiquido,
     };
-  }).filter(c => c.total > 0);
+  }).filter(c => c.total > 0)
+    .sort((a, b) => b.total - a.total || a.clienteNome.localeCompare(b.clienteNome));
 
   res.json(result);
 });
@@ -158,7 +165,7 @@ router.get("/dashboard/by-competencia", async (_req, res): Promise<void> => {
       total: compInsertions.length,
       ativas: compInsertions.filter(i => !['concluido', 'cancelado'].includes(i.statusNormalizado)).length,
       concluidas: compInsertions.filter(i => i.statusNormalizado === 'concluido').length,
-      atrasadas: compInsertions.filter(i => i.atrasado).length,
+      atrasadas: compInsertions.filter(i => computeInsertionDelay(i)).length,
     };
   });
 
@@ -183,15 +190,15 @@ router.get("/dashboard/critical", async (req, res): Promise<void> => {
   }
 
   const criticalInsertions = insertions.filter(i =>
-    i.atrasado || (!i.printGerado && i.bannerPublicadoNoSite) || (i.printGerado && !i.processoEnviadoAgencia)
+    computeInsertionDelay(i) || (!i.printGerado && i.bannerPublicadoNoSite) || (i.printGerado && !i.processoEnviadoAgencia)
   ).slice(0, 20);
 
   const enriched = await Promise.all(criticalInsertions.map(async (ins) => {
     const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, ins.campanhaId));
     const [site] = ins.siteId ? await db.select().from(sitesTable).where(eq(sitesTable.id, ins.siteId)) : [null];
-    const [countResult] = await db.select({ count: sql<number>`count(*)` }).from(
-      await import("@workspace/db").then(m => m.evidencesTable)
-    ).where(eq((await import("@workspace/db")).evidencesTable.insercaoId, ins.id));
+    const [countResult] = await db.select({ count: sql<number>`count(*)` })
+      .from(evidencesTable)
+      .where(eq(evidencesTable.insercaoId, ins.id));
 
     let clienteNome = null;
     let agenciaNome = null;

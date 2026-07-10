@@ -1,0 +1,124 @@
+{
+  "summary": {
+    "label": "OMT-PI-14414-vacina",
+    "insertionId": 1390,
+    "piCodigo": "PI 14414- PREF CBA",
+    "siteSigla": "OMT",
+    "periodoInicio": "2026-05-25",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "publicado_no_site",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 7,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/OMT-PI-14414-vacina",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/OMT-PI-14414-vacina.zip",
+    "checkedAt": "2026-06-01T09:28:32.391Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-25_MEGABANNERHOME1.png?v=1779969780606"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-26_MEGABANNERHOME1.png?v=1779969820238"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-27_MEGABANNERHOME1.png?v=1779969858245"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-28_MEGABANNERHOME1.png?v=1779969740506"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-29_MEGABANNERHOME1.png?v=1780092545649"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-30_MEGABANNERHOME1.png?v=1780164309828"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-31_MEGABANNERHOME1.png?v=1780257858710"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-25_MEGABANNERHOME1.png?v=1779969780606"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-26_MEGABANNERHOME1.png?v=1779969820238"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-27_MEGABANNERHOME1.png?v=1779969858245"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-28_MEGABANNERHOME1.png?v=1779969740506"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-29_MEGABANNERHOME1.png?v=1780092545649"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-30_MEGABANNERHOME1.png?v=1780164309828"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-31_MEGABANNERHOME1.png?v=1780257858710"
+      }
+    ]
+  }
+}

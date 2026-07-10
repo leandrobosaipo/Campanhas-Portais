@@ -40,6 +40,7 @@ testem.log
 # System Files
 .DS_Store
 Thumbs.db
+._*
 
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
@@ -47,3 +48,31 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Secrets and local operator state
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p8
+*.p12
+*.mobileprovision
+*token*.md
+*credential*.md
+*secret*.md
+
+# Operational/generated evidence and heavy local reports
+docs/harness-reports/
+docs/deploy-backups/
+docs/reports/
+relatorios/
+tmp-playwright/
+test-results/
+scripts/docs/reports/
+scripts/docs/harness-reports/
+ops/cloudflare-public-api/data/snapshot.*
+
+# Local scratch
+/0

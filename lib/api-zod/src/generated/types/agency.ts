@@ -9,6 +9,39 @@
 export interface Agency {
   id: number;
   nome: string;
+  /** @nullable */
+  razaoSocial?: string | null;
+  /** @nullable */
+  cnpj?: string | null;
+  /** @nullable */
+  telefone?: string | null;
+  /** @nullable */
+  whatsapp?: string | null;
+  /** @nullable */
+  email?: string | null;
+  /** @nullable */
+  emailFaturamento?: string | null;
+  /** @nullable */
+  endereco?: string | null;
+  /** @nullable */
+  cidade?: string | null;
+  /** @nullable */
+  uf?: string | null;
+  /** @nullable */
+  cep?: string | null;
+  /** @nullable */
+  prazoPagamento?: string | null;
+  /** @nullable */
+  prazoEnvioDocs?: string | null;
+  /** @nullable */
+  descontoPadraoPercentual?: string | null;
+  /** @nullable */
+  instrucoesFaturamento?: string | null;
+  exigeAceiteFormal?: boolean;
+  exigeNotaFiscalDetalhada?: boolean;
+  exigeDeclaracaoArt299?: boolean;
+  exigeComprovanteAssinado?: boolean;
+  exigePrintDiario?: boolean;
   ativo: boolean;
   createdAt: string;
 }

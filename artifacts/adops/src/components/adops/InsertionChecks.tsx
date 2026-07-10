@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getListInsertionsQueryKey, getGetInsertionQueryKey, getGetDashboardSummaryQueryKey } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
+import { INSERTION_PROGRESS_STEPS, STATUS_META } from "@/lib/adops-config";
 
 interface Props {
   id: number;
@@ -13,27 +14,32 @@ interface Props {
   docsEnviados: boolean;
 }
 
-function CheckItem({ label, checked, onToggle, disabled }: {
+function CheckItem({ label, checked, onToggle, disabled, statusKey }: {
   label: string;
   checked: boolean;
   onToggle: () => void;
   disabled?: boolean;
+  statusKey: string;
 }) {
+  const meta = STATUS_META[statusKey] ?? STATUS_META.rascunho;
   return (
     <button
-      onClick={onToggle}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
       disabled={disabled}
       className={cn(
         "flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded border transition-all",
         checked
-          ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-          : "bg-slate-700/40 text-slate-500 border-slate-600/30 hover:border-slate-500/50 hover:text-slate-400",
+          ? meta.checkOnClass
+          : meta.checkOffClass,
         disabled && "opacity-50 cursor-not-allowed"
       )}
     >
       <span className={cn(
         "w-3 h-3 rounded-sm border flex items-center justify-center shrink-0",
-        checked ? "bg-emerald-500 border-emerald-400" : "border-slate-500"
+        checked ? "bg-current/70 border-current/70 text-white" : "border-slate-500"
       )}>
         {checked && <Check className="w-2 h-2 text-white" />}
       </span>
@@ -72,10 +78,20 @@ export function InsertionChecks({ id, bannerPublicadoNoSite, printGerado, proces
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      <CheckItem label="Banner" checked={state.bannerPublicadoNoSite} onToggle={() => update("bannerPublicadoNoSite", !state.bannerPublicadoNoSite)} />
-      <CheckItem label="Print" checked={state.printGerado} onToggle={() => update("printGerado", !state.printGerado)} disabled={!state.bannerPublicadoNoSite} />
-      <CheckItem label="Enviado" checked={state.processoEnviadoAgencia} onToggle={() => update("processoEnviadoAgencia", !state.processoEnviadoAgencia)} disabled={!state.printGerado} />
-      <CheckItem label="Docs" checked={state.docsEnviados} onToggle={() => update("docsEnviados", !state.docsEnviados)} disabled={!state.processoEnviadoAgencia} />
+      {INSERTION_PROGRESS_STEPS.map((step) => (
+        <CheckItem
+          key={step.key}
+          label={step.label}
+          checked={state[step.key]}
+          onToggle={() => update(step.key, !state[step.key])}
+          disabled={
+            (step.key === "printGerado" && !state.bannerPublicadoNoSite) ||
+            (step.key === "processoEnviadoAgencia" && !state.printGerado) ||
+            (step.key === "docsEnviados" && !state.processoEnviadoAgencia)
+          }
+          statusKey={step.status}
+        />
+      ))}
     </div>
   );
 }

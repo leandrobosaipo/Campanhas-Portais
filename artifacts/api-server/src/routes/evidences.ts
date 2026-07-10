@@ -45,6 +45,32 @@ router.post("/insertions/:insertionId/evidences", async (req, res): Promise<void
   res.status(201).json(evidence);
 });
 
+router.patch("/evidences/:id", async (req, res): Promise<void> => {
+  const params = DeleteEvidenceParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const parsed = CreateEvidenceBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const [evidence] = await db.update(evidencesTable).set({
+    tipo: parsed.data.tipo,
+    arquivoUrl: parsed.data.arquivoUrl ?? null,
+    titulo: parsed.data.titulo ?? null,
+  }).where(eq(evidencesTable.id, params.data.id)).returning();
+
+  if (!evidence) {
+    res.status(404).json({ error: "Evidence not found" });
+    return;
+  }
+
+  res.json(evidence);
+});
+
 router.delete("/evidences/:id", async (req, res): Promise<void> => {
   const params = DeleteEvidenceParams.safeParse(req.params);
   if (!params.success) {

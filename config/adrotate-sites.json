@@ -1,0 +1,941 @@
+{
+  "PERRENGUE": {
+    "sigla": "PERRENGUE",
+    "label": "Perrengue",
+    "domain": "perrenguematogrosso.com",
+    "homeUrl": "https://perrenguematogrosso.com/",
+    "adminBaseUrl": "https://perrenguematogrosso.com/wp/wp-admin",
+    "articleFallbackUrl": "https://perrenguematogrosso.com/festa-celebracao-307-anos-cuiaba-parque-das-aguas-video/",
+    "browserTitle": "Perrengue Mato Grosso",
+    "hostLabel": "perrenguematogrosso.com",
+    "originIp": "186.209.113.107",
+    "disableOriginOverride": true,
+    "previewSecret": "adops-preview-perr-2026-c5",
+    "pageDateSelectors": [
+      "[data-perr-datetime='full']",
+      "[data-perr-datetime='short']",
+      ".header-datestamp-full",
+      ".header-datestamp-short",
+      "time.js-topbar-datetime"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 1800,
+      "postVisualWaitMs": 2000,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-1",
+        "contextSelector": "#header-ads-row",
+        "scrollMode": "top",
+        "auditOverrides": {
+          "gifFrameSelection": "source_preferred",
+          "postVisualWaitMs": 2400,
+          "allowViewportImageMisses": 1,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "preferBestLegibleFrame": true,
+          "stableFrameSampleCount": 8,
+          "stableFrameSampleIntervalMs": 320,
+          "stableFrameMinStddev": 22,
+          "stableFrameMinEdgeMean": 12,
+          "stableFrameMinMidtoneRatio": 0.18,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
+        }
+      },
+      {
+        "groupId": 10,
+        "aliases": [
+          "BANNER TOPO LATERAL",
+          "TOPO LATERAL",
+          "MEGA BANNER LATERAL"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-10",
+        "contextSelector": "#header-ads-row",
+        "scrollMode": "top"
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "PRIMEIRA DOBRA",
+          "HOME 1",
+          "MEGABANNER HOME 1",
+          "MEGABANNER HOME1",
+          "MEGABANNER HOME 01"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-2",
+        "contextSelector": ".g.g-2",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "slotScrollViewportOffsetRatio": 0.5,
+          "finalViewportTargetOffsetRatio": 0.5,
+          "viewportTrimBottomPx": 160
+        }
+      },
+      {
+        "groupId": 3,
+        "aliases": [
+          "HOME 2",
+          "SEGUNDA DOBRA"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-3",
+        "contextSelector": ".g.g-3",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
+        }
+      },
+      {
+        "groupId": 4,
+        "aliases": [
+          "HOME 3"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-4",
+        "contextSelector": ".g.g-4",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO",
+          "VIDEO LATERAL",
+          "LATERAL",
+          "LATERAL PRIMEIRA DOBRA"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 120,
+          "stableFrameMinStddev": 18,
+          "stableFrameMinEdgeMean": 8,
+          "stableFrameMinMidtoneRatio": 0.02,
+          "finalPngSlotMinSimilarity": 0.74,
+          "finalPngSlotMinContentStddev": 4,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true
+        }
+      },
+      {
+        "groupId": 9,
+        "aliases": [
+          "POP UP",
+          "POPUP",
+          "BANNER - 970X90",
+          "BANNER 970X90",
+          "970X90"
+        ],
+        "page": "home",
+        "slotSelector": "#cod5-bottom-popup-ad .g.g-9",
+        "contextSelector": "#cod5-bottom-popup-ad",
+        "scrollMode": "top",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2400,
+          "postVisualWaitMs": 3000,
+          "gifFrameSelection": "source_preferred",
+          "domFrameMinSimilarity": 0.74,
+          "requireSlotVisibleInViewport": true
+        }
+      },
+      {
+        "groupId": 11,
+        "aliases": [
+          "BANNER INTERNO NOTICIAS",
+          "INTERNO DE NOTICIAS",
+          "INTERNO DE NOTICIA",
+          "INTERNO NOTICIA"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-11",
+        "contextSelector": ".g.g-11",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "preferArticleFallbackForRetro": true
+        }
+      }
+    ]
+  },
+  "OMT": {
+    "sigla": "OMT",
+    "label": "O Matogrossense",
+    "domain": "omatogrossense.com",
+    "homeUrl": "https://omatogrossense.com/",
+    "adminBaseUrl": "https://omatogrossense.com/wp/wp-admin",
+    "articleFallbackUrl": null,
+    "browserTitle": "O Matogrossense",
+    "hostLabel": "omatogrossense.com",
+    "originIp": "66.253.112.200",
+    "previewSecret": "adops-preview-omt-2026-c5",
+    "pageDateSelectors": [
+      "time[data-omt-live-datestamp='1']",
+      "[data-omt-localtime]",
+      "[data-omt-localtime-el]",
+      "[data-omt-localtime-full]",
+      "[data-omt-localtime-short]",
+      ".header-datestamp-full",
+      ".header-datestamp-short"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 2000,
+      "postVisualWaitMs": 2600,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO",
+          "MEGABANNER",
+          "TOPO",
+          "TOP BANNER",
+          "MEGA BANNER TOPO 825 X 120",
+          "MEGA BANNER TOPO - 825 X 120",
+          "MEGABANER TOPO",
+          "MEGABANNER TPO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-1",
+        "contextSelector": ".header-top-banner",
+        "scrollMode": "top",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 3200,
+          "postVisualWaitMs": 3800,
+          "gifFrameSelection": "source_preferred",
+          "domGuidedSampleCount": 10,
+          "domGuidedMaxAttempts": 3,
+          "domSampleScreenshotMaxAttempts": 5,
+          "domSampleScreenshotRetryWaitMs": 320,
+          "domFrameMinSimilarity": 0.55,
+          "domFrameMinNonBgRatio": 0.03,
+          "gifMinHoldMs": 1200,
+          "gifMinIdentityFrameScore": 58,
+          "forceReferenceFrameOnSlot": true,
+          "bestEffortAllowed": true,
+          "requireSlotVisibleInViewport": true
+        }
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "HOME 1",
+          "MEGABANNER HOME 1",
+          "MEGABANNER HOME1",
+          "MEGABANNER HOME 01"
+        ],
+        "page": "home",
+        "slotSelector": ".homepage-banner-single .g.g-2",
+        "contextSelector": ".homepage-banner-single",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 4200,
+          "postVisualWaitMs": 4800,
+          "viewportTrimBottomPx": 180,
+          "stableFrameSampleCount": 12,
+          "stableFrameSampleIntervalMs": 360,
+          "stableFrameMotionThreshold": 6.5,
+          "stableFrameMinStablePairsAtEnd": 3,
+          "stableFrameMinStddev": 18,
+          "stableFrameMinEdgeMean": 10,
+          "stableFrameMinMidtoneRatio": 0.11,
+          "gifFrameSelection": "source_preferred",
+          "gifMinHoldMs": 1200,
+          "gifMinNonBgRatio": 0.02,
+          "gifMinContrast": 20,
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "finalPngSlotMinSimilarity": 0.26,
+          "bestEffortAllowed": true,
+          "requireSlotVisibleInViewport": true
+        }
+      },
+      {
+        "groupId": 4,
+        "aliases": [
+          "HOME 2",
+          "MEGABANNER HOME 2",
+          "MEGABANNER HOME2"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-4",
+        "contextSelector": ".g.g-4",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 5,
+        "aliases": [
+          "HOME 3",
+          "MEGABANNER HOME 3"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-5",
+        "contextSelector": ".g.g-5",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 9,
+        "aliases": [
+          "INTERNO DE NOTICIAS",
+          "INTERNO DE NOTICIA",
+          "BANNER INTERNO NOTICIAS",
+          "BANNER INTERNO NOTICIA",
+          "NOTICIA INTERNA"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-9",
+        "contextSelector": ".g.g-9",
+        "scrollMode": "slot"
+      }
+    ]
+  },
+  "AFL": {
+    "sigla": "AFL",
+    "label": "A Folha Livre",
+    "domain": "afolhalivre.com",
+    "homeUrl": "https://afolhalivre.com/",
+    "adminBaseUrl": "https://afolhalivre.com/wp/wp-admin",
+    "articleFallbackUrl": null,
+    "browserTitle": "A Folha Livre",
+    "hostLabel": "afolhalivre.com",
+    "originIp": "66.253.112.200",
+    "previewSecret": "adops-preview-afl-2026-c5",
+    "pageDateSelectors": [
+      "time.js-topbar-datetime",
+      ".header-datestamp-full",
+      ".header-datestamp-short"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 1800,
+      "postVisualWaitMs": 2000,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO",
+          "MEGABANNER",
+          "MEGABANNER TPO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-1",
+        "contextSelector": ".g.g-1",
+        "scrollMode": "top",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 3200,
+          "postVisualWaitMs": 3800,
+          "gifFrameSelection": "source_preferred",
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "finalPngSlotMinSimilarity": 0.26,
+          "bestEffortAllowed": true,
+          "allowViewportImageMisses": 1,
+          "forceReferenceFrameOnSlot": true,
+          "requireSlotVisibleInViewport": true,
+          "disableSignedPreview": true
+        }
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "HOME 1",
+          "MEGABANNER HOME 1",
+          "MEGABANNER HOME1"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-2",
+        "contextSelector": ".g.g-2",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 180,
+          "gifFrameSelection": "source_preferred",
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4,
+          "finalPngStickyHeaderMinContentStddev": 8,
+          "requireSlotVisibleInViewport": true,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      },
+      {
+        "groupId": 3,
+        "aliases": [
+          "HOME 2",
+          "MEGABANNER HOME 2"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-3",
+        "contextSelector": ".g.g-3",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 180,
+          "gifFrameSelection": "source_preferred",
+          "finalPngSlotMinContentStddev": 4,
+          "finalPngStickyHeaderMinContentStddev": 8,
+          "requireSlotVisibleInViewport": true,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 14,
+        "aliases": [
+          "INTERNO DE NOTICIAS",
+          "BANNER INTERNO NOTICIAS",
+          "INTERNO NOTICIA"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-14",
+        "contextSelector": ".g.g-14",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "postVisualWaitMs": 2600,
+          "gifFrameSelection": "source_preferred",
+          "finalPngSlotMinSimilarity": 0.48,
+          "finalPngSlotMinContentStddev": 4,
+          "finalPngStickyHeaderMinContentStddev": 8,
+          "allowViewportImageMisses": 1,
+          "requireSlotVisibleInViewport": true,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      }
+    ]
+  },
+  "PNMT": {
+    "sigla": "PNMT",
+    "label": "Portal Norte MT",
+    "domain": "portalnortemt.com",
+    "homeUrl": "https://portalnortemt.com/",
+    "adminBaseUrl": "https://portalnortemt.com/wp/wp-admin",
+    "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
+    "browserTitle": "Portal Norte MT",
+    "hostLabel": "portalnortemt.com",
+    "originIp": "66.253.112.200",
+    "previewSecret": "adops-preview-pnmt-2026-c5",
+    "pageDateSelectors": [
+      "time.js-topbar-datetime",
+      ".header-datestamp-full",
+      ".header-datestamp-short"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 1800,
+      "postVisualWaitMs": 1100,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO",
+          "MEGABANNER"
+        ],
+        "page": "home",
+        "slotSelector": "div.hidden.lg\\:block .g.g-1",
+        "contextSelector": "div.hidden.lg\\:block .g.g-1",
+        "scrollMode": "top",
+        "proofStyle": "viewport_with_slot_inset",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 3200,
+          "postVisualWaitMs": 3800,
+          "gifFrameSelection": "source_preferred",
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "bestEffortAllowed": true,
+          "allowViewportImageMisses": 1,
+          "requireSlotVisibleInViewport": true
+        }
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "HOME 1",
+          "MEGABANNER HOME 1",
+          "MEGABANNER HOME1"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-2",
+        "contextSelector": ".g.g-2",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      },
+      {
+        "groupId": 3,
+        "aliases": [
+          "HOME 2",
+          "MEGABANNER HOME 2"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-3",
+        "contextSelector": ".g.g-3",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 4,
+        "aliases": [
+          "HOME 3",
+          "MEGABANNER HOME 3"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-4",
+        "contextSelector": ".g.g-4",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 14,
+        "aliases": [
+          "INTERNO DE NOTICIAS",
+          "BANNER INTERNO NOTICIAS",
+          "INTERNO NOTICIA"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-14",
+        "contextSelector": ".g.g-14",
+        "scrollMode": "slot"
+      }
+    ],
+    "disableOriginOverride": true
+  },
+  "PPMT": {
+    "sigla": "PPMT",
+    "label": "Portal Pantanal MT",
+    "domain": "portalpantanalmt.com",
+    "homeUrl": "https://portalpantanalmt.com/",
+    "adminBaseUrl": "https://portalpantanalmt.com/wp/wp-admin",
+    "articleFallbackUrl": null,
+    "browserTitle": "Portal Pantanal MT",
+    "hostLabel": "portalpantanalmt.com",
+    "originIp": "66.253.112.200",
+    "previewSecret": "adops-preview-ppmt-2026-c5",
+    "pageDateSelectors": [
+      "time.js-topbar-datetime",
+      ".header-datestamp-full",
+      ".header-datestamp-short"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 1800,
+      "postVisualWaitMs": 1100,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO"
+        ],
+        "page": "home",
+        "slotSelector": "div.hidden.lg\\:block .g.g-1",
+        "contextSelector": "div.hidden.lg\\:block .g.g-1",
+        "scrollMode": "top",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 3200,
+          "postVisualWaitMs": 3800,
+          "gifFrameSelection": "source_preferred",
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "finalPngSlotMinSimilarity": 0.26,
+          "forceReferenceFrameOnSlot": true,
+          "bestEffortAllowed": true,
+          "allowViewportImageMisses": 1,
+          "requireSlotVisibleInViewport": true
+        }
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "FULLBANNER",
+          "FULL BANNER",
+          "HOME 1",
+          "MEGABANNER HOME 1"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-2",
+        "contextSelector": ".g.g-2",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_with_slot_inset",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 180,
+          "gifFrameSelection": "source_preferred",
+          "gifMinHoldMs": 1200,
+          "gifMinNonBgRatio": 0.03,
+          "gifMinContrast": 20,
+          "gifMinIdentityFrameScore": 58,
+          "gifMinTextEdgeRatio": 0.014,
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "bestEffortAllowed": true,
+          "forceReferenceFrameOnSlot": true,
+          "finalPngSlotMinContentStddev": 4,
+          "finalPngStickyHeaderMinContentStddev": 8,
+          "requireSlotVisibleInViewport": true,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      },
+      {
+        "groupId": 3,
+        "aliases": [
+          "HOME 2",
+          "MEGABANNER HOME 2"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-3",
+        "contextSelector": ".g.g-3",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 180,
+          "gifFrameSelection": "source_preferred",
+          "gifMinHoldMs": 1200,
+          "gifMinNonBgRatio": 0.03,
+          "gifMinContrast": 20,
+          "gifMinIdentityFrameScore": 58,
+          "gifMinTextEdgeRatio": 0.014,
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "forceReferenceFrameOnSlot": true,
+          "finalPngSlotMinContentStddev": 4,
+          "finalPngStickyHeaderMinContentStddev": 8,
+          "bestEffortAllowed": true,
+          "requireSlotVisibleInViewport": true,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 14,
+        "aliases": [
+          "INTERNO DE NOTICIAS",
+          "BANNER INTERNO NOTICIAS",
+          "INTERNO NOTICIA"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-14",
+        "contextSelector": ".g.g-14",
+        "scrollMode": "slot"
+      }
+    ]
+  },
+  "ROO": {
+    "sigla": "ROO",
+    "label": "Roo Notícias",
+    "domain": "roonoticias.com",
+    "homeUrl": "https://roonoticias.com/",
+    "adminBaseUrl": "https://roonoticias.com/wp/wp-admin",
+    "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
+    "browserTitle": "Roo Notícias",
+    "hostLabel": "roonoticias.com",
+    "originIp": "66.253.112.200",
+    "previewSecret": "adops-preview-roo-2026-c5",
+    "pageDateSelectors": [
+      "time.js-topbar-datetime",
+      ".header-datestamp-full",
+      ".header-datestamp-short"
+    ],
+    "consentConfig": {
+      "selectors": [
+        "button[aria-label*='cookie' i]",
+        "button[aria-label*='consent' i]",
+        "#onetrust-accept-btn-handler",
+        ".cky-btn-accept",
+        ".cmplz-btn.cmplz-accept",
+        ".fc-cta-consent",
+        ".cc-btn.cc-allow",
+        ".cookie-notice-container .cn-button"
+      ],
+      "textPatterns": [
+        "aceitar",
+        "aceito",
+        "concordo",
+        "entendi",
+        "fechar",
+        "ok",
+        "prosseguir",
+        "continuar"
+      ]
+    },
+    "auditConfig": {
+      "animatedBannerDelayMs": 1800,
+      "postVisualWaitMs": 1100,
+      "viewportTrimBottomPx": 0
+    },
+    "formatMappings": [
+      {
+        "groupId": 1,
+        "aliases": [
+          "MEGABANNER TOPO",
+          "MEGABANNER"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-1",
+        "contextSelector": ".g.g-1",
+        "scrollMode": "top",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "preferArticleFallbackForRetro": false,
+          "animatedBannerDelayMs": 6500,
+          "postVisualWaitMs": 6500,
+          "gifFrameSelection": "source_preferred",
+          "domFrameMinSimilarity": 0.26,
+          "domFrameMinNonBgRatio": 0.03,
+          "finalPngSlotMinSimilarity": 0.26,
+          "forceReferenceFrameOnSlot": true,
+          "bestEffortAllowed": true,
+          "allowViewportImageMisses": 1,
+          "requireSlotVisibleInViewport": true,
+          "disableSignedPreview": true
+        }
+      },
+      {
+        "groupId": 2,
+        "aliases": [
+          "HOME 1",
+          "MEGABANNER HOME 1",
+          "BANNER 728 X 90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-2",
+        "contextSelector": ".g.g-2",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_with_slot_inset",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2400,
+          "viewportTrimBottomPx": 180
+        }
+      },
+      {
+        "groupId": 3,
+        "aliases": [
+          "HOME 2",
+          "MEGABANNER HOME 2",
+          "TOPO LATERAL"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-3",
+        "contextSelector": ".g.g-3",
+        "scrollMode": "slot"
+      },
+      {
+        "groupId": 6,
+        "aliases": [
+          "VIDEO"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-6",
+        "contextSelector": ".g.g-6",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true
+        }
+      },
+      {
+        "groupId": 8,
+        "aliases": [
+          "INTERNO DE NOTICIAS",
+          "BANNER INTERNO NOTICIAS"
+        ],
+        "page": "article",
+        "slotSelector": ".g.g-8",
+        "contextSelector": ".g.g-8",
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "allowViewportImageMisses": 1,
+          "gifAllowedFrameRanges": [
+            [
+              120,
+              180
+            ]
+          ],
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime"
+        }
+      }
+    ],
+    "disableOriginOverride": true
+  }
+}

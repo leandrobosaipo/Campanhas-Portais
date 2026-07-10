@@ -1,0 +1,286 @@
+{
+  "summary": {
+    "label": "ROO-PI-14355-feminicidio",
+    "insertionId": 1341,
+    "piCodigo": "PI 14355- GOV",
+    "siteSigla": "ROO",
+    "periodoInicio": "2026-05-13",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "evidenceCount": 19,
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/ROO-PI-14355-feminicidio.zip",
+    "checkedAt": "2026-06-01T14:24:07.086Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-13_MEGABANNERHOME1.png?v=1779582314495"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-14_MEGABANNERHOME1.png?v=1779582350541"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-15_MEGABANNERHOME1.png?v=1779582384894"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-16_MEGABANNERHOME1.png?v=1779582419812"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-17_MEGABANNERHOME1.png?v=1779582470446"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-18_MEGABANNERHOME1.png?v=1779582504157"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-19_MEGABANNERHOME1.png?v=1779582535470"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-20_MEGABANNERHOME1.png?v=1779582581925"
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-21_MEGABANNERHOME1.png?v=1779582620404"
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-22_MEGABANNERHOME1.png?v=1779582663218"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-23_MEGABANNERHOME1.png?v=1779583349862"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-24_MEGABANNERHOME1.png?v=1779660431453"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-25_MEGABANNERHOME1.png?v=1779739496786"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-26_MEGABANNERHOME1.png?v=1779818568140"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-27_MEGABANNERHOME1.png?v=1779904990027"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-28_MEGABANNERHOME1.png?v=1779991374142"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-29_MEGABANNERHOME1.png?v=1780092254378"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-30_MEGABANNERHOME1.png?v=1780164182722"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-31_MEGABANNERHOME1.png?v=1780257749298"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-13",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-13_MEGABANNERHOME1.png?v=1779582314495"
+      },
+      {
+        "date": "2026-05-14",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-14_MEGABANNERHOME1.png?v=1779582350541"
+      },
+      {
+        "date": "2026-05-15",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-15_MEGABANNERHOME1.png?v=1779582384894"
+      },
+      {
+        "date": "2026-05-16",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-16_MEGABANNERHOME1.png?v=1779582419812"
+      },
+      {
+        "date": "2026-05-17",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-17_MEGABANNERHOME1.png?v=1779582470446"
+      },
+      {
+        "date": "2026-05-18",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-18_MEGABANNERHOME1.png?v=1779582504157"
+      },
+      {
+        "date": "2026-05-19",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-19_MEGABANNERHOME1.png?v=1779582535470"
+      },
+      {
+        "date": "2026-05-20",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-20_MEGABANNERHOME1.png?v=1779582581925"
+      },
+      {
+        "date": "2026-05-21",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-21_MEGABANNERHOME1.png?v=1779582620404"
+      },
+      {
+        "date": "2026-05-22",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-22_MEGABANNERHOME1.png?v=1779582663218"
+      },
+      {
+        "date": "2026-05-23",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-23_MEGABANNERHOME1.png?v=1779583349862"
+      },
+      {
+        "date": "2026-05-24",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-24_MEGABANNERHOME1.png?v=1779660431453"
+      },
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-25_MEGABANNERHOME1.png?v=1779739496786"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-26_MEGABANNERHOME1.png?v=1779818568140"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-27_MEGABANNERHOME1.png?v=1779904990027"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-28_MEGABANNERHOME1.png?v=1779991374142"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-29_MEGABANNERHOME1.png?v=1780092254378"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-30_MEGABANNERHOME1.png?v=1780164182722"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/875/1341/ROO_FEMINICIDIO_GOVMT_PI14355_2026-05-31_MEGABANNERHOME1.png?v=1780257749298"
+      }
+    ]
+  }
+}

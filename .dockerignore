@@ -1,0 +1,10 @@
+.git
+node_modules
+.wrangler
+dist
+build
+tmp
+tmp-playwright
+test-results
+artifacts/adops/dist
+artifacts/mockup-sandbox/dist

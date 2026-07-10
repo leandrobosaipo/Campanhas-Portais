@@ -30,5 +30,7 @@ export interface CreateInsertionBody {
   /** @nullable */
   dataEnvioAgencia?: string | null;
   /** @nullable */
+  mediaUrl?: string | null;
+  /** @nullable */
   observacoes?: string | null;
 }

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate API clients
+        run: pnpm --filter @workspace/api-spec run codegen
+      - name: Reject generated contract drift
+        run: git diff --exit-code -- lib/api-client-react/src/generated lib/api-zod/src/generated
+      - run: pnpm run typecheck
+      - run: pnpm --filter @workspace/api-server run build
+      - run: pnpm --filter @workspace/adops run build
+      - run: pnpm --dir scripts run test:runtime-auth
+      - run: pnpm --dir scripts run test:drive-pi-event-flow
+      - run: pnpm --dir scripts run test:drive-pi-publish-flow
+      - run: pnpm --dir scripts run test:drive-inventory-flow
+      - run: pnpm --dir scripts run harness:drive-pi-monitor-first-v4
+      - run: pnpm --dir scripts run audit:capture-rules-integrity
+      - name: Validate production compose
+        env:
+          ADOPS_IMAGE_TAG: ci
+          ADOPS_POSTGRES_PASSWORD: ci-only
+          ADOPS_INTERNAL_API_TOKEN: ci-only
+          DO_SPACES_ACCESS_KEY_ID: ci-only
+          DO_SPACES_SECRET_ACCESS_KEY: ci-only
+          OPS_API_TOKEN: ci-only
+        run: docker compose -f ops/portainer/adops-stack/docker-compose.yml config >/dev/null
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan release tree for secrets
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 dir /repo --redact --no-banner

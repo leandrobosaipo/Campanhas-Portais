@@ -1,0 +1,125 @@
+{
+  "summary": {
+    "label": "OMT-PI-14414-vacina",
+    "insertionId": 1390,
+    "piCodigo": "PI 14414- PREF CBA",
+    "siteSigla": "OMT",
+    "periodoInicio": "2026-05-25",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-30",
+    "evidenceCount": 6,
+    "zipPath": "/Users/leandrobosaipo/Downloads/OMT-PI-14414-vacina.zip",
+    "telegramEvidenceMessages": [
+      {
+        "date": "2026-05-25",
+        "messageId": 834
+      },
+      {
+        "date": "2026-05-26",
+        "messageId": 835
+      },
+      {
+        "date": "2026-05-27",
+        "messageId": 836
+      },
+      {
+        "date": "2026-05-28",
+        "messageId": 837
+      },
+      {
+        "date": "2026-05-29",
+        "messageId": 838
+      },
+      {
+        "date": "2026-05-30",
+        "messageId": 839
+      }
+    ],
+    "telegramMessageId": 840,
+    "checkedAt": "2026-05-30T20:30:56.673Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-25_MEGABANNERHOME1.png?v=1779969780606"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-26_MEGABANNERHOME1.png?v=1779969820238"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-27_MEGABANNERHOME1.png?v=1779969858245"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-28_MEGABANNERHOME1.png?v=1779969740506"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-29_MEGABANNERHOME1.png?v=1780092545649"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/889/1390/OMT_VACINA_PREFCBA_PI14414_2026-05-30_MEGABANNERHOME1.png?v=1780164309828"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "summary": {
+    "label": "PERRENGUE-PI-89784-aniversario-PVA",
+    "insertionId": 1364,
+    "piCodigo": "PI 89784- PREF PVA",
+    "siteSigla": "PERRENGUE",
+    "periodoInicio": "2026-05-14",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "aguardando_publicacao",
+    "mediaUrlPresent": false,
+    "bannerPublicadoNoSite": false,
+    "ok": false,
+    "skipped": true,
+    "reason": "Nao publicavel: mediaUrl=false bannerPublicadoNoSite=false"
+  },
+  "audit": null
+}

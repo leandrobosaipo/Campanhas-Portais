@@ -1,0 +1,124 @@
+{
+  "summary": {
+    "label": "PERRENGUE-PI-14408-aniversario-VG",
+    "insertionId": 1395,
+    "piCodigo": "14408- PREF CBA",
+    "siteSigla": "PERRENGUE",
+    "periodoInicio": "2026-05-25",
+    "periodoFim": "2026-05-31",
+    "targetDate": "2026-05-31",
+    "statusNormalizado": "publicado_no_site",
+    "mediaUrlPresent": true,
+    "bannerPublicadoNoSite": true,
+    "ok": true,
+    "skipped": false,
+    "evidenceCount": 7,
+    "dir": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-14408-aniversario-VG",
+    "zipPath": "/Users/leandrobosaipo/Downloads/Evidencias-SPM-Checklist-2026-06-01/PERRENGUE-PI-14408-aniversario-VG.zip",
+    "checkedAt": "2026-06-01T10:46:08.528Z"
+  },
+  "audit": {
+    "before": [
+      {
+        "date": "2026-05-25",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-26",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-27",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-28",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-29",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-30",
+        "ok": false,
+        "status": "missing",
+        "issues": 1,
+        "url": null
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-31_MEGA_TOPO.png?v=1780265019160"
+      }
+    ],
+    "final": [
+      {
+        "date": "2026-05-25",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-25_MEGA_TOPO.png?v=1780310250304"
+      },
+      {
+        "date": "2026-05-26",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-26_MEGA_TOPO.png?v=1780310344698"
+      },
+      {
+        "date": "2026-05-27",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-27_MEGA_TOPO.png?v=1780310389758"
+      },
+      {
+        "date": "2026-05-28",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-28_MEGA_TOPO.png?v=1780310443671"
+      },
+      {
+        "date": "2026-05-29",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-29_MEGA_TOPO.png?v=1780310618219"
+      },
+      {
+        "date": "2026-05-30",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-30_MEGA_TOPO.png?v=1780310665625"
+      },
+      {
+        "date": "2026-05-31",
+        "ok": true,
+        "status": "audited",
+        "issues": 0,
+        "url": "https://cod5.nyc3.digitaloceanspaces.com/adops-prints/MAIO-2026/892/1395/PERRENGUE_VACINA_PREFCBA_14408PREFCBA_2026-05-31_MEGA_TOPO.png?v=1780265019160"
+      }
+    ]
+  }
+}

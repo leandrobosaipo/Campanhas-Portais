@@ -31,6 +31,8 @@ export interface InsertionDetail {
   docsEnviados: boolean;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   atrasado: boolean;
   /** @nullable */
   observacoes?: string | null;
@@ -42,6 +44,8 @@ export interface InsertionDetail {
   siteNome?: string | null;
   /** @nullable */
   siteSigla?: string | null;
+  /** @nullable */
+  siteLogoUrl?: string | null;
   /** @nullable */
   clienteNome?: string | null;
   /** @nullable */

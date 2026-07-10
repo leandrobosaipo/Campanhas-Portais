@@ -30,6 +30,8 @@ export interface Insertion {
   docsEnviados: boolean;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   atrasado: boolean;
   /** @nullable */
   observacoes?: string | null;
