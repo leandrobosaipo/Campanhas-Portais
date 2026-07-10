@@ -52,6 +52,9 @@ assert(media.includes('DRIVE_INTEGRATION_MODE === "monitor"'));
 assert(compose.includes("DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-legacy}"));
 assert(!compose.match(/adops-api:[\s\S]*?GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:[\s\S]*?adops-runner:/), "API não pode receber credencial do Drive");
 assert(worker.includes('path === "/api/ops/jobs/drive-inventory-refresh"'));
+assert(runner.includes("ADOPS_DRIVE_RETRY_MAX_ATTEMPTS"));
+assert(runner.includes("AbortSignal.timeout(ADOPS_DRIVE_REQUEST_TIMEOUT_MS)"));
+assert(runner.includes("response.status === 429 || response.status >= 500 || quotaLimited"));
 assert(worker.includes('path === "/api/ops/drive-inventory/status"'));
 
 console.log("ok: drive inventory snapshot, API, runner and rollout contracts");
