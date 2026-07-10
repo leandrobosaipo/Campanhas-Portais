@@ -3356,9 +3356,21 @@ async function executeAdrotatePublishJob(payload) {
     path.posix.join(site.wpPath, "wp-content/mu-plugins/adrotate-adops.php"),
     path.posix.join(path.posix.dirname(site.wpPath), "app/mu-plugins/adrotate-adops.php"),
   ];
+  const remotePluginSyncCommand = [
+    `content_dir="$(${wpCliBase} eval ${shellEscape("echo WP_CONTENT_DIR;")} 2>/dev/null)"`,
+    'test -n "$content_dir"',
+    'plugin_target="$content_dir/plugins/adrotate/adrotate-adops.php"',
+    'tmp_plugin="$(mktemp /tmp/adrotate-adops.XXXXXX.php)"',
+    `printf %s ${shellEscape(pluginSourceBase64 || "")} | base64 -d > "$tmp_plugin"`,
+    `${shellEscape(site.phpBin ?? "php")} -l "$tmp_plugin" >/dev/null`,
+    'mkdir -p "$(dirname "$plugin_target")"',
+    'if ! cmp -s "$tmp_plugin" "$plugin_target"; then if test -f "$plugin_target"; then cp "$plugin_target" "$plugin_target.bak-$(date +%Y%m%d-%H%M%S)"; fi; install -m 0644 "$tmp_plugin" "$plugin_target"; fi',
+    'rm -f "$tmp_plugin"',
+    `${wpCliBase} help adops-adrotate-publish >/dev/null 2>&1`,
+  ].join(" && ");
   const remoteCommand = [
     `rm -f ${staleMuPluginTargets.map(shellEscape).join(" ")}`,
-    `if ! ${wpCliBase} help adops-adrotate-publish >/dev/null 2>&1; then content_dir="$(${wpCliBase} eval ${shellEscape("echo WP_CONTENT_DIR;")} 2>/dev/null)" && test -n "$content_dir" && plugin_target="$content_dir/plugins/adrotate/adrotate-adops.php" && tmp_plugin="$(mktemp /tmp/adrotate-adops.XXXXXX.php)" && printf %s ${shellEscape(pluginSourceBase64 || "")} | base64 -d > "$tmp_plugin" && ${shellEscape(site.phpBin ?? "php")} -l "$tmp_plugin" >/dev/null && mkdir -p "$(dirname "$plugin_target")" && mv "$tmp_plugin" "$plugin_target"; fi`,
+    remotePluginSyncCommand,
     'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
     `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
     `${wpCliCommand}; rc=$?`,
