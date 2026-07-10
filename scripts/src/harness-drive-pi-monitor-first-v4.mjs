@@ -55,12 +55,15 @@ await check("telegram-inicial-orienta-nao-cadastrar", async () => {
 
 await check("runner-cria-lock-antes-do-packaging", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
-  const intakeIndex = source.indexOf('"intake_locked"');
-  const packagingIndex = source.indexOf('"packaging"');
+  const flowStart = source.indexOf("async function executeDrivePiIngest(payload)");
+  const flowEnd = source.indexOf("async function executePrintBatch(payload)", flowStart);
+  const flowSource = flowStart >= 0 && flowEnd > flowStart ? source.slice(flowStart, flowEnd) : "";
+  const intakeIndex = flowSource.indexOf('"intake_locked"');
+  const packagingIndex = flowSource.indexOf('"packaging"');
   if (intakeIndex === -1 || packagingIndex === -1 || intakeIndex > packagingIndex) {
     throw new Error("intake_locked precisa aparecer antes de packaging no fluxo executeDrivePiIngest.");
   }
-  return requireIncludes(source, [
+  return requireIncludes(flowSource, [
     "const intakeLock =",
     "Nova entrada do Drive em processamento automatico",
     "notifyDrivePiTelegram({",
