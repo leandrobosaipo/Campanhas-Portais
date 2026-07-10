@@ -22,6 +22,7 @@
     "test:runtime-auth": "node --import tsx --test ./src/test-runtime-api-auth.ts ./src/test-api-base-auth.ts ./src/test-custom-fetch-auth.ts",
     "test:public-worker-auth": "node ./src/test-public-worker-auth.mjs",
     "test:drive-pi-event-flow": "node ./src/test-drive-pi-event-flow.mjs",
+    "test:drive-pi-publish-flow": "node ./src/test-drive-pi-publish-flow.mjs",
     "intake:spm-whatsapp-print-2026-06-03": "node ./src/create-spm-whatsapp-print-intakes-2026-06-03.mjs",
     "import:d1-control-plane": "node ./src/import-d1-control-plane-to-postgres.mjs",
     "test:public-auth-smoke": "node ./src/test-adops-public-auth.mjs",
@@ -56,6 +57,7 @@
     "drizzle-orm": "catalog:",
     "pg": "^8.20.0",
     "playwright": "1.59.1",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "xlsx": "^0.18.5"
   }
 }

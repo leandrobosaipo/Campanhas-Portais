@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import * as XLSX from "xlsx";
 import { eq, and } from "drizzle-orm";
 import { db, campaignsTable, insertionsTable, sitesTable } from "@workspace/db";
 
@@ -38,7 +39,6 @@ const EXPORT_URL =
 const PROJECT_ROOT = process.env.ADOPS_PROJECT_ROOT ?? process.cwd();
 const TMP_DIR = process.env.ADOPS_SHEET_TMP_DIR ?? path.join(os.tmpdir(), "campanhas-portais-sheet-check");
 const TMP_FILE = path.join(TMP_DIR, "relacao-campanhas-latest.xlsx");
-const AGENT_XLSX_UVX_ARGS = ["--with", "click", "--with", "polars[rtcompat]", "agent-xlsx"];
 const REPORT_FILE = process.env.ADOPS_RECONCILE_REPORT_FILE ?? path.join(PROJECT_ROOT, "docs", "reconcile-planilha-adrotate-latest.md");
 const SSH_HOST = process.env.ADOPS_MULTISITE_SSH_HOST ?? "66.253.112.200";
 const SSH_PORT = process.env.ADOPS_MULTISITE_SSH_PORT ?? "215";
@@ -426,10 +426,6 @@ function buildRowsFromSheetCsv(csv: string, sheetName: string, competenciaSheet:
   return rows.filter((row) => row.siteSigla && (isMeaningful(row.campanha) || isMeaningful(row.local)));
 }
 
-function jsonCommand(args: string[]) {
-  return JSON.parse(execFileSync(args[0]!, args.slice(1), { encoding: "utf8" }));
-}
-
 async function downloadLatestXlsx() {
   await mkdir(TMP_DIR, { recursive: true });
   const response = await fetch(EXPORT_URL);
@@ -440,13 +436,14 @@ async function downloadLatestXlsx() {
 
 async function loadRawRows() {
   await downloadLatestXlsx();
-  const probe = jsonCommand(["uvx", ...AGENT_XLSX_UVX_ARGS, "probe", TMP_FILE, "--brief"]);
+  const workbook = XLSX.read(await readFile(TMP_FILE), { type: "buffer" });
   const rows: RawRow[] = [];
-  for (const sheet of probe.sheets as Array<{ name: string; cols: number }>) {
-    const competenciaSheet = normalizeSheetCompetencia(sheet.name);
-    if (!competenciaSheet || sheet.cols === 0) continue;
-    const csv = execFileSync("uvx", [...AGENT_XLSX_UVX_ARGS, "export", TMP_FILE, "-s", sheet.name, "--format", "csv"], { encoding: "utf8" });
-    rows.push(...buildRowsFromSheetCsv(csv, sheet.name, competenciaSheet));
+  for (const sheetName of workbook.SheetNames) {
+    const competenciaSheet = normalizeSheetCompetencia(sheetName);
+    const worksheet = workbook.Sheets[sheetName];
+    if (!competenciaSheet || !worksheet || !worksheet["!ref"]) continue;
+    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: ",", RS: "\n", blankrows: false });
+    rows.push(...buildRowsFromSheetCsv(csv, sheetName, competenciaSheet));
   }
   return rows;
 }

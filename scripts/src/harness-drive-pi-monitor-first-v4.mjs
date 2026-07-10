@@ -87,7 +87,7 @@ await check("runner-classifica-pacote", async () => {
 await check("runner-bloqueia-auto-apply-incompleto-e-dedupe-conflitante", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
   return requireIncludes(source, [
-    "validateDrivePiPackageReadiness(packageClassification, fields)",
+    "validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing",
     "validateDrivePiDedupeSafety(fields)",
     "dedupe_conflict",
     "missing_pi_pdf",

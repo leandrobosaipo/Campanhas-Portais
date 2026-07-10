@@ -99,6 +99,8 @@
         "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
+          "slotScrollViewportOffsetRatio": 0.5,
+          "finalViewportTargetOffsetRatio": 0.5,
           "viewportTrimBottomPx": 160
         }
       },
@@ -111,7 +113,11 @@
         "page": "home",
         "slotSelector": ".g.g-3",
         "contextSelector": ".g.g-3",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
+        }
       },
       {
         "groupId": 4,
@@ -135,7 +141,7 @@
         "slotSelector": ".g.g-6",
         "contextSelector": ".g.g-6",
         "scrollMode": "slot",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
           "postVisualWaitMs": 2600,
@@ -143,6 +149,8 @@
           "stableFrameMinStddev": 18,
           "stableFrameMinEdgeMean": 8,
           "stableFrameMinMidtoneRatio": 0.02,
+          "finalPngSlotMinSimilarity": 0.78,
+          "finalPngSlotMinContentStddev": 4,
           "requireStableFrame": false,
           "requireLegibleFrame": true
         }
@@ -418,10 +426,10 @@
           "MEGABANNER TPO"
         ],
         "page": "home",
-        "slotSelector": ".omt-header-top .g.g-1",
-        "contextSelector": ".omt-header-top .g.g-1",
+        "slotSelector": ".g.g-1",
+        "contextSelector": ".g.g-1",
         "scrollMode": "top",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 3200,
           "postVisualWaitMs": 3800,
@@ -431,7 +439,8 @@
           "finalPngSlotMinSimilarity": 0.26,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true
+          "requireSlotVisibleInViewport": true,
+          "disableSignedPreview": true
         }
       },
       {
@@ -850,10 +859,10 @@
           "MEGABANNER"
         ],
         "page": "home",
-        "slotSelector": "div.hidden.lg\\:block .g.g-1",
-        "contextSelector": "div.hidden.lg\\:block .g.g-1",
+        "slotSelector": ".g.g-1",
+        "contextSelector": ".g.g-1",
         "scrollMode": "top",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "preferArticleFallbackForRetro": false,
           "animatedBannerDelayMs": 6500,
@@ -865,7 +874,8 @@
           "forceReferenceFrameOnSlot": true,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true
+          "requireSlotVisibleInViewport": true,
+          "disableSignedPreview": true
         }
       },
       {

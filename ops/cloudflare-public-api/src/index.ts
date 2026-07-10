@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -94,6 +94,12 @@ type DrivePiEventPayload = {
   simulation?: unknown;
   preflightOnly?: boolean;
   explicitFolder?: boolean;
+  resolveMedia?: boolean;
+  strictInsertionScope?: boolean;
+  allowPdfInsertions?: boolean;
+  publish?: boolean;
+  generateEvidence?: boolean;
+  purgeCache?: boolean;
   source?: string;
 };
 
@@ -591,6 +597,8 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     packaging: "Montando pacote da PI",
     agent_analysis: "Analisando PI com IA",
     parsing: "Lendo PI",
+    compressing_video: "Comprimindo vídeo",
+    uploading_video: "Subindo vídeo",
     validated: "PI validada",
     applying: "Aplicando no AdOps",
     syncing: "Sincronizando planilha",
@@ -614,6 +622,18 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Vinculando anúncio AdRotate",
     completed: "Vínculo AdRotate concluído",
     failed: "Falha no vínculo AdRotate",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
+  "adrotate-publish": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Publicando anúncio AdRotate",
+    resolving_contract: "Resolvendo checklist",
+    publishing: "Criando ou atualizando anúncio",
+    purging_cache: "Limpando cache do portal",
+    generating_evidence: "Gerando evidência",
+    completed: "Publicação AdRotate concluída",
+    failed: "Falha na publicação AdRotate",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
   "telegram-send-evidence": {
@@ -880,14 +900,15 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
   if (status === "queued") {
-    return kind === "analytics-report" || kind === "pi-site-export" ? 30 * 60_000 : 15 * 60_000;
+    return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
   if (status === "ready_for_runner") {
-    return kind === "analytics-report" || kind === "pi-site-export" ? 30 * 60_000 : 15 * 60_000;
+    return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
   if (status === "running") {
-    return kind === "analytics-report" || kind === "pi-site-export" ? 120 * 60_000 : 30 * 60_000;
+    return longRunning ? 120 * 60_000 : 30 * 60_000;
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -1062,6 +1083,12 @@ function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event:
       ...(body.simulation !== undefined ? { simulation: body.simulation } : {}),
       ...(body.preflightOnly === true ? { preflightOnly: true } : {}),
       ...(body.explicitFolder === true ? { explicitFolder: true } : {}),
+      ...(typeof body.resolveMedia === "boolean" ? { resolveMedia: body.resolveMedia } : {}),
+      ...(typeof body.strictInsertionScope === "boolean" ? { strictInsertionScope: body.strictInsertionScope } : {}),
+      ...(typeof body.allowPdfInsertions === "boolean" ? { allowPdfInsertions: body.allowPdfInsertions } : {}),
+      ...(typeof body.publish === "boolean" ? { publish: body.publish } : {}),
+      ...(typeof body.generateEvidence === "boolean" ? { generateEvidence: body.generateEvidence } : {}),
+      ...(typeof body.purgeCache === "boolean" ? { purgeCache: body.purgeCache } : {}),
       ...(readOptionalString(body.source) ? { source: readOptionalString(body.source) as string } : {}),
     },
   };
@@ -1998,16 +2025,17 @@ export default {
         return json({ ok: true, jobId, kind: "print-single", status: "queued" }, { status: 202 });
       }
 
-      if (path === "/api/ops/jobs/drive-pi-preflight" || path === "/api/ops/jobs/drive-pi-folder") {
+      if (path === "/api/ops/jobs/drive-pi-preflight" || path === "/api/ops/jobs/drive-pi-folder" || path === "/api/ops/jobs/drive-pi-publish") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
         const preflightOnly = path === "/api/ops/jobs/drive-pi-preflight";
+        const publishFlow = path === "/api/ops/jobs/drive-pi-publish";
         const folderId = parseDriveFolderId(body.folderUrl ?? body.folderId ?? body.driveFolderId);
         if (!folderId) return badRequest("Informe folderUrl, folderId ou driveFolderId válido do Google Drive.");
         const now = nowIso();
         const event = {
-          eventId: readOptionalString(body.eventId) ?? `drive:${preflightOnly ? "preflight:" : ""}${folderId}:${now}`,
+          eventId: readOptionalString(body.eventId) ?? `drive:${folderId}:${publishFlow ? "publish:" : preflightOnly ? "preflight:" : ""}${now}`,
           driveFileId: folderId,
           name: readOptionalString(body.name) ?? `${preflightOnly ? "Preflight Drive PI" : "Drive PI"} ${folderId}`,
           mimeType: "application/vnd.google-apps.folder",
@@ -2020,12 +2048,22 @@ export default {
           parsedPi: body.parsedPi,
           preflightOnly,
           explicitFolder: true,
-          source: preflightOnly ? "cloudflare-protected-api-preflight" : "cloudflare-protected-api",
+          resolveMedia: publishFlow ? body.resolveMedia !== false : body.resolveMedia === true,
+          strictInsertionScope: publishFlow ? body.strictInsertionScope !== false : body.strictInsertionScope === true,
+          allowPdfInsertions: publishFlow ? body.allowPdfInsertions === true : body.allowPdfInsertions !== false,
+          publish: publishFlow ? body.publish !== false : body.publish === true,
+          generateEvidence: publishFlow ? body.generateEvidence !== false : body.generateEvidence === true,
+          purgeCache: body.purgeCache !== false,
+          source: preflightOnly
+            ? "cloudflare-protected-api-preflight"
+            : publishFlow
+              ? "cloudflare-protected-api-publish"
+              : "cloudflare-protected-api",
         };
         const validated = validateDrivePiEvent(event);
         if (validated.ok === false) return validated.response;
         const result = await createDrivePiEventJob(env, validated.event, "ops-api");
-        return jsonNoStore({ ok: true, kind: "drive-pi-ingest", preflightOnly, ...result }, { status: result.duplicate ? 200 : 202 });
+        return jsonNoStore({ ok: true, kind: "drive-pi-ingest", preflightOnly, publishFlow, ...result }, { status: result.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/reconcile-adrotate") {
@@ -2059,6 +2097,41 @@ export default {
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "adrotate-link", status: "queued", apply }, { status: 202 });
+      }
+
+      if (path === "/api/ops/jobs/adrotate-publish") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const insertionId = readOptionalNumber(body.insertionId);
+        if (!insertionId || insertionId <= 0) {
+          return json({ error: "bad_request", details: "Informe insertionId positivo." }, { status: 400 });
+        }
+        const apply = body.apply === true;
+        const replaceExisting = body.replaceExisting !== false;
+        const purgeCache = body.purgeCache !== false;
+        const generateEvidence = body.generateEvidence === true;
+        const jobId = await createOpsJob(env, "adrotate-publish", {
+          insertionId,
+          apply,
+          replaceExisting,
+          purgeCache,
+          generateEvidence,
+          date: readOptionalString(body.date),
+          captureAt: readOptionalString(body.captureAt),
+          mode: apply ? "apply" : "preview",
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return json({
+          ok: true,
+          jobId,
+          kind: "adrotate-publish",
+          status: "queued",
+          apply,
+          requiredFollowUp: apply
+            ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
+            : ["review_preview", "rerun_with_apply_true"],
+        }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/watchdog") {

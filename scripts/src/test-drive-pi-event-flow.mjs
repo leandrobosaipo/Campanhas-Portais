@@ -148,7 +148,7 @@ await check("drive-pi-preflight-preserva-pacote-e-fallback-pi-sem-ia", async () 
     "buildDrivePiTextHints",
     "primaryArchive?.sourceName",
     "packageContext?.media",
-    "const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields);",
+    "const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing",
   ], "Drive PI preflight deterministic fallback");
   assert(!source.includes("const packageReadiness = validation.ok\n    ? validateDrivePiPackageReadiness"), "packageReadiness nao deve depender de validation.ok");
   return { ok: true };

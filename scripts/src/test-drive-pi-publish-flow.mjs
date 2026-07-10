@@ -1,0 +1,70 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+process.env.ADOPS_RUNNER_TEST_MODE = "1";
+const runner = await import(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"));
+
+const scoped = runner.filterSiteInsertions([
+  { siteId: 33, localFormato: "MEGABANNER TOPO", periodoInicio: "2026-07-09", periodoFim: "2026-07-29" },
+  { siteId: 33, localFormato: "INSTAGRAM STORIES", periodoInicio: "2026-07-09", periodoFim: "2026-07-14" },
+  { siteId: 33, localFormato: "REELS BONIFICACAO", periodoInicio: "2026-07-09", periodoFim: "2026-07-14" },
+]);
+assert.equal(scoped.accepted.length, 1);
+assert.equal(scoped.excluded.length, 2);
+
+const pdfInsertion = { siteId: 33, localFormato: "TOPO", periodoInicio: "2026-07-09", periodoFim: "2026-07-29" };
+const strictMerge = runner.mergeDrivePiFields(
+  { piCodigo: "PI 14608", campaignName: "FEMINICIDIO", competencia: "07/2026", clienteId: 151, agenciaId: 82, insertions: [], raw: {} },
+  { insertions: [pdfInsertion] },
+  { allowPdfInsertions: false },
+);
+assert.deepEqual(strictMerge.insertions, []);
+const permissiveMerge = runner.mergeDrivePiFields(
+  { piCodigo: "PI 14608", campaignName: "FEMINICIDIO", competencia: "07/2026", clienteId: 151, agenciaId: 82, insertions: [], raw: {} },
+  { insertions: [pdfInsertion] },
+  { allowPdfInsertions: true },
+);
+assert.equal(permissiveMerge.insertions.length, 1);
+
+const links = runner.extractUrlsFromText(`Banner: https://cdn.example.com/banner.gif\nDownload do video: https://files.example.com/vt.mp4.`);
+assert.deepEqual(links, ["https://cdn.example.com/banner.gif", "https://files.example.com/vt.mp4"]);
+assert.equal(runner.mediaKindFromUrl(links[0]), "image");
+assert.equal(runner.mediaKindFromUrl(links[1]), "video");
+assert.deepEqual(
+  runner.extractMediaLinksFromText(`Banner: https://cdn.example.com/download\nDestino: https://cliente.example.com/landing\nVideo: https://files.example.com/download`),
+  [
+    { url: "https://cdn.example.com/download", kind: "image", driveFileId: null },
+    { url: "https://cliente.example.com/landing", kind: "unknown", driveFileId: null },
+    { url: "https://files.example.com/download", kind: "video", driveFileId: null },
+  ],
+);
+assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: links[0], kind: "image" }] }] }, "image").link.url, links[0]);
+assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: "https://a/banner.gif", kind: "image" }, { url: "https://b/banner.gif", kind: "image" }] }] }, "image").ambiguous, true);
+
+const readiness = runner.validateDrivePiPackageReadiness(
+  { hasPdf: true, hasMedia: true },
+  { insertions: [{ siteId: 33, localFormato: "TOPO" }] },
+  { issues: [] },
+  { requireResolvedMedia: true },
+);
+assert.equal(readiness.ok, false);
+assert(readiness.issues.includes("insertion_media_url_missing_after_processing"));
+
+const [publicApi, privateApi, capture] = await Promise.all([
+  readFile(path.join(root, "ops/cloudflare-public-api/src/index.ts"), "utf8"),
+  readFile(path.join(root, "artifacts/api-server/src/routes/ops.ts"), "utf8"),
+  readFile(path.join(root, "scripts/src/capture-insertion-proof.cjs"), "utf8"),
+]);
+for (const source of [publicApi, privateApi]) {
+  assert(source.includes("/api/ops/jobs/drive-pi-publish") || source.includes("/ops/jobs/drive-pi-publish"));
+  assert(source.includes("strictInsertionScope"));
+  assert(source.includes("allowPdfInsertions"));
+}
+for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
+  assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
+}
+
+console.log("ok: drive-pi-publish contracts and deterministic scope/media rules");

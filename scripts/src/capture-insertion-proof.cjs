@@ -920,19 +920,54 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       }
     }
 
-    var mediaUrl = null;
-    var mediaNode = matched.querySelector("img, video, source");
-    if (mediaNode instanceof HTMLElement) {
-      mediaUrl =
-        mediaNode.getAttribute("src") ||
-        mediaNode.getAttribute("data-src") ||
-        mediaNode.getAttribute("data-lazy-src") ||
-        mediaNode.getAttribute("srcset") ||
-        mediaNode.getAttribute("data-lazy-srcset") ||
-        null;
-      if (mediaUrl && mediaUrl.indexOf(",") !== -1 && mediaUrl.indexOf(" ") !== -1) {
-        mediaUrl = mediaUrl.split(",")[0].trim().split(" ")[0].trim();
+    var normalizeMediaUrl = function (value) {
+      if (!value) return null;
+      var normalized = String(value).trim();
+      if (normalized && normalized.indexOf(",") !== -1 && normalized.indexOf(" ") !== -1) {
+        normalized = normalized.split(",")[0].trim().split(" ")[0].trim();
       }
+      return normalized || null;
+    };
+    var collectMediaUrls = function (node) {
+      if (!(node instanceof HTMLElement)) return [];
+      var values = [];
+      if (node instanceof HTMLVideoElement) {
+        values.push(node.currentSrc);
+        values.push(node.getAttribute("src"));
+        values.push(node.getAttribute("data-src"));
+        values.push(node.getAttribute("data-lazy-src"));
+        var sources = Array.prototype.slice.call(node.querySelectorAll("source"));
+        for (var sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+          var source = sources[sourceIndex];
+          values.push(source.getAttribute("src"));
+          values.push(source.getAttribute("data-src"));
+          values.push(source.getAttribute("data-lazy-src"));
+        }
+        values.push(node.getAttribute("poster"));
+      } else {
+        values.push(node.getAttribute("src"));
+        values.push(node.getAttribute("data-src"));
+        values.push(node.getAttribute("data-lazy-src"));
+        values.push(node.getAttribute("srcset"));
+        values.push(node.getAttribute("data-lazy-srcset"));
+        if (node.tagName.toLowerCase() === "source" && node.parentElement instanceof HTMLVideoElement) {
+          values.push(node.parentElement.currentSrc);
+        }
+      }
+      return values.map(normalizeMediaUrl).filter(Boolean);
+    };
+    var mediaUrl = null;
+    var mediaNodes = Array.prototype.slice.call(matched.querySelectorAll("video, source, img"));
+    for (var mediaIndex = 0; mediaIndex < mediaNodes.length; mediaIndex += 1) {
+      var urls = collectMediaUrls(mediaNodes[mediaIndex]);
+      for (var urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
+        if (!mediaUrl) mediaUrl = urls[urlIndex];
+        if (urls[urlIndex].toLowerCase().indexOf(mediaBasename) !== -1) {
+          mediaUrl = urls[urlIndex];
+          break;
+        }
+      }
+      if (mediaUrl && mediaUrl.toLowerCase().indexOf(mediaBasename) !== -1) break;
     }
 
     Array.prototype.slice.call(document.querySelectorAll("[data-adops-capture-slot]")).forEach(function (node) {
@@ -1030,6 +1065,46 @@ async function forceMatchedAdVisible(page) {
     if (matchedRect.width > 0) slot.style.width = `${Math.ceil(matchedRect.width)}px`;
     if (matchedRect.height > 0) slot.style.height = `${Math.ceil(matchedRect.height)}px`;
 
+    const applyLock = () => {
+      const currentMatched = document.querySelector('[data-adops-capture-ad="1"]');
+      const currentSlot = currentMatched instanceof HTMLElement
+        ? (currentMatched.closest('[data-adops-capture-slot="1"]') || currentMatched.closest(".g"))
+        : null;
+      if (!(currentMatched instanceof HTMLElement) || !(currentSlot instanceof HTMLElement)) return;
+      const currentItems = Array.from(currentSlot.querySelectorAll(":scope > .g-dyn, :scope > .g-single"));
+      const currentActive = currentItems.includes(currentMatched)
+        ? currentMatched
+        : currentItems.find((item) => item instanceof HTMLElement && item.contains(currentMatched));
+      for (const item of currentItems) {
+        if (!(item instanceof HTMLElement)) continue;
+        const isMatch = item === currentActive;
+        item.toggleAttribute("data-adops-capture-active-ad", isMatch);
+        item.style.setProperty("display", isMatch ? "block" : "none", "important");
+        item.style.setProperty("opacity", isMatch ? "1" : "0", "important");
+        item.style.setProperty("visibility", isMatch ? "visible" : "hidden", "important");
+        item.style.setProperty("position", isMatch ? "relative" : "absolute", "important");
+        item.style.setProperty("inset", isMatch ? "auto" : "0", "important");
+        item.style.setProperty("transform", "none", "important");
+        item.style.setProperty("transition", "none", "important");
+        item.style.setProperty("animation", "none", "important");
+      }
+      currentMatched.style.setProperty("display", "block", "important");
+      currentMatched.style.setProperty("opacity", "1", "important");
+      currentMatched.style.setProperty("visibility", "visible", "important");
+      for (const mediaNode of Array.from(currentMatched.querySelectorAll("img, video"))) {
+        if (!(mediaNode instanceof HTMLElement)) continue;
+        mediaNode.style.setProperty("display", "block", "important");
+        mediaNode.style.setProperty("opacity", "1", "important");
+        mediaNode.style.setProperty("visibility", "visible", "important");
+        mediaNode.style.setProperty("transform", "none", "important");
+      }
+    };
+    applyLock();
+    if (window.__adopsCaptureLockInterval) {
+      window.clearInterval(window.__adopsCaptureLockInterval);
+    }
+    window.__adopsCaptureLockInterval = window.setInterval(applyLock, 120);
+
     for (const image of Array.from(matched.querySelectorAll("img"))) {
       if (!(image instanceof HTMLImageElement)) continue;
       const lazySrc = image.getAttribute("data-lazy-src") || image.getAttribute("data-src");
@@ -1078,11 +1153,11 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
         height: Math.round(rect.height),
       };
     };
-	    const isVisible = (node) => {
-	      if (!(node instanceof HTMLElement)) return false;
-	      if (node.tagName.toLowerCase() === "source" && node.parentElement instanceof HTMLVideoElement) {
-	        return isVisible(node.parentElement);
-	      }
+    const isVisible = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      if (node.tagName.toLowerCase() === "source" && node.parentElement instanceof HTMLVideoElement) {
+        return isVisible(node.parentElement);
+      }
 	      const rect = node.getBoundingClientRect();
 	      const style = window.getComputedStyle(node);
 	      return style.display !== "none" &&
@@ -1090,6 +1165,16 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
         Number(style.opacity || "1") > 0 &&
         rect.width >= 48 &&
         rect.height >= 24;
+    };
+    const viewportVisibleRatio = (node) => {
+      if (!(node instanceof HTMLElement)) return false;
+      const rect = node.getBoundingClientRect();
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      const area = Math.max(1, rect.width * rect.height);
+      return (visibleWidth * visibleHeight) / area;
     };
 	    const mediaValue = (node) => {
 	      if (!(node instanceof HTMLElement)) return "";
@@ -1135,7 +1220,7 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
     const visibleSlotMedia = slotMedia.filter(isVisible);
     const visibleTargetsInside = visibleSlotMedia.filter((node) => mediaValue(node).toLowerCase().includes(basename));
     const visibleConflictsInside = visibleSlotMedia.filter((node) => !mediaValue(node).toLowerCase().includes(basename));
-    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && mediaValue(node).toLowerCase().includes(basename));
+    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && mediaValue(node).toLowerCase().includes(basename));
 
     if (visibleTargetsInside.length !== 1) {
       issues.push({
@@ -1203,7 +1288,13 @@ function summarizeCreativePlacementAudit(audit) {
         .map((item) => `${item.tag || "media"}:${item.box?.width || 0}x${item.box?.height || 0}:${String(item.mediaValue || "").slice(0, 160)}`)
         .join(" | ")
     : "";
-  return media ? `${details}; visibleSlotMedia=${media}` : details;
+  const boxes = {
+    slotBox: audit?.slotBox || null,
+    targetInsideBoxes: Array.isArray(audit?.targetInsideBoxes) ? audit.targetInsideBoxes.slice(0, 3) : [],
+    targetOutsideBoxes: Array.isArray(audit?.targetOutsideBoxes) ? audit.targetOutsideBoxes.slice(0, 3) : [],
+  };
+  const boxDetails = `boxes=${JSON.stringify(boxes)}`;
+  return media ? `${details}; ${boxDetails}; visibleSlotMedia=${media}` : `${details}; ${boxDetails}`;
 }
 
 async function upsertEvidence(apiBase, insertion, arquivoUrl, title, replaceExisting = false) {
@@ -2588,6 +2679,15 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
   if (mapping?.domain !== "perrenguematogrosso.com") {
     return { ok: true, issues: [], skipped: true, reason: "not_perrengue" };
   }
+  const selectorText = [
+    mapping?.slotSelector,
+    mapping?.contextSelector,
+  ].filter(Boolean).join(" ");
+  const groupId = Number(mapping?.groupId || 0);
+  const isHeaderSlot = groupId === 1 || groupId === 10 || selectorText.includes("#header-ads-row");
+  if (!isHeaderSlot) {
+    return { ok: true, issues: [], skipped: true, reason: "not_header_slot" };
+  }
   const allowStaticRetroAdInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1";
   return await page.evaluate(({ allowStaticRetroAdInjection }) => {
     const issues = [];
@@ -2612,7 +2712,34 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         rect.width >= 48 &&
         rect.height >= 24;
     };
-    const hasVisibleMedia = (node) => Array.from(node.querySelectorAll("img,video")).some(isVisible);
+    const isPlaceholderGroup = (node) => node instanceof HTMLElement && (
+      node.classList.contains("g-placeholder") ||
+      node.matches('[data-cod5-ad-placeholder="1"]') ||
+      !!node.closest('[data-cod5-ad-placeholder="1"]')
+    );
+    const mediaSource = (node) => {
+      if (!(node instanceof HTMLElement)) return "";
+      if (node instanceof HTMLVideoElement) {
+        return node.currentSrc || node.getAttribute("src") || node.querySelector("source")?.getAttribute("src") || "";
+      }
+      if (node instanceof HTMLIFrameElement) return node.getAttribute("src") || "";
+      if (node instanceof HTMLPictureElement) node = node.querySelector("img") || node;
+      if (node instanceof HTMLImageElement) {
+        return node.getAttribute("data-lazy-src") || node.currentSrc || node.getAttribute("src") || "";
+      }
+      return "";
+    };
+    const isRealAdMedia = (node) => {
+      if (!isVisible(node)) return false;
+      const source = mediaSource(node).trim().toLowerCase();
+      if (!source) return false;
+      if (source.includes("/assets/perrengue-sublogo.png")) return false;
+      if (source.startsWith("data:image/svg+xml")) return false;
+      if (/\/(?:transparent|placeholder|spacer)(?:[-_.\/]|$)/.test(source)) return false;
+      if (/\.(?:svg)(?:[?#]|$)/.test(source) && /(?:transparent|placeholder|spacer)/.test(source)) return false;
+      return true;
+    };
+    const hasVisibleMedia = (node) => !isPlaceholderGroup(node) && Array.from(node.querySelectorAll("img,video,picture,iframe")).some(isRealAdMedia);
     const mainHeader = document.querySelector("header.perrengue-header") || document.querySelector("#site-header header") || document.querySelector("header");
     if (!(mainHeader instanceof HTMLElement)) {
       return {
@@ -2638,7 +2765,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       .filter((entry) => Number(entry.box?.top ?? 999999) < headerTop);
 
     const popupRowsBeforeHeader = Array.from(document.querySelectorAll(".perrengue-popup-ads-row"))
-      .filter((node) => node instanceof HTMLElement && isVisible(node) && Number(toBox(node)?.top ?? 999999) < headerTop);
+      .filter((node) => node instanceof HTMLElement && isVisible(node) && hasVisibleMedia(node) && Number(toBox(node)?.top ?? 999999) < headerTop);
     if (popupRowsBeforeHeader.length > 0) {
       issues.push({
         code: "popup_row_before_header",
@@ -4909,13 +5036,19 @@ async function main() {
       }
     }
 
-    const previewSignature = args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret);
+    const disableSignedPreview =
+      mapping.auditConfig?.disableSignedPreview === true ||
+      mapping.auditConfig?.signedPreview === false;
+    const previewSignature = disableSignedPreview
+      ? (args.previewSignature || null)
+      : (args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret));
     const pageResolvedStage = trace.start("page_resolved");
     const candidateUrls = await resolvePageUrls(page, mapping, { captureAt: effectiveCaptureAt, previewSignature });
     trace.finish(pageResolvedStage, "ok", {
       candidateCount: candidateUrls.length,
       captureAt: effectiveCaptureAt,
       previewSupported,
+      signedPreviewDisabled: disableSignedPreview,
     });
     await page.setExtraHTTPHeaders({
       "Cache-Control": "no-cache",
@@ -4930,7 +5063,7 @@ async function main() {
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
         retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
         await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
-        await page.waitForSelector(mapping.slotSelector, { timeout: 12000 });
+        await page.waitForSelector(mapping.slotSelector, { state: "attached", timeout: 12000 });
         await page.waitForTimeout(2500);
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
@@ -5003,13 +5136,14 @@ async function main() {
     if (mapping.scrollMode === "slot") {
       const scrollTargetSelector = resolvedMediaSelector || resolvedSlotSelector;
       await page.locator(scrollTargetSelector).scrollIntoViewIfNeeded();
-      await page.evaluate((selector) => {
+      const slotScrollViewportOffsetRatio = Number(mapping.auditConfig?.slotScrollViewportOffsetRatio ?? 0.35);
+      await page.evaluate(({ selector, viewportOffsetRatio }) => {
         const slot = document.querySelector(selector);
         if (!slot) return;
-        const viewportOffset = Math.round((window.innerHeight || 768) * 0.35);
+        const viewportOffset = Math.round((window.innerHeight || 768) * viewportOffsetRatio);
         const top = slot.getBoundingClientRect().top + window.scrollY - viewportOffset;
         window.scrollTo({ top: Math.max(top, 0), behavior: "auto" });
-      }, scrollTargetSelector);
+      }, { selector: scrollTargetSelector, viewportOffsetRatio: slotScrollViewportOffsetRatio });
       await page.waitForTimeout(400);
       await dismissCookieConsent(page, mapping);
     } else {
@@ -5023,7 +5157,10 @@ async function main() {
     const gifSourceUrl = match.mediaUrl && isGifUrl(match.mediaUrl) ? resolveReachableMediaUrl(match.mediaUrl) : null;
     const videoMedia = isVideoMedia(insertion, match.mediaUrl);
     if (videoMedia) {
-      slotFrameSelector = resolvedMediaSelector || matchedAdSelector || slotFrameSelector;
+      // For AdRotate rotators, the <video> can be temporarily hidden while the
+      // wrapper is being activated. Capture the locked ad wrapper so Playwright
+      // does not race the carousel state.
+      slotFrameSelector = matchedAdSelector || slotFrameSelector;
     }
     const gifSourceAllowed = !videoMedia && gifFrameSelectionMode !== "dom_only" && gifSourceUrl;
     let videoProof = null;
@@ -5464,10 +5601,13 @@ async function main() {
       ...desktopFrameMetadata,
     });
 
+    const finalPngSlotAuditBox = Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]
+      ? creativePlacementAudit.targetInsideBoxes[0]
+      : (finalViewportTargetAudit?.box || creativePlacementAudit?.slotBox);
     const finalPngSlotAudit = auditFinalPngSlotPixels(
       finalPng,
       slotPng,
-      finalViewportTargetAudit?.box || creativePlacementAudit?.slotBox,
+      finalPngSlotAuditBox,
       desktopFrameMetadata,
       {
         finalProofStyle,

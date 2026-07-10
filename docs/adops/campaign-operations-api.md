@@ -12,6 +12,9 @@ Parâmetros:
 
 - `date=YYYY-MM-DD`: data de referência. Se omitido, usa a data atual em `America/Cuiaba`.
 - `siteSigla=PERRENGUE|OMT|ROO|AFL|PNMT|PPMT`: filtro opcional por portal.
+  - aliases aceitos pela API: `PMT` e `PMMT` são normalizados para `PPMT`.
+  - isso evita falso negativo operacional quando a planilha/equipe chama o portal de
+    `PMMT`, mas as regras de captura usam `PPMT`.
 - `refreshDrive=true|false`: quando `true`, tenta consultar Google Drive ao vivo. Padrão: `false`.
 - `includeEvidence=true|false`: quando `false`, não valida evidências por data. Padrão: `true`.
 
@@ -82,6 +85,33 @@ Arquivos classificados:
 - `ambiguous_drive_match`: mais de uma pasta candidata no Drive.
 - `blocked`: há problema objetivo que impede automação segura.
 
+## Regras de aceite visual e publicação
+
+- A posição retornada pela planilha/checklist é obrigatória. Uma evidência de `HOME 1`
+  nunca aprova uma inserção `HOME 2`, mesmo que a mídia seja a mesma.
+- Antes de marcar `bannerPublicadoNoSite=true`, validar HTML público ou relação
+  AdOps x AdRotate para o grupo resolvido em `/api/audit-checklists/resolve`.
+- Quando o WordPress copiar um GIF para o Spaces do próprio portal, atualizar
+  `mediaUrl` no AdOps para a URL real publicada no HTML. Isso evita falha de
+  `finalPngSlotAudit` por comparação contra URL opaca do Google Drive.
+- `printGerado` e evidência auditada só são aceitos quando
+  `/api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD` retornar
+  `status=audited` e `checklistValidation.approved=true`.
+- Se `adrotate-publish` falhar por SSH/WP-CLI, manter a campanha como
+  `needs_publication`; não marcar como publicada por inferência.
+- Antes de publicar em Perrengue, rodar `runtime-readiness-probe` e exigir
+  `capabilities.perrengueSshAuthOk=true`. Se o check
+  `PERRENGUE_SSH_AUTH` retornar `permission_denied`, a campanha fica pendente
+  de rota/admin SSH, mesmo que a chave exista no volume do runner.
+- Para campanhas futuras, a relação pública pode ficar vazia até a data de
+  início. Nesse caso, `adrotate-publish` só pode marcar como publicado quando o
+  WP-CLI retornar `ad_id` e `group_id` do anúncio criado/atualizado; registrar
+  essa decisão em `observacoes`.
+- Se o HTML público mostrar um anúncio legado no mesmo slot, mas a relação
+  `/api/integrations/adrotate/insertions/{id}/relation` não tiver
+  `exactLiveMatches`, manter como pendente. Não reaproveitar visualmente um
+  anúncio sem vínculo canônico com a inserção.
+
 ## Ações sugeridas
 
 O endpoint não executa mutação. Ele retorna payloads prontos para endpoints existentes.
@@ -141,13 +171,22 @@ Campos principais:
 
 ## Caso de aceite: 08/07/2026
 
-Resultado esperado para a planilha `JULHO 2026`:
+Resultado esperado para a planilha `JULHO 2026`, após sincronização:
 
-- `PI 492306 - ENERGISA` em `PERRENGUE`: deve casar com AdOps.
-- `PI 4500152231 - ÁGUAS CUIABÁ` em `PERRENGUE`: deve mostrar divergência de formato/período se o AdOps seguir em `HOME 1` até `17/07`.
-- `PI 003121 - SANEAR` em `PERRENGUE`: deve aparecer como pendente de cadastro.
-- `PI 003124 - SANEAR` em `ROO`: deve aparecer como pendente de cadastro.
-- `PI 003123 - SANEAR` em `AFL`: deve aparecer como pendente de cadastro.
+- `PI 90519 - GOV / DENGUE / OMT`: deve estar publicada no TOPO, com mídia real
+  do HTML público e evidência auditada para `2026-07-08`.
+- `PI 003124 - SANEAR / ROO / TOPO`: deve estar publicada e auditada.
+- `PI 492306 - ENERGISA / PERRENGUE / LATERAL`: deve estar publicada e auditada.
+- `PI 003123 - SANEAR / AFL / TOPO`: deve estar publicada e auditada, com
+  período alinhado à planilha.
+- `PI 4500152231 - ÁGUAS CUIABÁ / PERRENGUE / HOME 2`: se o HTML público
+  mostrar apenas `HOME 1`, deve permanecer como `needs_publication`.
+- `PI 003121 - SANEAR / PERRENGUE / VIDEO`: se o endpoint `adrotate-publish`
+  falhar por SSH, deve permanecer como `needs_publication`.
+- `PI 003124 - SANEAR / ROO / VIDEO`: quando futura, pode ficar sem evidência
+  até `2026-07-10`, mas deve estar com mídia e AdRotate agendados.
+- `PI 003123 - SANEAR / AFL / VIDEO`: quando futura, pode ficar sem evidência
+  até `2026-07-11`, mas deve estar com mídia e AdRotate agendados.
 
 ## Segurança
 

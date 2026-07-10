@@ -212,6 +212,76 @@ Aceite mínimo:
 - `checklistValidation.approved=true` quando presente;
 - `blockingIssues=[]`.
 
+## Perrengue / PMT headless
+
+O Perrengue publico nao consome WordPress/AdRotate em runtime. Ele e um
+headless estatico reconstruido a partir do WordPress VM8.
+
+Para `siteSigla=PERRENGUE`, a rota operacional canonica e:
+
+```text
+AdOps API -> runner -> Portainer VM8 -> cod5-pro119-perrenguematogrosso-app -> /app/web/wp/wp-load.php -> AdRotate -> webhook rebuild -> site estatico
+```
+
+Nao trate cPanel/SSH legado como fonte primaria para publicacao do PMT. Ele
+pode existir como fallback administrativo, mas nao prova que o site publico foi
+atualizado.
+
+Existem dois Portainers envolvidos e eles nao podem ser confundidos:
+
+- Portainer de administracao do stack AdOps: usado por scripts locais como
+  `upload-runtime-volumes.sh` e `deploy-stack.sh`.
+- Portainer VM8 do Perrengue: usado pelo `adops-runner` em producao para
+  executar PHP dentro do container WordPress
+  `cod5-pro119-perrenguematogrosso-app`.
+
+Arquivos locais de referencia, todos fora do Git:
+
+```text
+ops/portainer/adops-stack/.env.stack-admin-portainer
+ops/portainer/adops-stack/.env.perrengue-vm8-portainer
+/Users/leandrobosaipo/Projetos/macmini/deploys/adops/adops.env
+```
+
+O primeiro administra o proprio AdOps. O segundo e o bloco que precisa estar
+mesclado no `adops.env` para permitir publicacao PMT via API.
+
+Antes de gerar evidencia PMT:
+
+1. Validar relacao AdOps x AdRotate:
+
+```bash
+curl -fsSL \
+  "$ADOPS_API_BASE_URL/api/integrations/adrotate/insertions/INSERCAO_ID/relation"
+```
+
+2. Publicar via job `adrotate-publish` com `purgeCache=true` quando necessario.
+3. Rodar rebuild incremental do headless pelo webhook VM8.
+4. Validar a home publica sem query string.
+5. Confirmar que o grupo esperado nao contem `data-cod5-ad-placeholder="1"`.
+6. So entao gerar `print-single` ou `print-backfill`.
+
+Validacao rapida do acesso VM8 pelo arquivo organizado:
+
+```bash
+ops/portainer/adops-stack/scripts/validate-perrengue-vm8-portainer.sh
+```
+
+Resultado esperado:
+
+```text
+portainer_status_http=200
+perrengue_wp_container_count=1
+perrengue_static_container_count=1
+exec_exit_code=0
+exec_output=wp-load-ok
+```
+
+Videos PMT precisam ser publicados como `<video><source src="...mp4">`. O runner
+de captura deve registrar a URL do `<source>` em `mediaProof.matchedMediaUrl`;
+se esse campo vier vazio, a evidencia deve ser recusada mesmo que o PNG pareca
+correto.
+
 ## Gerar print de uma data
 
 Use para print atual ou retroativo específico.
@@ -395,6 +465,47 @@ Política:
 - O job não cria anúncio novo e não escolhe posição sozinho.
 - Antes de gerar prints, validar relação AdOps x AdRotate e checklist central.
 
+## Publicar ou atualizar anúncio AdRotate
+
+Use quando a inserção já existe no AdOps, a mídia está resolvida e o portal
+precisa criar ou atualizar o anúncio AdRotate no grupo canônico do checklist.
+
+Prévia sem mutação:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-publish" \
+  -d '{"insertionId":1666,"apply":false,"replaceExisting":true,"purgeCache":true,"generateEvidence":false}'
+```
+
+Aplicar publicação e já pedir evidência:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/adrotate-publish" \
+  -d '{"insertionId":1666,"apply":true,"replaceExisting":true,"purgeCache":true,"generateEvidence":true,"date":"2026-07-08"}'
+```
+
+Política:
+
+- `apply=false` é obrigatório como primeira checagem operacional.
+- A posição vem de `/api/audit-checklists/resolve`, nunca de escolha manual.
+- O runner bloqueia se não houver `mediaUrl`, grupo, site ou WP-CLI.
+- O plugin WordPress expõe `wp adops-adrotate-publish` e cria/atualiza por
+  `adops_insertion_id`, sem duplicar anúncio.
+- Para campanha futura, o HTML público e a relação viva podem não listar o
+  anúncio antes do início. Nesse caso, o job só pode marcar como publicado se o
+  WP-CLI retornar `ad_id` e `group_id`, e a inserção deve registrar a observação
+  de que a validação pública completa depende da data inicial.
+- Se o SSH/WP-CLI falhar, o job deve falhar e a inserção fica pendente de
+  publicação. Não corrigir por banco direto nem por hardcode no HTML.
+- Com `purgeCache=true`, o WordPress limpa cache e reavalia AdRotate.
+- Com `generateEvidence=true`, o job agenda `print-single`; a evidência só vale quando `capture-proof/status` voltar auditado.
+
 ## Reenviar evidência auditada no Telegram
 
 Use quando o print já existe e precisa ser enviado novamente no grupo.
@@ -413,6 +524,28 @@ O runner faz duas validações antes de enviar:
 2. só chama o bot Telegram se `approved=true`.
 
 Se o checklist recusar, o job falha com `blockingIssues` no resultado.
+
+## Readiness real de SSH/WP-CLI
+
+Use antes de tentar publicar AdRotate em portal que depende de WP-CLI.
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/runtime-readiness-probe" \
+  -d '{}'
+```
+
+No resultado do job, conferir:
+
+- `capabilities.perrengueSshConfigured=true`
+- `capabilities.perrengueSshAuthOk=true`
+- categoria `adrotate`, check `PERRENGUE_SSH_AUTH`
+
+Se `PERRENGUE_SSH_AUTH` voltar `permission_denied`, não executar
+`adrotate-publish` em lote para Perrengue. Corrigir primeiro a chave autorizada
+no servidor ou o usuário SSH do site. A existência da chave no volume não basta.
 
 Credenciais:
 
@@ -506,6 +639,39 @@ O intake correto precisa registrar no job:
 
 O job não deve publicar quando faltar dado crítico, mídia pública ou posição resolvida sem ambiguidade.
 
+### 3. Cadastro e publicação completa
+
+Use `drive-pi-publish` quando o escopo da PI já foi conferido e o objetivo é
+concluir cadastro, mídia, AdRotate, cache/rebuild e evidência em um único job.
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-publish" \
+  -d '{
+    "folderUrl": "https://drive.google.com/drive/folders/ID_DA_PASTA",
+    "parsedPi": {},
+    "resolveMedia": true,
+    "strictInsertionScope": true,
+    "allowPdfInsertions": false,
+    "publish": true,
+    "generateEvidence": true,
+    "purgeCache": true
+  }'
+```
+
+Regras:
+
+- `parsedPi.insertions` é canônico quando informado;
+- formatos sociais são excluídos das inserções de site;
+- `.txt` pode indicar URL de banner ou download de vídeo;
+- empate entre mídias candidatas termina em `needs_review`;
+- GIF/imagem do Perrengue é importado no WordPress VM8 e usa a URL pública do anexo;
+- vídeo passa pelo compressor e pelo Spaces/CDN;
+- no Perrengue, a evidência só roda depois do rebuild headless e da validação do HTML público;
+- `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` continua obrigatório.
+
 ## Regras de auditoria que a API deve bloquear
 
 O contrato real está em `GET /api/audit-checklists/resolve`.
@@ -565,7 +731,7 @@ O `.env` privado deve ficar fora do Git. Use:
 
 1. Criar testes de API para os wrappers `/ops/jobs/*`.
 2. Garantir que o deploy público use `OPS_JOB_KINDS` com todos os jobs:
-   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe`.
+   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.

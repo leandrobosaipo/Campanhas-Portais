@@ -4,6 +4,10 @@ import { getActiveCampaignOperations } from "../lib/campaign-operations";
 const router: IRouter = Router();
 
 const VALID_SITES = new Set(["OMT", "ROO", "PERRENGUE", "AFL", "PNMT", "PPMT"]);
+const SITE_ALIASES: Record<string, string> = {
+  PMT: "PPMT",
+  PMMT: "PPMT",
+};
 
 function parseDate(value: unknown) {
   if (value == null || value === "") return null;
@@ -27,14 +31,16 @@ router.get("/campaign-operations/active", async (req, res): Promise<void> => {
     return;
   }
 
-  const siteSigla = typeof req.query.siteSigla === "string" && req.query.siteSigla.trim()
+  const requestedSiteSigla = typeof req.query.siteSigla === "string" && req.query.siteSigla.trim()
     ? req.query.siteSigla.trim().toUpperCase()
     : null;
+  const siteSigla = requestedSiteSigla ? SITE_ALIASES[requestedSiteSigla] ?? requestedSiteSigla : null;
   if (siteSigla && !VALID_SITES.has(siteSigla)) {
     res.status(400).json({
       error: "bad_request",
       details: "siteSigla deve ser um dos portais suportados.",
       allowed: Array.from(VALID_SITES),
+      aliases: SITE_ALIASES,
     });
     return;
   }

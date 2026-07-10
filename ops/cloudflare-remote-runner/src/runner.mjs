@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import http from "node:http";
+import https from "node:https";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -40,6 +42,20 @@ const ADOPS_PI_AGENT_KNOWLEDGE_FILE = process.env.ADOPS_PI_AGENT_KNOWLEDGE_FILE 
 const ADOPS_PI_AGENT_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PI_AGENT_TIMEOUT_MS || "15000", 10);
 const ADOPS_PI_AGENT_RETRIES = Number.parseInt(process.env.ADOPS_PI_AGENT_RETRIES || "1", 10);
 const ADOPS_PI_AGENT_VERSION = "adops-pi-agent-v1";
+const COD5_VIDEO_COMPRESSOR_API_BASE = (process.env.COD5_VIDEO_COMPRESSOR_API_BASE || "https://video-compress.codigo5.com.br").replace(/\/$/, "");
+const COD5_VIDEO_COMPRESSOR_API_TOKEN = (process.env.COD5_VIDEO_COMPRESSOR_API_TOKEN || "").trim();
+const COD5_VIDEO_COMPRESSOR_PROFILE = (process.env.COD5_VIDEO_COMPRESSOR_PROFILE || "balanced-720p").trim();
+const COD5_VIDEO_COMPRESSOR_TIMEOUT_MS = Number.parseInt(process.env.COD5_VIDEO_COMPRESSOR_TIMEOUT_MS || "900000", 10);
+const COD5_VIDEO_COMPRESSOR_POLL_INTERVAL_MS = Number.parseInt(process.env.COD5_VIDEO_COMPRESSOR_POLL_INTERVAL_MS || "10000", 10);
+const DO_SPACES_ACCESS_KEY_ID = (process.env.DO_SPACES_ACCESS_KEY_ID || "").trim();
+const DO_SPACES_SECRET_ACCESS_KEY = (process.env.DO_SPACES_SECRET_ACCESS_KEY || "").trim();
+const DO_SPACES_ENDPOINT = (process.env.DO_SPACES_ENDPOINT || "https://nyc3.digitaloceanspaces.com").replace(/\/$/, "");
+const DO_SPACES_REGION = (process.env.DO_SPACES_REGION || "nyc3").trim();
+const ADOPS_VIDEO_MEDIA_BUCKET = (process.env.ADOPS_VIDEO_MEDIA_BUCKET || process.env.ADOPS_SPACES_BUCKET || "cod5").trim();
+const ADOPS_VIDEO_MEDIA_BASE_PATH = (process.env.ADOPS_VIDEO_MEDIA_BASE_PATH || "adops-media").replace(/^\/+|\/+$/g, "");
+const ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE || "";
+const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL = (process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE || "";
 const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS || "")
   .split(",")
   .map((item) => item.trim().toUpperCase())
@@ -47,7 +63,18 @@ const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_S
 const ADOPS_TELEGRAM_BOT_URL = (process.env.ADOPS_TELEGRAM_BOT_URL || "https://adops-telegram-bot.leandro471.workers.dev").replace(/\/$/, "");
 const TELEGRAM_BOT_TOKEN = (process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const TELEGRAM_DEFAULT_GROUP_ID = (process.env.TELEGRAM_DEFAULT_GROUP_ID || "").trim();
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,telegram-send-evidence,runtime-readiness-probe")
+const PORTAINER_URL = (process.env.PORTAINER_URL || "").replace(/\/$/, "");
+const PORTAINER_API_KEY = (process.env.PORTAINER_API_KEY || "").trim();
+const ADOPS_PERRENGUE_ADROTATE_EXEC_MODE = (process.env.ADOPS_PERRENGUE_ADROTATE_EXEC_MODE || "ssh").trim().toLowerCase();
+const ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID = Number.parseInt(process.env.ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID || process.env.PORTAINER_ENDPOINT_ID || "3", 10);
+const ADOPS_PERRENGUE_WP_CONTAINER = (process.env.ADOPS_PERRENGUE_WP_CONTAINER || "cod5-pro119-perrenguematogrosso-app").trim();
+const ADOPS_PERRENGUE_CONTAINER_WP_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER_WP_PATH || "/app/web/wp").trim();
+const ADOPS_PERRENGUE_CONTAINER_PHP_BIN = (process.env.ADOPS_PERRENGUE_CONTAINER_PHP_BIN || "php").trim();
+const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH || "wp").trim();
+const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
+const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
+const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -203,6 +230,26 @@ function normalizeSlotKey(value) {
     .trim();
 }
 
+const SOCIAL_INSERTION_PATTERN = /\b(instagram|stories?|reels?|social|sociais|redes sociais|feed|bonificacao|facebook|tiktok)\b/;
+
+function isSocialInsertion(raw) {
+  const format = readStringRecord(raw, ["localFormato", "localFormatoNormalizado", "formato", "posicao"]);
+  return SOCIAL_INSERTION_PATTERN.test(normalizeText(format));
+}
+
+function filterSiteInsertions(insertions) {
+  const accepted = [];
+  const excluded = [];
+  for (const insertion of Array.isArray(insertions) ? insertions : []) {
+    if (isSocialInsertion(insertion)) {
+      excluded.push({ insertion, reason: "social_format" });
+    } else {
+      accepted.push(insertion);
+    }
+  }
+  return { accepted, excluded };
+}
+
 function safeFileName(value, fallback = "drive-pi") {
   const sanitized = String(value ?? "")
     .normalize("NFD")
@@ -211,6 +258,566 @@ function safeFileName(value, fallback = "drive-pi") {
     .replace(/^-+|-+$/g, "")
     .slice(0, 120);
   return sanitized || fallback;
+}
+
+function slugifyPathPart(value, fallback = "media") {
+  const sanitized = normalizeText(value)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return sanitized || fallback;
+}
+
+function parseEnvMap(value) {
+  const entries = new Map();
+  for (const item of String(value || "").split(",")) {
+    const match = item.trim().match(/^([^:=]+)\s*[:=]\s*(.+)$/);
+    if (match) entries.set(match[1].trim().toUpperCase(), match[2].trim());
+  }
+  return entries;
+}
+
+function isVideoMediaItem(item) {
+  const mimeType = String(item?.mimeType || "");
+  const name = String(item?.name || "");
+  return /^video\//.test(mimeType) || /\.(mp4|mov|m4v|webm)$/i.test(name);
+}
+
+function isVideoInsertion(raw) {
+  const formato = readStringRecord(raw, ["localFormato", "localFormatoNormalizado", "formato", "posicao"]);
+  return /\bvideo\b/.test(normalizeSlotKey(formato));
+}
+
+function buildVideoCompressorIdempotencyKey(payload, mediaItem, raw, fields) {
+  const source = [
+    "drive-pi-video",
+    payload?.eventId || payload?.driveFileId || payload?.parentFolderId || "event",
+    mediaItem?.driveFileId || mediaItem?.name || "media",
+    fields?.piCodigo || "pi",
+    readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "video",
+    COD5_VIDEO_COMPRESSOR_PROFILE,
+  ].join(":");
+  return crypto.createHash("sha256").update(source).digest("hex");
+}
+
+function scoreVideoMediaForInsertion(mediaItem, raw, fields) {
+  const haystack = normalizeText(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`);
+  let score = 0;
+  const piDigits = normalizePiDigits(fields?.piCodigo);
+  if (piDigits && haystack.includes(piDigits)) score += 80;
+  const campaignWords = normalizeText(fields?.campaignName || "")
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4);
+  for (const word of campaignWords) {
+    if (haystack.includes(word)) score += 8;
+  }
+  const formatoWords = normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4);
+  for (const word of formatoWords) {
+    if (haystack.includes(word)) score += 6;
+  }
+  if (/(\b|[-_])video(\b|[-_])/.test(haystack)) score += 20;
+  if (/\.(mp4|mov|m4v|webm)$/i.test(String(mediaItem?.name || ""))) score += 10;
+  return score;
+}
+
+function selectDriveVideoForInsertion(packageContext, raw, fields) {
+  const videos = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isVideoMediaItem);
+  if (videos.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
+  if (videos.length === 1) return { mediaItem: videos[0], ambiguous: false, candidates: 1 };
+  const ranked = videos
+    .map((item) => ({ item, score: scoreVideoMediaForInsertion(item, raw, fields) }))
+    .sort((a, b) => b.score - a.score);
+  const ambiguous = ranked.length > 1 && ranked[0].score === ranked[1].score;
+  return {
+    mediaItem: ranked[0].item,
+    ambiguous,
+    candidates: videos.length,
+    score: ranked[0].score,
+  };
+}
+
+function selectObservedMediaLink(packageContext, kind) {
+  const links = (Array.isArray(packageContext?.textObservations) ? packageContext.textObservations : [])
+    .flatMap((item) => Array.isArray(item?.links) ? item.links.map((link) => ({ ...link, sourceName: item.name })) : [])
+    .filter((item) => item?.url && item.kind === kind);
+  const candidates = links;
+  if (candidates.length !== 1) {
+    return { link: null, ambiguous: candidates.length > 1, candidates: candidates.length };
+  }
+  return { link: candidates[0], ambiguous: false, candidates: 1 };
+}
+
+function scoreImageMediaForInsertion(mediaItem, raw, fields) {
+  const haystack = normalizeText(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`);
+  let score = 0;
+  const piDigits = normalizePiDigits(fields?.piCodigo);
+  if (piDigits && haystack.includes(piDigits)) score += 80;
+  for (const word of normalizeText(fields?.campaignName || "").split(/[^a-z0-9]+/).filter((item) => item.length >= 4)) {
+    if (haystack.includes(word)) score += 8;
+  }
+  for (const word of normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "").split(/\s+/).filter((item) => item.length >= 4)) {
+    if (haystack.includes(word)) score += 6;
+  }
+  if (/\.(gif|png|jpe?g|webp)$/i.test(String(mediaItem?.name || ""))) score += 10;
+  return score;
+}
+
+function selectDriveImageForInsertion(packageContext, raw, fields) {
+  const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isImageMediaItem);
+  if (images.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
+  if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
+  const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
+  return {
+    mediaItem: ranked[0].item,
+    ambiguous: ranked[0].score === ranked[1].score,
+    candidates: images.length,
+    score: ranked[0].score,
+  };
+}
+
+async function downloadExternalMediaToArchive(url, fallbackName = "media") {
+  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120000) });
+  if (!response.ok) throw new Error(`Falha ao baixar mídia externa: HTTP ${response.status}`);
+  const declaredLength = Number(response.headers.get("content-length") || 0);
+  if (declaredLength > 512 * 1024 * 1024) throw new Error("Mídia externa excede limite de 512 MB.");
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > 512 * 1024 * 1024) throw new Error("Mídia externa excede limite de 512 MB.");
+  const mimeType = response.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
+  let sourceName = safeFileName(mediaBasenameFromUrl(response.url || url) || fallbackName, fallbackName);
+  if (!path.extname(sourceName)) {
+    const extension = ({
+      "image/gif": ".gif",
+      "image/png": ".png",
+      "image/jpeg": ".jpg",
+      "image/webp": ".webp",
+      "video/mp4": ".mp4",
+      "video/quicktime": ".mov",
+      "video/webm": ".webm",
+    })[mimeType];
+    if (extension) sourceName += extension;
+  }
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
+  await mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, `${sha256.slice(0, 12)}-${sourceName}`);
+  await writeFile(filePath, buffer);
+  return {
+    filePath,
+    buffer,
+    bytes: buffer.length,
+    sha256,
+    sourceName,
+    mimeType: mimeType === "application/octet-stream" ? contentTypeForMediaName(sourceName) : mimeType,
+    sourceUrl: url,
+  };
+}
+
+async function materializeMediaSource({ driveItem, observedLink, fallbackName }) {
+  if (observedLink?.driveFileId) {
+    const metadata = await googleDriveRequest(`files/${encodeURIComponent(observedLink.driveFileId)}`, {
+      fields: "id,name,mimeType,size,webViewLink",
+      supportsAllDrives: "true",
+    }).catch(() => null);
+    const archived = await downloadDriveFileToArchive({
+      driveFileId: observedLink.driveFileId,
+      name: metadata?.name || fallbackName,
+      mimeType: metadata?.mimeType || "application/octet-stream",
+    });
+    return {
+      ...archived,
+      buffer: await readFile(archived.filePath),
+      sourceUrl: observedLink.url,
+      sourceName: metadata?.name || archived.sourceName,
+      mimeType: metadata?.mimeType || contentTypeForMediaName(metadata?.name || archived.sourceName),
+    };
+  }
+  if (observedLink?.url) return downloadExternalMediaToArchive(observedLink.url, fallbackName);
+  if (driveItem?.driveFileId) {
+    const archived = await downloadDriveFileToArchive(driveItem);
+    return {
+      ...archived,
+      buffer: await readFile(archived.filePath),
+      mimeType: driveItem.mimeType || contentTypeForMediaName(driveItem.name),
+      sourceName: driveItem.name,
+    };
+  }
+  return null;
+}
+
+async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey }) {
+  if (!COD5_VIDEO_COMPRESSOR_API_TOKEN) {
+    throw new Error("COD5_VIDEO_COMPRESSOR_API_TOKEN ausente no runner");
+  }
+  const bytes = await readFile(inputPath);
+  const form = new FormData();
+  form.append("profile", COD5_VIDEO_COMPRESSOR_PROFILE);
+  form.append("file", new Blob([bytes], { type: "video/mp4" }), safeFileName(sourceName, "video.mp4"));
+  const createResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}`,
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: form,
+  });
+  const created = await createResponse.json().catch(() => null);
+  if (!createResponse.ok) {
+    throw new Error(created?.detail || created?.error || `Falha ao criar job no compressor: ${createResponse.status}`);
+  }
+  const jobId = created?.job_id || created?.id;
+  if (!jobId) throw new Error("Compressor nao retornou job_id");
+
+  const deadline = Date.now() + COD5_VIDEO_COMPRESSOR_TIMEOUT_MS;
+  let statusPayload = null;
+  while (Date.now() < deadline) {
+    const statusResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}`, {
+      headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
+    });
+    statusPayload = await statusResponse.json().catch(() => null);
+    if (!statusResponse.ok) {
+      throw new Error(statusPayload?.detail || statusPayload?.error || `Falha ao consultar compressor: ${statusResponse.status}`);
+    }
+    if (statusPayload?.status === "done") break;
+    if (["failed", "error", "cancelled"].includes(String(statusPayload?.status || ""))) {
+      throw new Error(statusPayload?.error || `Compressor terminou com status ${statusPayload?.status}`);
+    }
+    await sleep(COD5_VIDEO_COMPRESSOR_POLL_INTERVAL_MS);
+  }
+  if (statusPayload?.status !== "done") {
+    throw new Error(`Timeout aguardando compressor concluir job ${jobId}`);
+  }
+
+  const downloadResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}/download`, {
+    headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
+  });
+  if (!downloadResponse.ok) {
+    throw new Error(`Falha ao baixar video comprimido: ${downloadResponse.status}`);
+  }
+  return {
+    jobId,
+    status: statusPayload,
+    filename: statusPayload?.download_filename || safeFileName(sourceName, "video-compressed.mp4"),
+    buffer: Buffer.from(await downloadResponse.arrayBuffer()),
+  };
+}
+
+function spacesBucketForSite(siteSigla) {
+  const bySite = parseEnvMap(ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE);
+  return bySite.get(String(siteSigla || "").toUpperCase()) || ADOPS_VIDEO_MEDIA_BUCKET;
+}
+
+function spacesPublicBaseForSite(siteSigla, bucket) {
+  const bySite = parseEnvMap(ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE);
+  const configured = bySite.get(String(siteSigla || "").toUpperCase()) || ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  try {
+    const endpoint = new URL(DO_SPACES_ENDPOINT);
+    if (endpoint.hostname.endsWith(".digitaloceanspaces.com")) {
+      const region = endpoint.hostname.split(".")[0] || DO_SPACES_REGION;
+      return `https://${bucket}.${region}.digitaloceanspaces.com`;
+    }
+    return `${endpoint.origin}/${bucket}`;
+  } catch {
+    return `${DO_SPACES_ENDPOINT}/${bucket}`;
+  }
+}
+
+function buildSpacesVideoObjectKey({ siteSigla, fields, raw }) {
+  const periodoInicio = readStringRecord(raw, ["periodoInicio", "inicio"]) || todayInCuiaba();
+  const month = periodoInicio.slice(0, 7);
+  const sitePart = slugifyPathPart(siteSigla || readStringRecord(raw, ["siteSigla"]) || "site");
+  const piPart = slugifyPathPart(fields?.piCodigo || "pi");
+  const campaignPart = slugifyPathPart(fields?.campaignName || "campanha");
+  const formatPart = slugifyPathPart(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "video");
+  const filename = `${piPart}-${campaignPart}-${formatPart}-compressed.mp4`;
+  return [ADOPS_VIDEO_MEDIA_BASE_PATH, sitePart, month, filename].filter(Boolean).join("/");
+}
+
+function signSpacesRequest({ method, url, bodyHash, contentType, extraHeaders = {} }) {
+  if (!DO_SPACES_ACCESS_KEY_ID || !DO_SPACES_SECRET_ACCESS_KEY) {
+    throw new Error("Credenciais DO Spaces ausentes no runner");
+  }
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const parsed = new URL(url);
+  const headers = {
+    "content-type": contentType,
+    host: parsed.host,
+    "x-amz-content-sha256": bodyHash,
+    "x-amz-date": amzDate,
+    ...Object.fromEntries(Object.entries(extraHeaders).map(([key, value]) => [key.toLowerCase(), String(value)])),
+  };
+  const signedHeaders = Object.keys(headers).sort().join(";");
+  const canonicalHeaders = Object.keys(headers)
+    .sort()
+    .map((key) => `${key}:${headers[key]}\n`)
+    .join("");
+  const canonicalRequest = [
+    method,
+    parsed.pathname,
+    "",
+    canonicalHeaders,
+    signedHeaders,
+    bodyHash,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/${DO_SPACES_REGION}/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    crypto.createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+  const dateKey = crypto.createHmac("sha256", `AWS4${DO_SPACES_SECRET_ACCESS_KEY}`).update(dateStamp).digest();
+  const regionKey = crypto.createHmac("sha256", dateKey).update(DO_SPACES_REGION).digest();
+  const serviceKey = crypto.createHmac("sha256", regionKey).update("s3").digest();
+  const signingKey = crypto.createHmac("sha256", serviceKey).update("aws4_request").digest();
+  const signature = crypto.createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const { host, ...requestHeaders } = headers;
+  return {
+    ...requestHeaders,
+    Authorization: `AWS4-HMAC-SHA256 Credential=${DO_SPACES_ACCESS_KEY_ID}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+async function uploadVideoToSpaces({ buffer, bucket, objectKey }) {
+  return uploadBufferToSpaces({ buffer, bucket, objectKey, contentType: "video/mp4" });
+}
+
+async function uploadBufferToSpaces({ buffer, bucket, objectKey, contentType = "application/octet-stream" }) {
+  const encodedKey = objectKey.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const url = `${DO_SPACES_ENDPOINT}/${encodeURIComponent(bucket)}/${encodedKey}`;
+  const bodyHash = crypto.createHash("sha256").update(buffer).digest("hex");
+  const extraHeaders = { "x-amz-acl": "public-read" };
+  const headers = signSpacesRequest({ method: "PUT", url, bodyHash, contentType, extraHeaders });
+  const response = await fetch(url, {
+    method: "PUT",
+    headers,
+    body: buffer,
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`Falha no upload DO Spaces: ${response.status} ${details.slice(0, 300)}`);
+  }
+}
+
+function contentTypeForMediaName(name, fallback = "application/octet-stream") {
+  const extension = path.extname(String(name || "")).toLowerCase();
+  return ({
+    ".gif": "image/gif",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+  })[extension] || fallback;
+}
+
+function isImageMediaItem(item) {
+  const mimeType = String(item?.mimeType || "");
+  const name = String(item?.name || "");
+  return /^image\//.test(mimeType) || /\.(gif|png|jpe?g|webp)$/i.test(name);
+}
+
+function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName }) {
+  const periodoInicio = readStringRecord(raw, ["periodoInicio", "inicio"]) || todayInCuiaba();
+  const month = periodoInicio.slice(0, 7);
+  const extension = path.extname(String(sourceName || "")).toLowerCase() || ".bin";
+  const filename = [
+    slugifyPathPart(fields?.piCodigo || "pi"),
+    slugifyPathPart(fields?.campaignName || "campanha"),
+    slugifyPathPart(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"),
+  ].join("-") + extension;
+  return [ADOPS_VIDEO_MEDIA_BASE_PATH, slugifyPathPart(siteSigla || "site"), month, filename].filter(Boolean).join("/");
+}
+
+function mediaPublicUrl(siteSigla, bucket, objectKey) {
+  return `${spacesPublicBaseForSite(siteSigla, bucket)}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+}
+
+async function getSiteSiglaByIdMap() {
+  const sites = await privateApiGet("/api/sites?limit=500").catch(() => []);
+  const map = new Map();
+  for (const site of Array.isArray(sites) ? sites : []) {
+    if (site?.id && site?.sigla) map.set(Number(site.id), String(site.sigla).toUpperCase());
+  }
+  return map;
+}
+
+async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
+  const results = [];
+  const issues = [];
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  if (!insertions.some((item) => isVideoInsertion(item) && !readStringRecord(item, ["mediaUrl", "media_url"]))) {
+    return { fields, videoMediaProcessing: { skipped: true, results, issues } };
+  }
+  const siteSiglaById = await getSiteSiglaByIdMap();
+  const resolvedInsertions = [];
+  for (const raw of insertions) {
+    if (!isVideoInsertion(raw) || readStringRecord(raw, ["mediaUrl", "media_url"])) {
+      resolvedInsertions.push(raw);
+      continue;
+    }
+    const observed = selectObservedMediaLink(packageContext, "video");
+    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveVideoForInsertion(packageContext, raw, fields);
+    if (!observed.link && !selected.mediaItem?.driveFileId) {
+      issues.push(`video_media_missing:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "video"}`);
+      resolvedInsertions.push(raw);
+      continue;
+    }
+    try {
+      await updateDrivePiState(payload, "compressing_video", {
+        parseRun: {
+          fields: {
+            piCodigo: fields.piCodigo,
+            campaignName: fields.campaignName,
+            video: { sourceName: observed.link?.sourceName || selected.mediaItem?.name, candidates: selected.candidates, ambiguous: selected.ambiguous },
+          },
+          alerts: ["Comprimindo video da PI no cod5-video-compressor antes de criar a insercao."],
+        },
+      });
+      if (selected.ambiguous || observed.ambiguous) throw new Error("Mais de uma mídia de vídeo candidata; revisão obrigatória.");
+      const archivedVideo = await materializeMediaSource({
+        driveItem: selected.mediaItem,
+        observedLink: observed.link,
+        fallbackName: "video-source.mp4",
+      });
+      const compressed = await compressVideoWithCod5Api({
+        inputPath: archivedVideo.filePath,
+        sourceName: archivedVideo.sourceName,
+        idempotencyKey: buildVideoCompressorIdempotencyKey(payload, selected.mediaItem || observed.link, raw, fields),
+      });
+      await updateDrivePiState(payload, "uploading_video", {
+        parseRun: {
+          fields: {
+            piCodigo: fields.piCodigo,
+            campaignName: fields.campaignName,
+            compressorJobId: compressed.jobId,
+          },
+          alerts: ["Subindo video comprimido para DigitalOcean Spaces."],
+        },
+      });
+      const siteId = readNumberRecord(raw, ["siteId"]);
+      const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+      const bucket = spacesBucketForSite(siteSigla);
+      const objectKey = buildSpacesVideoObjectKey({ siteSigla, fields, raw });
+      await uploadVideoToSpaces({ buffer: compressed.buffer, bucket, objectKey });
+      const publicUrl = `${spacesPublicBaseForSite(siteSigla, bucket)}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+      results.push({
+        siteId,
+        siteSigla,
+        localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "VIDEO",
+        sourceDriveFileId: selected.mediaItem?.driveFileId || observed.link?.driveFileId || null,
+        sourceUrl: observed.link?.url || null,
+        sourceName: archivedVideo.sourceName,
+        compressorJobId: compressed.jobId,
+        bucket,
+        objectKey,
+        mediaUrl: publicUrl,
+        ambiguousSource: selected.ambiguous,
+      });
+      resolvedInsertions.push({
+        ...raw,
+        mediaUrl: publicUrl,
+        mediaProcessingNote: `Video comprimido no Mac Mini e publicado no Spaces: ${objectKey}`,
+      });
+    } catch (error) {
+      issues.push(`video_media_processing_failed:${error instanceof Error ? error.message : String(error)}`);
+      resolvedInsertions.push(raw);
+    }
+  }
+  return {
+    fields: {
+      ...fields,
+      insertions: resolvedInsertions,
+      videoMediaProcessing: { skipped: false, results, issues },
+    },
+    videoMediaProcessing: { skipped: false, results, issues },
+  };
+}
+
+async function resolveDrivePiImageMedia(fields, packageContext, payload) {
+  const results = [];
+  const issues = [];
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const unresolved = insertions.filter((item) => !isVideoInsertion(item) && !readStringRecord(item, ["mediaUrl", "media_url"]));
+  if (!unresolved.length) return { fields, imageMediaProcessing: { skipped: true, results, issues } };
+  const siteSiglaById = await getSiteSiglaByIdMap();
+  const resolvedInsertions = [];
+  for (const raw of insertions) {
+    if (isVideoInsertion(raw) || readStringRecord(raw, ["mediaUrl", "media_url"])) {
+      resolvedInsertions.push(raw);
+      continue;
+    }
+    const observed = selectObservedMediaLink(packageContext, "image");
+    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields);
+    if ((!observed.link && !selected.mediaItem?.driveFileId) || observed.ambiguous || selected.ambiguous) {
+      issues.push(`${observed.ambiguous || selected.ambiguous ? "image_media_ambiguous" : "image_media_missing"}:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"}`);
+      resolvedInsertions.push(raw);
+      continue;
+    }
+    try {
+      const materialized = await materializeMediaSource({
+        driveItem: selected.mediaItem,
+        observedLink: observed.link,
+        fallbackName: "banner.gif",
+      });
+      const siteId = readNumberRecord(raw, ["siteId"]);
+      const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+      const bucket = spacesBucketForSite(siteSigla);
+      const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
+      await uploadBufferToSpaces({
+        buffer: materialized.buffer,
+        bucket,
+        objectKey,
+        contentType: materialized.mimeType || contentTypeForMediaName(materialized.sourceName),
+      });
+      const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
+      let mediaUrl = stagedUrl;
+      let wordpressImport = null;
+      if (String(siteSigla).toUpperCase() === "PERRENGUE") {
+        const mediaKey = crypto.createHash("sha256").update([
+          fields.piCodigo,
+          fields.campaignName,
+          siteSigla,
+          readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+          materialized.sha256,
+        ].join(":" )).digest("hex");
+        wordpressImport = await importPerrengueMediaFromUrl({ sourceUrl: stagedUrl, filename: materialized.sourceName, mediaKey });
+        mediaUrl = wordpressImport.url;
+      } else {
+        const validation = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30000) });
+        if (!validation.ok) throw new Error(`URL pública da mídia não respondeu 200: HTTP ${validation.status}`);
+      }
+      results.push({
+        siteId,
+        siteSigla,
+        localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+        sourceDriveFileId: selected.mediaItem?.driveFileId || observed.link?.driveFileId || null,
+        sourceUrl: observed.link?.url || null,
+        sourceName: materialized.sourceName,
+        stagedUrl,
+        mediaUrl,
+        wordpressImport,
+      });
+      resolvedInsertions.push({
+        ...raw,
+        mediaUrl,
+        mediaProcessingNote: `Mídia resolvida da pasta Drive e publicada em URL canônica: ${mediaUrl}`,
+      });
+    } catch (error) {
+      issues.push(`image_media_processing_failed:${error instanceof Error ? error.message : String(error)}`);
+      resolvedInsertions.push(raw);
+    }
+  }
+  return {
+    fields: { ...fields, insertions: resolvedInsertions, imageMediaProcessing: { skipped: false, results, issues } },
+    imageMediaProcessing: { skipped: false, results, issues },
+  };
 }
 
 async function ensureRuntimeDirs() {
@@ -710,6 +1317,66 @@ async function downloadDriveFileToArchive(file) {
   return { filePath, sha256, bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
 }
 
+function trimUrlPunctuation(value) {
+  return String(value || "").replace(/[),.;:'\"]+$/g, "");
+}
+
+function extractUrlsFromText(text) {
+  return Array.from(new Set((String(text || "").match(/https?:\/\/[^\s<>"']+/gi) || []).map(trimUrlPunctuation)));
+}
+
+function extractMediaLinksFromText(text) {
+  const links = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    for (const url of extractUrlsFromText(line)) {
+      links.push({ url, kind: mediaKindFromUrl(url, line), driveFileId: parseGoogleDriveFileId(url) });
+    }
+  }
+  return Array.from(new Map(links.map((item) => [item.url, item])).values());
+}
+
+function parseGoogleDriveFileId(value) {
+  const raw = String(value || "");
+  return raw.match(/\/file\/d\/([A-Za-z0-9_-]+)/)?.[1]
+    || raw.match(/[?&]id=([A-Za-z0-9_-]+)/)?.[1]
+    || null;
+}
+
+function mediaKindFromUrl(url, surroundingText = "") {
+  const value = `${url} ${surroundingText}`;
+  if (/\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(url) || /\b(video|vt|download do video)\b/i.test(value)) return "video";
+  if (/\.(gif|png|jpe?g|webp)(?:[?#]|$)/i.test(url) || /\b(banner|arte|imagem|gif)\b/i.test(value)) return "image";
+  return "unknown";
+}
+
+async function readDriveTextObservations(items) {
+  const textItems = (Array.isArray(items) ? items : [])
+    .filter((item) => item?.mimeType === "text/plain" || /\.txt$/i.test(String(item?.name || "")))
+    .slice(0, 20);
+  const observations = [];
+  for (const item of textItems) {
+    try {
+      const archived = await downloadDriveFileToArchive(item);
+      const text = String(await readFile(archived.filePath, "utf8")).slice(0, 1024 * 1024);
+      observations.push({
+        driveFileId: item.driveFileId,
+        name: item.name,
+        text,
+        links: extractMediaLinksFromText(text),
+      });
+    } catch (error) {
+      observations.push({
+        driveFileId: item?.driveFileId || null,
+        name: item?.name || null,
+        text: "",
+        links: [],
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return observations;
+}
+
 async function buildDrivePiPackageContext(payload, archived) {
   if (payload?.simulation?.packageContext && typeof payload.simulation.packageContext === "object" && !Array.isArray(payload.simulation.packageContext)) {
     const context = payload.simulation.packageContext;
@@ -731,6 +1398,7 @@ async function buildDrivePiPackageContext(payload, archived) {
       },
       items,
       media,
+      textObservations: Array.isArray(context.textObservations) ? context.textObservations : [],
       pdf: context.pdf || null,
       primaryArchive: context.primaryArchive || archived || null,
     };
@@ -739,6 +1407,7 @@ async function buildDrivePiPackageContext(payload, archived) {
   const items = folder?.folderId ? await listDrivePiPackageItems(folder.folderId, folder.path || "") : [];
   const pdfItems = items.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const mediaItems = items.filter((item) => /^image\//.test(item.mimeType) || /^video\//.test(item.mimeType) || /\.(gif|png|jpe?g|webp|mp4)$/i.test(item.name));
+  const textObservations = await readDriveTextObservations(items);
   let primaryArchive = archived;
   if (!primaryArchive && pdfItems.length) {
     primaryArchive = await downloadDriveFileToArchive(pdfItems[0]);
@@ -754,18 +1423,23 @@ async function buildDrivePiPackageContext(payload, archived) {
     },
     folder,
     items: items.map((item) => ({
+      driveFileId: item.driveFileId,
       name: item.name,
       path: item.path,
       mimeType: item.mimeType,
       modifiedTime: item.modifiedTime,
       webViewLink: item.webViewLink,
+      size: item.size,
     })),
     media: mediaItems.map((item) => ({
+      driveFileId: item.driveFileId,
       name: item.name,
       path: item.path,
       mimeType: item.mimeType,
       webViewLink: item.webViewLink,
+      size: item.size,
     })),
+    textObservations,
     pdf: primaryArchive ? {
       filePath: primaryArchive.filePath,
       sha256: primaryArchive.sha256,
@@ -1127,8 +1801,12 @@ async function normalizeAgentParsedPi(agentParsedPi) {
   };
 }
 
-function mergeDrivePiFields(parsed, parsedFromPdf) {
-  const parsedInsertions = parsed.insertions?.length ? parsed.insertions : parsedFromPdf.insertions || [];
+function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true } = {}) {
+  const parsedInsertions = parsed.insertions?.length
+    ? parsed.insertions
+    : allowPdfInsertions
+      ? parsedFromPdf.insertions || []
+      : [];
   const mergedCompetencia = mergeFieldValue(parsed.competencia, parsedFromPdf.competencia);
   const inferredCompetencia = mergedCompetencia ? null : inferCompetenciaFromInsertionPeriod(parsedInsertions);
   return {
@@ -1183,7 +1861,7 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
     raw: parsed,
   };
   const parsedFromPdf = await parseDrivePiPdfFields(archived);
-  return mergeDrivePiFields(baseFields, parsedFromPdf);
+  return mergeDrivePiFields(baseFields, parsedFromPdf, { allowPdfInsertions: payload?.allowPdfInsertions !== false });
 }
 
 function validateDrivePiApplyFields(fields) {
@@ -1331,11 +2009,15 @@ function buildDrivePiReviewReasons({
   return uniqueStrings(reasons);
 }
 
-function validateDrivePiPackageReadiness(packageClassification, fields) {
+function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false } = {}) {
   const hasInsertionMedia = fields.insertions.some((item) => readStringRecord(item, ["mediaUrl", "media_url"]));
+  const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"]));
   const issues = [];
   if (!packageClassification?.hasPdf) issues.push("missing_pi_pdf");
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
+  if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
+  if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
+  for (const issue of mediaProcessing?.issues || []) issues.push(issue);
   return {
     ok: issues.length === 0,
     issues: uniqueStrings(issues),
@@ -1417,6 +2099,26 @@ function safeProcessOutput(value, maxLength = 4000) {
     .slice(-maxLength);
 }
 
+function parseWpCliJsonObject(stdout) {
+  const text = String(stdout ?? "").trim();
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+    if (depth === 0) {
+      try {
+        return JSON.parse(text.slice(start, i + 1));
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 function shellEscape(value) {
   return `'${String(value ?? "").replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -1429,6 +2131,345 @@ function mediaBasenameFromUrl(value) {
   } catch {
     return path.basename(value.split("?")[0] || "") || null;
   }
+}
+
+function shouldUsePerrenguePortainerAdrotate(siteSigla) {
+  return String(siteSigla || "").toUpperCase() === "PERRENGUE" && ADOPS_PERRENGUE_ADROTATE_EXEC_MODE === "portainer";
+}
+
+function requirePortainerConfig() {
+  if (!PORTAINER_URL || !PORTAINER_API_KEY) {
+    throw new Error("Publicação AdRotate do PERRENGUE via Portainer exige PORTAINER_URL e PORTAINER_API_KEY no runner.");
+  }
+  if (!Number.isInteger(ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID) || ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID <= 0) {
+    throw new Error("ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID inválido para publicação AdRotate do PERRENGUE.");
+  }
+  if (!ADOPS_PERRENGUE_WP_CONTAINER) {
+    throw new Error("ADOPS_PERRENGUE_WP_CONTAINER ausente para publicação AdRotate do PERRENGUE.");
+  }
+}
+
+async function portainerRequest(method, pathname, body = undefined) {
+  requirePortainerConfig();
+  const response = await portainerHttpRequest(`${PORTAINER_URL}/api${pathname}`, {
+    method,
+    headers: {
+      "X-API-Key": PORTAINER_API_KEY,
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const { statusCode, text } = response;
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = text;
+  }
+  if (statusCode < 200 || statusCode >= 300) {
+    const details = typeof payload === "object" && payload
+      ? (payload.message || payload.details || payload.err || payload.error || JSON.stringify(payload))
+      : (text || `HTTP ${statusCode}`);
+    throw new Error(`Portainer API falhou em ${method} ${pathname}: ${details}`);
+  }
+  return payload;
+}
+
+function portainerHttpRequest(url, { method = "GET", headers = {}, body = undefined, timeoutMs = 180000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === "http:" ? http : https;
+    const request = client.request({
+      method,
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "http:" ? 80 : 443),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers,
+      timeout: timeoutMs,
+      ...(parsed.protocol === "https:" ? { rejectUnauthorized: !ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE } : {}),
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => {
+        resolve({
+          statusCode: response.statusCode || 0,
+          headers: response.headers,
+          text: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+    });
+    request.on("timeout", () => {
+      request.destroy(new Error(`Timeout na chamada Portainer ${method} ${parsed.pathname}`));
+    });
+    request.on("error", reject);
+    if (body !== undefined) request.write(body);
+    request.end();
+  });
+}
+
+async function findPortainerContainerByName(containerName) {
+  const containers = await portainerRequest("GET", `/endpoints/${ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID}/docker/containers/json?all=true`);
+  const match = Array.isArray(containers)
+    ? containers.find((container) => Array.isArray(container.Names) && container.Names.some((name) => name.replace(/^\//, "") === containerName))
+    : null;
+  if (!match?.Id) {
+    throw new Error(`Container WordPress do PERRENGUE não encontrado no Portainer: ${containerName}.`);
+  }
+  return match;
+}
+
+async function execPortainerContainerCommand(containerId, command, timeoutMs = 180000) {
+  const created = await portainerRequest("POST", `/endpoints/${ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID}/docker/containers/${containerId}/exec`, {
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: true,
+    Cmd: ["sh", "-lc", command],
+  });
+  if (!created?.Id) {
+    throw new Error("Portainer não retornou ID de exec para o container do PERRENGUE.");
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await portainerHttpRequest(`${PORTAINER_URL}/api/endpoints/${ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID}/docker/exec/${created.Id}/start`, {
+      method: "POST",
+      headers: {
+        "X-API-Key": PORTAINER_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ Detach: false, Tty: true }),
+      timeoutMs,
+    });
+    const stdout = response.text;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`Portainer exec start falhou: HTTP ${response.statusCode} ${stdout.slice(0, 1000)}`);
+    }
+    const inspect = await portainerRequest("GET", `/endpoints/${ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID}/docker/exec/${created.Id}/json`);
+    const exitCode = Number(inspect?.ExitCode ?? 0);
+    if (exitCode !== 0) {
+      throw new Error(`Comando no container PERRENGUE terminou com exit ${exitCode}: ${safeProcessOutput(stdout, 3000)}`);
+    }
+    return { stdout, stderr: "" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function executePerrenguePortainerWpCliPublish({ payloadJson, apply }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const payloadBase64 = Buffer.from(payloadJson).toString("base64");
+  const runnerPhp = `<?php
+$wp_path = getenv('ADOPS_WP_PATH') ?: '/app/web/wp';
+$payload_path = getenv('ADOPS_PAYLOAD_JSON');
+$apply = getenv('ADOPS_APPLY') === '1';
+if (!$payload_path || !is_readable($payload_path)) {
+  throw new RuntimeException('Payload JSON ausente ou ilegivel.');
+}
+require_once rtrim($wp_path, '/') . '/wp-load.php';
+require_once WP_CONTENT_DIR . '/plugins/adrotate/adrotate-adops.php';
+if (!function_exists('adrotate_adops_publish_payload')) {
+  throw new RuntimeException('Funcao adrotate_adops_publish_payload nao carregada.');
+}
+$payload = json_decode(file_get_contents($payload_path), true);
+if (!is_array($payload)) {
+  throw new RuntimeException('Payload JSON invalido.');
+}
+$result = adrotate_adops_publish_payload($payload, $apply);
+echo wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
+`;
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const command = [
+    'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
+    'tmp_runner="$(mktemp /tmp/adops-adrotate-runner.XXXXXX.php)"',
+    `printf %s ${shellEscape(payloadBase64)} | base64 -d > "$tmp_payload"`,
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ADOPS_PAYLOAD_JSON="$tmp_payload" ADOPS_APPLY=${apply ? "1" : "0"} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_payload" "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const result = await execPortainerContainerCommand(container.Id, command);
+  return {
+    ...result,
+    executor: "portainer",
+    containerName: ADOPS_PERRENGUE_WP_CONTAINER,
+    endpointId: ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID,
+    wpPath: ADOPS_PERRENGUE_CONTAINER_WP_PATH,
+  };
+}
+
+async function importPerrengueMediaFromUrl({ sourceUrl, filename, mediaKey }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const input = Buffer.from(JSON.stringify({ sourceUrl, filename, mediaKey })).toString("base64");
+  const runnerPhp = `<?php
+$wp_path = getenv('ADOPS_WP_PATH') ?: '/app/web/wp';
+$input = json_decode(base64_decode(getenv('ADOPS_MEDIA_INPUT') ?: ''), true);
+if (!is_array($input) || empty($input['sourceUrl']) || empty($input['filename']) || empty($input['mediaKey'])) throw new RuntimeException('Payload de midia invalido.');
+require_once rtrim($wp_path, '/') . '/wp-load.php';
+require_once ABSPATH . 'wp-admin/includes/file.php';
+require_once ABSPATH . 'wp-admin/includes/media.php';
+require_once ABSPATH . 'wp-admin/includes/image.php';
+$existing = get_posts(['post_type' => 'attachment', 'post_status' => 'inherit', 'posts_per_page' => 1, 'fields' => 'ids', 'meta_key' => '_adops_media_key', 'meta_value' => sanitize_text_field($input['mediaKey'])]);
+if (!empty($existing[0])) {
+  echo wp_json_encode(['attachment_id' => (int) $existing[0], 'url' => wp_get_attachment_url((int) $existing[0]), 'reused' => true]) . PHP_EOL;
+  exit(0);
+}
+$tmp = download_url(esc_url_raw($input['sourceUrl']), 120);
+if (is_wp_error($tmp)) throw new RuntimeException($tmp->get_error_message());
+$attachment_id = media_handle_sideload(['name' => sanitize_file_name($input['filename']), 'tmp_name' => $tmp], 0, 'AdOps Drive PI');
+if (is_wp_error($attachment_id)) { @unlink($tmp); throw new RuntimeException($attachment_id->get_error_message()); }
+update_post_meta($attachment_id, '_adops_media_key', sanitize_text_field($input['mediaKey']));
+update_post_meta($attachment_id, '_adops_source_url', esc_url_raw($input['sourceUrl']));
+echo wp_json_encode(['attachment_id' => (int) $attachment_id, 'url' => wp_get_attachment_url($attachment_id), 'reused' => false]) . PHP_EOL;
+`;
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const command = [
+    'tmp_runner="$(mktemp /tmp/adops-media-import.XXXXXX.php)"',
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ADOPS_MEDIA_INPUT=${shellEscape(input)} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const execution = await execPortainerContainerCommand(container.Id, command, 300000);
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.attachment_id || !result?.url) throw new Error(`Importação WordPress não retornou attachment/url: ${safeProcessOutput(execution.stdout)}`);
+  const validation = await fetch(result.url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30000) });
+  if (!validation.ok) throw new Error(`URL importada no WordPress não respondeu 200: HTTP ${validation.status}`);
+  return { ...result, executor: "portainer", containerName: ADOPS_PERRENGUE_WP_CONTAINER };
+}
+
+async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache })).toString("base64");
+  const timeoutSeconds = Math.max(60, Math.ceil(ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS / 1000));
+  const pollMicroseconds = Math.max(1000000, ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS * 1000);
+  const runnerPhp = `<?php
+$wp_path = getenv('ADOPS_WP_PATH') ?: '/app/web/wp';
+$input = json_decode(base64_decode(getenv('ADOPS_REBUILD_INPUT') ?: ''), true);
+require_once rtrim($wp_path, '/') . '/wp-load.php';
+if (!function_exists('cod5_static_rebuild_webhook_url') || !function_exists('cod5_static_rebuild_webhook_health')) throw new RuntimeException('MU-plugin de rebuild headless nao carregado.');
+$url = cod5_static_rebuild_webhook_url();
+$secret = cod5_static_rebuild_webhook_secret();
+if ($url === '' || $secret === '') throw new RuntimeException('Webhook/secret de rebuild headless ausente.');
+$before = cod5_static_rebuild_webhook_health();
+$payload = ['reason' => 'adops_adrotate_publish', 'status' => 'publish', 'insertion_id' => (int) ($input['insertionId'] ?? 0), 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
+$response = wp_remote_post($url, ['timeout' => 10, 'blocking' => true, 'headers' => ['content-type' => 'application/json', 'x-cod5-webhook-secret' => $secret], 'body' => wp_json_encode($payload)]);
+if (is_wp_error($response)) throw new RuntimeException($response->get_error_message());
+$code = (int) wp_remote_retrieve_response_code($response);
+if ($code < 200 || $code >= 300) throw new RuntimeException('Webhook rejeitou rebuild com HTTP ' . $code);
+$deadline = time() + ${timeoutSeconds};
+$seen_new_run = false;
+while (time() < $deadline) {
+  usleep(${pollMicroseconds});
+  $health = cod5_static_rebuild_webhook_health();
+  $seen_new_run = $seen_new_run || (!empty($health['lastStartedAt']) && $health['lastStartedAt'] !== ($before['lastStartedAt'] ?? null)) || !empty($health['running']) || !empty($health['queued']);
+  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && ($health['lastStatus'] ?? null) === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'health' => $health]) . PHP_EOL; exit(0); }
+  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && !empty($health['lastStatus']) && $health['lastStatus'] !== 'ok') throw new RuntimeException('Rebuild terminou com status ' . $health['lastStatus']);
+}
+throw new RuntimeException('Timeout aguardando rebuild headless concluir.');
+`;
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const command = [
+    'tmp_runner="$(mktemp /tmp/adops-headless-rebuild.XXXXXX.php)"',
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ADOPS_REBUILD_INPUT=${shellEscape(input)} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const execution = await execPortainerContainerCommand(container.Id, command, ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS + 30000);
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.completed) throw new Error(`Rebuild headless não confirmou conclusão: ${safeProcessOutput(execution.stdout)}`);
+  return result;
+}
+
+function todayInCuiaba() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function buildAdrotatePublishTitle(insertion, campaign) {
+  const campaignName = firstNonEmptyString(
+    insertion.campanhaName,
+    insertion.campaignName,
+    campaign?.nome,
+    insertion.campanha?.nome,
+    insertion.campaign?.nome,
+    "Campanha AdOps",
+  );
+  const siteSigla = firstNonEmptyString(insertion.siteSigla, insertion.site?.sigla);
+  const format = firstNonEmptyString(insertion.localFormatoNormalizado, insertion.localFormato);
+  return [siteSigla, campaignName, format].filter(Boolean).join(" - ");
+}
+
+function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence }) {
+  const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
+  const mediaUrl = firstNonEmptyString(
+    checklist?.expectedMedia?.mediaUrl,
+    insertion.mediaUrl,
+    insertion.midiaUrl,
+    insertion.media?.url,
+  );
+  const campaignId = readPositiveInteger(
+    insertion.campanhaId ?? insertion.campaignId ?? insertion.campanha?.id ?? insertion.campaign?.id ?? campaign?.id,
+  );
+  const piCodigo = firstNonEmptyString(
+    insertion.piCodigo,
+    insertion.campanha?.piCodigo,
+    insertion.campaign?.piCodigo,
+    insertion.campanhaPiCodigo,
+    insertion.campaignPiCodigo,
+    campaign?.piCodigo,
+  );
+  const linkUrl = firstNonEmptyString(
+    insertion.linkUrl,
+    insertion.urlDestino,
+    insertion.destinationUrl,
+    insertion.destinoUrl,
+    insertion.campanha?.linkUrl,
+    insertion.campaign?.linkUrl,
+    campaign?.linkUrl,
+    campaign?.urlDestino,
+  );
+  if (!groupId) throw new Error(`Checklist da inserção ${insertion.id} não resolveu groupId.`);
+  if (!mediaUrl) throw new Error(`Inserção ${insertion.id} sem mediaUrl resolvida.`);
+  if (!campaignId) throw new Error(`Inserção ${insertion.id} sem campanha vinculada.`);
+  const siteSigla = firstNonEmptyString(site?.sigla, insertion.siteSigla, insertion.site?.sigla);
+  const externalKey = siteSigla ? `ADOPS-${siteSigla}-${insertion.id}` : `ADOPS-${insertion.id}`;
+
+  return {
+    insertion_id: insertion.id,
+    campaign_id: campaignId,
+    pi_code: piCodigo,
+    external_key: externalKey,
+    title: buildAdrotatePublishTitle(insertion, campaign),
+    group_id: groupId,
+    media_url: mediaUrl,
+    media_basename: mediaBasenameFromUrl(mediaUrl),
+    link_url: linkUrl,
+    period_start: insertion.periodoInicio ?? null,
+    period_end: insertion.periodoFim ?? null,
+    local_format: insertion.localFormatoNormalizado ?? insertion.localFormato ?? null,
+    page: checklist?.resolvedRule?.page ?? null,
+    slot_selector: checklist?.expectedSelectors?.slotSelector ?? null,
+    context_selector: checklist?.expectedSelectors?.contextSelector ?? null,
+    target_date: targetDate,
+    site_sigla: siteSigla,
+    replace_existing: replaceExisting,
+    purge_cache: purgeCache,
+    generate_evidence: generateEvidence,
+  };
 }
 
 function readPositiveInteger(value) {
@@ -1458,12 +2499,135 @@ function compactAdrotateRelation(relation) {
   };
 }
 
+function sitePublicHomeUrl(site) {
+  const domain = firstNonEmptyString(site?.domain, site?.dominio, site?.url);
+  if (!domain) return null;
+  if (/^https?:\/\//i.test(domain)) return new URL("/", domain).toString();
+  return `https://${domain.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename }) {
+  const url = sitePublicHomeUrl(site);
+  if (!url) return { ok: false, url: null, error: "site_public_url_missing" };
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+    signal: AbortSignal.timeout(30000),
+  });
+  const html = await response.text();
+  const markers = [
+    mediaBasename && html.includes(mediaBasename),
+    html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`),
+    adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)),
+  ].filter(Boolean);
+  return {
+    ok: response.ok && markers.length > 0,
+    url: response.url,
+    status: response.status,
+    mediaFound: Boolean(mediaBasename && html.includes(mediaBasename)),
+    insertionFound: html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`),
+    adFound: Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`))),
+  };
+}
+
+async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
+  const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
+    date: targetDate,
+    captureAt: captureAt || undefined,
+    replace: true,
+    force: true,
+  });
+  const checklist = await privateApi("/api/audit-checklists/validate-proof", { insertionId, date: targetDate });
+  const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`);
+  const approved = status?.status === "audited"
+    && (status?.checklistValidation?.approved ?? checklist?.approved) === true
+    && (status?.blockingIssues || checklist?.blockingIssues || []).length === 0
+    && Boolean(status?.arquivoUrl || status?.evidence?.arquivoUrl || capture?.arquivoUrl || capture?.capture?.arquivoUrl);
+  if (!approved) throw new Error(`Evidência da inserção ${insertionId} não foi aprovada: ${JSON.stringify({ status: status?.status, blockingIssues: status?.blockingIssues || checklist?.blockingIssues || [] })}`);
+  return { capture, checklist, status };
+}
+
 function envNameForSite(prefix, siteSigla) {
   const safeSigla = String(siteSigla || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
   return safeSigla ? `ADOPS_${safeSigla}_${prefix}` : null;
+}
+
+function sshKeyPathForSite(siteSigla) {
+  const specificEnvName = envNameForSite("SSH_KEY_PATH", siteSigla);
+  const specificPath = specificEnvName ? String(process.env[specificEnvName] || "").trim() : "";
+  if (specificPath) return specificPath;
+  const safeSigla = String(siteSigla || "").toUpperCase().replace(/[^A-Z0-9]+/g, "_");
+  if (safeSigla && safeSigla !== "PERRENGUE") {
+    return String(process.env.ADOPS_MULTISITE_SSH_KEY_PATH || "").trim();
+  }
+  return "";
+}
+
+function classifySshFailure(error) {
+  const text = `${error?.stdout || ""}\n${error?.stderr || ""}\n${error?.message || ""}`;
+  if (/Permission denied/i.test(text)) return "permission_denied";
+  if (/Connection timed out|Operation timed out/i.test(text)) return "connection_timeout";
+  if (/Connection refused/i.test(text)) return "connection_refused";
+  if (/No route to host/i.test(text)) return "no_route";
+  if (/Could not resolve hostname|Name or service not known/i.test(text)) return "dns_resolution_failed";
+  if (/Load key .* bad permissions|UNPROTECTED PRIVATE KEY FILE/i.test(text)) return "bad_key_permissions";
+  if (/Identity file .* not accessible|No such file or directory/i.test(text)) return "key_not_accessible";
+  return "ssh_failed";
+}
+
+async function probeSshAuthForSite(siteSigla) {
+  const requestedSigla = String(siteSigla || "").trim().toUpperCase();
+  const result = {
+    siteSigla: requestedSigla,
+    configured: false,
+    keyConfigured: false,
+    authOk: false,
+    errorCode: null,
+  };
+  try {
+    const sites = await privateApiGet("/api/sites");
+    const site = Array.isArray(sites) ? sites.find((item) => String(item?.sigla || "").toUpperCase() === requestedSigla) : null;
+    const sshKeyPath = sshKeyPathForSite(requestedSigla);
+    result.configured = Boolean(site?.sshHost && site?.sshPort && site?.sshUser);
+    result.keyConfigured = Boolean(sshKeyPath);
+    result.portConfigured = Boolean(site?.sshPort);
+    if (!result.configured) {
+      result.errorCode = "site_ssh_not_configured";
+      return result;
+    }
+    if (!sshKeyPath) {
+      result.errorCode = "ssh_key_not_configured";
+      return result;
+    }
+    await execFileAsync(
+      "ssh",
+      [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=12",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "UserKnownHostsFile=/tmp/adops-known-hosts",
+        "-i",
+        sshKeyPath,
+        "-p",
+        String(site.sshPort),
+        `${site.sshUser}@${site.sshHost}`,
+        "true",
+      ],
+      { maxBuffer: 512 * 1024, timeout: 20000 },
+    );
+    result.authOk = true;
+    return result;
+  } catch (error) {
+    result.errorCode = classifySshFailure(error);
+    return result;
+  }
 }
 
 async function readJsonFile(filePath, fallback) {
@@ -1754,7 +2918,11 @@ async function applyDrivePiToAdOps(fields, payload) {
         duplicatePatch.periodoOriginal = readStringRecord(raw, ["periodoOriginal"]);
       }
       if (Object.keys(duplicatePatch).length) {
-        duplicatePatch.observacoes = [duplicate.observacoes, clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null]
+        duplicatePatch.observacoes = [
+          duplicate.observacoes,
+          clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null,
+          readStringRecord(raw, ["mediaProcessingNote"]),
+        ]
           .filter(Boolean)
           .join("\n");
         await privateApiPatch(`/api/insertions/${duplicate.id}`, duplicatePatch);
@@ -1771,14 +2939,16 @@ async function applyDrivePiToAdOps(fields, payload) {
       periodoInicio,
       periodoFim,
       periodoOriginal: readStringRecord(raw, ["periodoOriginal"]),
-      statusNormalizado: readStringRecord(raw, ["statusNormalizado"]) ?? "aguardando_publicacao",
+      statusNormalizado: "aguardando_publicacao",
       mediaUrl: readStringRecord(raw, ["mediaUrl"]),
       observacoes: [
         `Criado a partir do Drive: ${payload.path}`,
         clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null,
+        readStringRecord(raw, ["mediaProcessingNote"]),
       ].filter(Boolean).join("\n"),
     });
     createdInsertions.push(insertion);
+    existingInsertions.push(insertion);
   }
 
   return {
@@ -1790,9 +2960,53 @@ async function applyDrivePiToAdOps(fields, payload) {
   };
 }
 
+function insertionScopeKey(raw) {
+  return [
+    Number(readNumberRecord(raw, ["siteId"]) || 0),
+    normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || ""),
+    readStringRecord(raw, ["periodoInicio", "inicio"]) || "",
+    readStringRecord(raw, ["periodoFim", "fim"]) || "",
+  ].join("|");
+}
+
+async function reconcileDrivePiStrictScope(applied, fields, payload) {
+  if (payload?.strictInsertionScope !== true || !applied?.campaignId) {
+    return { skipped: true, reason: "strict_insertion_scope_disabled", cancelledInsertions: [] };
+  }
+  const detail = await privateApiGet(`/api/campaigns/${applied.campaignId}`);
+  const current = Array.isArray(detail?.insertions) ? detail.insertions : [];
+  const allowedKeys = new Set(fields.insertions.map(insertionScopeKey));
+  const allowedPeriodsBySite = new Set(fields.insertions.map((item) => [
+    Number(readNumberRecord(item, ["siteId"]) || 0),
+    readStringRecord(item, ["periodoInicio", "inicio"]) || "",
+    readStringRecord(item, ["periodoFim", "fim"]) || "",
+  ].join("|")));
+  const cancelledInsertions = [];
+  for (const insertion of current) {
+    if (insertion?.statusNormalizado === "cancelado" || allowedKeys.has(insertionScopeKey(insertion))) continue;
+    const periodSiteKey = [Number(insertion?.siteId || 0), insertion?.periodoInicio || "", insertion?.periodoFim || ""].join("|");
+    const reason = isSocialInsertion(insertion)
+      ? "social_format_outside_site_scope"
+      : allowedPeriodsBySite.has(periodSiteKey)
+        ? "duplicate_outside_explicit_scope"
+        : null;
+    if (!reason) continue;
+    await privateApiPatch(`/api/insertions/${insertion.id}`, {
+      statusNormalizado: "cancelado",
+      bannerPublicadoNoSite: false,
+      observacoes: [
+        insertion.observacoes,
+        `Cancelada pelo fluxo Drive PI estrito em ${new Date().toISOString()}: ${reason}. Fonte: ${payload?.webViewLink || payload?.path || "Drive"}.`,
+      ].filter(Boolean).join("\n"),
+    });
+    cancelledInsertions.push({ insertionId: insertion.id, reason });
+  }
+  return { skipped: false, cancelledInsertions };
+}
+
 async function executeSyncPlanilha(payload) {
   await ensureRuntimeDirs();
-  const args = ["--filter", "@workspace/scripts", "run", "sync:planilha"];
+  const args = ["--dir", "scripts", "run", "sync:planilha"];
   const { stdout, stderr } = await runPnpm(args, {
     cwd: PROJECT_ROOT,
     env: process.env,
@@ -1807,7 +3021,7 @@ async function executeSyncPlanilha(payload) {
 
 async function executeReconcilePlanilhaAdrotate() {
   await ensureRuntimeDirs();
-  const args = ["--filter", "@workspace/scripts", "run", "reconcile:planilha-adrotate"];
+  const args = ["--dir", "scripts", "run", "reconcile:planilha-adrotate"];
   const { stdout, stderr } = await runPnpm(args, {
     cwd: PROJECT_ROOT,
     env: process.env,
@@ -1885,8 +3099,7 @@ async function executeAdrotateLinkJob(payload) {
     throw new Error(`Inserção ${insertionId} sem piCodigo resolvido.`);
   }
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? null;
-  const sshKeyEnvName = envNameForSite("SSH_KEY_PATH", siteSigla);
-  const sshKeyPath = sshKeyEnvName ? String(process.env[sshKeyEnvName] || "").trim() : "";
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
 
   const args = [
     shellEscape(site.phpBin ?? "php"),
@@ -1942,6 +3155,188 @@ async function executeAdrotateLinkJob(payload) {
     stdout: safeProcessOutput(stdout, 6000),
     stderr: safeProcessOutput(stderr, 6000),
     relationAfter,
+  };
+}
+
+async function executeAdrotatePublishJob(payload) {
+  const insertionId = readPositiveInteger(payload?.insertionId);
+  if (!insertionId) {
+    throw new Error("adrotate-publish exige insertionId positivo.");
+  }
+
+  const apply = payload?.apply === true;
+  const replaceExisting = payload?.replaceExisting !== false;
+  const purgeCache = payload?.purgeCache !== false;
+  const generateEvidence = payload?.generateEvidence === true;
+  const targetDate = firstNonEmptyString(payload?.date) ?? todayInCuiaba();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    throw new Error("adrotate-publish exige date em YYYY-MM-DD quando informado.");
+  }
+
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  if (!insertion?.id) {
+    throw new Error(`Inserção ${insertionId} não encontrada.`);
+  }
+  const checklist = await privateApiGet(`/api/audit-checklists/resolve?insertionId=${insertionId}&date=${encodeURIComponent(targetDate)}`);
+  if (!checklist?.ok) {
+    throw new Error(`Checklist bloqueou publicação da inserção ${insertionId}: ${JSON.stringify(checklist?.blockingIssues ?? checklist)}`);
+  }
+
+  const siteId = readPositiveInteger(insertion.siteId ?? insertion.site?.id ?? checklist.insertion?.siteId);
+  if (!siteId) {
+    throw new Error(`Inserção ${insertionId} sem siteId.`);
+  }
+  const site = await privateApiGet(`/api/sites/${siteId}`);
+  const campaignId = readPositiveInteger(insertion.campanhaId ?? insertion.campaignId ?? insertion.campanha?.id ?? insertion.campaign?.id);
+  const campaign = campaignId ? await privateApiGet(`/api/campaigns/${campaignId}`).catch(() => null) : null;
+  const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? checklist.insertion?.siteSigla ?? null;
+  if (!shouldUsePerrenguePortainerAdrotate(siteSigla) && (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath)) {
+    throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
+  }
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const publishPayload = buildAdrotatePublishPayload({
+    insertion,
+    campaign,
+    site,
+    checklist,
+    targetDate,
+    replaceExisting,
+    purgeCache,
+    generateEvidence,
+  });
+  const payloadJson = JSON.stringify(publishPayload);
+  const wpCliCommand = [
+    shellEscape(site.phpBin ?? "php"),
+    shellEscape(site.wpCliPath ?? "wp"),
+    "--allow-root",
+    `--path=${shellEscape(site.wpPath)}`,
+    "adops-adrotate-publish",
+    '--payload-json="$tmp_payload"',
+    ...(apply ? ["--apply"] : []),
+  ].join(" ");
+  const remoteCommand = [
+    'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
+    `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
+    `${wpCliCommand}; rc=$?`,
+    'rm -f "$tmp_payload"',
+    "exit $rc",
+  ].join(" && ");
+
+  const execution = shouldUsePerrenguePortainerAdrotate(siteSigla)
+    ? await executePerrenguePortainerWpCliPublish({ payloadJson, apply })
+    : {
+        ...(await execFileAsync(
+          "ssh",
+          [
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "UserKnownHostsFile=/tmp/adops-known-hosts",
+            ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+            "-p",
+            String(site.sshPort),
+            `${site.sshUser}@${site.sshHost}`,
+            remoteCommand,
+          ],
+          { maxBuffer: 2 * 1024 * 1024, timeout: 180000 },
+        )),
+        executor: "ssh",
+      };
+  const { stdout, stderr } = execution;
+
+  const wpCliResult = parseWpCliJsonObject(stdout);
+  const wpCliPublished = Boolean(wpCliResult?.ad_id && wpCliResult?.group_id);
+  let headlessRebuild = null;
+  if (apply && wpCliPublished && String(siteSigla || "").toUpperCase() === "PERRENGUE") {
+    headlessRebuild = await executePerrengueHeadlessRebuild({
+      insertionId,
+      adId: wpCliResult.ad_id,
+      mediaBasename: publishPayload.media_basename,
+      purgeCache,
+    });
+  }
+
+  const relationAfter = apply
+    ? compactAdrotateRelation(await privateApiGet(`/api/integrations/adrotate/insertions/${insertionId}/relation`).catch(() => null))
+    : null;
+  const exactLiveCount = relationAfter?.exactLiveMatches?.length ?? 0;
+  const publicHtmlValidation = apply && wpCliPublished
+    ? await validatePublishedAdHtml({
+        site,
+        insertionId,
+        adId: wpCliResult.ad_id,
+        mediaBasename: publishPayload.media_basename,
+      }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
+    : null;
+  const activeToday = todayInCuiaba() >= String(insertion.periodoInicio || "") && todayInCuiaba() <= String(insertion.periodoFim || "");
+  if (apply && wpCliPublished && activeToday && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
+    throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}.`);
+  }
+
+  if (apply && wpCliPublished) {
+    await privateApiPatch(`/api/insertions/${insertionId}`, {
+      bannerPublicadoNoSite: true,
+      statusNormalizado: "publicado",
+      observacoes: [
+        insertion.observacoes,
+        `AdRotate publicado via adrotate-publish em ${new Date().toISOString()} (grupo ${publishPayload.group_id}, ad ${wpCliResult.ad_id}).`,
+        exactLiveCount > 0
+          ? "Relação pública validada após publicação."
+          : "Publicação agendada/criada no WordPress; relação pública pode ficar vazia antes do início do período.",
+      ].filter(Boolean).join("\n"),
+    }).catch(() => null);
+  }
+
+  let evidenceJob = null;
+  if (apply && generateEvidence) {
+    evidenceJob = await captureAndValidatePublishedProof({
+      insertionId,
+      targetDate,
+      captureAt: firstNonEmptyString(payload?.captureAt),
+    });
+  }
+
+  return {
+    mode: apply ? "apply" : "preview",
+    apply,
+    insertionId,
+    targetDate,
+    siteId,
+    siteSigla,
+    executor: execution.executor,
+    executorContext: execution.executor === "portainer"
+      ? {
+          endpointId: execution.endpointId,
+          containerName: execution.containerName,
+          wpPath: execution.wpPath,
+        }
+      : {
+          sshHost: site.sshHost,
+          sshPort: site.sshPort,
+          sshUser: site.sshUser,
+          wpPath: site.wpPath,
+        },
+    sshKeyConfigured: Boolean(sshKeyPath),
+    resolvedRule: checklist.resolvedRule,
+    expectedSelectors: checklist.expectedSelectors,
+    expectedMedia: checklist.expectedMedia,
+    publishPayload: {
+      ...publishPayload,
+      link_url: publishPayload.link_url ?? null,
+    },
+    wpCliResult,
+    stdout: safeProcessOutput(stdout, 8000),
+    stderr: safeProcessOutput(stderr, 8000),
+    relationAfter,
+    relationOk: apply ? exactLiveCount > 0 : null,
+    headlessRebuild,
+    publicHtmlValidation,
+    evidenceJob,
+    requiredFollowUp: apply
+      ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
+      : ["review_preview", "rerun_with_apply_true"],
   };
 }
 
@@ -2126,15 +3521,35 @@ async function executeDrivePiIngest(payload) {
     };
   }
 
-  const fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  const insertionScope = (payload?.strictInsertionScope === true || payload?.publish === true)
+    ? filterSiteInsertions(fields.insertions)
+    : { accepted: fields.insertions, excluded: [] };
+  fields = { ...fields, insertions: insertionScope.accepted };
+  const shouldResolveMedia = payload?.resolveMedia === true || payload?.publish === true;
+  const videoResolution = shouldResolveMedia
+    ? await resolveDrivePiVideoMedia(fields, packageContext, payload)
+    : { fields, videoMediaProcessing: { skipped: true, results: [], issues: [] } };
+  fields = videoResolution.fields;
+  const imageResolution = shouldResolveMedia
+    ? await resolveDrivePiImageMedia(fields, packageContext, payload)
+    : { fields, imageMediaProcessing: { skipped: true, results: [], issues: [] } };
+  fields = imageResolution.fields;
+  const mediaProcessing = {
+    results: [...(videoResolution.videoMediaProcessing?.results || []), ...(imageResolution.imageMediaProcessing?.results || [])],
+    issues: [...(videoResolution.videoMediaProcessing?.issues || []), ...(imageResolution.imageMediaProcessing?.issues || [])],
+    video: videoResolution.videoMediaProcessing,
+    image: imageResolution.imageMediaProcessing,
+  };
   const validation = validateDrivePiApplyFields(fields);
-  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields);
+  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, { requireResolvedMedia: payload?.publish === true });
   const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
   const dedupe = validation.ok && packageReadiness.ok && rollout.ok
     ? await validateDrivePiDedupeSafety(fields)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
-  const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY;
+  const explicitPublishFlow = payload?.publish === true && /api-publish$/.test(String(payload?.source || ""));
+  const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && (explicitPublishFlow || ADOPS_PI_AGENT_AUTO_APPLY);
   let preApplySyncPlanilha = { skipped: true, reason: "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
   if (canApply && mutationEnabled) {
     try {
@@ -2187,6 +3602,14 @@ async function executeDrivePiIngest(payload) {
           classification: packageClassification,
         },
         packageReadiness,
+        mediaProcessing,
+        insertionScope: {
+          strict: payload?.strictInsertionScope === true,
+          excluded: insertionScope.excluded.map((item) => ({
+            reason: item.reason,
+            localFormato: readStringRecord(item.insertion, ["localFormato", "localFormatoNormalizado"]),
+          })),
+        },
         dedupe: preApplyDedupe,
         preApplySyncPlanilha,
         reviewReasons,
@@ -2247,15 +3670,17 @@ async function executeDrivePiIngest(payload) {
       intakeLock: intakeLock.key,
       applied,
     });
-    evidenceCoverage = await ensureDrivePiEvidenceCoverage(applied);
-    await notifyDrivePiStageTelegram(payload, "evidence_checked", {
-      piCodigo: fields.piCodigo,
-      campaignName: fields.campaignName,
-      packageClass: packageClassification?.class,
-      intakeLock: intakeLock.key,
-      applied,
-      evidenceCoverage,
-    });
+    if (payload?.publish !== true) {
+      evidenceCoverage = await ensureDrivePiEvidenceCoverage(applied);
+      await notifyDrivePiStageTelegram(payload, "evidence_checked", {
+        piCodigo: fields.piCodigo,
+        campaignName: fields.campaignName,
+        packageClass: packageClassification?.class,
+        intakeLock: intakeLock.key,
+        applied,
+        evidenceCoverage,
+      });
+    }
     const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => item?.status !== "audited");
     await updateDrivePiState(payload, "applied", {
       parseRun: {
@@ -2284,6 +3709,9 @@ async function executeDrivePiIngest(payload) {
   const syncPlanilha = hasAdOpsChanges
     ? await executeSyncPlanilha({ mode: "latest" })
     : preApplySyncPlanilha;
+  const strictScopeReconciliation = hasAdOpsChanges
+    ? await reconcileDrivePiStrictScope(applied, fields, payload)
+    : { skipped: true, reason: "no_adops_changes", cancelledInsertions: [] };
   let reconcile = { skipped: true, reason: "Nenhuma alteração nova aplicada no AdOps." };
   if (hasAdOpsChanges) {
     try {
@@ -2311,6 +3739,32 @@ async function executeDrivePiIngest(payload) {
       applied,
     });
   }
+  const publicationResults = [];
+  if (hasAdOpsChanges && payload?.publish === true) {
+    for (const insertionId of getAppliedInsertionIds(applied)) {
+      const common = {
+        insertionId,
+        replaceExisting: true,
+        purgeCache: payload?.purgeCache !== false,
+        date: firstNonEmptyString(payload?.date) || todayInCuiaba(),
+        captureAt: firstNonEmptyString(payload?.captureAt),
+      };
+      const preview = await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
+      const published = await executeAdrotatePublishJob({
+        ...common,
+        apply: true,
+        generateEvidence: payload?.generateEvidence !== false,
+      });
+      publicationResults.push({ insertionId, preview, published });
+    }
+    evidenceCoverage = {
+      checked: publicationResults.map((item) => item.insertionId),
+      results: publicationResults.map((item) => ({
+        insertionId: item.insertionId,
+        status: item.published?.evidenceJob ? "audited" : "published",
+      })),
+    };
+  }
   const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => item?.status !== "audited");
   const finalStatus = applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
   const finalReviewReasons = buildDrivePiReviewReasons({
@@ -2333,6 +3787,8 @@ async function executeDrivePiIngest(payload) {
         packageReadiness,
         dedupe: preApplyDedupe,
         preApplySyncPlanilha,
+        strictScopeReconciliation,
+        publicationResults,
         reviewReasons: finalReviewReasons,
       },
       alerts: applied
@@ -2368,6 +3824,8 @@ async function executeDrivePiIngest(payload) {
     dedupe: preApplyDedupe,
     applied,
     evidenceCoverage,
+    strictScopeReconciliation,
+    publicationResults,
     rollout,
     agentAnalysis: fields.agentAnalysis || agentResult,
   }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
@@ -2655,6 +4113,7 @@ async function executeRuntimeReadinessProbe() {
   const telegramDirectReady = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_DEFAULT_GROUP_ID);
   const telegramBridgeConfigured = Boolean(ADOPS_TELEGRAM_BOT_URL);
   const perrengueSshEnvName = "ADOPS_PERRENGUE_SSH_KEY_PATH";
+  const perrengueSshAuth = await probeSshAuthForSite("PERRENGUE");
   const runnerRuntimeReadiness = {
     ok: true,
     version: "adops-runner-runtime-readiness-v1",
@@ -2671,7 +4130,10 @@ async function executeRuntimeReadinessProbe() {
       drivePiMutationAllowed: ADOPS_DRIVE_PI_ALLOW_MUTATION,
       piAgentEnabled: ADOPS_PI_AGENT_ENABLED,
       piAgentAutoApply: ADOPS_PI_AGENT_AUTO_APPLY,
+      perrengueAdrotateExecMode: ADOPS_PERRENGUE_ADROTATE_EXEC_MODE,
+      perrenguePortainerConfigured: Boolean(PORTAINER_URL && PORTAINER_API_KEY && ADOPS_PERRENGUE_WP_CONTAINER),
       perrengueSshConfigured: envPresent(perrengueSshEnvName),
+      perrengueSshAuthOk: perrengueSshAuth.authOk,
       jobKindAllowed: kinds.includes("runtime-readiness-probe"),
     },
     categories: [
@@ -2720,8 +4182,26 @@ async function executeRuntimeReadinessProbe() {
       {
         id: "adrotate",
         title: "AdRotate e WordPress",
-        checks: namedChecks([
-          { name: perrengueSshEnvName, requiredFor: "Corrigir/publicar AdRotate do Perrengue via SSH/WP-CLI." },
+        checks: namedChecks(
+          ADOPS_PERRENGUE_ADROTATE_EXEC_MODE === "portainer"
+            ? [
+                { name: "PORTAINER_URL", requiredFor: "Executar WP-CLI do Perrengue no container VM8 via Portainer." },
+                { name: "PORTAINER_API_KEY", requiredFor: "Autorizar execução no Portainer sem expor segredo." },
+                { name: "ADOPS_PERRENGUE_WP_CONTAINER", requiredFor: "Identificar o container WordPress do Perrengue." },
+              ]
+            : [
+                { name: perrengueSshEnvName, requiredFor: "Corrigir/publicar AdRotate do Perrengue via SSH/WP-CLI." },
+              ],
+        ).concat([
+          {
+            name: "PERRENGUE_SSH_AUTH",
+            present: perrengueSshAuth.authOk,
+            requiredFor: ADOPS_PERRENGUE_ADROTATE_EXEC_MODE === "portainer"
+              ? "Fallback SSH do Perrengue; não é requisito quando o modo está em Portainer."
+              : "Executar WP-CLI do Perrengue pelo job adrotate-publish.",
+            status: perrengueSshAuth.authOk ? "ok" : (ADOPS_PERRENGUE_ADROTATE_EXEC_MODE === "portainer" ? "skipped" : "failed"),
+            errorCode: perrengueSshAuth.errorCode,
+          },
         ]),
       },
     ],
@@ -3206,6 +4686,9 @@ async function handleJob(job) {
   if (job.kind === "adrotate-link") {
     return executeAdrotateLinkJob(payload);
   }
+  if (job.kind === "adrotate-publish") {
+    return executeAdrotatePublishJob(payload);
+  }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);
   }
@@ -3349,7 +4832,20 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+export {
+  extractUrlsFromText,
+  extractMediaLinksFromText,
+  filterSiteInsertions,
+  isSocialInsertion,
+  mediaKindFromUrl,
+  mergeDrivePiFields,
+  selectObservedMediaLink,
+  validateDrivePiPackageReadiness,
+};
+
+if (process.env.ADOPS_RUNNER_TEST_MODE !== "1") {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

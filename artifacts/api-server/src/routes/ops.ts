@@ -13,6 +13,7 @@ type JobKind =
   | "operational-documents"
   | "reconcile-adrotate"
   | "adrotate-link"
+  | "adrotate-publish"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -47,6 +48,12 @@ type DrivePiEventPayload = {
   simulation?: unknown;
   preflightOnly?: boolean;
   explicitFolder?: boolean;
+  resolveMedia?: boolean;
+  strictInsertionScope?: boolean;
+  allowPdfInsertions?: boolean;
+  publish?: boolean;
+  generateEvidence?: boolean;
+  purgeCache?: boolean;
   source?: string;
 };
 
@@ -63,6 +70,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "operational-documents",
   "reconcile-adrotate",
   "adrotate-link",
+  "adrotate-publish",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
@@ -282,6 +290,11 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     intake_locked: "Processo automatico iniciado",
     packaging: "Conferindo pacote",
     agent_analysis: "Analisando PI com IA",
+    compressing_video: "Comprimindo video",
+    uploading_video: "Publicando video no CDN",
+    applying: "Aplicando campanha no AdOps",
+    syncing: "Sincronizando planilha e AdRotate",
+    applied: "Campanha aplicada",
     needs_review: "Precisa revisao",
     completed: "Concluido",
     failed: "Falhou",
@@ -306,6 +319,17 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Vinculando anuncio AdRotate",
     completed: "Vinculo AdRotate concluido",
     failed: "Falha no vinculo AdRotate",
+  },
+  "adrotate-publish": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Publicando anuncio AdRotate",
+    resolving_contract: "Resolvendo checklist",
+    publishing: "Criando ou atualizando anuncio",
+    purging_cache: "Limpando cache do portal",
+    generating_evidence: "Gerando evidencia",
+    completed: "Publicacao AdRotate concluida",
+    failed: "Falha na publicacao AdRotate",
   },
   "telegram-send-evidence": {
     queued: "Na fila",
@@ -508,11 +532,12 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
-    return kind === "analytics-report" || kind === "pi-site-export" ? 30 * 60_000 : 15 * 60_000;
+    return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
   if (status === "running") {
-    return kind === "analytics-report" || kind === "pi-site-export" ? 120 * 60_000 : 30 * 60_000;
+    return longRunning ? 120 * 60_000 : 30 * 60_000;
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -558,6 +583,12 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     ...(body["simulation"] !== undefined ? { simulation: body["simulation"] } : {}),
     ...(body["preflightOnly"] === true ? { preflightOnly: true } : {}),
     ...(body["explicitFolder"] === true ? { explicitFolder: true } : {}),
+    ...(typeof body["resolveMedia"] === "boolean" ? { resolveMedia: body["resolveMedia"] } : {}),
+    ...(typeof body["strictInsertionScope"] === "boolean" ? { strictInsertionScope: body["strictInsertionScope"] } : {}),
+    ...(typeof body["allowPdfInsertions"] === "boolean" ? { allowPdfInsertions: body["allowPdfInsertions"] } : {}),
+    ...(typeof body["publish"] === "boolean" ? { publish: body["publish"] } : {}),
+    ...(typeof body["generateEvidence"] === "boolean" ? { generateEvidence: body["generateEvidence"] } : {}),
+    ...(typeof body["purgeCache"] === "boolean" ? { purgeCache: body["purgeCache"] } : {}),
     ...(readOptionalString(body["source"]) ? { source: readOptionalString(body["source"]) as string } : {}),
   };
 }
@@ -1093,6 +1124,14 @@ function buildOpsApiCatalog() {
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-folder -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA"}'`,
       },
       {
+        id: "drive-pi-publish",
+        method: "POST",
+        path: "/api/ops/jobs/drive-pi-publish",
+        purpose: "Cadastrar a PI, resolver mídia da pasta/TXT, publicar no AdRotate, renovar o headless e validar a evidência.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-publish -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA","parsedPi":{},"resolveMedia":true,"strictInsertionScope":true,"allowPdfInsertions":false,"publish":true,"generateEvidence":true,"purgeCache":true}'`,
+      },
+      {
         id: "drive-pi-event",
         method: "POST",
         path: "/api/ops/drive-pi-events",
@@ -1122,6 +1161,14 @@ function buildOpsApiCatalog() {
         purpose: "Vincular ou corrigir um anúncio AdRotate existente para uma inserção AdOps via WP-CLI. Por padrão não muta.",
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-link -d '{"insertionId":1663,"adId":160,"apply":false}'`,
+      },
+      {
+        id: "adrotate-publish",
+        method: "POST",
+        path: "/api/ops/jobs/adrotate-publish",
+        purpose: "Criar ou atualizar o anúncio AdRotate de uma inserção usando o checklist central como fonte de posição. Por padrão não muta.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-publish -d '{"insertionId":1666,"apply":false,"replaceExisting":true,"purgeCache":true,"generateEvidence":false}'`,
       },
       ],
     },
@@ -1228,6 +1275,7 @@ function buildOpsQuickstart() {
       steps: [
         { label: "Auditar reconciliação sem aplicar", command: command("reconcile-adrotate") },
         { label: "Vincular anúncio existente em modo dry-run", command: command("adrotate-link") },
+        { label: "Publicar ou atualizar anúncio via checklist em modo dry-run", command: command("adrotate-publish") },
         { label: "Só repetir com apply=true depois de revisar o diagnóstico", command: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-link -d '{"insertionId":1663,"adId":160,"apply":true}'` },
       ],
       acceptance: ["sem nova inserção duplicada", "grupo/slot resolvido pelo checklist", "HTML público confere mídia e link"],
@@ -1672,6 +1720,19 @@ router.post("/ops/jobs/print-batch", async (req, res): Promise<void> => {
   res.status(202).json({ ok: true, jobId, kind: "print-batch", status: "ready_for_runner" });
 });
 
+router.post("/ops/jobs/sync-planilha", async (req, res): Promise<void> => {
+  const mode = readOptionalString(req.body?.mode) ?? "latest";
+  const campaignIds = Array.isArray(req.body?.campaignIds)
+    ? req.body.campaignIds.filter((item: unknown) => Number.isInteger(item))
+    : null;
+  const jobId = await createOpsJob("sync-planilha", {
+    mode,
+    campaignIds,
+    source: "macmini-api",
+  }, "ops-api");
+  res.status(202).json({ ok: true, jobId, kind: "sync-planilha", status: "ready_for_runner" });
+});
+
 router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
   const piCodigo = readOptionalString(req.body?.piCodigo);
   const siteSigla = readOptionalString(req.body?.siteSigla)?.toUpperCase() ?? null;
@@ -1718,15 +1779,60 @@ router.post("/ops/jobs/adrotate-link", async (req, res): Promise<void> => {
   res.status(202).json({ ok: true, jobId, kind: "adrotate-link", status: "ready_for_runner", apply });
 });
 
+router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
+  const insertionId = readOptionalNumber(req.body?.insertionId);
+  if (!insertionId || insertionId <= 0) {
+    res.status(400).json({
+      error: "bad_request",
+      details: "Informe insertionId positivo.",
+    });
+    return;
+  }
+
+  const apply = req.body?.apply === true;
+  const replaceExisting = req.body?.replaceExisting !== false;
+  const purgeCache = req.body?.purgeCache !== false;
+  const generateEvidence = req.body?.generateEvidence === true;
+  const date = readOptionalString(req.body?.date);
+  const captureAt = readOptionalString(req.body?.captureAt);
+
+  const jobId = await createOpsJob("adrotate-publish", {
+    insertionId,
+    apply,
+    replaceExisting,
+    purgeCache,
+    generateEvidence,
+    date,
+    captureAt,
+    mode: apply ? "apply" : "preview",
+    source: "macmini-api",
+  }, "ops-api");
+
+  res.status(202).json({
+    ok: true,
+    jobId,
+    kind: "adrotate-publish",
+    status: "ready_for_runner",
+    apply,
+    requiredFollowUp: apply
+      ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
+      : ["review_preview", "rerun_with_apply_true"],
+  });
+});
+
 router.post("/ops/jobs/drive-pi-folder", async (req, res): Promise<void> => {
-  await createDrivePiFolderJob(req, res, { preflightOnly: false });
+  await createDrivePiFolderJob(req, res, { preflightOnly: false, publishFlow: false });
 });
 
 router.post("/ops/jobs/drive-pi-preflight", async (req, res): Promise<void> => {
-  await createDrivePiFolderJob(req, res, { preflightOnly: true });
+  await createDrivePiFolderJob(req, res, { preflightOnly: true, publishFlow: false });
 });
 
-async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean }) {
+router.post("/ops/jobs/drive-pi-publish", async (req, res): Promise<void> => {
+  await createDrivePiFolderJob(req, res, { preflightOnly: false, publishFlow: true });
+});
+
+async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean; publishFlow: boolean }) {
   const folderId = parseDriveFolderId(req.body?.folderUrl ?? req.body?.folderId ?? req.body?.driveFolderId);
   if (!folderId) {
     res.status(400).json({
@@ -1736,9 +1842,9 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     return;
   }
   const now = nowIso();
-  const source = options.preflightOnly ? "macmini-api-preflight" : "macmini-api";
+  const source = options.preflightOnly ? "macmini-api-preflight" : options.publishFlow ? "macmini-api-publish" : "macmini-api";
   const event = {
-    eventId: readOptionalString(req.body?.eventId) ?? `drive:${options.preflightOnly ? "preflight:" : ""}${folderId}:${now}`,
+    eventId: readOptionalString(req.body?.eventId) ?? `drive:${folderId}:${options.publishFlow ? "publish:" : options.preflightOnly ? "preflight:" : ""}${now}`,
     driveFileId: folderId,
     name: readOptionalString(req.body?.name) ?? `${options.preflightOnly ? "Preflight Drive PI" : "Drive PI"} ${folderId}`,
     mimeType: "application/vnd.google-apps.folder",
@@ -1751,6 +1857,12 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     parsedPi: req.body?.parsedPi,
     preflightOnly: options.preflightOnly,
     explicitFolder: true,
+    resolveMedia: options.publishFlow ? req.body?.resolveMedia !== false : req.body?.resolveMedia === true,
+    strictInsertionScope: options.publishFlow ? req.body?.strictInsertionScope !== false : req.body?.strictInsertionScope === true,
+    allowPdfInsertions: options.publishFlow ? req.body?.allowPdfInsertions === true : req.body?.allowPdfInsertions !== false,
+    publish: options.publishFlow ? req.body?.publish !== false : req.body?.publish === true,
+    generateEvidence: options.publishFlow ? req.body?.generateEvidence !== false : req.body?.generateEvidence === true,
+    purgeCache: req.body?.purgeCache !== false,
     source,
   };
   const validated = validateDrivePiEvent(event);
@@ -1759,7 +1871,7 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     return;
   }
   const result = await createDrivePiEventJob(validated, "ops-api");
-  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "drive-pi-ingest", preflightOnly: options.preflightOnly, ...result });
+  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "drive-pi-ingest", preflightOnly: options.preflightOnly, publishFlow: options.publishFlow, ...result });
 }
 
 router.post("/ops/jobs/telegram-send-evidence", async (req, res): Promise<void> => {

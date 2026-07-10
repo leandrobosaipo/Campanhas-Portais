@@ -21,6 +21,7 @@ import {
 } from "./drive-campaign-media";
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
+import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
 
@@ -31,7 +32,8 @@ type RequiredAction =
   | "generate_evidence"
   | "review_period_divergence"
   | "review_format_divergence"
-  | "review_drive_ambiguity";
+  | "review_drive_ambiguity"
+  | "review_live_slot_conflict";
 
 type OperationStatus =
   | "ok"
@@ -219,6 +221,91 @@ function unique<T>(values: T[]) {
   return Array.from(new Set(values));
 }
 
+type LiveAdSlot = {
+  pageUrl: string;
+  groupId: number;
+  adId: number;
+  mediaUrl: string | null;
+  mediaBasename: string | null;
+};
+
+function mediaBasename(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).pathname.split("/").filter(Boolean).pop() ?? value.split("/").pop() ?? null;
+  } catch {
+    return value.split("/").pop() ?? null;
+  }
+}
+
+function parseLiveSlotsFromHtml(html: string, pageUrl: string, supportedGroups: number[]) {
+  const slots: LiveAdSlot[] = [];
+  const groupPattern = /class="g g-(\d+)"/gi;
+  const matches = [...html.matchAll(groupPattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index]!;
+    const groupId = Number.parseInt(match[1] ?? "", 10);
+    if (supportedGroups.length && !supportedGroups.includes(groupId)) continue;
+    const start = match.index ?? 0;
+    const end = matches[index + 1]?.index ?? Math.min(html.length, start + 4000);
+    const groupHtml = html.slice(start, end);
+    const adPattern = /<div class="g-dyn a-(\d+)[^"]*">([\s\S]*?)<\/div>/gi;
+    let adMatch: RegExpExecArray | null = null;
+    while ((adMatch = adPattern.exec(groupHtml)) != null) {
+      const adId = Number.parseInt(adMatch[1] ?? "", 10);
+      const adHtml = adMatch[2] ?? "";
+      const mediaSourceMatch = adHtml.match(/data-lazy-src="([^"]+)"/i) ?? adHtml.match(/<noscript><img[^>]+src="([^"]+)"/i) ?? adHtml.match(/src="([^"]+)"/i);
+      const mediaUrl = normalizeSiteMediaUrl(mediaSourceMatch?.[1] ?? null);
+      if (!Number.isFinite(adId) || !mediaUrl || mediaUrl.startsWith("data:image/svg+xml")) continue;
+      slots.push({ pageUrl, groupId, adId, mediaUrl, mediaBasename: mediaBasename(mediaUrl) });
+    }
+  }
+  return slots;
+}
+
+async function fetchHomeLiveSlots(siteSigla: string) {
+  const site = getSiteIntegration(siteSigla);
+  if (!site) return [] as LiveAdSlot[];
+  try {
+    const response = await fetch(site.homeUrl, { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) return [];
+    const html = await response.text();
+    return parseLiveSlotsFromHtml(html, site.homeUrl, getSupportedGroupIds(siteSigla));
+  } catch {
+    return [];
+  }
+}
+
+function liveSlotIssuesForInsertion(insertion: MinimalEnrichedInsertion | null, liveSlots: LiveAdSlot[]) {
+  if (!insertion) return [];
+  const siteSigla = insertion.site?.sigla ?? null;
+  const expectedGroupId = getAdRotateGroupId(siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const expectedMediaBasename = mediaBasename(insertion.mediaUrl);
+  if (!expectedGroupId || !expectedMediaBasename) return [];
+
+  const issues: string[] = [];
+  const groupSlots = liveSlots.filter((slot) => slot.groupId === expectedGroupId);
+  const exactSlot = groupSlots.find((slot) => slot.mediaBasename === expectedMediaBasename);
+  const conflictingSlots = groupSlots.filter((slot) => slot.mediaBasename && slot.mediaBasename !== expectedMediaBasename);
+
+  if (!exactSlot && conflictingSlots.length) {
+    issues.push(
+      `Slot público do grupo ${expectedGroupId} está ocupado por outra mídia: ${conflictingSlots.map((slot) => `ad ${slot.adId}/${slot.mediaBasename}`).join(", ")}.`,
+    );
+  }
+
+  for (const slot of groupSlots) {
+    const duplicateGroups = liveSlots
+      .filter((candidate) => candidate.pageUrl === slot.pageUrl && candidate.adId === slot.adId && candidate.groupId !== slot.groupId)
+      .map((candidate) => candidate.groupId);
+    if (duplicateGroups.length) {
+      issues.push(`Anúncio ${slot.adId} aparece duplicado nos grupos ${unique([slot.groupId, ...duplicateGroups]).sort((a, b) => a - b).join(", ")}.`);
+    }
+  }
+
+  return unique(issues);
+}
+
 async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
   const [insertionsResult, campaignsResult, sitesResult] = await Promise.all([
     db.execute(sql`
@@ -234,7 +321,7 @@ async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
         status_normalizado as "statusNormalizado",
         banner_publicado_no_site as "bannerPublicadoNoSite",
         print_gerado as "printGerado",
-        null::text as "mediaUrl",
+        media_url as "mediaUrl",
         observacoes
       from insertions
     `),
@@ -267,6 +354,35 @@ function findAdopsMatches(row: CurrentSheetCampaignRow, insertions: MinimalEnric
     const insertionPi = extractPiDigits(insertion.campaign?.piCodigo);
     return siteSigla === row.blockSite && insertionPi === piDigits;
   });
+}
+
+function periodsOverlap(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion) {
+  if (!row.periodoInicio || !row.periodoFim || !insertion.periodoInicio || !insertion.periodoFim) return false;
+  return insertion.periodoInicio <= row.periodoFim && insertion.periodoFim >= row.periodoInicio;
+}
+
+function scoreAdopsMatch(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion) {
+  let score = 0;
+  const adopsFormat = insertion.localFormatoNormalizado ?? insertion.localFormato;
+  if (isFormatCompatible(row.localFormato, adopsFormat)) score += 100;
+  if (insertion.periodoInicio === row.periodoInicio && insertion.periodoFim === row.periodoFim) score += 60;
+  else if (periodsOverlap(row, insertion)) score += 30;
+  if (insertion.mediaUrl) score += 20;
+  if (insertion.bannerPublicadoNoSite === true) score += 20;
+  if (["publicado", "em_veiculacao", "publicado_no_site"].includes(normalizeForMatch(insertion.statusNormalizado))) score += 10;
+  return score;
+}
+
+function selectBestAdopsMatch(row: CurrentSheetCampaignRow, matches: MinimalEnrichedInsertion[]) {
+  const compatible = matches.filter((insertion) => isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
+  if (compatible.length === 0) return { insertion: null, compatible };
+  const ranked = compatible
+    .map((insertion) => ({ insertion, score: scoreAdopsMatch(row, insertion) }))
+    .sort((a, b) => b.score - a.score || b.insertion.id - a.insertion.id);
+  if (ranked.length === 1) return { insertion: ranked[0]!.insertion, compatible };
+  const [best, second] = ranked;
+  if (best && second && best.score > second.score) return { insertion: best.insertion, compatible };
+  return { insertion: null, compatible };
 }
 
 async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: CurrentSheetCampaignRow, targetDate: string, includeEvidence: boolean) {
@@ -369,11 +485,18 @@ export async function getActiveCampaignOperations(options: {
     loadCurrentSheetCampaigns({ date, siteSigla: options.siteSigla ?? null, includeUpcoming: true }),
     loadEnrichedInsertions(),
   ]);
+  const liveSlotsBySite = new Map<string, LiveAdSlot[]>();
+  const getLiveSlots = async (siteSigla: string) => {
+    if (!liveSlotsBySite.has(siteSigla)) {
+      liveSlotsBySite.set(siteSigla, await fetchHomeLiveSlots(siteSigla));
+    }
+    return liveSlotsBySite.get(siteSigla) ?? [];
+  };
 
   const items: CampaignOperationItem[] = [];
   for (const row of sheet.rows) {
     const matches = findAdopsMatches(row, insertions);
-    const insertion = matches.length === 1 ? matches[0]! : null;
+    const { insertion, compatible } = selectBestAdopsMatch(row, matches);
     const drive = await findDriveCampaignMedia({
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
@@ -384,15 +507,17 @@ export async function getActiveCampaignOperations(options: {
     const evidence = await resolveEvidence(insertion, row, date, includeEvidence);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
+    const hasAdopsMedia = Boolean(insertion?.mediaUrl);
+    const liveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
 
     if (!insertion) requiredActions.push("create_campaign_or_insertion");
-    if (matches.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal.");
-    if (drive.status === "not_found" || drive.status === "unavailable") requiredActions.push("locate_or_upload_media");
+    if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
+    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
     }
-    if (drive.mediaFiles.length && !mediaMatchesFormat) {
+    if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
@@ -404,12 +529,16 @@ export async function getActiveCampaignOperations(options: {
     const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
     if (periodDivergent) requiredActions.push("review_period_divergence");
     if (formatDivergent) requiredActions.push("review_format_divergence");
+    if (liveSlotIssues.length) {
+      requiredActions.push("review_live_slot_conflict");
+      blockingIssues.push(...liveSlotIssues);
+    }
 
     const statuses: OperationStatus[] = [];
     if (!insertion) statuses.push("needs_create_in_adops");
-    if (drive.status === "not_found" || drive.status === "unavailable") statuses.push("drive_missing");
+    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) statuses.push("drive_missing");
     if (drive.status === "ambiguous") statuses.push("ambiguous_drive_match");
-    if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat))) statuses.push("needs_media");
+    if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat && !hasAdopsMedia))) statuses.push("needs_media");
     if (!insertion || insertion.bannerPublicadoNoSite !== true) statuses.push("needs_publication");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) statuses.push("needs_evidence");
     if (periodDivergent) statuses.push("divergent_period");
@@ -445,7 +574,7 @@ export async function getActiveCampaignOperations(options: {
         mediaMatchesFormat,
       },
       adops: {
-        status: matches.length === 0 ? "missing" : matches.length === 1 ? "matched" : "ambiguous",
+        status: insertion ? "matched" : compatible.length > 1 ? "ambiguous" : "missing",
         campaignId: insertion?.campanhaId ?? null,
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
@@ -463,7 +592,7 @@ export async function getActiveCampaignOperations(options: {
   const upcomingItems: CampaignOperationUpcomingItem[] = [];
   for (const row of sheet.upcomingRows) {
     const matches = findAdopsMatches(row, insertions);
-    const insertion = matches.length === 1 ? matches[0]! : null;
+    const { insertion, compatible } = selectBestAdopsMatch(row, matches);
     const drive = await findDriveCampaignMedia({
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
@@ -473,15 +602,17 @@ export async function getActiveCampaignOperations(options: {
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
+    const hasAdopsMedia = Boolean(insertion?.mediaUrl);
+    const liveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
 
     if (!insertion) requiredActions.push("create_campaign_or_insertion");
-    if (matches.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal.");
-    if (drive.status === "not_found" || drive.status === "unavailable") requiredActions.push("locate_or_upload_media");
+    if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
+    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
     }
-    if (drive.mediaFiles.length && !mediaMatchesFormat) {
+    if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
@@ -492,6 +623,10 @@ export async function getActiveCampaignOperations(options: {
     const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
     if (periodDivergent) requiredActions.push("review_period_divergence");
     if (formatDivergent) requiredActions.push("review_format_divergence");
+    if (liveSlotIssues.length) {
+      requiredActions.push("review_live_slot_conflict");
+      blockingIssues.push(...liveSlotIssues);
+    }
 
     upcomingItems.push({
       version: CAMPAIGN_OPERATIONS_VERSION,
@@ -518,7 +653,7 @@ export async function getActiveCampaignOperations(options: {
         mediaMatchesFormat,
       },
       adops: {
-        status: matches.length === 0 ? "missing" : matches.length === 1 ? "matched" : "ambiguous",
+        status: insertion ? "matched" : compatible.length > 1 ? "ambiguous" : "missing",
         campaignId: insertion?.campanhaId ?? null,
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
