@@ -326,6 +326,13 @@ function scoreVideoMediaForInsertion(mediaItem, raw, fields) {
 function selectDriveVideoForInsertion(packageContext, raw, fields) {
   const videos = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isVideoMediaItem);
   if (videos.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
+  const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
+  if (explicitDriveFileId) {
+    const exact = videos.find((item) => item?.driveFileId === explicitDriveFileId);
+    return exact
+      ? { mediaItem: exact, ambiguous: false, candidates: 1, selectedBy: "explicit_drive_file_id" }
+      : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
+  }
   if (videos.length === 1) return { mediaItem: videos[0], ambiguous: false, candidates: 1 };
   const ranked = videos
     .map((item) => ({ item, score: scoreVideoMediaForInsertion(item, raw, fields) }))
@@ -392,6 +399,13 @@ function scoreImageMediaForInsertion(mediaItem, raw, fields) {
 function selectDriveImageForInsertion(packageContext, raw, fields) {
   const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isImageMediaItem);
   if (images.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
+  const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
+  if (explicitDriveFileId) {
+    const exact = images.find((item) => item?.driveFileId === explicitDriveFileId);
+    return exact
+      ? { mediaItem: exact, ambiguous: false, candidates: 1, selectedBy: "explicit_drive_file_id" }
+      : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
+  }
   if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
   const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
   return {
@@ -4965,6 +4979,8 @@ export {
   mediaKindFromUrl,
   mergeDrivePiFields,
   resolveDrivePiClickUrl,
+  selectDriveImageForInsertion,
+  selectDriveVideoForInsertion,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
 };

@@ -43,6 +43,14 @@ assert.deepEqual(
 );
 assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: links[0], kind: "image" }] }] }, "image").link.url, links[0]);
 assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: "https://a/banner.gif", kind: "image" }, { url: "https://b/banner.gif", kind: "image" }] }] }, "image").ambiguous, true);
+assert.equal(
+  runner.selectDriveImageForInsertion(
+    { media: [{ driveFileId: "top", mimeType: "image/gif", name: "825x120.gif" }, { driveFileId: "home", mimeType: "image/gif", name: "670x90.gif" }] },
+    { mediaDriveFileId: "home", localFormato: "HOME 1" },
+    {},
+  ).mediaItem.driveFileId,
+  "home",
+);
 const clickResolved = runner.resolveDrivePiClickUrl(
   { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
   { textObservations: [{ links: [{ url: "https://cdn.example.com/banner.gif", kind: "image" }, { url: "https://cliente.example.com/landing", kind: "unknown" }] }] },
