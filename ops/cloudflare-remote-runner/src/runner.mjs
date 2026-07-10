@@ -3343,7 +3343,18 @@ async function executeAdrotatePublishJob(payload) {
     '--payload-json="$tmp_payload"',
     ...(apply ? ["--apply"] : []),
   ].join(" ");
+  const pluginTarget = path.posix.join(site.wpPath, "wp-content/plugins/adrotate/adrotate-adops.php");
+  const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla)
+    ? null
+    : Buffer.from(await readFile(path.join(PROJECT_ROOT, "ops/wordpress/adrotate-adops.php"))).toString("base64");
+  const wpCliBase = [
+    shellEscape(site.phpBin ?? "php"),
+    shellEscape(site.wpCliPath ?? "wp"),
+    "--allow-root",
+    `--path=${shellEscape(site.wpPath)}`,
+  ].join(" ");
   const remoteCommand = [
+    `if ! ${wpCliBase} help adops-adrotate-publish >/dev/null 2>&1; then tmp_plugin="$(mktemp /tmp/adrotate-adops.XXXXXX.php)" && printf %s ${shellEscape(pluginSourceBase64 || "")} | base64 -d > "$tmp_plugin" && ${shellEscape(site.phpBin ?? "php")} -l "$tmp_plugin" >/dev/null && mkdir -p ${shellEscape(path.posix.dirname(pluginTarget))} && mv "$tmp_plugin" ${shellEscape(pluginTarget)}; fi`,
     'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
     `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
     `${wpCliCommand}; rc=$?`,

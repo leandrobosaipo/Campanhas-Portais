@@ -93,7 +93,7 @@ assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
-for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow"]) {
+for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php"]) {
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
 }
 for (const marker of ["application/vnd.google-apps.document", "/export?mimeType="]) {
