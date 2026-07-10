@@ -3687,9 +3687,12 @@ async function executeDrivePiIngest(payload) {
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
   const explicitPublishFlow = payload?.publish === true && /api-publish$/.test(String(payload?.source || ""));
+  const strictExplicitPublishFlow = explicitPublishFlow && payload?.strictInsertionScope === true && Array.isArray(payload?.parsedPi?.insertions);
   const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && (explicitPublishFlow || ADOPS_PI_AGENT_AUTO_APPLY);
-  let preApplySyncPlanilha = { skipped: true, reason: "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
-  if (canApply && mutationEnabled) {
+  let preApplySyncPlanilha = { skipped: true, reason: strictExplicitPublishFlow
+    ? "Sync da planilha ignorado porque parsedPi.insertions define o escopo canônico estrito."
+    : "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
+  if (canApply && mutationEnabled && !strictExplicitPublishFlow) {
     try {
       preApplySyncPlanilha = await executeSyncPlanilha({ mode: "pre-apply-latest" });
     } catch (error) {
@@ -3845,7 +3848,7 @@ async function executeDrivePiIngest(payload) {
       applied,
     });
   }
-  const syncPlanilha = hasAdOpsChanges
+  const syncPlanilha = hasAdOpsChanges && !strictExplicitPublishFlow
     ? await executeSyncPlanilha({ mode: "latest" })
     : preApplySyncPlanilha;
   const strictScopeReconciliation = hasAdOpsChanges
