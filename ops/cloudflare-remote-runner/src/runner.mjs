@@ -3343,7 +3343,7 @@ async function executeAdrotatePublishJob(payload) {
     '--payload-json="$tmp_payload"',
     ...(apply ? ["--apply"] : []),
   ].join(" ");
-  const pluginTarget = path.posix.join(site.wpPath, "wp-content/plugins/adrotate/adrotate-adops.php");
+  const pluginTarget = path.posix.join(site.wpPath, "wp-content/mu-plugins/adrotate-adops.php");
   const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla)
     ? null
     : Buffer.from(await readFile(path.join(PROJECT_ROOT, "ops/wordpress/adrotate-adops.php"))).toString("base64");
