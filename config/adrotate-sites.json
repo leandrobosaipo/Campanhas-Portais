@@ -271,20 +271,6 @@
           "domFrameMinNonBgRatio": 0.03,
           "gifMinHoldMs": 1200,
           "gifMinIdentityFrameScore": 58,
-          "gifAllowedFrameRanges": [
-            [
-              25,
-              25
-            ],
-            [
-              55,
-              55
-            ],
-            [
-              68,
-              68
-            ]
-          ],
           "forceReferenceFrameOnSlot": true,
           "bestEffortAllowed": true,
           "requireSlotVisibleInViewport": true
@@ -439,6 +425,7 @@
           "finalPngSlotMinSimilarity": 0.26,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
+          "forceReferenceFrameOnSlot": true,
           "requireSlotVisibleInViewport": true,
           "disableSignedPreview": true
         }
@@ -459,6 +446,7 @@
           "postVisualWaitMs": 2600,
           "viewportTrimBottomPx": 180,
           "gifFrameSelection": "source_preferred",
+          "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4,
           "finalPngStickyHeaderMinContentStddev": 8,
           "requireSlotVisibleInViewport": true,

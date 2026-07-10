@@ -18,6 +18,7 @@ BACKUP_TAR="${TMP_DIR}/adops-safe-pi-intake-backup-${SAFE_PI_COMMIT}-${STAMP}.ta
 CONTAINER_NAME="adops-safe-pi-intake-upload-${STAMP}"
 
 FILES=(
+  "config/adrotate-sites.json"
   "ops/cloudflare-remote-runner/src/runner.mjs"
   "ops/telegram-adapter/server.mjs"
   "ops/cloudflare-telegram-bot/src/index.ts"
