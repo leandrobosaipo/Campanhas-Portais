@@ -22,7 +22,7 @@
   - `adops_insertion_id = 1192`
   - `adops_campaign_id = 840`
   - `adops_pi_code = PI 15727- ALMT`
-  - `adops_external_key = ADOPS-PERRENGUE-1192`
+  - `adops_external_key = [REDACTED; configure ADOPS_EXTERNAL_KEY in the secure runtime]`
   - `adops_media_basename = 825x120-1-almt-1.gif`
 - O vídeo foi criado como anúncio novo `122` no grupo `6`.
 - Schedule do vídeo criado em `122`:

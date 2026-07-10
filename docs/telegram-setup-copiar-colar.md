@@ -133,7 +133,7 @@ adops-telegram-secret-2026-codigo5
 Cole no `.env`:
 
 ```text
-TELEGRAM_WEBHOOK_SECRET=adops-telegram-secret-2026-codigo5
+TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET
 ```
 
 ## Parte 5. Preencher a URL base do webhook
@@ -160,7 +160,7 @@ TELEGRAM_BOT_USERNAME=adops_codigo5_bot
 TELEGRAM_BOT_TOKEN=123456789:ABCDEF_EXEMPLO
 TELEGRAM_BOT_USERNAME=adops_codigo5_bot
 TELEGRAM_WEBHOOK_BASE_URL=https://adops-telegram-bot.seudominio.workers.dev
-TELEGRAM_WEBHOOK_SECRET=adops-telegram-secret-2026-codigo5
+TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_WEBHOOK_SECRET
 TELEGRAM_ALLOWED_USER_ID=123456789
 TELEGRAM_DEFAULT_GROUP_ID=-1001234567890
 TELEGRAM_MINI_APP_URL=https://adops-campanhas-portais.pages.dev/telegram
