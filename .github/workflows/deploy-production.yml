@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, linux, x64, cod5-cloud]
+    runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
     steps:
@@ -25,8 +25,8 @@ jobs:
           ref: ${{ inputs.git_sha || github.sha }}
       - name: Deploy immutable SHA through Portainer
         env:
-          ADOPS_STACK_ENV_FILE: ${{ vars.ADOPS_STACK_ENV_FILE }}
-          PORTAINER_ENV_FILE: ${{ vars.PORTAINER_ENV_FILE }}
+          PORTAINER_URL: ${{ secrets.PORTAINER_URL }}
+          PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
           ADOPS_IMAGE_TAG: ${{ inputs.git_sha || github.sha }}
           DRIVE_INTEGRATION_MODE: legacy
         run: bash ops/portainer/adops-stack/scripts/deploy-production.sh

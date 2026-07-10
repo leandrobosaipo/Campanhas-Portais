@@ -8,12 +8,31 @@ REPO_ROOT="$(cd "$STACK_DIR/../../.." && pwd)"
 # shellcheck source=./lib-portainer.sh
 source "$SCRIPT_DIR/lib-portainer.sh"
 
-: "${ADOPS_STACK_ENV_FILE:?ADOPS_STACK_ENV_FILE must point to the private production env file}"
 : "${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG must be the commit SHA}"
-[[ -f "$ADOPS_STACK_ENV_FILE" ]] || { printf 'Production env file not found.\n' >&2; exit 1; }
 
 load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
+DISCOVERED_ENV=""
+DEPLOY_ENV=""
+cleanup() {
+  [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
+  [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
+}
+trap cleanup EXIT
+
+STACK_ENV_FILE="${ADOPS_STACK_ENV_FILE:-}"
+if [[ -z "$STACK_ENV_FILE" || ! -f "$STACK_ENV_FILE" ]]; then
+  STACK_ID="$(portainer_curl "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
+  [[ -n "$STACK_ID" ]] || { printf 'AdOps stack not found in Portainer.\n' >&2; exit 1; }
+  DISCOVERED_ENV="$(mktemp)"
+  portainer_curl "${PORTAINER_API}/stacks/${STACK_ID}" \
+    | jq -r '.Env[] | select(.name | test("^[A-Z0-9_]+$")) | "\(.name)=\(.value)"' \
+    > "$DISCOVERED_ENV"
+  chmod 600 "$DISCOVERED_ENV"
+  [[ -s "$DISCOVERED_ENV" ]] || { printf 'Portainer stack environment is empty.\n' >&2; exit 1; }
+  STACK_ENV_FILE="$DISCOVERED_ENV"
+fi
+
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
 [[ -n "$POSTGRES_ID" ]] || { printf 'adops-postgres container not found.\n' >&2; exit 1; }
@@ -32,8 +51,7 @@ export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 bash "$SCRIPT_DIR/build-image-portainer.sh"
 
 DEPLOY_ENV="$(mktemp)"
-trap 'rm -f "$DEPLOY_ENV"' EXIT
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE)=' "$ADOPS_STACK_ENV_FILE" > "$DEPLOY_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\n' "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" >> "$DEPLOY_ENV"
 bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
 
