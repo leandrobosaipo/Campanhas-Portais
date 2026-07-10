@@ -3808,8 +3808,13 @@ async function executeDrivePiIngest(payload) {
   const strictScopeReconciliation = hasAdOpsChanges
     ? await reconcileDrivePiStrictScope(applied, fields, payload)
     : { skipped: true, reason: "no_adops_changes", cancelledInsertions: [] };
-  let reconcile = { skipped: true, reason: "Nenhuma alteração nova aplicada no AdOps." };
-  if (hasAdOpsChanges) {
+  let reconcile = {
+    skipped: true,
+    reason: payload?.publish === true
+      ? "O fluxo de publicação valida a relação por inserção após o AdRotate."
+      : "Nenhuma alteração nova aplicada no AdOps.",
+  };
+  if (hasAdOpsChanges && payload?.publish !== true) {
     try {
       reconcile = await executeReconcilePlanilhaAdrotate();
     } catch (error) {
@@ -3959,6 +3964,8 @@ async function executeDrivePiIngest(payload) {
     agentAnalysis: fields.agentAnalysis || agentResult,
     applied,
     evidenceCoverage,
+    strictScopeReconciliation,
+    publicationResults,
     syncPlanilha,
     reconcile,
     telegram: {
