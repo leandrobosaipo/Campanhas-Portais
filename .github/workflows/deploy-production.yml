@@ -6,6 +6,14 @@ on:
       git_sha:
         description: Commit SHA to deploy
         required: false
+      drive_mode:
+        description: Google Drive integration mode
+        required: true
+        default: monitor
+        type: choice
+        options:
+          - monitor
+          - legacy
 
 permissions:
   contents: read
@@ -38,5 +46,5 @@ jobs:
           PORTAINER_API_KEY: ${{ secrets.PORTAINER_API_KEY }}
           ADOPS_IMAGE_TAG: ${{ inputs.git_sha || github.sha }}
           ADOPS_RELEASE_SHA: ${{ inputs.git_sha || github.sha }}
-          DRIVE_INTEGRATION_MODE: legacy
+          DRIVE_INTEGRATION_MODE: ${{ inputs.drive_mode || 'monitor' }}
         run: bash ops/portainer/adops-stack/scripts/deploy-production.sh

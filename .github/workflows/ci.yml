@@ -46,7 +46,9 @@ jobs:
           DO_SPACES_ACCESS_KEY_ID: ci-only
           DO_SPACES_SECRET_ACCESS_KEY: ci-only
           OPS_API_TOKEN: ci-only
-        run: docker compose -f ops/portainer/adops-stack/docker-compose.yml config >/dev/null
+        run: |
+          docker compose -f ops/portainer/adops-stack/docker-compose.yml config >/dev/null
+          docker compose -f ops/portainer/adops-stack/docker-compose.volume.yml config >/dev/null
 
   secrets:
     runs-on: ubuntu-latest
