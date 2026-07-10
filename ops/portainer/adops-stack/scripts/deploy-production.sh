@@ -48,12 +48,19 @@ EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/ex
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
-bash "$SCRIPT_DIR/build-image-portainer.sh"
+export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
+
+# Docker's synchronous build stream exceeds Cloudflare's request timeout for
+# this Playwright image. The volume runtime is the production path already
+# validated for this stack and keeps the release traceable through its SHA.
+VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
+  bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
 
 DEPLOY_ENV="$(mktemp)"
 grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\n' "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" >> "$DEPLOY_ENV"
-bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
+COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
+  bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
 
 for attempt in $(seq 1 30); do
   if curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/healthz >/dev/null && \
@@ -65,4 +72,4 @@ for attempt in $(seq 1 30); do
 done
 
 curl -fsS --max-time 15 https://adops-api.codigo5.com.br/api/ops/drive-inventory/status >/dev/null
-printf 'AdOps deployed tag=%s backup=%s\n' "$ADOPS_IMAGE_TAG" "$BACKUP_NAME"
+printf 'AdOps deployed release=%s backup=%s runtime=volume\n' "$ADOPS_RELEASE_SHA" "$BACKUP_NAME"
