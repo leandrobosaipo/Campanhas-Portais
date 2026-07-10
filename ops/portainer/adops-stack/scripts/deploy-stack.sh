@@ -71,14 +71,18 @@ if [[ "$CODE" == "000" && -n "${STACK_ID:-}" ]]; then
   # Portainer applies the update before Cloudflare returns its 524/timeout in
   # some deployments. Confirm the persisted stack file instead of reporting a
   # false failure or blindly retrying the mutation.
-  REMOTE_STACK_CONTENT="$(curl -fsS --max-time 20 \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
-    "${PORTAINER_API}/stacks/${STACK_ID}/file" \
-    | jq -r '.StackFileContent // empty' || true)"
-  if [[ "$REMOTE_STACK_CONTENT" == "$STACK_CONTENT" ]]; then
-    CODE="202"
-    printf 'Portainer response timed out, but the persisted stack matches the requested release.\n'
-  fi
+  for verify_attempt in $(seq 1 9); do
+    REMOTE_STACK_CONTENT="$(curl -fsS --max-time 20 \
+      -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      "${PORTAINER_API}/stacks/${STACK_ID}/file" \
+      | jq -r '.StackFileContent // empty' || true)"
+    if [[ "$REMOTE_STACK_CONTENT" == "$STACK_CONTENT" ]]; then
+      CODE="202"
+      printf 'Portainer response timed out, but the persisted stack matches the requested release.\n'
+      break
+    fi
+    [[ "$verify_attempt" == "9" ]] || sleep 5
+  done
 fi
 
 if [[ ! "$CODE" =~ ^2 ]]; then
