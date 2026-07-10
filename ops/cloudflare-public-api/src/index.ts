@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -607,6 +607,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "PI processada",
     failed: "Falha no processamento da PI",
     queue_dispatch_failed: "Falha ao despachar fila",
+  },
+  "drive-inventory-refresh": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando monitor do Drive",
+    running: "Atualizando inventário do Drive",
+    completed: "Inventário do Drive atualizado",
+    failed: "Falha ao atualizar inventário do Drive",
   },
   "reconcile-adrotate": {
     queued: "Na fila",
@@ -2167,6 +2174,17 @@ export default {
         return jsonNoStore({ ok: true, kind: "drive-pi-ingest", ...result }, { status: result.duplicate ? 200 : 202 });
       }
 
+      if (path === "/api/ops/jobs/drive-inventory-refresh") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+        const jobId = await createOpsJob(env, "drive-inventory-refresh", {
+          scanId: crypto.randomUUID(),
+          source: "cloudflare-protected-api",
+        }, "ops-api");
+        return jsonNoStore({ ok: true, jobId, kind: "drive-inventory-refresh", status: "queued" }, { status: 202 });
+      }
+
       if (path === "/api/ops/jobs/telegram-send-evidence") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
@@ -2477,6 +2495,11 @@ export default {
     }
 
     if (path === "/api/healthz") return json({ status: "ok", mode: privateApiEnabled(env) ? "cloudflare-public-live-proxy" : "cloudflare-public-readonly", generatedAt: snapshot.generatedAt, opsApiAvailable: true, privateApiEnabled: privateApiEnabled(env) });
+
+    if (path === "/api/ops/drive-inventory/status") {
+      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+      return jsonNoStore({ ok: false, snapshotStatus: "unavailable", snapshotAt: null, snapshotAgeSeconds: null, stale: true, itemCount: 0 });
+    }
 
     const analyticsRequirementsMatch = path.match(/^\/api\/analytics\/insertions\/(\d+)\/requirements$/);
     if (analyticsRequirementsMatch) {

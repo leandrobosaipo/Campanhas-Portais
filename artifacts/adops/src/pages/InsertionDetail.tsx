@@ -4,6 +4,7 @@ import {
   useGetInsertion, useUpdateInsertion, useCreateEvidence, useListInsertions,
   getListInsertionsQueryKey, getGetInsertionQueryKey,
 } from "@workspace/api-client-react";
+import type { InsertionDetail as InsertionDetailData } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/adops/Layout";
@@ -359,7 +360,7 @@ function formatMoney(value: number | null | undefined) {
   return Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function getDayEvidencePlan(insertion: NonNullable<ReturnType<typeof useGetInsertion>["data"]>): EvidencePlanItem[] {
+function getDayEvidencePlan(insertion: InsertionDetailData): EvidencePlanItem[] {
   const start = parseDateOnly(insertion.periodoInicio);
   const end = parseDateOnly(insertion.periodoFim);
   if (!start || !end || end < start) return [];
@@ -456,11 +457,11 @@ export function InsertionDetail() {
   const { token, setToken, hasToken } = useOpsOperator();
 
   const { data: insertion, isLoading, refetch: refetchInsertion } = useGetInsertion(numId, {
-    query: { enabled: !!numId },
+    query: { queryKey: getGetInsertionQueryKey(numId), enabled: !!numId },
   });
   const { data: relatedInsertions } = useListInsertions(
     insertion?.campanhaId ? { campanhaId: insertion.campanhaId, competencia: insertion.competencia ?? undefined } as any : undefined,
-    { query: { enabled: !!insertion?.campanhaId } },
+    { query: { queryKey: getListInsertionsQueryKey(insertion?.campanhaId ? { campanhaId: insertion.campanhaId, competencia: insertion.competencia ?? undefined } as any : undefined), enabled: !!insertion?.campanhaId } },
   );
   const { data: adrotateRelation, refetch: refetchAdrotateRelation } = useQuery({
     queryKey: ["insertion-adrotate-relation", numId],

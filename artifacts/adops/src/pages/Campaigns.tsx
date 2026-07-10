@@ -66,7 +66,7 @@ export function Campaigns() {
             <button
               type="button"
               disabled
-              title={readonlyMessage}
+              title={readonlyMessage ?? undefined}
               className="flex items-center gap-1.5 text-xs bg-primary text-primary-foreground px-3 py-1.5 rounded font-medium opacity-60 cursor-not-allowed"
             >
               <Plus className="w-3.5 h-3.5" />

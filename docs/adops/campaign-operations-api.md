@@ -15,13 +15,14 @@ Parâmetros:
   - aliases aceitos pela API: `PMT` e `PMMT` são normalizados para `PPMT`.
   - isso evita falso negativo operacional quando a planilha/equipe chama o portal de
     `PMMT`, mas as regras de captura usam `PPMT`.
-- `refreshDrive=true|false`: quando `true`, tenta consultar Google Drive ao vivo. Padrão: `false`.
+- `refreshDrive=true|false`: no modo `monitor`, retorna o snapshot atual e enfileira um refresh idempotente quando solicitado. A API não recebe credenciais do Drive. Padrão: `false`.
 - `includeEvidence=true|false`: quando `false`, não valida evidências por data. Padrão: `true`.
 
 A resposta sempre separa:
 
 - `items`: campanhas ativas na data consultada;
 - `upcomingItems`: campanhas da mesma aba que ainda vão entrar no ar, com início posterior à data consultada e horizonte padrão de 45 dias.
+- `snapshotStatus`, `snapshotAt`, `snapshotAgeSeconds`, `stale` e `refreshJobId`: saúde e atualização do inventário do Drive.
 
 Exemplos:
 
@@ -43,6 +44,21 @@ curl -fsSL "https://adops-api.codigo5.com.br/api/campaign-operations/active?date
 - Linhas futuras entram em `upcomingItems` quando o início está dentro do horizonte da consulta.
 
 ## Regra de Drive
+
+O modo canônico é `DRIVE_INTEGRATION_MODE=monitor`:
+
+```text
+Google Drive -> adops-drive-pi-monitor -> snapshot PostgreSQL -> API/runner
+```
+
+O rollout começa em `legacy`, compara os dois inventários e só muda para `monitor` depois do smoke. Se o monitor falhar, a API mantém o último snapshot e informa `stale=true`; isso não deve ser interpretado como campanha inexistente.
+
+Endpoints:
+
+```bash
+GET  /api/ops/drive-inventory/status
+POST /api/ops/jobs/drive-inventory-refresh
+```
 
 Raiz canônica:
 

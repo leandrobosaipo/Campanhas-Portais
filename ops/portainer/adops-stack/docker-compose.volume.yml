@@ -44,6 +44,8 @@ services:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
+      DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-legacy}
+      ADOPS_DRIVE_INVENTORY_STALE_MS: ${ADOPS_DRIVE_INVENTORY_STALE_MS:-600000}
       ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
       ADOPS_GENERATED_PRINTS_ROOT: /app/tmp/generated-prints
       ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -109,7 +111,7 @@ services:
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,drive-pi-ingest,drive-inventory-refresh,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}

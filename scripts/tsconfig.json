@@ -2,8 +2,10 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"]
+    "rootDir": "..",
+    "types": ["node"],
+    "lib": ["es2022", "dom"],
+    "allowImportingTsExtensions": true
   },
-  "include": ["src"]
+  "include": ["src", "../artifacts/adops/src/vite-env.d.ts"]
 }

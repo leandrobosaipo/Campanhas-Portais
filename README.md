@@ -36,6 +36,9 @@ O fluxo hospedado cobre:
 - purge de cache e validacao de HTML publico;
 - prints individuais, retroativos e validacao por checklist;
 - fila assincrona com progresso e diagnostico de prontidao do runner.
+- inventario persistido e idempotente do Google Drive, sem credencial na API publica;
+- CI com codegen, typecheck, builds, testes de Drive/captura e varredura de secrets;
+- deploy imutavel por SHA no Portainer, protegido pelo ambiente GitHub `production`.
 
 Fluxo recomendado para uma nova campanha:
 
@@ -46,7 +49,19 @@ Drive/PDF/TXT -> preflight -> AdOps -> midia publica -> AdRotate
 
 Release operacional mais recente:
 
+- [2026-07-10 - Estabilizacao, inventario Drive e CI/CD](docs/releases/2026-07-10-adops-stabilization.md)
 - [2026-07-10 - Fluxo reutilizavel de PI, publicacao e auditoria](docs/releases/2026-07-10-drive-pi-publish.md)
+
+Inventario do Drive:
+
+```bash
+curl -fsSL https://adops-api.codigo5.com.br/api/ops/drive-inventory/status
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  https://adops-api.codigo5.com.br/api/ops/jobs/drive-inventory-refresh \
+  -d '{}'
+```
 
 Observação: este projeto foi migrado de `/Users/leandrobosaipo/Projetos/AdOps`. A pasta antiga deve ser tratada como origem histórica, não como raiz operacional principal.
 

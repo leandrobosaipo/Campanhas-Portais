@@ -59,7 +59,8 @@ test("customFetch envia headers de diagnóstico e Authorization com token válid
   });
 
   assert.equal(payload.ok, true);
-  assert.equal(capturedHeaders?.get("authorization"), "Bearer token-real");
-  assert.equal(capturedHeaders?.get("x-adops-auth-state"), "present");
-  assert.equal(capturedHeaders?.get("x-adops-client-build"), "build-c");
+  const headers = capturedHeaders as Headers | null;
+  assert.equal(headers?.get("authorization"), "Bearer token-real");
+  assert.equal(headers?.get("x-adops-auth-state"), "present");
+  assert.equal(headers?.get("x-adops-client-build"), "build-c");
 });

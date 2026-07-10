@@ -4,7 +4,7 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const configPath = path.join(repoRoot, "config/adrotate-sites.json");
-const API_BASE = (process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev/api").replace(/\/$/, "");
+const API_BASE = (process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api.codigo5.com.br/api").replace(/\/$/, "");
 const STRICT = process.env.ADOPS_CAPTURE_RULE_AUDIT_STRICT !== "0";
 
 function normalizeText(value) {

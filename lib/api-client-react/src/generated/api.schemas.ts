@@ -334,16 +334,11 @@ export interface Agency {
   descontoPadraoPercentual?: string | null;
   /** @nullable */
   instrucoesFaturamento?: string | null;
-  /** @nullable */
-  exigeAceiteFormal?: boolean | null;
-  /** @nullable */
-  exigeNotaFiscalDetalhada?: boolean | null;
-  /** @nullable */
-  exigeDeclaracaoArt299?: boolean | null;
-  /** @nullable */
-  exigeComprovanteAssinado?: boolean | null;
-  /** @nullable */
-  exigePrintDiario?: boolean | null;
+  exigeAceiteFormal?: boolean;
+  exigeNotaFiscalDetalhada?: boolean;
+  exigeDeclaracaoArt299?: boolean;
+  exigeComprovanteAssinado?: boolean;
+  exigePrintDiario?: boolean;
   ativo: boolean;
   createdAt: string;
 }
@@ -378,16 +373,11 @@ export interface CreateAgencyBody {
   descontoPadraoPercentual?: string | null;
   /** @nullable */
   instrucoesFaturamento?: string | null;
-  /** @nullable */
-  exigeAceiteFormal?: boolean | null;
-  /** @nullable */
-  exigeNotaFiscalDetalhada?: boolean | null;
-  /** @nullable */
-  exigeDeclaracaoArt299?: boolean | null;
-  /** @nullable */
-  exigeComprovanteAssinado?: boolean | null;
-  /** @nullable */
-  exigePrintDiario?: boolean | null;
+  exigeAceiteFormal?: boolean;
+  exigeNotaFiscalDetalhada?: boolean;
+  exigeDeclaracaoArt299?: boolean;
+  exigeComprovanteAssinado?: boolean;
+  exigePrintDiario?: boolean;
   ativo?: boolean;
 }
 
@@ -446,6 +436,20 @@ export interface Campaign {
   /** @nullable */
   piCodigo?: string | null;
   /** @nullable */
+  projeto?: string | null;
+  /** @nullable */
+  plano?: string | null;
+  /** @nullable */
+  planilhaRef?: string | null;
+  /** @nullable */
+  produto?: string | null;
+  /** @nullable */
+  praca?: string | null;
+  /** @nullable */
+  condicaoPagamento?: string | null;
+  /** @nullable */
+  faturamentoTipo?: string | null;
+  /** @nullable */
   valorLiquido?: number | null;
   /** @nullable */
   competencia?: string | null;
@@ -470,6 +474,20 @@ export interface CreateCampaignBody {
   /** @nullable */
   piCodigo?: string | null;
   /** @nullable */
+  projeto?: string | null;
+  /** @nullable */
+  plano?: string | null;
+  /** @nullable */
+  planilhaRef?: string | null;
+  /** @nullable */
+  produto?: string | null;
+  /** @nullable */
+  praca?: string | null;
+  /** @nullable */
+  condicaoPagamento?: string | null;
+  /** @nullable */
+  faturamentoTipo?: string | null;
+  /** @nullable */
   valorLiquido?: number | null;
   /** @nullable */
   competencia?: string | null;
@@ -488,6 +506,20 @@ export interface UpdateCampaignBody {
   agenciaId?: number | null;
   /** @nullable */
   piCodigo?: string | null;
+  /** @nullable */
+  projeto?: string | null;
+  /** @nullable */
+  plano?: string | null;
+  /** @nullable */
+  planilhaRef?: string | null;
+  /** @nullable */
+  produto?: string | null;
+  /** @nullable */
+  praca?: string | null;
+  /** @nullable */
+  condicaoPagamento?: string | null;
+  /** @nullable */
+  faturamentoTipo?: string | null;
   /** @nullable */
   valorLiquido?: number | null;
   /** @nullable */
@@ -522,6 +554,8 @@ export interface InsertionWithRelations {
   docsEnviados: boolean;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   atrasado: boolean;
   /** @nullable */
   observacoes?: string | null;
@@ -553,6 +587,20 @@ export interface CampaignDetail {
   agenciaId?: number | null;
   /** @nullable */
   piCodigo?: string | null;
+  /** @nullable */
+  projeto?: string | null;
+  /** @nullable */
+  plano?: string | null;
+  /** @nullable */
+  planilhaRef?: string | null;
+  /** @nullable */
+  produto?: string | null;
+  /** @nullable */
+  praca?: string | null;
+  /** @nullable */
+  condicaoPagamento?: string | null;
+  /** @nullable */
+  faturamentoTipo?: string | null;
   /** @nullable */
   valorLiquido?: number | null;
   /** @nullable */
@@ -594,6 +642,8 @@ export interface Insertion {
   docsEnviados: boolean;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   atrasado: boolean;
   /** @nullable */
   observacoes?: string | null;
@@ -636,6 +686,8 @@ export interface InsertionDetail {
   docsEnviados: boolean;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   atrasado: boolean;
   /** @nullable */
   observacoes?: string | null;
@@ -683,6 +735,8 @@ export interface CreateInsertionBody {
   /** @nullable */
   dataEnvioAgencia?: string | null;
   /** @nullable */
+  mediaUrl?: string | null;
+  /** @nullable */
   observacoes?: string | null;
 }
 
@@ -711,6 +765,8 @@ export interface UpdateInsertionBody {
   docsEnviados?: boolean | null;
   /** @nullable */
   dataEnvioAgencia?: string | null;
+  /** @nullable */
+  mediaUrl?: string | null;
   /** @nullable */
   observacoes?: string | null;
 }

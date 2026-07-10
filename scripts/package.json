@@ -23,6 +23,7 @@
     "test:public-worker-auth": "node ./src/test-public-worker-auth.mjs",
     "test:drive-pi-event-flow": "node ./src/test-drive-pi-event-flow.mjs",
     "test:drive-pi-publish-flow": "node ./src/test-drive-pi-publish-flow.mjs",
+    "test:drive-inventory-flow": "node ./src/test-drive-inventory-flow.mjs",
     "intake:spm-whatsapp-print-2026-06-03": "node ./src/create-spm-whatsapp-print-intakes-2026-06-03.mjs",
     "import:d1-control-plane": "node ./src/import-d1-control-plane-to-postgres.mjs",
     "test:public-auth-smoke": "node ./src/test-adops-public-auth.mjs",

@@ -31,6 +31,7 @@ export type SiteIntegration = {
   homeUrl: string;
   adminBaseUrl?: string;
   originIp?: string | null;
+  disableOriginOverride?: boolean;
   previewSecret?: string | null;
   articleFallbackUrl: string | null;
   browserTitle: string;

@@ -709,6 +709,7 @@ async function renderDocx(kind: OperationalDocumentKind, context: OperationalDoc
       spacing: { after: kind === "declaracao-execucao" ? 360 : 240 },
       children: [
         new ImageRun({
+          type: "png",
           data: logo,
           transformation: {
             width: kind === "declaracao-execucao" ? 214 : 156,

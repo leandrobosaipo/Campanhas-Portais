@@ -1,0 +1,37 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: Commit SHA to deploy
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adops-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, linux, x64, cod5-cloud]
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_sha || github.event.workflow_run.head_sha || github.sha }}
+      - name: Deploy immutable SHA through Portainer
+        env:
+          ADOPS_STACK_ENV_FILE: ${{ vars.ADOPS_STACK_ENV_FILE }}
+          PORTAINER_ENV_FILE: ${{ vars.PORTAINER_ENV_FILE }}
+          ADOPS_IMAGE_TAG: ${{ inputs.git_sha || github.event.workflow_run.head_sha || github.sha }}
+          DRIVE_INTEGRATION_MODE: legacy
+        run: bash ops/portainer/adops-stack/scripts/deploy-production.sh

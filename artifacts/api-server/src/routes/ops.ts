@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
+import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
 
 type JobKind =
   | "print-batch"
@@ -10,6 +11,7 @@ type JobKind =
   | "analytics-report"
   | "pi-site-export"
   | "drive-pi-ingest"
+  | "drive-inventory-refresh"
   | "operational-documents"
   | "reconcile-adrotate"
   | "adrotate-link"
@@ -67,6 +69,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "analytics-report",
   "pi-site-export",
   "drive-pi-ingest",
+  "drive-inventory-refresh",
   "operational-documents",
   "reconcile-adrotate",
   "adrotate-link",
@@ -166,7 +169,10 @@ async function readRunnerLiveness(recentRunnerWindowMinutes = 30): Promise<Runne
   }
 }
 
-function buildOpsRuntimeReadiness(runnerLiveness: RunnerLiveness) {
+function buildOpsRuntimeReadiness(
+  runnerLiveness: RunnerLiveness,
+  driveInventory: Awaited<ReturnType<typeof getDriveInventoryStatus>>,
+) {
   const driveChecks = buildEnvChecks([
     { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Ler PI e mídia do Google Drive via service account inline." },
     { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Ler PI e mídia do Google Drive via arquivo service account." },
@@ -197,12 +203,17 @@ function buildOpsRuntimeReadiness(runnerLiveness: RunnerLiveness) {
     { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
   ]);
   const driveOAuthReady = allEnvPresent(["GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET"]);
-  const googleDriveReady = anyEnvPresent(["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", "GOOGLE_DRIVE_ACCESS_TOKEN"]) || driveOAuthReady;
+  const monitorMode = process.env.DRIVE_INTEGRATION_MODE === "monitor";
+  const directGoogleDriveReady = anyEnvPresent(["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", "GOOGLE_DRIVE_ACCESS_TOKEN"]) || driveOAuthReady;
+  const googleDriveReady = monitorMode ? driveInventory.snapshotStatus !== "unavailable" : directGoogleDriveReady;
   const telegramDirectReady = allEnvPresent(["TELEGRAM_BOT_TOKEN", "TELEGRAM_DEFAULT_GROUP_ID"]);
   const telegramBridgeConfigured = envIsPresent("ADOPS_TELEGRAM_BOT_URL");
   const mutationAllowed = process.env.ADOPS_DRIVE_PI_ALLOW_MUTATION === "true";
   const warnings: string[] = [];
-  if (!googleDriveReady) warnings.push("Google Drive nao esta pronto neste runtime; intake por pasta pode virar diagnostico bloqueado.");
+  if (!googleDriveReady) warnings.push(monitorMode
+    ? "Snapshot do Google Drive indisponível; o último inventário não pode ser consultado."
+    : "Google Drive nao esta pronto neste runtime; intake por pasta pode virar diagnostico bloqueado.");
+  if (monitorMode && driveInventory.stale) warnings.push("Snapshot do Google Drive está vencido; um refresh deve ser enfileirado.");
   if (!telegramBridgeConfigured && !telegramDirectReady) warnings.push("Telegram nao esta pronto neste runtime; envio de evidencia pode falhar.");
   if (!mutationAllowed) warnings.push("Mutacao de PI por Drive esta desabilitada; intake nao deve publicar automaticamente.");
   return {
@@ -214,6 +225,7 @@ function buildOpsRuntimeReadiness(runnerLiveness: RunnerLiveness) {
       nodeEnv: process.env.NODE_ENV || "unknown",
       timezone: process.env.TZ || "runtime-default",
       noSecretValues: true,
+      driveIntegrationMode: monitorMode ? "monitor" : "legacy",
       note: "Este endpoint retorna somente nomes e presença/ausência de variáveis. Valores de segredo nunca são expostos.",
     },
     capabilities: {
@@ -237,6 +249,7 @@ function buildOpsRuntimeReadiness(runnerLiveness: RunnerLiveness) {
       { id: "mutation-policy", title: "Politica de Mutacao", checks: mutationChecks },
     ],
     runnerLiveness,
+    driveInventory,
     warnings,
   };
 }
@@ -298,6 +311,15 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     needs_review: "Precisa revisao",
     completed: "Concluido",
     failed: "Falhou",
+  },
+  "drive-inventory-refresh": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando monitor do Drive",
+    running: "Atualizando inventário do Drive",
+    scanning: "Lendo arquivos do Drive",
+    syncing: "Persistindo snapshot",
+    completed: "Inventário do Drive atualizado",
+    failed: "Falha ao atualizar inventário do Drive",
   },
   "operational-documents": {
     queued: "Na fila",
@@ -532,7 +554,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -728,6 +750,56 @@ router.post("/ops/drive-pi-events/status", async (req, res): Promise<void> => {
   res.json({ ok: true, eventId, documentId: documentId ?? null, status });
 });
 
+router.get("/ops/drive-inventory/status", async (_req, res): Promise<void> => {
+  res.json({ ok: true, ...(await getDriveInventoryStatus()) });
+});
+
+router.post("/ops/jobs/drive-inventory-refresh", async (_req, res): Promise<void> => {
+  const result = await enqueueDriveInventoryRefresh("ops-api");
+  res.status(result.duplicate ? 200 : 202).json({
+    ok: true,
+    kind: "drive-inventory-refresh",
+    ...result,
+  });
+});
+
+router.post("/ops/drive-inventory/sync", async (req, res): Promise<void> => {
+  const scanId = readOptionalString(req.body?.scanId);
+  const rootFolderId = readOptionalString(req.body?.rootFolderId);
+  const scannedAt = readOptionalString(req.body?.scannedAt);
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!scanId || !rootFolderId || !scannedAt || !rawItems || rawItems.length > 5000) {
+    res.status(400).json({ error: "bad_request", details: "scanId, rootFolderId, scannedAt e items (máximo 5000) são obrigatórios." });
+    return;
+  }
+  const items: DriveInventoryItemInput[] = [];
+  for (const raw of rawItems) {
+    const item = asRecord(raw);
+    const driveFileId = readOptionalString(item?.["driveFileId"]);
+    const name = readOptionalString(item?.["name"]);
+    const mimeType = readOptionalString(item?.["mimeType"]);
+    const itemPath = readOptionalString(item?.["path"]);
+    const modifiedTime = readOptionalString(item?.["modifiedTime"]);
+    if (!driveFileId || !name || !mimeType || !itemPath || !modifiedTime) {
+      res.status(400).json({ error: "bad_request", details: "Item inválido no snapshot do Drive." });
+      return;
+    }
+    items.push({
+      driveFileId,
+      name,
+      mimeType,
+      path: itemPath,
+      parentFolderId: readOptionalString(item?.["parentFolderId"]),
+      modifiedTime,
+      webViewLink: readOptionalString(item?.["webViewLink"]),
+      size: readOptionalString(item?.["size"]),
+      checksum: readOptionalString(item?.["checksum"]),
+    });
+  }
+  const result = await syncDriveInventory({ scanId, rootFolderId, scannedAt, items });
+  res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
+});
+
 router.get("/ops/jobs", async (req, res): Promise<void> => {
   const limit = Math.min(Number(req.query.limit) || 20, 100);
   const statuses = String(req.query.status ?? "")
@@ -896,7 +968,11 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
 });
 
 router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
-  res.json(buildOpsRuntimeReadiness(await readRunnerLiveness()));
+  const [runnerLiveness, driveInventory] = await Promise.all([
+    readRunnerLiveness(),
+    getDriveInventoryStatus(),
+  ]);
+  res.json(buildOpsRuntimeReadiness(runnerLiveness, driveInventory));
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {
@@ -982,6 +1058,22 @@ function buildOpsApiCatalog() {
         purpose: "Conferir prontidao de API, Drive, Telegram, runner e politica de mutacao sem expor valores de segredo.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/runtime-readiness`,
+      },
+      {
+        id: "drive-inventory-status",
+        method: "GET",
+        path: "/api/ops/drive-inventory/status",
+        purpose: "Consultar idade, quantidade de arquivos e saúde do snapshot persistido do Google Drive.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/drive-inventory/status`,
+      },
+      {
+        id: "drive-inventory-refresh",
+        method: "POST",
+        path: "/api/ops/jobs/drive-inventory-refresh",
+        purpose: "Enfileirar atualização idempotente do inventário do Google Drive sem fornecer credenciais à API pública.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-inventory-refresh -d '{}'`,
       },
       {
         id: "ops-quickstart",

@@ -16,6 +16,20 @@ export interface UpdateCampaignBody {
   /** @nullable */
   piCodigo?: string | null;
   /** @nullable */
+  projeto?: string | null;
+  /** @nullable */
+  plano?: string | null;
+  /** @nullable */
+  planilhaRef?: string | null;
+  /** @nullable */
+  produto?: string | null;
+  /** @nullable */
+  praca?: string | null;
+  /** @nullable */
+  condicaoPagamento?: string | null;
+  /** @nullable */
+  faturamentoTipo?: string | null;
+  /** @nullable */
   valorLiquido?: number | null;
   /** @nullable */
   competencia?: string | null;

@@ -13,7 +13,7 @@ function formatPtDate(value: string) {
   return value.split("-").reverse().join("/");
 }
 
-function getAuditIssueLines(audit: any) {
+function getAuditIssueLines(audit: any): string[] {
   return Array.isArray(audit?.issues) ? audit.issues.map((issue: any) => String(issue?.label || issue?.detail || "Falha sem detalhe")) : [];
 }
 

@@ -1155,6 +1155,20 @@ components:
           type: ["integer", "null"]
         piCodigo:
           type: ["string", "null"]
+        projeto:
+          type: ["string", "null"]
+        plano:
+          type: ["string", "null"]
+        planilhaRef:
+          type: ["string", "null"]
+        produto:
+          type: ["string", "null"]
+        praca:
+          type: ["string", "null"]
+        condicaoPagamento:
+          type: ["string", "null"]
+        faturamentoTipo:
+          type: ["string", "null"]
         valorLiquido:
           type: ["number", "null"]
         competencia:
@@ -1188,6 +1202,20 @@ components:
           type: ["integer", "null"]
         piCodigo:
           type: ["string", "null"]
+        projeto:
+          type: ["string", "null"]
+        plano:
+          type: ["string", "null"]
+        planilhaRef:
+          type: ["string", "null"]
+        produto:
+          type: ["string", "null"]
+        praca:
+          type: ["string", "null"]
+        condicaoPagamento:
+          type: ["string", "null"]
+        faturamentoTipo:
+          type: ["string", "null"]
         valorLiquido:
           type: ["number", "null"]
         competencia:
@@ -1210,6 +1238,20 @@ components:
           type: ["integer", "null"]
         piCodigo:
           type: ["string", "null"]
+        projeto:
+          type: ["string", "null"]
+        plano:
+          type: ["string", "null"]
+        planilhaRef:
+          type: ["string", "null"]
+        produto:
+          type: ["string", "null"]
+        praca:
+          type: ["string", "null"]
+        condicaoPagamento:
+          type: ["string", "null"]
+        faturamentoTipo:
+          type: ["string", "null"]
         valorLiquido:
           type: ["number", "null"]
         competencia:
@@ -1231,6 +1273,20 @@ components:
         agenciaId:
           type: ["integer", "null"]
         piCodigo:
+          type: ["string", "null"]
+        projeto:
+          type: ["string", "null"]
+        plano:
+          type: ["string", "null"]
+        planilhaRef:
+          type: ["string", "null"]
+        produto:
+          type: ["string", "null"]
+        praca:
+          type: ["string", "null"]
+        condicaoPagamento:
+          type: ["string", "null"]
+        faturamentoTipo:
           type: ["string", "null"]
         valorLiquido:
           type: ["number", "null"]
@@ -1292,6 +1348,8 @@ components:
           type: boolean
         dataEnvioAgencia:
           type: ["string", "null"]
+        mediaUrl:
+          type: ["string", "null"]
         atrasado:
           type: boolean
         observacoes:
@@ -1344,6 +1402,8 @@ components:
         docsEnviados:
           type: boolean
         dataEnvioAgencia:
+          type: ["string", "null"]
+        mediaUrl:
           type: ["string", "null"]
         atrasado:
           type: boolean
@@ -1414,6 +1474,8 @@ components:
         docsEnviados:
           type: boolean
         dataEnvioAgencia:
+          type: ["string", "null"]
+        mediaUrl:
           type: ["string", "null"]
         atrasado:
           type: boolean
@@ -1487,6 +1549,8 @@ components:
         docsEnviados:
           type: boolean
         dataEnvioAgencia:
+          type: ["string", "null"]
+        mediaUrl:
           type: ["string", "null"]
         observacoes:
           type: ["string", "null"]

@@ -75,7 +75,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -2879,7 +2879,7 @@ async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Ma
   do {
     const payload = await googleDriveRequest("files", {
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id,name,mimeType,modifiedTime,webViewLink,parents)",
+      fields: "nextPageToken, files(id,name,mimeType,modifiedTime,webViewLink,parents,size,md5Checksum)",
       pageSize: 1000,
       pageToken,
       supportsAllDrives: "true",
@@ -2895,6 +2895,8 @@ async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Ma
         parentFolderId: folderId,
         modifiedTime: file.modifiedTime,
         webViewLink: file.webViewLink || null,
+        size: file.size || null,
+        checksum: file.md5Checksum || null,
       });
       if (file.mimeType === "application/vnd.google-apps.folder") {
         await listDrivePiFolderRecursive(file.id, itemPath, seen);
@@ -2904,6 +2906,17 @@ async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Ma
     pageToken = payload.nextPageToken || null;
   } while (pageToken && seen.size < DRIVE_PI_MONITOR_MAX_ITEMS);
   return seen;
+}
+
+async function syncDriveInventorySnapshot(currentMap, scanId = crypto.randomUUID()) {
+  const scannedAt = new Date().toISOString();
+  const result = await privateApi("/api/ops/drive-inventory/sync", {
+    scanId,
+    rootFolderId: DRIVE_PI_MONITOR_ROOT_FOLDER_ID,
+    scannedAt,
+    items: Array.from(currentMap.values()),
+  });
+  return { ...result, scannedAt };
 }
 
 async function postDrivePiMonitorEvent(item, previous) {
@@ -2952,6 +2965,8 @@ async function runDrivePiMonitorOnce({ force = false } = {}) {
     }
   }
 
+  const snapshot = await syncDriveInventorySnapshot(currentMap);
+
   await writeJsonFile(DRIVE_PI_MONITOR_STATE_FILE, {
     initialized: true,
     rootFolderId: DRIVE_PI_MONITOR_ROOT_FOLDER_ID,
@@ -2965,7 +2980,34 @@ async function runDrivePiMonitorOnce({ force = false } = {}) {
   } else if (sent.length) {
     console.log(`[runner] drive-pi monitor enviou ${sent.length} evento(s)`);
   }
-  return { baseline: !state.initialized, scanned: currentMap.size, sent };
+  return { baseline: !state.initialized, scanned: currentMap.size, sent, snapshot };
+}
+
+async function executeDriveInventoryRefresh(job) {
+  await progressJob(job.id, { stage: "scanning", stageKey: "scanning", percentTotal: 20 });
+  const currentMap = await listDrivePiFolderRecursive(DRIVE_PI_MONITOR_ROOT_FOLDER_ID);
+  await progressJob(job.id, {
+    stage: "syncing",
+    stageKey: "syncing",
+    percentTotal: 70,
+    itemsDone: 0,
+    itemsTotal: currentMap.size,
+  });
+  const snapshot = await syncDriveInventorySnapshot(currentMap, job?.payload?.scanId || crypto.randomUUID());
+  await writeJsonFile(DRIVE_PI_MONITOR_STATE_FILE, {
+    initialized: true,
+    rootFolderId: DRIVE_PI_MONITOR_ROOT_FOLDER_ID,
+    checkedAt: snapshot.scannedAt,
+    count: currentMap.size,
+    items: Object.fromEntries(currentMap),
+  });
+  return {
+    stage: "completed",
+    stageKey: "completed",
+    percentTotal: 100,
+    scanned: currentMap.size,
+    snapshot,
+  };
 }
 
 async function findOrCreateDrivePiCampaign(fields, payload) {
@@ -4889,6 +4931,9 @@ async function handleJob(job) {
       await notifyDrivePiErrorTelegram(payload, error);
       throw error;
     }
+  }
+  if (job.kind === "drive-inventory-refresh") {
+    return executeDriveInventoryRefresh(job);
   }
   throw new Error(`Kind não suportado pelo runner: ${job.kind}`);
 }

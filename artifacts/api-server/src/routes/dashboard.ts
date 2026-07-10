@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
-import { db, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable } from "@workspace/db";
+import { db, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable } from "@workspace/db";
 import {
   GetDashboardSummaryQueryParams,
   GetDashboardBySiteQueryParams,
@@ -196,9 +196,9 @@ router.get("/dashboard/critical", async (req, res): Promise<void> => {
   const enriched = await Promise.all(criticalInsertions.map(async (ins) => {
     const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, ins.campanhaId));
     const [site] = ins.siteId ? await db.select().from(sitesTable).where(eq(sitesTable.id, ins.siteId)) : [null];
-    const [countResult] = await db.select({ count: sql<number>`count(*)` }).from(
-      await import("@workspace/db").then(m => m.evidencesTable)
-    ).where(eq((await import("@workspace/db")).evidencesTable.insercaoId, ins.id));
+    const [countResult] = await db.select({ count: sql<number>`count(*)` })
+      .from(evidencesTable)
+      .where(eq(evidencesTable.insercaoId, ins.id));
 
     let clienteNome = null;
     let agenciaNome = null;

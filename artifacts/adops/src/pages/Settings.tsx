@@ -347,11 +347,11 @@ export function Settings() {
     return !search || haystack.includes(search.toLowerCase());
   });
 
-  function mergePreferredText(targetValue: unknown, sourceValue: unknown) {
+  function mergePreferredText(targetValue: unknown, sourceValue: unknown): string | null {
     const target = typeof targetValue === "string" ? targetValue.trim() : "";
-    if (target) return targetValue;
+    if (target) return target;
     const source = typeof sourceValue === "string" ? sourceValue.trim() : "";
-    return source ? sourceValue : null;
+    return source || null;
   }
 
   function clientCompleteness(client: any) {

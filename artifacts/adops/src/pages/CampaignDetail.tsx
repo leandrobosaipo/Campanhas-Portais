@@ -1,6 +1,6 @@
 import { useParams, useLocation, Link } from "wouter";
 import { useState } from "react";
-import { useGetCampaign, useDeleteCampaign, getListCampaignsQueryKey } from "@workspace/api-client-react";
+import { useGetCampaign, useDeleteCampaign, getGetCampaignQueryKey, getListCampaignsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/adops/Layout";
 import { StatusBadge, DelayBadge } from "@/components/adops/StatusBadge";
@@ -41,7 +41,7 @@ export function CampaignDetail() {
   const { toast } = useToast();
   const { isReadonlyPublic, readonlyMessage, canRunProtectedMutations, protectedMutationMessage } = useApiMode();
   const protectedActionMessage = protectedMutationMessage ?? readonlyMessage ?? "Acao operacional protegida.";
-  const { data: campaign, isLoading } = useGetCampaign(numId, { query: { enabled: !!numId } });
+  const { data: campaign, isLoading } = useGetCampaign(numId, { query: { queryKey: getGetCampaignQueryKey(numId), enabled: !!numId } });
   const deleteCampaign = useDeleteCampaign();
   const [confirmValue, setConfirmValue] = useState("");
 
@@ -78,7 +78,7 @@ export function CampaignDetail() {
     }
     try {
       await new Promise<void>((resolve, reject) => {
-        deleteCampaign.mutate({ id: campaign.id }, { onSuccess: () => resolve(), onError: reject });
+        deleteCampaign.mutate({ id: campaign!.id }, { onSuccess: () => resolve(), onError: reject });
       });
       await qc.invalidateQueries({ queryKey: getListCampaignsQueryKey() });
       toast({

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { getActiveCampaignOperations } from "../lib/campaign-operations";
+import { enqueueDriveInventoryRefresh, getDriveInventoryStatus } from "../lib/drive-inventory";
 
 const router: IRouter = Router();
 
@@ -46,13 +47,27 @@ router.get("/campaign-operations/active", async (req, res): Promise<void> => {
   }
 
   try {
+    const refreshDrive = parseBoolean(req.query.refreshDrive, false);
+    const monitorMode = process.env.DRIVE_INTEGRATION_MODE === "monitor";
+    const refresh = refreshDrive && monitorMode
+      ? await enqueueDriveInventoryRefresh("campaign-operations")
+      : null;
     const payload = await getActiveCampaignOperations({
       date: date ?? undefined,
-      refreshDrive: parseBoolean(req.query.refreshDrive, false),
+      refreshDrive: refreshDrive && !monitorMode,
       siteSigla,
       includeEvidence: parseBoolean(req.query.includeEvidence, true),
     });
-    res.json(payload);
+    const inventory = await getDriveInventoryStatus();
+    res.json({
+      ...payload,
+      snapshotStatus: inventory.snapshotStatus,
+      snapshotAt: inventory.snapshotAt,
+      snapshotAgeSeconds: inventory.snapshotAgeSeconds,
+      stale: inventory.stale,
+      refreshJobId: refresh?.jobId ?? null,
+      driveInventory: { ...inventory, refreshJobId: refresh?.jobId ?? null },
+    });
   } catch (error) {
     res.status(500).json({
       error: "campaign_operations_failed",

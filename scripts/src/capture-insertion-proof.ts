@@ -160,7 +160,7 @@ async function fetchInsertion(apiBase: string, insertionId: number): Promise<Ins
   if (!response.ok) {
     throw new Error(`Falha ao buscar inserção ${insertionId}: ${response.status}`);
   }
-  return response.json();
+  return await response.json() as InsertionDetail;
 }
 
 async function upsertEvidence(apiBase: string, insertion: InsertionDetail, arquivoUrl: string, title: string) {
@@ -245,7 +245,7 @@ async function main() {
     await page.waitForSelector(mapping.slotSelector, { timeout: 30000 });
     await page.waitForTimeout(2500);
 
-    const match = await page.evaluate(({ slotSelector, mediaBasename }) => {
+    const match = await page.evaluate(({ slotSelector, mediaBasename }: { slotSelector: string; mediaBasename: string }) => {
       const slot = document.querySelector(slotSelector);
       if (!slot) return { ok: false, reason: "slot_not_found" };
 

@@ -539,9 +539,9 @@ export function SyncCenter() {
           <div className="mt-3 text-[11px] text-muted-foreground">
             Leitura pública atual:
             {" "}
-            <a href={liveQuery.data?.homeUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">home</a>
+            <a href={liveQuery.data?.homeUrl ?? undefined} target="_blank" rel="noreferrer" className="text-primary hover:underline">home</a>
             {" · "}
-            <a href={liveQuery.data?.articleUrl ?? selectedSite.homeUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">página interna</a>
+            <a href={liveQuery.data?.articleUrl ?? `https://${selectedSite.domain}`} target="_blank" rel="noreferrer" className="text-primary hover:underline">página interna</a>
           </div>
         </section>
       </div>

@@ -308,7 +308,7 @@ function FieldLabel({ label, required, tip }: { label: string; required?: boolea
     <label className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
       <span>{label}</span>
       {required && <span className="text-destructive">*</span>}
-      {tip ? <Info className="h-3 w-3 text-muted-foreground/70" title={tip} /> : null}
+      {tip ? <span title={tip}><Info className="h-3 w-3 text-muted-foreground/70" /></span> : null}
     </label>
   );
 }
@@ -426,7 +426,7 @@ export function NewCampaign() {
   const [bulkStatus, setBulkStatus] = useState("aguardando_publicacao");
 
   const sourceCampaign = useGetCampaign(Number(sourceCampaignId), {
-    query: { enabled: Boolean(sourceCampaignId) },
+    query: { queryKey: getGetCampaignQueryKey(Number(sourceCampaignId)), enabled: Boolean(sourceCampaignId) },
   });
 
   useEffect(() => {
@@ -635,7 +635,7 @@ export function NewCampaign() {
       toFormState({
         ...prev,
         ...currentPreset.campaign,
-        rows: currentPreset.rows.map((row) => ({
+        rows: currentPreset.rows.map((row) => createRow({
           siteId: row.siteId ?? "",
           localFormato: row.localFormato ?? "",
           periodoInicio: row.periodoInicio ?? "",
@@ -798,7 +798,7 @@ export function NewCampaign() {
               type="button"
               onClick={saveDraft}
               disabled={isReadonlyPublic}
-              title={isReadonlyPublic ? readonlyMessage : undefined}
+              title={isReadonlyPublic ? readonlyMessage ?? undefined : undefined}
               className="flex items-center gap-1.5 rounded border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Save className="h-3.5 w-3.5" />
@@ -1400,7 +1400,7 @@ export function NewCampaign() {
                       <TextInput label="Nome do preset" value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Ex.: GOV 3 portais" />
                       <TextInput label="Descrição curta" value={presetDescription} onChange={(event) => setPresetDescription(event.target.value)} placeholder="Ex.: pacote recorrente com banner topo" />
                     </div>
-                    <button type="button" onClick={savePresetFromCurrent} disabled={isReadonlyPublic} title={isReadonlyPublic ? readonlyMessage : undefined} className="mt-3 inline-flex items-center gap-1.5 rounded border border-border px-3 py-2 text-xs font-medium text-foreground hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60">
+                    <button type="button" onClick={savePresetFromCurrent} disabled={isReadonlyPublic} title={isReadonlyPublic ? readonlyMessage ?? undefined : undefined} className="mt-3 inline-flex items-center gap-1.5 rounded border border-border px-3 py-2 text-xs font-medium text-foreground hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-60">
                       <Wand2 className="h-3.5 w-3.5" />
                       Salvar como preset
                     </button>

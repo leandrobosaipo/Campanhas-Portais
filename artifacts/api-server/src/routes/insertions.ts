@@ -36,7 +36,6 @@ import {
   isCaptureAtInRetroWindow,
   listAuditIssueCodes,
   pageTextMatchesTargetDate,
-  pageTextMatchesTargetTime,
   parseDateOnly,
   resolveRegenerationCaptureAt,
   safeFileName,
@@ -487,7 +486,7 @@ async function resolveEvidenceAuditStatus(
   }
 
   const downgraded = audit?.visualAudit?.frameSelectionDowngraded === true;
-  const status = evidence && isReachable && checklistValidation.approved
+  const status: "ok" | "ok_best_effort" | "invalid_audit" | "invalid_url" | "missing" = evidence && isReachable && checklistValidation.approved
     ? (downgraded ? "ok_best_effort" : "ok")
     : evidence
       ? (isReachable ? "invalid_audit" : "invalid_url")
@@ -1365,7 +1364,7 @@ router.get("/insertions/capture-proof/audit/failures", async (req, res): Promise
     targetDate: string;
     arquivoUrl: string | null;
     status: "invalid_url" | "invalid_audit";
-    audit: ReturnType<typeof evaluateCaptureMetadata>;
+    audit: ReturnType<typeof evaluateCaptureMetadata> | null;
   }> = [];
 
   for (const item of candidates) {
@@ -1737,7 +1736,9 @@ router.post("/insertions/:id/capture-proof/fix-invalid", async (req, res): Promi
       .filter((value): value is string => Boolean(value)),
   )).sort();
   const statuses = await Promise.all(evidenceDates.map((targetDate) => resolveEvidenceAuditStatus(insertion, targetDate, evidences)));
-  const invalidStatuses = statuses.filter((item) => item.status === "invalid_audit" || item.status === "invalid_url");
+  const invalidStatuses = statuses.filter((item): item is typeof item & { status: "invalid_audit" | "invalid_url" } => (
+    item.status === "invalid_audit" || item.status === "invalid_url"
+  ));
 
   if (invalidStatuses.length === 0) {
     res.json({

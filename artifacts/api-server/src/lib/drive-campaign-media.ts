@@ -2,6 +2,7 @@ import { createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { extractPiDigits, normalizeForMatch } from "./current-sheet-campaigns";
+import { listCurrentDriveInventoryItems } from "./drive-inventory";
 
 export const DRIVE_CAMPAIGN_MEDIA_VERSION = "drive-campaign-media-v1" as const;
 
@@ -47,7 +48,7 @@ export type DriveCampaignFile = {
 export type DriveCampaignMediaMatch = {
   version: typeof DRIVE_CAMPAIGN_MEDIA_VERSION;
   status: "matched" | "not_found" | "ambiguous" | "unavailable";
-  source: "cache" | "live" | "none";
+  source: "cache" | "live" | "snapshot" | "none";
   folderPath: string | null;
   folderId: string | null;
   mediaFiles: DriveCampaignFile[];
@@ -244,9 +245,19 @@ export async function findDriveCampaignMedia(input: {
   const rootFolderId = process.env.DRIVE_PI_MONITOR_ROOT_FOLDER_ID ?? DEFAULT_ROOT_FOLDER_ID;
   const warnings: string[] = [];
   let items: DriveRawItem[] = [];
-  let source: "cache" | "live" | "none" = "none";
+  let source: "cache" | "live" | "snapshot" | "none" = "none";
 
-  if (input.refreshDrive) {
+  if (process.env.DRIVE_INTEGRATION_MODE === "monitor") {
+    try {
+      items = await listCurrentDriveInventoryItems();
+      if (items.length) source = "snapshot";
+      else warnings.push("Snapshot do Drive ainda não possui itens.");
+    } catch (error) {
+      warnings.push(`Snapshot do Drive indisponível: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (!items.length && input.refreshDrive && process.env.DRIVE_INTEGRATION_MODE !== "monitor") {
     try {
       const live = await listLiveDriveItems(rootFolderId);
       items = live.items;

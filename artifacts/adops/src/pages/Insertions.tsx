@@ -87,7 +87,7 @@ function getPrintCoverage(totalEvidencias: number, start: string | null | undefi
   return { total, actual: totalEvidencias, state: "attention" as const };
 }
 
-function getAuditIssueLines(audit: any) {
+function getAuditIssueLines(audit: any): string[] {
   return Array.isArray(audit?.issues) ? audit.issues.map((issue: any) => String(issue?.label || issue?.detail || "Falha sem detalhe")) : [];
 }
 
@@ -198,7 +198,7 @@ export function Insertions() {
       return payload as {
         items: Array<{
           insertionId: number;
-          status: "ok" | "missing" | "invalid_url" | "invalid_audit";
+          status: "ok" | "ok_best_effort" | "missing" | "invalid_url" | "invalid_audit";
           audit: any;
           arquivoUrl: string | null;
         }>;
@@ -830,7 +830,7 @@ export function Insertions() {
             ? "Precisa refazer"
             : missingInfo
               ? "Falta evidência"
-              : auditInfo?.status === "audited" || auditInfo?.status === "audited_best_effort"
+              : auditInfo?.status === "ok" || auditInfo?.status === "ok_best_effort"
                 ? "Status em dia"
                 : printMeta.label;
           const profile = resolveOperationalProfile({
