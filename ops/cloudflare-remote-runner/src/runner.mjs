@@ -26,6 +26,10 @@ const DRIVE_PI_MONITOR_ROOT_FOLDER_ID = (process.env.DRIVE_PI_MONITOR_ROOT_FOLDE
 const DRIVE_PI_MONITOR_INTERVAL_MS = Number.parseInt(process.env.DRIVE_PI_MONITOR_INTERVAL_MS || "300000", 10);
 const DRIVE_PI_MONITOR_STATE_FILE = process.env.DRIVE_PI_MONITOR_STATE_FILE || "/var/lib/adops/drive-pi-monitor-state.json";
 const DRIVE_PI_MONITOR_MAX_ITEMS = Number.parseInt(process.env.DRIVE_PI_MONITOR_MAX_ITEMS || "2000", 10);
+const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "30000", 10);
+const ADOPS_DRIVE_RETRY_MAX_ATTEMPTS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_ATTEMPTS || "7", 10);
+const ADOPS_DRIVE_RETRY_BASE_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_BASE_MS || "2000", 10);
+const ADOPS_DRIVE_RETRY_MAX_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_MS || "30000", 10);
 const GOOGLE_DRIVE_REFRESH_TOKEN = (process.env.GOOGLE_DRIVE_REFRESH_TOKEN || "").trim();
 const GOOGLE_DRIVE_CLIENT_ID = (process.env.GOOGLE_DRIVE_CLIENT_ID || "").trim();
 const GOOGLE_DRIVE_CLIENT_SECRET = (process.env.GOOGLE_DRIVE_CLIENT_SECRET || "").trim();
@@ -2853,17 +2857,48 @@ async function getGoogleDriveAccessToken() {
 }
 
 async function googleDriveRequest(pathname, query = {}) {
-  const token = await getGoogleDriveAccessToken();
   const url = new URL(`https://www.googleapis.com/drive/v3/${pathname}`);
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
   }
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Google Drive API falhou: ${response.status}`);
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+    let retryAfterMs = 0;
+    try {
+      const token = await getGoogleDriveAccessToken();
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(ADOPS_DRIVE_REQUEST_TIMEOUT_MS),
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.ok) return payload;
+
+      const message = payload?.error?.message || `Google Drive API falhou: ${response.status}`;
+      const quotaLimited = response.status === 403 && /quota|rate.?limit|userratelimitexceeded/i.test(message);
+      const retryable = response.status === 429 || response.status >= 500 || quotaLimited;
+      if (!retryable) {
+        const error = new Error(message);
+        error.retryable = false;
+        throw error;
+      }
+
+      const retryAfterSeconds = Number.parseFloat(response.headers.get("retry-after") || "0");
+      retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0;
+      lastError = new Error(message);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.retryable === false) throw lastError;
+      if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) throw lastError;
+    }
+
+    if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) break;
+    const exponentialMs = ADOPS_DRIVE_RETRY_BASE_MS * (2 ** (attempt - 1));
+    const delayMs = Math.min(ADOPS_DRIVE_RETRY_MAX_MS, Math.max(retryAfterMs, exponentialMs));
+    console.warn(`[runner] Google Drive temporariamente indisponível; retry ${attempt}/${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS} em ${delayMs}ms`);
+    await sleep(delayMs);
   }
-  return payload;
+  throw lastError || new Error("Google Drive API indisponível após retries.");
 }
 
 function drivePiEventType(item, previous) {
