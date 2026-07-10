@@ -43,6 +43,12 @@ assert.deepEqual(
 );
 assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: links[0], kind: "image" }] }] }, "image").link.url, links[0]);
 assert.equal(runner.selectObservedMediaLink({ textObservations: [{ name: "LINK.txt", links: [{ url: "https://a/banner.gif", kind: "image" }, { url: "https://b/banner.gif", kind: "image" }] }] }, "image").ambiguous, true);
+const clickResolved = runner.resolveDrivePiClickUrl(
+  { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
+  { textObservations: [{ links: [{ url: "https://cdn.example.com/banner.gif", kind: "image" }, { url: "https://cliente.example.com/landing", kind: "unknown" }] }] },
+);
+assert.equal(clickResolved.clickUrl, "https://cliente.example.com/landing");
+assert.equal(clickResolved.fields.insertions[0].clickUrl, "https://cliente.example.com/landing");
 
 const readiness = runner.validateDrivePiPackageReadiness(
   { hasPdf: true, hasMedia: true },
@@ -53,18 +59,24 @@ const readiness = runner.validateDrivePiPackageReadiness(
 assert.equal(readiness.ok, false);
 assert(readiness.issues.includes("insertion_media_url_missing_after_processing"));
 
-const [publicApi, privateApi, capture] = await Promise.all([
+const [publicApi, privateApi, capture, adrotatePlugin] = await Promise.all([
   readFile(path.join(root, "ops/cloudflare-public-api/src/index.ts"), "utf8"),
   readFile(path.join(root, "artifacts/api-server/src/routes/ops.ts"), "utf8"),
   readFile(path.join(root, "scripts/src/capture-insertion-proof.cjs"), "utf8"),
+  readFile(path.join(root, "ops/wordpress/adrotate-adops.php"), "utf8"),
 ]);
 for (const source of [publicApi, privateApi]) {
   assert(source.includes("/api/ops/jobs/drive-pi-publish") || source.includes("/ops/jobs/drive-pi-publish"));
   assert(source.includes("strictInsertionScope"));
   assert(source.includes("allowPdfInsertions"));
 }
+assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
+assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
+}
+for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date"]) {
+  assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
 }
 
 console.log("ok: drive-pi-publish contracts and deterministic scope/media rules");

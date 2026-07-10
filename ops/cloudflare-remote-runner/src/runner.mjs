@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
@@ -56,6 +56,7 @@ const ADOPS_VIDEO_MEDIA_BASE_PATH = (process.env.ADOPS_VIDEO_MEDIA_BASE_PATH || 
 const ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE || "";
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL = (process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE || "";
+const ADOPS_MEDIA_MAX_BYTES = Number.parseInt(process.env.ADOPS_MEDIA_MAX_BYTES || String(256 * 1024 * 1024), 10);
 const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS || "")
   .split(",")
   .map((item) => item.trim().toUpperCase())
@@ -349,6 +350,30 @@ function selectObservedMediaLink(packageContext, kind) {
   return { link: candidates[0], ambiguous: false, candidates: 1 };
 }
 
+function resolveDrivePiClickUrl(fields, packageContext) {
+  const explicit = firstNonEmptyString(fields?.clickUrl, readUrlRecord(fields?.raw || {}, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]));
+  const unknownLinks = Array.from(new Set(
+    (Array.isArray(packageContext?.textObservations) ? packageContext.textObservations : [])
+      .flatMap((item) => Array.isArray(item?.links) ? item.links : [])
+      .filter((item) => item?.kind === "unknown" && item?.url)
+      .map((item) => item.url),
+  ));
+  const clickUrl = explicit || (unknownLinks.length === 1 ? unknownLinks[0] : null);
+  return {
+    fields: {
+      ...fields,
+      clickUrl,
+      insertions: (Array.isArray(fields?.insertions) ? fields.insertions : []).map((item) => ({
+        ...item,
+        ...(readUrlRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || !clickUrl ? {} : { clickUrl }),
+      })),
+    },
+    clickUrl,
+    source: explicit ? "parsed_pi_or_pdf" : clickUrl ? "txt_observation" : "missing",
+    ambiguousCandidates: explicit ? [] : unknownLinks.length > 1 ? unknownLinks : [],
+  };
+}
+
 function scoreImageMediaForInsertion(mediaItem, raw, fields) {
   const haystack = normalizeText(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`);
   let score = 0;
@@ -381,9 +406,9 @@ async function downloadExternalMediaToArchive(url, fallbackName = "media") {
   const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120000) });
   if (!response.ok) throw new Error(`Falha ao baixar mídia externa: HTTP ${response.status}`);
   const declaredLength = Number(response.headers.get("content-length") || 0);
-  if (declaredLength > 512 * 1024 * 1024) throw new Error("Mídia externa excede limite de 512 MB.");
+  if (declaredLength > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Mídia externa excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > 512 * 1024 * 1024) throw new Error("Mídia externa excede limite de 512 MB.");
+  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Mídia externa excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const mimeType = response.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
   let sourceName = safeFileName(mediaBasenameFromUrl(response.url || url) || fallbackName, fallbackName);
   if (!path.extname(sourceName)) {
@@ -450,6 +475,8 @@ async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey 
   if (!COD5_VIDEO_COMPRESSOR_API_TOKEN) {
     throw new Error("COD5_VIDEO_COMPRESSOR_API_TOKEN ausente no runner");
   }
+  const inputStat = await stat(inputPath);
+  if (inputStat.size > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Vídeo excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const bytes = await readFile(inputPath);
   const form = new FormData();
   form.append("profile", COD5_VIDEO_COMPRESSOR_PROFILE);
@@ -495,11 +522,15 @@ async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey 
   if (!downloadResponse.ok) {
     throw new Error(`Falha ao baixar video comprimido: ${downloadResponse.status}`);
   }
+  const compressedLength = Number(downloadResponse.headers.get("content-length") || 0);
+  if (compressedLength > ADOPS_MEDIA_MAX_BYTES) throw new Error("Vídeo comprimido excede limite operacional do runner.");
+  const compressedBuffer = Buffer.from(await downloadResponse.arrayBuffer());
+  if (compressedBuffer.length > ADOPS_MEDIA_MAX_BYTES) throw new Error("Vídeo comprimido excede limite operacional do runner.");
   return {
     jobId,
     status: statusPayload,
     filename: statusPayload?.download_filename || safeFileName(sourceName, "video-compressed.mp4"),
-    buffer: Buffer.from(await downloadResponse.arrayBuffer()),
+    buffer: compressedBuffer,
   };
 }
 
@@ -1299,6 +1330,7 @@ async function downloadDriveFileToArchive(file) {
   if (!file?.driveFileId || String(file.mimeType || "").includes("folder")) {
     return null;
   }
+  if (Number(file.size || 0) > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const accessToken = await getGoogleDriveAccessToken();
   const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}?alt=media`, {
     headers: {
@@ -1308,7 +1340,10 @@ async function downloadDriveFileToArchive(file) {
   if (!response.ok) {
     throw new Error(`Falha ao baixar arquivo do Drive: ${response.status}`);
   }
+  const declaredLength = Number(response.headers.get("content-length") || 0);
+  if (declaredLength > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
   await mkdir(dir, { recursive: true });
@@ -2337,6 +2372,36 @@ echo wp_json_encode(['attachment_id' => (int) $attachment_id, 'url' => wp_get_at
   return { ...result, executor: "portainer", containerName: ADOPS_PERRENGUE_WP_CONTAINER };
 }
 
+async function validatePerrengueHeadlessRebuildReadiness() {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const runnerPhp = `<?php
+$wp_path = getenv('ADOPS_WP_PATH') ?: '/app/web/wp';
+require_once rtrim($wp_path, '/') . '/wp-load.php';
+if (!function_exists('cod5_static_rebuild_webhook_url') || !function_exists('cod5_static_rebuild_webhook_secret')) throw new RuntimeException('MU-plugin de rebuild headless nao carregado.');
+$url = cod5_static_rebuild_webhook_url();
+$secret = cod5_static_rebuild_webhook_secret();
+if ($url === '' || $secret === '') throw new RuntimeException('Webhook/secret de rebuild headless ausente.');
+$parts = wp_parse_url($url);
+if (empty($parts['scheme']) || empty($parts['host'])) throw new RuntimeException('URL do webhook headless invalida.');
+$health_url = $parts['scheme'] . '://' . $parts['host'] . (!empty($parts['port']) ? ':' . (int) $parts['port'] : '') . '/health';
+$response = wp_remote_get($health_url, ['timeout' => 3, 'redirection' => 0]);
+if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) throw new RuntimeException('Health do rebuild headless indisponivel.');
+echo wp_json_encode(['ready' => true, 'health_status' => 200]) . PHP_EOL;
+`;
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const command = [
+    'tmp_runner="$(mktemp /tmp/adops-headless-readiness.XXXXXX.php)"',
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const execution = await execPortainerContainerCommand(container.Id, command, 30000);
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.ready) throw new Error("Readiness do rebuild headless não foi confirmada.");
+  return result;
+}
+
 async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache }) {
   const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
   const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache })).toString("base64");
@@ -2346,11 +2411,22 @@ async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasenam
 $wp_path = getenv('ADOPS_WP_PATH') ?: '/app/web/wp';
 $input = json_decode(base64_decode(getenv('ADOPS_REBUILD_INPUT') ?: ''), true);
 require_once rtrim($wp_path, '/') . '/wp-load.php';
-if (!function_exists('cod5_static_rebuild_webhook_url') || !function_exists('cod5_static_rebuild_webhook_health')) throw new RuntimeException('MU-plugin de rebuild headless nao carregado.');
+if (!function_exists('cod5_static_rebuild_webhook_url') || !function_exists('cod5_static_rebuild_webhook_secret')) throw new RuntimeException('MU-plugin de rebuild headless nao carregado.');
 $url = cod5_static_rebuild_webhook_url();
 $secret = cod5_static_rebuild_webhook_secret();
 if ($url === '' || $secret === '') throw new RuntimeException('Webhook/secret de rebuild headless ausente.');
-$before = cod5_static_rebuild_webhook_health();
+$read_health = static function () use ($url) {
+  $parts = wp_parse_url($url);
+  if (empty($parts['scheme']) || empty($parts['host'])) return ['available' => false];
+  $health_url = $parts['scheme'] . '://' . $parts['host'] . (!empty($parts['port']) ? ':' . (int) $parts['port'] : '') . '/health';
+  $response = wp_remote_get($health_url, ['timeout' => 3, 'redirection' => 0]);
+  if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) return ['available' => false];
+  $body = json_decode((string) wp_remote_retrieve_body($response), true);
+  if (!is_array($body)) return ['available' => false];
+  $last = isset($body['last']) && is_array($body['last']) ? $body['last'] : [];
+  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
+};
+$before = $read_health();
 $payload = ['reason' => 'adops_adrotate_publish', 'status' => 'publish', 'insertion_id' => (int) ($input['insertionId'] ?? 0), 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
 $response = wp_remote_post($url, ['timeout' => 10, 'blocking' => true, 'headers' => ['content-type' => 'application/json', 'x-cod5-webhook-secret' => $secret], 'body' => wp_json_encode($payload)]);
 if (is_wp_error($response)) throw new RuntimeException($response->get_error_message());
@@ -2360,7 +2436,7 @@ $deadline = time() + ${timeoutSeconds};
 $seen_new_run = false;
 while (time() < $deadline) {
   usleep(${pollMicroseconds});
-  $health = cod5_static_rebuild_webhook_health();
+  $health = $read_health();
   $seen_new_run = $seen_new_run || (!empty($health['lastStartedAt']) && $health['lastStartedAt'] !== ($before['lastStartedAt'] ?? null)) || !empty($health['running']) || !empty($health['queued']);
   if ($seen_new_run && empty($health['running']) && empty($health['queued']) && ($health['lastStatus'] ?? null) === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'health' => $health]) . PHP_EOL; exit(0); }
   if ($seen_new_run && empty($health['running']) && empty($health['queued']) && !empty($health['lastStatus']) && $health['lastStatus'] !== 'ok') throw new RuntimeException('Rebuild terminou com status ' . $health['lastStatus']);
@@ -2413,6 +2489,11 @@ function buildAdrotatePublishTitle(insertion, campaign) {
   return [siteSigla, campaignName, format].filter(Boolean).join(" - ");
 }
 
+function destinationUrlFromObservations(value) {
+  const match = String(value || "").match(/Link destino informado[^:]*:\s*(https?:\/\/\S+)/i);
+  return match?.[1] ? trimUrlPunctuation(match[1]) : null;
+}
+
 function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence }) {
   const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
   const mediaUrl = firstNonEmptyString(
@@ -2441,6 +2522,7 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
     insertion.campaign?.linkUrl,
     campaign?.linkUrl,
     campaign?.urlDestino,
+    destinationUrlFromObservations(insertion.observacoes),
   );
   if (!groupId) throw new Error(`Checklist da inserção ${insertion.id} não resolveu groupId.`);
   if (!mediaUrl) throw new Error(`Inserção ${insertion.id} sem mediaUrl resolvida.`);
@@ -2912,7 +2994,7 @@ async function applyDrivePiToAdOps(fields, payload) {
     if (duplicate) {
       const duplicatePatch = {};
       const mediaUrl = readStringRecord(raw, ["mediaUrl"]);
-      const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+      const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
       if (mediaUrl && mediaUrl !== duplicate.mediaUrl) duplicatePatch.mediaUrl = mediaUrl;
       if (readStringRecord(raw, ["periodoOriginal"]) && readStringRecord(raw, ["periodoOriginal"]) !== duplicate.periodoOriginal) {
         duplicatePatch.periodoOriginal = readStringRecord(raw, ["periodoOriginal"]);
@@ -2930,7 +3012,7 @@ async function applyDrivePiToAdOps(fields, payload) {
       skippedInsertions.push({ id: duplicate.id, reason: "duplicate" });
       continue;
     }
-    const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+    const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
     const insertion = await privateApi("/api/insertions", {
       campanhaId: campaign.id,
       siteId,
@@ -3177,7 +3259,11 @@ async function executeAdrotatePublishJob(payload) {
   if (!insertion?.id) {
     throw new Error(`Inserção ${insertionId} não encontrada.`);
   }
-  const checklist = await privateApiGet(`/api/audit-checklists/resolve?insertionId=${insertionId}&date=${encodeURIComponent(targetDate)}`);
+  const periodStart = firstNonEmptyString(insertion.periodoInicio);
+  const periodEnd = firstNonEmptyString(insertion.periodoFim);
+  const targetInPeriod = Boolean(periodStart && periodEnd && targetDate >= periodStart && targetDate <= periodEnd);
+  const checklistDate = targetInPeriod ? targetDate : periodStart || targetDate;
+  const checklist = await privateApiGet(`/api/audit-checklists/resolve?insertionId=${insertionId}&date=${encodeURIComponent(checklistDate)}`);
   if (!checklist?.ok) {
     throw new Error(`Checklist bloqueou publicação da inserção ${insertionId}: ${JSON.stringify(checklist?.blockingIssues ?? checklist)}`);
   }
@@ -3199,7 +3285,7 @@ async function executeAdrotatePublishJob(payload) {
     campaign,
     site,
     checklist,
-    targetDate,
+    targetDate: checklistDate,
     replaceExisting,
     purgeCache,
     generateEvidence,
@@ -3222,6 +3308,9 @@ async function executeAdrotatePublishJob(payload) {
     "exit $rc",
   ].join(" && ");
 
+  const headlessReadiness = String(siteSigla || "").toUpperCase() === "PERRENGUE"
+    ? await validatePerrengueHeadlessRebuildReadiness()
+    : null;
   const execution = shouldUsePerrenguePortainerAdrotate(siteSigla)
     ? await executePerrenguePortainerWpCliPublish({ payloadJson, apply })
     : {
@@ -3291,11 +3380,13 @@ async function executeAdrotatePublishJob(payload) {
 
   let evidenceJob = null;
   if (apply && generateEvidence) {
-    evidenceJob = await captureAndValidatePublishedProof({
-      insertionId,
-      targetDate,
-      captureAt: firstNonEmptyString(payload?.captureAt),
-    });
+    evidenceJob = targetInPeriod && targetDate <= todayInCuiaba()
+      ? await captureAndValidatePublishedProof({
+          insertionId,
+          targetDate,
+          captureAt: firstNonEmptyString(payload?.captureAt),
+        })
+      : { skipped: true, reason: targetInPeriod ? "future_date" : "date_out_of_period", targetDate, checklistDate };
   }
 
   return {
@@ -3303,6 +3394,7 @@ async function executeAdrotatePublishJob(payload) {
     apply,
     insertionId,
     targetDate,
+    checklistDate,
     siteId,
     siteSigla,
     executor: execution.executor,
@@ -3322,6 +3414,7 @@ async function executeAdrotatePublishJob(payload) {
     resolvedRule: checklist.resolvedRule,
     expectedSelectors: checklist.expectedSelectors,
     expectedMedia: checklist.expectedMedia,
+    headlessReadiness,
     publishPayload: {
       ...publishPayload,
       link_url: publishPayload.link_url ?? null,
@@ -3522,6 +3615,8 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
+  fields = clickUrlResolution.fields;
   const insertionScope = (payload?.strictInsertionScope === true || payload?.publish === true)
     ? filterSiteInsertions(fields.insertions)
     : { accepted: fields.insertions, excluded: [] };
@@ -3603,6 +3698,7 @@ async function executeDrivePiIngest(payload) {
         },
         packageReadiness,
         mediaProcessing,
+        clickUrlResolution,
         insertionScope: {
           strict: payload?.strictInsertionScope === true,
           excluded: insertionScope.excluded.map((item) => ({
@@ -3681,7 +3777,7 @@ async function executeDrivePiIngest(payload) {
         evidenceCoverage,
       });
     }
-    const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => item?.status !== "audited");
+    const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "not_due", "not_requested"].includes(item?.status));
     await updateDrivePiState(payload, "applied", {
       parseRun: {
         fields,
@@ -3761,11 +3857,15 @@ async function executeDrivePiIngest(payload) {
       checked: publicationResults.map((item) => item.insertionId),
       results: publicationResults.map((item) => ({
         insertionId: item.insertionId,
-        status: item.published?.evidenceJob ? "audited" : "published",
+        status: item.published?.evidenceJob?.skipped
+          ? "not_due"
+          : item.published?.evidenceJob
+            ? "audited"
+            : "not_requested",
       })),
     };
   }
-  const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => item?.status !== "audited");
+  const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "not_due", "not_requested"].includes(item?.status));
   const finalStatus = applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
   const finalReviewReasons = buildDrivePiReviewReasons({
     packageClassification,
@@ -4839,6 +4939,7 @@ export {
   isSocialInsertion,
   mediaKindFromUrl,
   mergeDrivePiFields,
+  resolveDrivePiClickUrl,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
 };

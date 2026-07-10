@@ -101,9 +101,13 @@ if (!function_exists('adrotate_adops_build_bannercode')) {
 	function adrotate_adops_build_bannercode($payload) {
 		$media_url = adrotate_adops_trim($payload['media_url'] ?? '');
 		$link_url = esc_url_raw($payload['link_url'] ?? '');
-		$alt = esc_attr(adrotate_adops_trim($payload['title'] ?? 'Publicidade'));
-		if (adrotate_adops_is_video($media_url)) {
-			return '<video controls muted playsinline preload="metadata" style="display:block;width:100%;height:auto;max-width:100%;"><source src="%asset%" type="video/mp4"></video>';
+			$alt = esc_attr(adrotate_adops_trim($payload['title'] ?? 'Publicidade'));
+			if (adrotate_adops_is_video($media_url)) {
+				$video = '<video controls muted playsinline preload="metadata" style="display:block;width:100%;height:auto;max-width:100%;"><source src="%asset%" type="video/mp4"></video>';
+				if ($link_url !== '') {
+					return '<a href="'.$link_url.'" target="_blank" rel="noopener noreferrer" aria-label="'.$alt.'">'.$video.'</a>';
+				}
+				return $video;
 		}
 		$image = '<img src="%asset%" alt="'.$alt.'" style="display:block;width:100%;height:auto;max-width:100%;" loading="lazy" decoding="async" />';
 		if ($link_url !== '') {
@@ -267,25 +271,20 @@ if (!function_exists('adrotate_adops_publish_payload')) {
 			throw new RuntimeException('Falha ao criar ou atualizar anúncio AdRotate.');
 		}
 
-		if ($replace_existing) {
-			$wpdb->delete($link_table, array('ad' => $ad_id, 'user' => 0));
-			$wpdb->query($wpdb->prepare(
-				"DELETE FROM `{$link_table}` WHERE `user` = 0 AND `group` = %d AND `ad` <> %d",
-				$group_id,
-				$ad_id
-			));
-		}
-
-		$link_columns = adrotate_adops_table_columns($link_table);
-		$schedule_columns = adrotate_adops_table_columns($schedule_table);
-		$starttime = adrotate_adops_period_timestamp($payload['period_start'] ?? '', false);
-		$stoptime = adrotate_adops_period_timestamp($payload['period_end'] ?? '', true);
-		$schedule_id = 0;
-		if ($starttime > 0 && $stoptime > 0 && !empty($schedule_columns)) {
+			$link_columns = adrotate_adops_table_columns($link_table);
+			$schedule_columns = adrotate_adops_table_columns($schedule_table);
+			$starttime = adrotate_adops_period_timestamp($payload['period_start'] ?? '', false);
+			$stoptime = adrotate_adops_period_timestamp($payload['period_end'] ?? '', true);
 			$schedule_id = (int) $wpdb->get_var($wpdb->prepare(
 				"SELECT `schedule` FROM `{$link_table}` WHERE `ad` = %d AND `user` = 0 AND `group` = 0 AND `schedule` > 0 ORDER BY `id` DESC LIMIT 1",
 				$ad_id
 			));
+			if ($replace_existing) {
+				// Replace only links owned by this AdOps insertion. Other active or
+				// scheduled campaigns in the same group must remain intact.
+				$wpdb->delete($link_table, array('ad' => $ad_id, 'user' => 0));
+			}
+			if ($starttime > 0 && $stoptime > 0 && !empty($schedule_columns)) {
 			$schedule_data = adrotate_adops_filter_columns($schedule_table, array(
 				'name' => 'Schedule for AdOps insertion '.$insertion_id,
 				'starttime' => $starttime,
@@ -602,24 +601,18 @@ if (defined('WP_CLI') && WP_CLI) {
 				\WP_CLI::error('Falha ao criar ou atualizar anúncio AdRotate.');
 			}
 
-			if ($replace_existing) {
-				$wpdb->delete($link_table, array('ad' => $ad_id, 'user' => 0));
-				$wpdb->query($wpdb->prepare(
-					"DELETE FROM `{$link_table}` WHERE `user` = 0 AND `group` = %d AND `ad` <> %d",
-					$group_id,
-					$ad_id
-				));
-			}
-			$link_columns = adrotate_adops_table_columns($link_table);
-			$schedule_columns = adrotate_adops_table_columns($schedule_table);
-			$starttime = adrotate_adops_period_timestamp($payload['period_start'] ?? '', false);
-			$stoptime = adrotate_adops_period_timestamp($payload['period_end'] ?? '', true);
-			$schedule_id = 0;
-			if ($starttime > 0 && $stoptime > 0 && !empty($schedule_columns)) {
+				$link_columns = adrotate_adops_table_columns($link_table);
+				$schedule_columns = adrotate_adops_table_columns($schedule_table);
+				$starttime = adrotate_adops_period_timestamp($payload['period_start'] ?? '', false);
+				$stoptime = adrotate_adops_period_timestamp($payload['period_end'] ?? '', true);
 				$schedule_id = (int) $wpdb->get_var($wpdb->prepare(
 					"SELECT `schedule` FROM `{$link_table}` WHERE `ad` = %d AND `user` = 0 AND `group` = 0 AND `schedule` > 0 ORDER BY `id` DESC LIMIT 1",
 					$ad_id
 				));
+				if ($replace_existing) {
+					$wpdb->delete($link_table, array('ad' => $ad_id, 'user' => 0));
+				}
+				if ($starttime > 0 && $stoptime > 0 && !empty($schedule_columns)) {
 				$schedule_data = adrotate_adops_filter_columns($schedule_table, array(
 					'name' => 'Schedule for AdOps insertion '.$insertion_id,
 					'starttime' => $starttime,
