@@ -237,6 +237,10 @@ export function normalizeFormato(value: string | null | undefined) {
   return direct[normalized] ?? normalizeSpaces(normalized);
 }
 
+function isSocialOnlyFormato(value: string) {
+  return /\b(INSTAGRAM|STORIES?|REELS?|SOCIAL|BONIFICACAO|BONIFICACAO SOCIAL)\b/.test(normalizeForMatch(value));
+}
+
 function findHeaderOffset(headers: string[], candidates: string[]) {
   return headers.findIndex((header) => candidates.some((candidate) => normalizeForMatch(header).includes(candidate)));
 }
@@ -336,6 +340,7 @@ export async function loadCurrentSheetCampaigns(options: {
       const processoEnviado = offProcessoEnviado >= 0 ? normalizeSpaces(slice[offProcessoEnviado] ?? "") : "";
       const dataEnvioAgencia = offDataEnvio >= 0 ? normalizeSpaces(slice[offDataEnvio] ?? "") : "";
       if (!isMeaningful(campaignName) && !isMeaningful(localFormato) && !isMeaningful(periodoOriginal)) return;
+      if (isSocialOnlyFormato(localFormato)) return;
 
       const parsedPeriod = parsePeriodo(periodoOriginal, sheetName);
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;

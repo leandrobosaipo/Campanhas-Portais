@@ -276,6 +276,10 @@ function normalizeFormato(value: string): string {
   return direct[normalized] ?? titleCase(normalized);
 }
 
+function isSocialOnlyFormato(value: string): boolean {
+  return /\b(INSTAGRAM|STORIES?|REELS?|SOCIAL|BONIFICACAO|BONIFICACAO SOCIAL)\b/.test(normalizeForMatch(value));
+}
+
 function findAgencyName(value: string): string | null {
   const normalized = normalizeForMatch(value);
   for (const [pattern, label] of AGENCY_ALIASES) {
@@ -506,6 +510,10 @@ async function main() {
   const changes: Array<Record<string, unknown>> = [];
 
   for (const row of rawRows) {
+    if (isSocialOnlyFormato(row.local)) {
+      warnings.push(`${row.sourceSheet}: ${row.campanha} / ${row.local} registrada como ação social fora do escopo de inserções de site.`);
+      continue;
+    }
     const agencyInfo = splitAgencyValue(row.agenciaValor);
     const clientName = inferClientName(row.peca, row.campanha);
     const piCodigo = normalizePi(row.peca, row.agenciaValor);
