@@ -1306,14 +1306,25 @@ async function resolveDrivePiPackageFolder(payload) {
 
 async function listDrivePiPackageItems(folderId, basePath = "") {
   if (!folderId) return [];
-  const payload = await googleDriveRequest("files", {
-    q: `'${folderId}' in parents and trashed = false`,
-    fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size)",
-    pageSize: 1000,
-    supportsAllDrives: "true",
-    includeItemsFromAllDrives: "true",
-    orderBy: "folder,name",
-  });
+  let payload = null;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      payload = await googleDriveRequest("files", {
+        q: `'${folderId}' in parents and trashed = false`,
+        fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size)",
+        pageSize: 1000,
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        orderBy: "folder,name",
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await sleep(750 * (attempt + 1));
+    }
+  }
+  if (!payload) throw lastError || new Error("Falha ao listar pasta da PI no Google Drive.");
   return (payload.files || []).map((file) => ({
     driveFileId: file.id,
     name: file.name || file.id,
@@ -2026,8 +2037,8 @@ function buildDrivePiReviewReasons({
   const reasons = [];
   const packageMissing = Array.isArray(packageClassification?.missing) ? packageClassification.missing : [];
   if (packageClassification?.class === "folder_empty" && preflightOnly) reasons.push("drive_folder_empty_or_not_shared");
-  if (packageMissing.includes("pi_pdf")) reasons.push("missing_pi_pdf");
-  if (packageMissing.includes("media")) reasons.push("missing_media");
+  if (packageMissing.includes("pi_pdf") && packageReadiness?.issues?.includes("missing_pi_pdf")) reasons.push("missing_pi_pdf");
+  if (packageMissing.includes("media") && packageReadiness?.issues?.includes("missing_media")) reasons.push("missing_media");
   for (const item of packageReadiness?.issues || []) reasons.push(item);
   for (const item of validation?.missing || []) reasons.push(`missing_${item}`);
   if (validation?.invalidInsertions?.length) reasons.push("invalid_insertions");
