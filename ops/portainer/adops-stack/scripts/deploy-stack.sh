@@ -16,7 +16,7 @@ if [[ -z "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-if rg -n 'change-me|SOURCE_DATABASE_URL=postgresql://source-user' "$ENV_FILE" >/dev/null; then
+if grep -En 'change-me|SOURCE_DATABASE_URL=postgresql://source-user' "$ENV_FILE" >/dev/null; then
   printf 'Env file still contains placeholder values. Refusing deploy.\n' >&2
   exit 1
 fi
@@ -67,6 +67,20 @@ else
     "${PORTAINER_API}/stacks/create/standalone/string?endpointId=${ENDPOINT_ID}" || true)"
 fi
 
+if [[ "$CODE" == "000" && -n "${STACK_ID:-}" ]]; then
+  # Portainer applies the update before Cloudflare returns its 524/timeout in
+  # some deployments. Confirm the persisted stack file instead of reporting a
+  # false failure or blindly retrying the mutation.
+  REMOTE_STACK_CONTENT="$(curl -fsS --max-time 20 \
+    -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    "${PORTAINER_API}/stacks/${STACK_ID}/file" \
+    | jq -r '.StackFileContent // empty' || true)"
+  if [[ "$REMOTE_STACK_CONTENT" == "$STACK_CONTENT" ]]; then
+    CODE="202"
+    printf 'Portainer response timed out, but the persisted stack matches the requested release.\n'
+  fi
+fi
+
 if [[ ! "$CODE" =~ ^2 ]]; then
   printf 'Portainer stack deploy failed HTTP=%s\n' "$CODE" >&2
   jq -r '.message // .details // .err // .error // .' "$BODY" 2>/dev/null >&2 || sed -n '1,40p' "$BODY" >&2
@@ -74,7 +88,12 @@ if [[ ! "$CODE" =~ ^2 ]]; then
   exit 1
 fi
 
-jq '{Id, Name, Status, EndpointId}' "$BODY"
+if [[ -s "$BODY" ]]; then
+  jq '{Id, Name, Status, EndpointId}' "$BODY"
+else
+  jq -n --arg id "${STACK_ID:-}" --arg name "$STACK_NAME" \
+    '{Id:$id,Name:$name,Status:"applied-after-timeout"}'
+fi
 rm -f "$BODY"
 
 printf '\nContainers matching %s:\n' "$STACK_NAME"
