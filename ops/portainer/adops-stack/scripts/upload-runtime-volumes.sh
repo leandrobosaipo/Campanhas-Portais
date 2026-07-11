@@ -37,6 +37,7 @@ upload_to_volume() {
   local image="$2"
   local mount_path="$3"
   local tar_path="$4"
+  local prepare_command="${5:-}"
   local container_name="adops-volume-upload-${volume}-${STAMP}"
   local body code container_id
   body="$(mktemp)"
@@ -80,6 +81,25 @@ upload_to_volume() {
   fi
   rm -f "$body"
 
+  if [[ -n "$prepare_command" ]]; then
+    local exec_id exit_code
+    exec_id="$(curl -fsS --max-time 30 \
+      -X POST \
+      -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n --arg command "$prepare_command" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:"/app",Cmd:["sh","-lc",$command]}')" \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/exec" | jq -r '.Id')"
+    curl -fsS --max-time 300 \
+      -X POST \
+      -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d '{"Detach":false,"Tty":false}' \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
+    exit_code="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json" | jq -r '.ExitCode')"
+    [[ "$exit_code" == "0" ]] || { printf 'Runtime dependency install failed for volume=%s.\n' "$volume" >&2; exit 1; }
+  fi
+
   curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
   printf 'Uploaded %s into volume %s\n' "$tar_path" "$volume"
@@ -120,7 +140,8 @@ printf 'Creating clean web dist tar\n'
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_ROOT/artifacts/adops/dist/public" -cf "$WEB_TAR" .
 tar --no-xattrs -C "$RELEASE_DIR" -rf "$WEB_TAR" cod5-release.json
 
-upload_to_volume "$APP_VOLUME" node:22-alpine /app "$APP_TAR"
+upload_to_volume "$APP_VOLUME" mcr.microsoft.com/playwright:v1.59.1-noble /app "$APP_TAR" \
+  'corepack enable && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile'
 upload_to_volume "$WEB_VOLUME" nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR"
 
 printf 'Runtime volumes are ready on endpoint %s app=%s web=%s\n' "$ENDPOINT_ID" "$APP_VOLUME" "$WEB_VOLUME"

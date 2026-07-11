@@ -44,7 +44,9 @@ for (const marker of ["ADOPS_APP_SOURCE_VOLUME", "ADOPS_WEB_PUBLIC_VOLUME"]) {
 
 assert(upload.includes('cut -c1-12'), "volume precisa usar SHA curto");
 assert(upload.includes("adops_app_source_${RELEASE_SUFFIX:-unknown}"));
-assert(deploy.includes('STACK_SWITCHED="true"'), "deploy precisa registrar troca de stack");
+const switchedAt = deploy.indexOf('STACK_SWITCHED="true"');
+const deployStackAt = deploy.indexOf('bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"');
+assert(switchedAt >= 0 && deployStackAt >= 0 && switchedAt < deployStackAt, "rollback precisa ser armado antes de atualizar o stack");
 assert(deploy.includes("restaurando volumes anteriores"), "deploy precisa de rollback automático");
 assert(retire.includes('KEEP_RELEASES="${ADOPS_VOLUME_RETENTION_KEEP:-3}"'));
 assert(retire.includes('APPLY="${ADOPS_VOLUME_RETENTION_APPLY:-false}"'));
