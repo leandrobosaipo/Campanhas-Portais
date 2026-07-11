@@ -64,6 +64,8 @@ Thumbs.db
 *secret*.md
 
 # Operational/generated evidence and heavy local reports
+/.playwright-cli/
+/reports/
 docs/harness-reports/
 docs/deploy-backups/
 docs/reports/

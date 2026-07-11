@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
+import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
 
 type JobKind =
   | "print-batch"
@@ -98,6 +99,10 @@ type RunnerLiveness = {
     lastSeenAgeMinutes: number | null;
     recent: boolean;
     totalJobsSeen: number;
+    heartbeat: boolean;
+    version: string | null;
+    capabilities: Record<string, unknown>;
+    lastError: string | null;
   }>;
   error?: string;
 };
@@ -129,25 +134,37 @@ function minutesSince(value: string | null, nowMs = Date.now()) {
 
 async function readRunnerLiveness(recentRunnerWindowMinutes = 30): Promise<RunnerLiveness> {
   try {
-    const rows = await pool.query<{ runner_id: string; last_seen_at: string; total_jobs_seen: string | number }>(
+    const [rows, heartbeats] = await Promise.all([
+      pool.query<{ runner_id: string; last_seen_at: string; total_jobs_seen: string | number }>(
       `SELECT runner_id, MAX(updated_at)::text AS last_seen_at, COUNT(*) AS total_jobs_seen
          FROM ops_jobs
         WHERE runner_id IS NOT NULL AND runner_id <> ''
         GROUP BY runner_id
         ORDER BY MAX(updated_at) DESC
         LIMIT 10`,
-    );
+      ),
+      listRunnerHeartbeats(),
+    ]);
     const nowMs = Date.now();
-    const runners = rows.rows.map((row) => {
-      const age = minutesSince(row.last_seen_at, nowMs);
+    const jobsByRunner = new Map(rows.rows.map((row) => [row.runner_id, row]));
+    const ids = new Set([...rows.rows.map((row) => row.runner_id), ...heartbeats.map((row) => row.runner_id)]);
+    const runners = [...ids].map((runnerId) => {
+      const job = jobsByRunner.get(runnerId);
+      const heartbeat = heartbeats.find((row) => row.runner_id === runnerId);
+      const lastSeenAt = heartbeat?.updated_at ?? job?.last_seen_at ?? null;
+      const age = minutesSince(lastSeenAt, nowMs);
       return {
-        runnerId: row.runner_id,
-        lastSeenAt: row.last_seen_at,
+        runnerId,
+        lastSeenAt: lastSeenAt ?? "",
         lastSeenAgeMinutes: age,
         recent: age !== null && age <= recentRunnerWindowMinutes,
-        totalJobsSeen: Number(row.total_jobs_seen ?? 0) || 0,
+        totalJobsSeen: Number(job?.total_jobs_seen ?? 0) || 0,
+        heartbeat: Boolean(heartbeat),
+        version: heartbeat?.version ?? null,
+        capabilities: heartbeat?.capabilities_json ?? {},
+        lastError: heartbeat?.last_error ?? null,
       };
-    });
+    }).sort((a, b) => (parseDateMs(b.lastSeenAt) ?? 0) - (parseDateMs(a.lastSeenAt) ?? 0));
     return {
       ok: true,
       recentRunnerWindowMinutes,
@@ -428,6 +445,13 @@ function parseDriveFolderId(value: unknown) {
 function parseIsoDate(value: unknown) {
   const raw = readOptionalString(value);
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function parseIsoTimestamp(value: unknown) {
+  const raw = readOptionalString(value);
+  if (!raw) return null;
+  const timestamp = Date.parse(raw);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
 }
 
 function readNumber(candidates: unknown[], keys: string[]): number | null {
@@ -973,6 +997,31 @@ router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
     getDriveInventoryStatus(),
   ]);
   res.json(buildOpsRuntimeReadiness(runnerLiveness, driveInventory));
+});
+
+router.post("/ops/runner/heartbeat", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId || !/^[a-zA-Z0-9._:-]{1,120}$/.test(runnerId)) {
+    res.status(400).json({ error: "bad_request", details: "runnerId inválido." });
+    return;
+  }
+  const rawCapabilities = asRecord(req.body?.capabilities) ?? {};
+  const capabilities = {
+    jobKinds: Array.isArray(rawCapabilities.jobKinds)
+      ? rawCapabilities.jobKinds.filter((value): value is string => typeof value === "string").slice(0, 30).map((value) => value.slice(0, 80))
+      : [],
+    driveMonitorEnabled: rawCapabilities.driveMonitorEnabled === true,
+    healthPortEnabled: rawCapabilities.healthPortEnabled === true,
+  };
+  await upsertRunnerHeartbeat({
+    runnerId,
+    version: readOptionalString(req.body?.version),
+    capabilities,
+    lastCycleAt: parseIsoTimestamp(req.body?.lastCycleAt) ?? nowIso(),
+    lastSuccessAt: parseIsoTimestamp(req.body?.lastSuccessAt),
+    lastError: sanitizeJobText(readOptionalString(req.body?.lastError), 1000) as string | null,
+  });
+  res.json({ ok: true, runnerId, receivedAt: nowIso() });
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {

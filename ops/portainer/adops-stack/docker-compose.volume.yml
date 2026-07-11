@@ -111,6 +111,8 @@ services:
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
@@ -165,6 +167,8 @@ services:
       CAMPANHAS_PORTAIS_ROOT: /app
       RUNNER_ID: drive-pi-monitor
       ADOPS_RUNNER_HEALTH_PORT: "4012"
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh
       DRIVE_PI_ARCHIVE_DIR: /data/drive-pi-archive
@@ -277,9 +281,9 @@ services:
 
 volumes:
   adops_app_source:
-    name: adops_app_source
+    name: ${ADOPS_APP_SOURCE_VOLUME:-adops_app_source}
   adops_web_public:
-    name: adops_web_public
+    name: ${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public}
   adops_postgres_data:
     name: adops_postgres_data
   adops_generated_prints:

@@ -36,6 +36,7 @@ jobs:
       - run: pnpm --dir scripts run test:drive-pi-event-flow
       - run: pnpm --dir scripts run test:drive-pi-publish-flow
       - run: pnpm --dir scripts run test:drive-inventory-flow
+      - run: pnpm --dir scripts run test:git-platform-pilot
       - run: pnpm --dir scripts run harness:drive-pi-monitor-first-v4
       - run: pnpm --dir scripts run audit:capture-rules-integrity
       - name: Validate production compose

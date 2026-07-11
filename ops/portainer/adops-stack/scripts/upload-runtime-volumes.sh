@@ -15,6 +15,9 @@ APP_TAR="${TMPDIR:-/tmp}/adops-app-source-${STAMP}.tar"
 WEB_TAR="${TMPDIR:-/tmp}/adops-web-public-${STAMP}.tar"
 RELEASE_DIR="$(mktemp -d)"
 RELEASE_FILE="$RELEASE_DIR/cod5-release.json"
+RELEASE_SUFFIX="$(printf '%s' "${ADOPS_RELEASE_SHA:-unknown}" | tr -cd 'a-zA-Z0-9' | cut -c1-12)"
+APP_VOLUME="${ADOPS_APP_SOURCE_VOLUME:-adops_app_source_${RELEASE_SUFFIX:-unknown}}"
+WEB_VOLUME="${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public_${RELEASE_SUFFIX:-unknown}}"
 
 cleanup() {
   rm -f "$APP_TAR" "$WEB_TAR"
@@ -25,7 +28,9 @@ trap cleanup EXIT
 jq -n \
   --arg sha "${ADOPS_RELEASE_SHA:-unknown}" \
   --arg builtAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '{sha:$sha,builtAt:$builtAt,runtime:"portainer-volume"}' > "$RELEASE_FILE"
+  --arg appVolume "$APP_VOLUME" \
+  --arg webVolume "$WEB_VOLUME" \
+  '{sha:$sha,builtAt:$builtAt,runtime:"portainer-volume",volumes:{app:$appVolume,web:$webVolume}}' > "$RELEASE_FILE"
 
 upload_to_volume() {
   local volume="$1"
@@ -115,7 +120,7 @@ printf 'Creating clean web dist tar\n'
 COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_ROOT/artifacts/adops/dist/public" -cf "$WEB_TAR" .
 tar --no-xattrs -C "$RELEASE_DIR" -rf "$WEB_TAR" cod5-release.json
 
-upload_to_volume adops_app_source node:22-alpine /app "$APP_TAR"
-upload_to_volume adops_web_public nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR"
+upload_to_volume "$APP_VOLUME" node:22-alpine /app "$APP_TAR"
+upload_to_volume "$WEB_VOLUME" nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR"
 
-printf 'Runtime volumes are ready on endpoint %s\n' "$ENDPOINT_ID"
+printf 'Runtime volumes are ready on endpoint %s app=%s web=%s\n' "$ENDPOINT_ID" "$APP_VOLUME" "$WEB_VOLUME"

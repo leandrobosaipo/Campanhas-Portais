@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (file) => readFile(path.join(root, file), "utf8");
 
-const [inventory, ops, campaigns, media, runner, compose, worker, migration] = await Promise.all([
+const [inventory, ops, campaigns, media, runner, compose, worker, migration, heartbeats] = await Promise.all([
   read("artifacts/api-server/src/lib/drive-inventory.ts"),
   read("artifacts/api-server/src/routes/ops.ts"),
   read("artifacts/api-server/src/routes/campaign-operations.ts"),
@@ -16,6 +16,7 @@ const [inventory, ops, campaigns, media, runner, compose, worker, migration] = a
   read("ops/portainer/adops-stack/docker-compose.yml"),
   read("ops/cloudflare-public-api/src/index.ts"),
   read("ops/portainer/adops-stack/migrations/2026-07-10-drive-inventory.sql"),
+  read("artifacts/api-server/src/lib/runner-heartbeats.ts"),
 ]);
 
 for (const marker of [
@@ -57,6 +58,9 @@ assert(runner.includes("ADOPS_DRIVE_RETRY_MAX_ATTEMPTS"));
 assert(runner.includes("AbortSignal.timeout(ADOPS_DRIVE_REQUEST_TIMEOUT_MS)"));
 assert(runner.includes("response.status === 429 || response.status >= 500 || quotaLimited"));
 assert(runner.includes('req.url !== "/healthz"'));
+assert(runner.includes('privateApi("/api/ops/runner/heartbeat"'));
+assert(ops.includes('router.post("/ops/runner/heartbeat"'));
+assert(heartbeats.includes("cod5_runner_heartbeats"));
 assert(worker.includes('path === "/api/ops/drive-inventory/status"'));
 
 console.log("ok: drive inventory snapshot, API, runner and rollout contracts");
