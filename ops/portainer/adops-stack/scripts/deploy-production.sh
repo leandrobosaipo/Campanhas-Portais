@@ -14,10 +14,17 @@ load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
 DISCOVERED_ENV=""
 DEPLOY_ENV=""
+ROLLBACK_ENV=""
 LEGACY_MONITOR_ID=""
 LEGACY_MONITOR_STOPPED="false"
 DEPLOY_COMPLETE="false"
+STACK_SWITCHED="false"
 cleanup() {
+  if [[ "$STACK_SWITCHED" == "true" && "$DEPLOY_COMPLETE" != "true" && -n "$ROLLBACK_ENV" ]]; then
+    printf 'Deploy incompleto; restaurando volumes anteriores app=%s web=%s\n' "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >&2
+    COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
+      bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >/dev/null 2>&1 || true
+  fi
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
     NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
       | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Status' | head -n 1 || true)"
@@ -27,6 +34,7 @@ cleanup() {
   fi
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
   [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
+  [[ -z "$ROLLBACK_ENV" ]] || rm -f "$ROLLBACK_ENV"
 }
 trap cleanup EXIT
 
@@ -42,6 +50,20 @@ if [[ -z "$STACK_ENV_FILE" || ! -f "$STACK_ENV_FILE" ]]; then
   [[ -s "$DISCOVERED_ENV" ]] || { printf 'Portainer stack environment is empty.\n' >&2; exit 1; }
   STACK_ENV_FILE="$DISCOVERED_ENV"
 fi
+
+env_value() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$STACK_ENV_FILE"
+}
+
+PREVIOUS_APP_VOLUME="$(env_value ADOPS_APP_SOURCE_VOLUME)"
+PREVIOUS_WEB_VOLUME="$(env_value ADOPS_WEB_PUBLIC_VOLUME)"
+PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
+PREVIOUS_IMAGE_TAG="$(env_value ADOPS_IMAGE_TAG)"
+PREVIOUS_APP_VOLUME="${PREVIOUS_APP_VOLUME:-adops_app_source}"
+PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
+PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-legacy}"
+PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
 
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
@@ -59,6 +81,8 @@ EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/ex
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
+export ADOPS_APP_SOURCE_VOLUME="${ADOPS_APP_SOURCE_VOLUME:-adops_app_source_${ADOPS_IMAGE_TAG}}"
+export ADOPS_WEB_PUBLIC_VOLUME="${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public_${ADOPS_IMAGE_TAG}}"
 
 # Docker's synchronous build stream exceeds Cloudflare's request timeout for
 # this Playwright image. The volume runtime is the production path already
@@ -77,10 +101,19 @@ if [[ -n "$LEGACY_MONITOR_ID" ]]; then
 fi
 
 DEPLOY_ENV="$(mktemp)"
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
-printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\n' "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" >> "$DEPLOY_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+chmod 600 "$DEPLOY_ENV"
+
+ROLLBACK_ENV="$(mktemp)"
+grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$ROLLBACK_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$PREVIOUS_IMAGE_TAG" "$PREVIOUS_DRIVE_MODE" "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >> "$ROLLBACK_ENV"
+chmod 600 "$ROLLBACK_ENV"
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
   bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
+STACK_SWITCHED="true"
 
 stable_checks=0
 for attempt in $(seq 1 60); do
@@ -109,4 +142,5 @@ printf '%s' "$RUNNER_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[
 printf '%s' "$MONITOR_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0]] | index("GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE") != null) and (.HostConfig.PortBindings | length == 0)' >/dev/null
 
 DEPLOY_COMPLETE="true"
-printf 'AdOps deployed release=%s backup=%s runtime=volume\n' "$ADOPS_RELEASE_SHA" "$BACKUP_NAME"
+printf 'AdOps deployed release=%s backup=%s runtime=volume app=%s web=%s\n' \
+  "$ADOPS_RELEASE_SHA" "$BACKUP_NAME" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME"

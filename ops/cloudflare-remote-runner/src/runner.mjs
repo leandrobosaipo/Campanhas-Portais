@@ -18,6 +18,8 @@ const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
 const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
+const RUNNER_HEARTBEAT_INTERVAL_MS = Number.parseInt(process.env.ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS || "60000", 10);
+const RUNNER_VERSION = (process.env.ADOPS_RELEASE_SHA || process.env.ADOPS_IMAGE_TAG || "development").trim();
 const ANALYTICS_REPORT_PROJECT_ROOT = process.env.ANALYTICS_REPORT_PROJECT_ROOT || "/Users/leandrobosaipo/.openclaw/workspace-codigo5-manutencao/projects/perrengue-ga4-relatorio-analytics";
 const ANALYTICS_REPORT_PYTHON = process.env.ANALYTICS_REPORT_PYTHON || path.join(ANALYTICS_REPORT_PROJECT_ROOT, ".venv/bin/python");
 const ANALYTICS_REPORT_HOOK_URL = (process.env.ANALYTICS_REPORT_HOOK_URL || "").trim();
@@ -86,6 +88,9 @@ const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-bac
   .filter(Boolean);
 let lastWatchdogAt = 0;
 let lastDrivePiMonitorAt = 0;
+let lastRunnerHeartbeatAt = 0;
+let runnerLastCycleError = null;
+let runnerLastSuccessAt = null;
 let googleDriveAccessTokenCache = null;
 
 const ANALYTICS_SITE_CONFIGS = {
@@ -154,6 +159,24 @@ async function privateApi(pathname, body) {
     throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
   }
   return payload;
+}
+
+async function sendRunnerHeartbeat(force = false) {
+  const now = Date.now();
+  if (!force && now - lastRunnerHeartbeatAt < RUNNER_HEARTBEAT_INTERVAL_MS) return null;
+  lastRunnerHeartbeatAt = now;
+  return privateApi("/api/ops/runner/heartbeat", {
+    runnerId: RUNNER_ID,
+    version: RUNNER_VERSION,
+    capabilities: {
+      jobKinds: kinds,
+      driveMonitorEnabled: DRIVE_PI_MONITOR_ENABLED,
+      healthPortEnabled: RUNNER_HEALTH_PORT > 0,
+    },
+    lastCycleAt: new Date(now).toISOString(),
+    lastSuccessAt: runnerLastSuccessAt,
+    lastError: runnerLastCycleError,
+  });
 }
 
 async function privateApiPatch(pathname, body) {
@@ -5101,17 +5124,23 @@ async function main() {
   console.log(`[runner] kinds=${kinds.join(",")}`);
   console.log(`[runner] drivePiMonitor=${DRIVE_PI_MONITOR_ENABLED ? "enabled" : "disabled"}`);
   startRunnerHealthServer();
+  await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
   while (true) {
     try {
+      await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
       await runWatchdogIfDue(false);
       await runDrivePiMonitorOnce();
       const handled = await runOnce();
+      runnerLastCycleError = null;
+      runnerLastSuccessAt = new Date().toISOString();
       if (!handled) {
         await sleep(POLL_INTERVAL_MS);
       }
     } catch (error) {
-      console.error("[runner] ciclo com erro", error instanceof Error ? error.message : String(error));
+      runnerLastCycleError = error instanceof Error ? error.message : String(error);
+      await sendRunnerHeartbeat(true).catch(() => null);
+      console.error("[runner] ciclo com erro", runnerLastCycleError);
       await sleep(POLL_INTERVAL_MS);
     }
   }
