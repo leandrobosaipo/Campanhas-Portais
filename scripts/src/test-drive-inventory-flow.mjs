@@ -61,6 +61,8 @@ assert(runner.includes('req.url !== "/healthz"'));
 assert(runner.includes('privateApi("/api/ops/runner/heartbeat"'));
 assert(ops.includes('router.post("/ops/runner/heartbeat"'));
 assert(heartbeats.includes("cod5_runner_heartbeats"));
+assert(heartbeats.includes("let schemaReady: Promise<void> | null = null"));
+assert(heartbeats.includes("schemaReady = null"));
 assert(worker.includes('path === "/api/ops/drive-inventory/status"'));
 
 console.log("ok: drive inventory snapshot, API, runner and rollout contracts");
