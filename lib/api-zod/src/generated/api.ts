@@ -786,6 +786,53 @@ export const CreateEvidenceBody = zod.object({
   titulo: zod.string().nullish(),
 });
 
+/**
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * @summary Export insertion evidence package
+ */
+export const ExportInsertionEvidencesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const exportInsertionEvidencesQueryModeDefault = `full`;
+export const exportInsertionEvidencesQueryVariantDefault = `original`;
+
+export const ExportInsertionEvidencesQueryParams = zod.object({
+  mode: zod
+    .enum(["full", "prints-only"])
+    .default(exportInsertionEvidencesQueryModeDefault),
+  variant: zod
+    .enum(["original", "web"])
+    .default(exportInsertionEvidencesQueryVariantDefault),
+  source: zod.coerce.string().nullish(),
+});
+
+/**
+ * @summary Describe or download evidence package by PI and site
+ */
+export const exportPiSitePackageQueryDownloadDefault = `0`;
+export const exportPiSitePackageQueryModeDefault = `full`;
+export const exportPiSitePackageQueryVariantDefault = `original`;
+
+export const ExportPiSitePackageQueryParams = zod.object({
+  piCodigo: zod.coerce.string(),
+  siteSigla: zod.coerce.string(),
+  download: zod
+    .enum(["0", "1"])
+    .default(exportPiSitePackageQueryDownloadDefault),
+  mode: zod
+    .enum(["full", "prints-only"])
+    .default(exportPiSitePackageQueryModeDefault),
+  variant: zod
+    .enum(["original", "web"])
+    .default(exportPiSitePackageQueryVariantDefault),
+});
+
+export const ExportPiSitePackageResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
 export const DeleteEvidenceParams = zod.object({
   id: zod.coerce.number(),
 });

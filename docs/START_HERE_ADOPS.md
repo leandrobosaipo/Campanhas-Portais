@@ -132,6 +132,7 @@ node --check scripts/src/capture-insertion-proof.cjs
 - `docs/base-de-conhecimento-do-projeto.md`
 - `docs/status-do-projeto.md`
 - `docs/prints-retroativos.md`
+- `docs/adops/evidence-web-print-export.md`
 - `docs/adops/pi-automation-v3/prd.md`
 - `docs/adops/pi-automation-v3/blueprint.md`
 - `docs/adops/pi-automation-v3/sdd.md`

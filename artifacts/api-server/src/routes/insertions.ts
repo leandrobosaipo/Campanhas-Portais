@@ -49,6 +49,18 @@ import { loadLocalCaptureMetadata, saveLocalCaptureMetadata } from "../lib/local
 import { generateOperationalDocument, listOperationalDocuments, type OperationalDocumentKind } from "../lib/operational-documents";
 import { getPrintRunner } from "../lib/print-runner";
 import type { PrintRunnerJobPayload, PrintRunnerJobResultItem } from "../lib/print-runner-contract";
+import {
+  buildDeliveryPackageName,
+  buildDeliveryPrintFileName,
+  calculateSavingsPercent,
+  deliverySegment,
+  EvidenceExportInputError,
+  parseEvidenceExportOptions,
+  prepareEvidencePng,
+  resolveDeliveryDateRange,
+  resolveDeliveryPiCode,
+  type EvidenceImageVariant,
+} from "../lib/evidence-export";
 
 const router: IRouter = Router();
 
@@ -398,6 +410,142 @@ function resolveOperationalPrintFolder(insertion: Awaited<ReturnType<typeof enri
     .toUpperCase();
 
   return safeFileName(normalized || "PRINTS", "PRINTS");
+}
+
+type PrintDeliveryMetrics = {
+  total: number;
+  generated: number;
+  failed: number;
+  originalBytes: number;
+  outputBytes: number;
+};
+
+function emptyPrintDeliveryMetrics(): PrintDeliveryMetrics {
+  return { total: 0, generated: 0, failed: 0, originalBytes: 0, outputBytes: 0 };
+}
+
+function mergePrintDeliveryMetrics(target: PrintDeliveryMetrics, source: PrintDeliveryMetrics) {
+  target.total += source.total;
+  target.generated += source.generated;
+  target.failed += source.failed;
+  target.originalBytes += source.originalBytes;
+  target.outputBytes += source.outputBytes;
+}
+
+function setPrintDeliveryHeaders(
+  res: any,
+  metrics: PrintDeliveryMetrics,
+  variant: EvidenceImageVariant,
+  requestId: string,
+) {
+  res.setHeader("cache-control", "no-store");
+  res.setHeader("x-adops-export-request-id", requestId);
+  res.setHeader("x-adops-export-mode", "prints-only");
+  res.setHeader("x-adops-export-variant", variant);
+  res.setHeader("x-adops-export-images-total", String(metrics.total));
+  res.setHeader("x-adops-export-images-generated", String(metrics.generated));
+  res.setHeader("x-adops-export-images-failed", String(metrics.failed));
+  res.setHeader("x-adops-export-original-bytes", String(metrics.originalBytes));
+  res.setHeader("x-adops-export-output-bytes", String(metrics.outputBytes));
+  res.setHeader("x-adops-export-savings-percent", String(calculateSavingsPercent(metrics.originalBytes, metrics.outputBytes)));
+  res.setHeader("access-control-expose-headers", [
+    "content-disposition",
+    "x-adops-export-request-id",
+    "x-adops-export-mode",
+    "x-adops-export-variant",
+    "x-adops-export-images-total",
+    "x-adops-export-images-generated",
+    "x-adops-export-images-failed",
+    "x-adops-export-original-bytes",
+    "x-adops-export-output-bytes",
+    "x-adops-export-savings-percent",
+  ].join(", "));
+}
+
+async function writePrintDeliveryFolder(options: {
+  rootDir: string;
+  insertion: Awaited<ReturnType<typeof enrichInsertion>>;
+  evidences: Array<typeof evidencesTable.$inferSelect>;
+  variant: EvidenceImageVariant;
+  packageNameOverride?: string;
+}) {
+  const { rootDir, insertion, evidences, variant } = options;
+  const dates = evidences.map((evidence) => getEvidenceDateKey(evidence.titulo));
+  const packageName = options.packageNameOverride ?? buildDeliveryPackageName(insertion, dates);
+  const packageDir = join(rootDir, packageName);
+  await mkdir(packageDir, { recursive: true });
+
+  const metrics = emptyPrintDeliveryMetrics();
+  metrics.total = evidences.length;
+  const failures: Array<{ evidenceId: number; date: string | null; error: string }> = [];
+  const dateOccurrences = new Map<string, number>();
+
+  for (const evidence of evidences) {
+    const dateKey = getEvidenceDateKey(evidence.titulo);
+    if (!dateKey || !isValidHttpUrl(evidence.arquivoUrl)) {
+      metrics.failed += 1;
+      failures.push({
+        evidenceId: evidence.id,
+        date: dateKey,
+        error: !dateKey ? "evidence_date_missing" : "evidence_url_invalid",
+      });
+      continue;
+    }
+
+    const occurrence = (dateOccurrences.get(dateKey) ?? 0) + 1;
+    dateOccurrences.set(dateKey, occurrence);
+    const fileName = buildDeliveryPrintFileName(
+      insertion,
+      dateKey,
+      occurrence > 1 ? `EV-${evidence.id}` : undefined,
+    );
+
+    try {
+      const response = await fetch(evidence.arquivoUrl!);
+      if (!response.ok) throw new EvidenceExportInputError(`download_http_${response.status}`, 422);
+      const prepared = await prepareEvidencePng({
+        source: Buffer.from(await response.arrayBuffer()),
+        outputPath: join(packageDir, fileName),
+        variant,
+      });
+      metrics.generated += 1;
+      metrics.originalBytes += prepared.originalBytes;
+      metrics.outputBytes += prepared.outputBytes;
+    } catch (error) {
+      metrics.failed += 1;
+      failures.push({
+        evidenceId: evidence.id,
+        date: dateKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { packageName, metrics, failures };
+}
+
+function buildPiSitePrintDeliveryArchiveName(
+  descriptor: { piCodigo: string; siteSigla: string },
+  insertions: Array<Awaited<ReturnType<typeof enrichInsertion>>>,
+  evidenceDates: string[],
+) {
+  if (insertions.length === 1) return buildDeliveryPackageName(insertions[0], evidenceDates);
+  const range = resolveDeliveryDateRange(
+    {
+      periodoInicio: insertions.map((item) => item.periodoInicio).filter(Boolean).sort()[0] ?? null,
+      periodoFim: insertions.map((item) => item.periodoFim).filter(Boolean).sort().at(-1) ?? null,
+    },
+    evidenceDates,
+  );
+  return [
+    deliverySegment(descriptor.siteSigla, "SITE"),
+    "PI",
+    resolveDeliveryPiCode(descriptor.piCodigo),
+    "PRINTS",
+    range.start,
+    "A",
+    range.end,
+  ].join("-");
 }
 
 async function attachOperationalDocumentsToExport(tempDir: string, insertion: Awaited<ReturnType<typeof enrichInsertion>>, lines: string[]) {
@@ -1900,6 +2048,16 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
     return;
   }
 
+  let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
+  try {
+    exportOptions = parseEvidenceExportOptions(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
   const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
   if (!rawInsertion) {
     res.status(404).json({ error: "Inserção não encontrada." });
@@ -1908,9 +2066,67 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
 
   const insertion = await enrichInsertion(rawInsertion);
   const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId)).orderBy(evidencesTable.criadoEm);
-  const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
   const exportRequestId = crypto.randomUUID();
   const downloadSource = typeof req.query.source === "string" ? req.query.source : "unknown";
+
+  if (exportOptions.mode === "prints-only") {
+    if (evidences.length === 0) {
+      res.status(409).json({ error: "A inserção não possui prints para exportação." });
+      return;
+    }
+    const tempDir = await mkdtemp(join(tmpdir(), `adops-print-delivery-${insertionId}-`));
+    let zipPath: string | null = null;
+    try {
+      const delivery = await writePrintDeliveryFolder({
+        rootDir: tempDir,
+        insertion,
+        evidences,
+        variant: exportOptions.variant,
+      });
+      if (delivery.failures.length > 0) {
+        setPrintDeliveryHeaders(res, delivery.metrics, exportOptions.variant, exportRequestId);
+        await rm(tempDir, { recursive: true, force: true });
+        res.status(422).json({
+          error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.",
+          requestId: exportRequestId,
+          failed: delivery.failures,
+        });
+        return;
+      }
+
+      zipPath = join(tmpdir(), `${delivery.packageName}-${exportRequestId}.zip`);
+      await execFileAsync("zip", ["-rq", zipPath, delivery.packageName], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+      setPrintDeliveryHeaders(res, delivery.metrics, exportOptions.variant, exportRequestId);
+      (req as any).log?.info?.({
+        exportRequestId,
+        insertionId,
+        source: downloadSource,
+        mode: exportOptions.mode,
+        variant: exportOptions.variant,
+        ...delivery.metrics,
+      }, "print delivery export completed");
+      res.download(zipPath, `${delivery.packageName}.zip`, async () => {
+        await Promise.allSettled([
+          rm(tempDir, { recursive: true, force: true }),
+          rm(zipPath!, { force: true }),
+        ]);
+      });
+      return;
+    } catch (error) {
+      await Promise.allSettled([
+        rm(tempDir, { recursive: true, force: true }),
+        zipPath ? rm(zipPath, { force: true }) : Promise.resolve(),
+      ]);
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao gerar o pacote de prints.",
+        requestId: exportRequestId,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
   (req as any).log?.info?.({
     exportRequestId,
     insertionId,
@@ -2128,6 +2344,16 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const piCodigo = typeof req.query.piCodigo === "string" ? req.query.piCodigo : "";
   const siteSigla = typeof req.query.siteSigla === "string" ? req.query.siteSigla : "";
   const download = String(req.query.download ?? "") === "1";
+  let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
+
+  try {
+    exportOptions = parseEvidenceExportOptions(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
 
   if (!piCodigo.trim()) {
     res.status(400).json({ error: "piCodigo é obrigatório." });
@@ -2165,6 +2391,77 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const exportableInsertionIds = new Set(descriptor.exportableInsertionIds);
   const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
+
+  if (exportOptions.mode === "prints-only") {
+    const exportRequestId = crypto.randomUUID();
+    const aggregateMetrics = emptyPrintDeliveryMetrics();
+    const allEvidenceDates: string[] = [];
+    const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
+    const packageNameOccurrences = new Map<string, number>();
+    let zipPath: string | null = null;
+    try {
+      for (const insertion of exportableInsertions) {
+        const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        for (const evidence of evidences) {
+          const dateKey = getEvidenceDateKey(evidence.titulo);
+          if (dateKey) allEvidenceDates.push(dateKey);
+        }
+        if (evidences.length === 0) {
+          failures.push({ insertionId: insertion.id, evidenceId: 0, date: null, error: "no_evidence_images" });
+          continue;
+        }
+        const basePackageName = buildDeliveryPackageName(
+          insertion,
+          evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
+        );
+        const packageOccurrence = (packageNameOccurrences.get(basePackageName) ?? 0) + 1;
+        packageNameOccurrences.set(basePackageName, packageOccurrence);
+        const delivery = await writePrintDeliveryFolder({
+          rootDir: tempDir,
+          insertion,
+          evidences,
+          variant: exportOptions.variant,
+          packageNameOverride: packageOccurrence > 1 ? `${basePackageName}-INSERCAO-${insertion.id}` : basePackageName,
+        });
+        mergePrintDeliveryMetrics(aggregateMetrics, delivery.metrics);
+        failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
+      }
+
+      if (failures.length > 0) {
+        setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);
+        await rm(tempDir, { recursive: true, force: true });
+        res.status(422).json({
+          error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.",
+          requestId: exportRequestId,
+          failed: failures,
+        });
+        return;
+      }
+
+      const archiveBase = buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
+      zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
+      await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+      setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);
+      res.download(zipPath, `${archiveBase}.zip`, async () => {
+        await Promise.allSettled([
+          rm(tempDir, { recursive: true, force: true }),
+          rm(zipPath!, { force: true }),
+        ]);
+      });
+      return;
+    } catch (error) {
+      await Promise.allSettled([
+        rm(tempDir, { recursive: true, force: true }),
+        zipPath ? rm(zipPath, { force: true }) : Promise.resolve(),
+      ]);
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao gerar o pacote consolidado de prints.",
+        requestId: exportRequestId,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
 
   const lines: string[] = [
     "PACOTE OPERACIONAL POR PI E SITE",

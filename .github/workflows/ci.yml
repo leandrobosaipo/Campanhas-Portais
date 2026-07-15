@@ -32,6 +32,9 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --dir scripts run test:api-bundle-runtime
+      - name: Install image export runtime
+        run: sudo apt-get update && sudo apt-get install -y python3-pil zip unzip
+      - run: pnpm --dir scripts run test:evidence-web-export
       - run: pnpm --filter @workspace/adops run build
       - run: pnpm --dir scripts run test:runtime-auth
       - run: pnpm --dir scripts run test:drive-pi-event-flow

@@ -874,6 +874,65 @@ export type ListInsertionsParams = {
   atrasado?: boolean | null;
 };
 
+export type ExportInsertionEvidencesParams = {
+  mode?: ExportInsertionEvidencesMode;
+  variant?: ExportInsertionEvidencesVariant;
+  /**
+   * @nullable
+   */
+  source?: string | null;
+};
+
+export type ExportInsertionEvidencesMode =
+  (typeof ExportInsertionEvidencesMode)[keyof typeof ExportInsertionEvidencesMode];
+
+export const ExportInsertionEvidencesMode = {
+  full: "full",
+  "prints-only": "prints-only",
+} as const;
+
+export type ExportInsertionEvidencesVariant =
+  (typeof ExportInsertionEvidencesVariant)[keyof typeof ExportInsertionEvidencesVariant];
+
+export const ExportInsertionEvidencesVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type ExportPiSitePackageParams = {
+  piCodigo: string;
+  siteSigla: string;
+  download?: ExportPiSitePackageDownload;
+  mode?: ExportPiSitePackageMode;
+  variant?: ExportPiSitePackageVariant;
+};
+
+export type ExportPiSitePackageDownload =
+  (typeof ExportPiSitePackageDownload)[keyof typeof ExportPiSitePackageDownload];
+
+export const ExportPiSitePackageDownload = {
+  NUMBER_0: "0",
+  NUMBER_1: "1",
+} as const;
+
+export type ExportPiSitePackageMode =
+  (typeof ExportPiSitePackageMode)[keyof typeof ExportPiSitePackageMode];
+
+export const ExportPiSitePackageMode = {
+  full: "full",
+  "prints-only": "prints-only",
+} as const;
+
+export type ExportPiSitePackageVariant =
+  (typeof ExportPiSitePackageVariant)[keyof typeof ExportPiSitePackageVariant];
+
+export const ExportPiSitePackageVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type ExportPiSitePackage200One = { [key: string]: unknown };
+
 export type GetDashboardSummaryParams = {
   /**
    * @nullable

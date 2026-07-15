@@ -34,6 +34,9 @@ import type {
   DashboardSummary,
   ErrorResponse,
   Evidence,
+  ExportInsertionEvidencesParams,
+  ExportPiSitePackage200One,
+  ExportPiSitePackageParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
@@ -2007,6 +2010,227 @@ export const useCreateEvidence = <
 > => {
   return useMutation(getCreateEvidenceMutationOptions(options));
 };
+
+/**
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * @summary Export insertion evidence package
+ */
+export const getExportInsertionEvidencesUrl = (
+  id: number,
+  params?: ExportInsertionEvidencesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/insertions/${id}/evidences/export.zip?${stringifiedParams}`
+    : `/api/insertions/${id}/evidences/export.zip`;
+};
+
+export const exportInsertionEvidences = async (
+  id: number,
+  params?: ExportInsertionEvidencesParams,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getExportInsertionEvidencesUrl(id, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getExportInsertionEvidencesQueryKey = (
+  id: number,
+  params?: ExportInsertionEvidencesParams,
+) => {
+  return [
+    `/api/insertions/${id}/evidences/export.zip`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getExportInsertionEvidencesQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportInsertionEvidences>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  params?: ExportInsertionEvidencesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportInsertionEvidences>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getExportInsertionEvidencesQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportInsertionEvidences>>
+  > = ({ signal }) =>
+    exportInsertionEvidences(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportInsertionEvidences>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ExportInsertionEvidencesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportInsertionEvidences>>
+>;
+export type ExportInsertionEvidencesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Export insertion evidence package
+ */
+
+export function useExportInsertionEvidences<
+  TData = Awaited<ReturnType<typeof exportInsertionEvidences>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  params?: ExportInsertionEvidencesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportInsertionEvidences>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getExportInsertionEvidencesQueryOptions(
+    id,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Describe or download evidence package by PI and site
+ */
+export const getExportPiSitePackageUrl = (
+  params: ExportPiSitePackageParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/pi-site-exports?${stringifiedParams}`
+    : `/api/pi-site-exports`;
+};
+
+export const exportPiSitePackage = async (
+  params: ExportPiSitePackageParams,
+  options?: RequestInit,
+): Promise<ExportPiSitePackage200One | Blob> => {
+  return customFetch<ExportPiSitePackage200One | Blob>(
+    getExportPiSitePackageUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getExportPiSitePackageQueryKey = (
+  params?: ExportPiSitePackageParams,
+) => {
+  return [`/api/pi-site-exports`, ...(params ? [params] : [])] as const;
+};
+
+export const getExportPiSitePackageQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportPiSitePackage>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: ExportPiSitePackageParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportPiSitePackage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getExportPiSitePackageQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportPiSitePackage>>
+  > = ({ signal }) =>
+    exportPiSitePackage(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportPiSitePackage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ExportPiSitePackageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportPiSitePackage>>
+>;
+export type ExportPiSitePackageQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Describe or download evidence package by PI and site
+ */
+
+export function useExportPiSitePackage<
+  TData = Awaited<ReturnType<typeof exportPiSitePackage>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params: ExportPiSitePackageParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof exportPiSitePackage>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getExportPiSitePackageQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 export const getDeleteEvidenceUrl = (id: number) => {
   return `/api/evidences/${id}`;
