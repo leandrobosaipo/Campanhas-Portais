@@ -555,8 +555,8 @@ function categoryClassFromSlug(slug) {
   const normalized = String(slug || "").toLowerCase();
   if (normalized.includes("esporte")) return "badge-cat badge-cat--esportes";
   if (normalized.includes("politica")) return "badge-cat badge-cat--politica";
-  if (normalized.includes("vovo")) return "badge-cat badge-cat--vovo-de-olho";
   if (normalized.includes("meme")) return "badge-cat badge-cat--memes-do-vovo";
+  if (normalized.includes("vovo")) return "badge-cat badge-cat--vovo-de-olho";
   return "badge-cat";
 }
 
@@ -1806,12 +1806,39 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     for (const post of Array.isArray(adminRetroPosts) ? adminRetroPosts : []) pushUnique(post);
     for (const post of index) pushUnique(post);
 
-    const posts = combinedIndex
+    const allPosts = combinedIndex
       .map((post) => ({ ...post, _date: parseLocalDate(post.date || post.localDate || post.publishedAt) }))
       .filter((post) => post._date && post._date.getTime() <= cutoff.getTime())
       .sort((left, right) => right._date.getTime() - left._date.getTime());
+    if (allPosts.length < 1) return { applied: false, reason: "not_enough_retro_posts", posts: 0 };
+    const normalizeCategory = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const isMemePost = (post) => {
+      const categorySlugs = [post.categorySlug, ...(Array.isArray(post.categorySlugs) ? post.categorySlugs : [])]
+        .map(normalizeCategory);
+      const categoryName = normalizeCategory(post.category || post.categoryName);
+      const categoryClass = normalizeCategory(post.categoryClass);
+      return categorySlugs.includes("memes-do-vovo")
+        || categoryName === "memes-do-vovo"
+        || categoryName.startsWith("memes-do-vovo-")
+        || categoryClass.includes("memes-do-vovo");
+    };
+    const posts = allPosts.filter((post) => !isMemePost(post));
+    const excludedMemePosts = allPosts.length - posts.length;
     const minRequiredPosts = 4;
-    if (posts.length < 1) return { applied: false, reason: "not_enough_retro_posts", posts: posts.length };
+    if (posts.length < 1) {
+      return {
+        applied: false,
+        reason: "not_enough_editorial_retro_posts",
+        posts: posts.length,
+        totalPosts: allPosts.length,
+        excludedMemePosts,
+      };
+    }
     const sparseMode = posts.length < minRequiredPosts;
     const pickPost = (index) => posts[index] || posts[index % posts.length] || null;
 
@@ -1875,6 +1902,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
         time.textContent = `${parts.dateText} • ${parts.timeText}`;
       }
       article.setAttribute("data-adops-retro-post-date", post.date || post.localDate || post.publishedAt || "");
+      article.setAttribute("data-adops-retro-category-slug", normalizeCategory(post.categorySlug || post.category));
       article.setAttribute("data-date", post.date || post.localDate || post.publishedAt || "");
       article.setAttribute("data-datetime", post.publishedAt || post.date || "");
       return true;
@@ -1894,7 +1922,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     if (nowList && nowPosts.length > 0) {
       nowList.innerHTML = nowPosts.map((post) => {
         const parts = formatParts(post);
-        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}">
+        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}" data-adops-retro-category-slug="${normalizeCategory(post.categorySlug || post.category)}">
           <a class="group flex min-h-[44px] items-center gap-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white" href="${absoluteUrl(post.url || `/${post.slug || ""}/`)}">
             <span class="w-14 shrink-0 text-xs font-semibold text-secondary-500 tabular-nums" title="Atualizado em ${parts.label}">${parts.timeText}</span>
             <span class="min-w-0 flex-1">
@@ -1917,18 +1945,57 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
       if (candidate && updateArticle(article, candidate)) offset += 1;
     });
 
+    const editorialMemeLeaks = [];
+    const findMemeLeaks = (root, area) => {
+      if (!root) return;
+      const candidates = root.matches?.("article,li")
+        ? [root]
+        : Array.from(root.querySelectorAll("article,li"));
+      for (const candidate of candidates) {
+        const badgeText = normalizeCategory(candidate.querySelector(".badge-cat")?.textContent);
+        const categorySlug = normalizeCategory(candidate.getAttribute("data-adops-retro-category-slug"));
+        const memeClass = candidate.querySelector(".badge-cat--memes-do-vovo");
+        const memeCategoryLink = candidate.querySelector('a[href*="/categoria/memes-do-vovo/"]');
+        if (categorySlug === "memes-do-vovo" || badgeText === "memes-do-vovo" || memeClass || memeCategoryLink) {
+          editorialMemeLeaks.push({
+            area,
+            categorySlug,
+            badgeText,
+            href: candidate.querySelector("a[href]")?.getAttribute("href") || "",
+          });
+        }
+      }
+    };
+    leadArticles.forEach((article) => findMemeLeaks(article, "destaques"));
+    findMemeLeaks(nowList, "agora");
+    if (editorialMemeLeaks.length > 0) {
+      return {
+        applied: false,
+        reason: "retro_editorial_meme_leak",
+        editorialMemeLeaks: editorialMemeLeaks.slice(0, 12),
+        posts: posts.length,
+        totalPosts: allPosts.length,
+        excludedMemePosts,
+      };
+    }
+
     document.documentElement.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
     document.documentElement.setAttribute("data-adops-static-retro-preview-sparse", sparseMode ? "1" : "0");
     document.documentElement.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
+    document.documentElement.setAttribute("data-adops-static-retro-memes-excluded", String(excludedMemePosts));
     document.body?.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
     document.body?.setAttribute("data-adops-static-retro-preview-sparse", sparseMode ? "1" : "0");
     document.body?.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
+    document.body?.setAttribute("data-adops-static-retro-memes-excluded", String(excludedMemePosts));
     return {
       applied: true,
       cutoff: rawCaptureAt,
       posts: posts.length,
       sparse: sparseMode,
       postsAvailable: posts.length,
+      totalPostsAvailable: allPosts.length,
+      excludedMemePosts,
+      editorialMemeLeaks: [],
       postsRequired: minRequiredPosts,
       adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
     };
@@ -6003,6 +6070,9 @@ async function main() {
         ...retroGate,
         sparse: retroPreview.sparse === true,
         postsAvailable: Number.isFinite(Number(retroPreview.postsAvailable ?? retroPreview.posts)) ? Number(retroPreview.postsAvailable ?? retroPreview.posts) : null,
+        totalPostsAvailable: Number.isFinite(Number(retroPreview.totalPostsAvailable)) ? Number(retroPreview.totalPostsAvailable) : null,
+        excludedMemePosts: Number.isFinite(Number(retroPreview.excludedMemePosts)) ? Number(retroPreview.excludedMemePosts) : 0,
+        editorialMemeLeaks: Array.isArray(retroPreview.editorialMemeLeaks) ? retroPreview.editorialMemeLeaks : [],
         postsRequired: Number.isFinite(Number(retroPreview.postsRequired)) ? Number(retroPreview.postsRequired) : null,
       };
     }
