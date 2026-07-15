@@ -2205,6 +2205,27 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       article.setAttribute("data-adops-retro-post-date", post.date);
     });
 
+    const reservedArticles = new Set([hero, ...latest]);
+    const remainingArticles = Array.from(document.querySelectorAll("main article"))
+      .filter((article) => !reservedArticles.has(article));
+    let remainingOffset = 1 + sidebarPosts.length;
+    remainingArticles.forEach((article) => {
+      const post = retroPosts[remainingOffset % retroPosts.length];
+      remainingOffset += 1;
+      if (!post) return;
+      setLink(article, post);
+      setImage(article, post);
+      const title = article.querySelector("h1,h2,h3,h4,.entry-title");
+      if (title) title.textContent = post.title;
+      const excerpt = article.querySelector("p");
+      if (excerpt && post.excerpt) excerpt.textContent = post.excerpt;
+      setCategory(article, post);
+      const dateNodes = article.querySelectorAll("time, .text-xs span, .post-date, .entry-date");
+      dateNodes.forEach((dateNode) => { dateNode.textContent = formatDate(post.date); });
+      article.setAttribute("data-adops-retro-post-slug", post.slug);
+      article.setAttribute("data-adops-retro-post-date", post.date);
+    });
+
     const renderedHeroSlug = hero.getAttribute("data-adops-retro-post-slug") || "";
     const renderedLatestSlugs = latest.map((article) => article.getAttribute("data-adops-retro-post-slug") || "").filter(Boolean);
     const expectedLatestSlugs = sidebarPosts.map((post) => post.slug);
@@ -2229,6 +2250,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       renderedHeroSlug,
       expectedLatestSlugs,
       renderedLatestSlugs,
+      rewrittenArticles: 1 + latest.length + remainingArticles.length,
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts });
