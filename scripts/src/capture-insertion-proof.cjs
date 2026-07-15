@@ -560,6 +560,19 @@ function categoryClassFromSlug(slug) {
   return "badge-cat";
 }
 
+function normalizePerrengueWpRestBefore(captureAt) {
+  const raw = String(captureAt || "").trim();
+  if (!raw) return "";
+  const withoutZone = raw
+    .replace(/[zZ]$/, "")
+    .replace(/[+-]\d{2}:?\d{2}$/, "")
+    .replace(" ", "T");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(withoutZone)) return `${withoutZone}T23:59:59`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(withoutZone)) return `${withoutZone}:00`;
+  const match = withoutZone.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+  return match?.[1] || "";
+}
+
 async function fetchPerrengueAdminRetroPosts(captureAt) {
   const cutoff = parseIsoLikeDate(captureAt);
   if (!cutoff) return [];
@@ -567,7 +580,8 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
   const after = `${monthStart.toISOString().slice(0, 10)}T00:00:00`;
-  const before = String(captureAt).replace(/[+-]\d{2}:?\d{2}$/, "").replace(/Z$/, "");
+  const before = normalizePerrengueWpRestBefore(captureAt);
+  if (!before) throw new Error(`perrengue_admin_retro_posts_failed: invalid_capture_at=${captureAt}`);
   const host = process.env.ADOPS_PERRENGUE_ADMIN_WP_API_BASE || "https://admin.perrenguematogrosso.com/wp-json/wp/v2/posts";
   const posts = [];
   for (let pageNo = 1; pageNo <= 5; pageNo += 1) {
@@ -582,12 +596,20 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
       response = await fetch(url, {
         headers: { "user-agent": "adops-capture-retro-preview/1.0" },
       });
-    } catch {
+    } catch (error) {
+      if (pageNo === 1) {
+        throw new Error(`perrengue_admin_retro_posts_failed: request_error=${error instanceof Error ? error.message : String(error)}`);
+      }
       break;
     }
-    if (response.status === 400 || response.status === 404) break;
-    if (!response.ok) break;
-    const items = await response.json().catch(() => []);
+    if ((response.status === 400 || response.status === 404) && pageNo > 1) break;
+    if (!response.ok) {
+      throw new Error(`perrengue_admin_retro_posts_failed: http_${response.status}; before=${before}`);
+    }
+    const items = await response.json().catch(() => null);
+    if (!Array.isArray(items)) {
+      throw new Error(`perrengue_admin_retro_posts_failed: invalid_json; before=${before}`);
+    }
     if (!Array.isArray(items) || items.length === 0) break;
     for (const item of items) {
       const embedded = item?._embedded || {};
@@ -616,6 +638,9 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
         excerpt: stripHtml(item?.excerpt?.rendered || ""),
       });
     }
+    const editorialPosts = posts.filter((post) => post.categorySlug !== "memes-do-vovo");
+    const editorialPostsWithImage = editorialPosts.filter((post) => post.image);
+    if (editorialPosts.length >= 24 && editorialPostsWithImage.length >= 6) break;
     if (items.length < 100) break;
   }
   return posts;
@@ -1768,11 +1793,17 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
   return audit;
 }
 
-async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
+async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "perrenguematogrosso.com") return false;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
-  const adminRetroPosts = await fetchPerrengueAdminRetroPosts(captureAt);
-  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts }) => {
+  const adminRetroPosts = Array.isArray(options.adminRetroPosts)
+    ? options.adminRetroPosts
+    : await fetchPerrengueAdminRetroPosts(captureAt);
+  if (adminRetroPosts.length < 1 && options.requireAdminPosts !== false) {
+    throw new Error(`perrengue_static_retro_preview_failed: admin_retro_posts_unavailable; captureAt=${captureAt}`);
+  }
+  const requireEditorialTargets = options.requireEditorialTargets !== false;
+  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts, requireEditorialTargets }) => {
     const parseLocalDate = (value) => {
       const raw = String(value || "").trim();
       if (!raw) return null;
@@ -1860,6 +1891,9 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     };
     const categoryClass = (post) => post.categoryClass || "badge-cat";
     const text = (value) => String(value || "").trim();
+    const postSlug = (post) => text(post.slug || post.url)
+      .replace(/^https?:\/\/[^/]+/i, "")
+      .replace(/^\/+|\/+$/g, "");
     const absoluteUrl = (url) => {
       const raw = text(url);
       if (!raw) return "/";
@@ -1902,6 +1936,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
         time.textContent = `${parts.dateText} • ${parts.timeText}`;
       }
       article.setAttribute("data-adops-retro-post-date", post.date || post.localDate || post.publishedAt || "");
+      article.setAttribute("data-adops-retro-post-slug", postSlug(post));
       article.setAttribute("data-adops-retro-category-slug", normalizeCategory(post.categorySlug || post.category));
       article.setAttribute("data-date", post.date || post.localDate || post.publishedAt || "");
       article.setAttribute("data-datetime", post.publishedAt || post.date || "");
@@ -1922,7 +1957,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     if (nowList && nowPosts.length > 0) {
       nowList.innerHTML = nowPosts.map((post) => {
         const parts = formatParts(post);
-        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}" data-adops-retro-category-slug="${normalizeCategory(post.categorySlug || post.category)}">
+        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}" data-adops-retro-post-slug="${postSlug(post)}" data-adops-retro-category-slug="${normalizeCategory(post.categorySlug || post.category)}">
           <a class="group flex min-h-[44px] items-center gap-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white" href="${absoluteUrl(post.url || `/${post.slug || ""}/`)}">
             <span class="w-14 shrink-0 text-xs font-semibold text-secondary-500 tabular-nums" title="Atualizado em ${parts.label}">${parts.timeText}</span>
             <span class="min-w-0 flex-1">
@@ -1979,6 +2014,36 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
       };
     }
 
+    if (requireEditorialTargets && (leadArticles.length < 1 || !nowList)) {
+      return {
+        applied: false,
+        reason: "retro_editorial_targets_missing",
+        leadArticles: leadArticles.length,
+        nowListFound: Boolean(nowList),
+      };
+    }
+    const expectedLeadSlugs = leadArticles
+      .map((_, index) => leadPosts[index] || pickPost(index))
+      .filter(Boolean)
+      .map(postSlug);
+    const renderedLeadSlugs = leadArticles.map((article) => text(article.getAttribute("data-adops-retro-post-slug")));
+    const expectedNowSlugs = nowPosts.map(postSlug);
+    const renderedNowSlugs = nowList
+      ? Array.from(nowList.querySelectorAll("li")).map((item) => text(item.getAttribute("data-adops-retro-post-slug")))
+      : [];
+    const editorialContentMatches = JSON.stringify(expectedLeadSlugs) === JSON.stringify(renderedLeadSlugs)
+      && JSON.stringify(expectedNowSlugs) === JSON.stringify(renderedNowSlugs);
+    if (requireEditorialTargets && !editorialContentMatches) {
+      return {
+        applied: false,
+        reason: "retro_editorial_content_mismatch",
+        expectedLeadSlugs,
+        renderedLeadSlugs,
+        expectedNowSlugs,
+        renderedNowSlugs,
+      };
+    }
+
     document.documentElement.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
     document.documentElement.setAttribute("data-adops-static-retro-preview-sparse", sparseMode ? "1" : "0");
     document.documentElement.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
@@ -1996,6 +2061,12 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
       totalPostsAvailable: allPosts.length,
       excludedMemePosts,
       editorialMemeLeaks: [],
+      source: "admin-wp+search-index",
+      expectedLeadSlugs,
+      renderedLeadSlugs,
+      expectedNowSlugs,
+      renderedNowSlugs,
+      editorialContentMatches,
       postsRequired: minRequiredPosts,
       adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
     };
@@ -6073,6 +6144,13 @@ async function main() {
         totalPostsAvailable: Number.isFinite(Number(retroPreview.totalPostsAvailable)) ? Number(retroPreview.totalPostsAvailable) : null,
         excludedMemePosts: Number.isFinite(Number(retroPreview.excludedMemePosts)) ? Number(retroPreview.excludedMemePosts) : 0,
         editorialMemeLeaks: Array.isArray(retroPreview.editorialMemeLeaks) ? retroPreview.editorialMemeLeaks : [],
+        retroContentSource: retroPreview.source || null,
+        adminPosts: Number.isFinite(Number(retroPreview.adminPosts)) ? Number(retroPreview.adminPosts) : 0,
+        expectedLeadSlugs: Array.isArray(retroPreview.expectedLeadSlugs) ? retroPreview.expectedLeadSlugs : [],
+        renderedLeadSlugs: Array.isArray(retroPreview.renderedLeadSlugs) ? retroPreview.renderedLeadSlugs : [],
+        expectedNowSlugs: Array.isArray(retroPreview.expectedNowSlugs) ? retroPreview.expectedNowSlugs : [],
+        renderedNowSlugs: Array.isArray(retroPreview.renderedNowSlugs) ? retroPreview.renderedNowSlugs : [],
+        editorialContentMatches: retroPreview.editorialContentMatches === true,
         postsRequired: Number.isFinite(Number(retroPreview.postsRequired)) ? Number(retroPreview.postsRequired) : null,
       };
     }
@@ -6703,6 +6781,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     applyPerrengueStaticRetroPreview,
+    normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
     auditFinalPngSlotPixels,
