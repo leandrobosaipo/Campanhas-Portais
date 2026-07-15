@@ -118,7 +118,43 @@ function sanitizeAliases(value: unknown) {
 }
 
 function sanitizeAuditConfig(value: unknown) {
-  const payload = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const payload = value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
+  if (payload.readinessMode != null) {
+    const mode = String(payload.readinessMode).trim().toLowerCase();
+    if (!["legacy", "strict-visible"].includes(mode)) {
+      throw new Error("auditConfig.readinessMode deve ser legacy ou strict-visible.");
+    }
+    payload.readinessMode = mode;
+  }
+  if (payload.criticalContentSelectors != null) {
+    if (!Array.isArray(payload.criticalContentSelectors)) {
+      throw new Error("auditConfig.criticalContentSelectors deve ser uma lista.");
+    }
+    if (payload.criticalContentSelectors.length > 12) {
+      throw new Error("auditConfig.criticalContentSelectors excede 12 itens.");
+    }
+    payload.criticalContentSelectors = payload.criticalContentSelectors.map((selector, index) => (
+      sanitizeSelector(selector, `auditConfig.criticalContentSelectors[${index}]`)
+    ));
+  }
+  const numericLimits: Record<string, [number, number]> = {
+    readinessTimeoutMs: [5_000, 90_000],
+    layoutStableSamples: [2, 8],
+    layoutStableIntervalMs: [100, 2_000],
+    captureRetryCount: [0, 3],
+    criticalContentMinStddev: [1, 64],
+  };
+  for (const [key, [minimum, maximum]] of Object.entries(numericLimits)) {
+    if (payload[key] == null) continue;
+    const numeric = Number(payload[key]);
+    if (!Number.isFinite(numeric) || numeric < minimum || numeric > maximum) {
+      throw new Error(`auditConfig.${key} deve ficar entre ${minimum} e ${maximum}.`);
+    }
+    payload[key] = numeric;
+  }
+  if (payload.requireCriticalContentPainted != null && typeof payload.requireCriticalContentPainted !== "boolean") {
+    throw new Error("auditConfig.requireCriticalContentPainted deve ser booleano.");
+  }
   const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   if (bytes > MAX_AUDIT_JSON_BYTES) {
     throw new Error(`auditConfig excede ${MAX_AUDIT_JSON_BYTES} bytes.`);

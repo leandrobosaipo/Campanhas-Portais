@@ -35,6 +35,9 @@ jobs:
       - name: Install image export runtime
         run: sudo apt-get update && sudo apt-get install -y python3-pil zip unzip
       - run: pnpm --dir scripts run test:evidence-web-export
+      - name: Install capture browser
+        run: pnpm --dir scripts exec playwright install --with-deps chromium
+      - run: pnpm --dir scripts run test:strict-capture-readiness
       - run: pnpm --filter @workspace/adops run build
       - run: pnpm --dir scripts run test:runtime-auth
       - run: pnpm --dir scripts run test:drive-pi-event-flow

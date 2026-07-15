@@ -34,6 +34,7 @@ export type PrintRunnerJobResultItem = {
   uploadedUrl?: string | null;
   captureLogId?: string | null;
   probableCause?: string | null;
+  readinessAudit?: Record<string, unknown> | null;
   reason?: string;
   error?: string;
 };

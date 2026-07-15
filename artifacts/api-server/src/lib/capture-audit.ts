@@ -318,6 +318,14 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const viewportBackgroundsLoaded = Number(visualAudit.viewportBackgroundsLoaded ?? 0);
   const viewportVideosTotal = Number(visualAudit.viewportVideosTotal ?? 0);
   const viewportVideosLoaded = Number(visualAudit.viewportVideosLoaded ?? 0);
+  const readinessAudit = metadata.readinessAudit && typeof metadata.readinessAudit === "object"
+    ? metadata.readinessAudit as Record<string, unknown>
+    : null;
+  const metadataRequiredGates = metadata.requiredGates && typeof metadata.requiredGates === "object"
+    ? metadata.requiredGates as Record<string, unknown>
+    : null;
+  const readinessRequired = metadataRequiredGates?.requireReadinessAudit === true;
+  const readinessOk = !readinessRequired || readinessAudit?.approved === true;
   const videoProofCurrentTime = Number(videoProof.currentTime ?? 0);
   const videoProofDuration = Number(videoProof.duration ?? 0);
   const videoProgressVisible = videoProof.progressVisible === true || videoProof.overlayInjected === true;
@@ -364,6 +372,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     slotImagesTotal === slotImagesLoaded &&
     viewportBackgroundsTotal === viewportBackgroundsLoaded &&
     viewportVideosTotal === viewportVideosLoaded &&
+    readinessOk &&
     (!requireStableFrame || slotStableFrameOk) &&
     (!requireLegibleFrame || slotLegibilityOk) &&
     (!requireIdentityFrame || identityFrameOk) &&
@@ -415,6 +424,15 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       code: "slot_images_incomplete",
       label: "Imagens do anúncio incompletas",
       detail: `${slotImagesLoaded}/${slotImagesTotal} imagens do slot do anúncio carregaram completamente.`,
+    });
+  }
+  if (!readinessOk) {
+    issues.push({
+      code: readinessAudit ? "readiness_audit_failed" : "readiness_audit_missing",
+      label: "Conteúdo crítico incompleto",
+      detail: readinessAudit
+        ? `readinessAudit.approved=false: ${JSON.stringify(readinessAudit)}`
+        : "A captura exige readinessAudit, mas o metadado está ausente.",
     });
   }
   if (!mediaMatchesInsertion) {
@@ -543,6 +561,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       viewportBackgroundsLoaded,
       viewportVideosTotal,
       viewportVideosLoaded,
+      readinessAudit,
+      readinessOk,
       slotStableFrameOk,
       slotLegibilityOk,
       slotMotionScore: typeof metadata.slotMotionScore === "number" ? metadata.slotMotionScore : null,

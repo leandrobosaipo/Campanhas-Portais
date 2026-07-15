@@ -111,6 +111,9 @@ class LocalPrintRunner implements PrintRunnerPort {
         uploadedUrl: capture.uploadedUrl ?? null,
         captureLogId: capture.captureLogId ?? null,
         probableCause: capture.probableCause ?? null,
+        readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
+          ? capture.readinessAudit as Record<string, unknown>
+          : null,
       };
     } catch (error) {
       return {

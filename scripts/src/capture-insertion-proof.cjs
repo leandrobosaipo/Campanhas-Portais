@@ -66,7 +66,19 @@ function parseArgs(argv) {
     jobId: options.jobId ? String(options.jobId) : null,
     runnerJobId: options.runnerJobId ? String(options.runnerJobId) : null,
     diagnosticMode: options.diagnosticMode === true || options.diagnosticMode === "true",
+    captureAttempt: Math.max(1, Number(options.captureAttempt || 1)),
   };
+}
+
+function appendCaptureRetryQuery(value, attempt) {
+  if (!value || Number(attempt) <= 1) return value;
+  try {
+    const parsed = new URL(value);
+    parsed.searchParams.set("_adops_capture_retry", String(attempt));
+    return parsed.toString();
+  } catch {
+    return value;
+  }
 }
 
 function loadPlaywright() {
@@ -1484,6 +1496,20 @@ async function fetchCaptureAuditStatus(apiBase, insertionId, targetDate) {
   });
   if (!response.ok) return null;
   return response.json().catch(() => null);
+}
+
+async function validateCaptureChecklist(apiBase, insertionId, targetDate, metadata) {
+  const response = await fetch(`${apiBase}/audit-checklists/validate-proof`, {
+    method: "POST",
+    headers: buildApiHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ insertionId, date: targetDate, metadata }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.approved !== true) {
+    const details = payload?.blockingIssues || payload?.issues || payload?.error || `HTTP ${response.status}`;
+    throw new Error(`capture_audit_failed: checklist_pre_upload_failed: ${JSON.stringify(details)}`);
+  }
+  return payload;
 }
 
 function createStageRecorder() {
@@ -2935,6 +2961,9 @@ function determineProbableCause(payload) {
   if (errorCode === "placeholder_only") {
     return { probableCause: "placeholder_only", confidence: 97, nextAction: "O site exibiu placeholder/modelo. Revisar publicação ativa do anúncio antes de recapturar." };
   }
+  if (["critical_image_not_loaded", "critical_image_not_painted", "critical_background_not_loaded", "resource_request_failed", "readiness_timeout", "layout_not_stable", "final_viewport_changed"].includes(errorCode)) {
+    return { probableCause: "critical_content_not_ready", confidence: 96, nextAction: "Revisar a mídia crítica indicada no readinessAudit e recapturar somente depois que o frame final estiver carregado e pintado." };
+  }
   if (errorCode === "capture_legibility_failed" && Number(slot.nonBgRatio ?? 0) < 0.02) {
     return { probableCause: "slot_without_useful_content", confidence: 88, nextAction: "Aguardar um frame melhor ou revisar o criativo/slot porque o banner capturado ficou sem conteúdo útil." };
   }
@@ -2952,6 +2981,9 @@ function determineProbableCause(payload) {
 
 function detectErrorCode(error) {
   const message = String(error?.message || error || "");
+  for (const code of ["critical_image_not_loaded", "critical_image_not_painted", "critical_background_not_loaded", "resource_request_failed", "readiness_timeout", "layout_not_stable", "final_viewport_changed"]) {
+    if (message.includes(code)) return code;
+  }
   if (message.includes("placeholder")) return "placeholder_only";
   if (message.includes("capture_legibility_failed")) return "capture_legibility_failed";
   if (message.includes("capture_audit_failed")) return "capture_audit_failed";
@@ -4012,6 +4044,19 @@ function compactGifFrameCandidates(candidates, chosenIndex, maxItems = 36) {
 
 function compactMetadataForPersistence(metadata) {
   if (!metadata || typeof metadata !== "object") return metadata;
+  const readinessAudit = metadata.readinessAudit && typeof metadata.readinessAudit === "object"
+    ? metadata.readinessAudit
+    : null;
+  const compactPixelAudit = (audit) => audit && typeof audit === "object"
+    ? {
+        ok: audit.ok === true,
+        pixelScale: audit.pixelScale ?? null,
+        failedElements: Array.isArray(audit.elements)
+          ? audit.elements.filter((item) => item?.painted !== true).slice(0, 8)
+          : [],
+        error: audit.error || null,
+      }
+    : null;
   return {
     ...metadata,
     contentDateSamples: [],
@@ -4027,6 +4072,17 @@ function compactMetadataForPersistence(metadata) {
           domFrameSamples: [],
         }
       : metadata.visualAudit,
+    readinessAudit: readinessAudit
+      ? {
+          ...readinessAudit,
+          elements: [],
+          ignoredLoadedResourceFailures: Array.isArray(readinessAudit.ignoredLoadedResourceFailures)
+            ? readinessAudit.ignoredLoadedResourceFailures.slice(0, 8)
+            : [],
+          pixelAudit: compactPixelAudit(readinessAudit.pixelAudit),
+          finalPixelAudit: compactPixelAudit(readinessAudit.finalPixelAudit),
+        }
+      : readinessAudit,
   };
 }
 
@@ -4319,6 +4375,334 @@ async function waitForViewportVisuals(page, slotSelector) {
 
   await page.waitForTimeout(1600);
   return stats;
+}
+
+function normalizeStrictReadinessConfig(auditConfig = {}) {
+  const selectors = Array.isArray(auditConfig.criticalContentSelectors)
+    ? auditConfig.criticalContentSelectors
+        .filter((value) => typeof value === "string" && value.trim())
+        .map((value) => value.trim())
+        .slice(0, 12)
+    : [];
+  return {
+    mode: String(auditConfig.readinessMode || "legacy").trim().toLowerCase(),
+    criticalContentSelectors: selectors,
+    timeoutMs: Math.min(90_000, Math.max(5_000, Number(auditConfig.readinessTimeoutMs ?? 45_000))),
+    layoutStableSamples: Math.min(8, Math.max(2, Number(auditConfig.layoutStableSamples ?? 3))),
+    layoutStableIntervalMs: Math.min(2_000, Math.max(100, Number(auditConfig.layoutStableIntervalMs ?? 350))),
+    captureRetryCount: Math.min(3, Math.max(0, Number(auditConfig.captureRetryCount ?? 2))),
+    requirePainted: auditConfig.requireCriticalContentPainted !== false,
+    minContentStddev: Math.max(1, Number(auditConfig.criticalContentMinStddev ?? 4)),
+  };
+}
+
+function auditVisibleMediaPixels(pngPath, elements, options = {}) {
+  const payload = Buffer.from(JSON.stringify({
+    pngPath,
+    elements,
+    viewportWidthCss: Number(options.viewportWidthCss || 0),
+    topOffsetPx: Number(options.topOffsetPx || 0),
+    minContentStddev: Number(options.minContentStddev ?? 4),
+  }), "utf8").toString("base64");
+  const py = `
+import base64, json, os
+from PIL import Image, ImageStat
+
+payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
+path = payload["pngPath"]
+if not os.path.exists(path):
+    print(json.dumps({"ok": False, "error": "missing_file", "elements": []}))
+    raise SystemExit(0)
+img = Image.open(path).convert("RGB")
+viewport_width = max(1.0, float(payload.get("viewportWidthCss") or img.size[0]))
+scale = img.size[0] / viewport_width
+top_offset = float(payload.get("topOffsetPx") or 0)
+minimum = float(payload.get("minContentStddev") or 4)
+results = []
+for item in payload.get("elements") or []:
+    box = item.get("box") or {}
+    left = max(0, int(round(float(box.get("left") or 0) * scale)))
+    top = max(0, int(round(float(box.get("top") or 0) * scale + top_offset)))
+    width = max(1, int(round(float(box.get("width") or 0) * scale)))
+    height = max(1, int(round(float(box.get("height") or 0) * scale)))
+    right = min(img.size[0], left + width)
+    bottom = min(img.size[1], top + height)
+    if right <= left or bottom <= top:
+        results.append({**item, "painted": False, "reason": "empty_crop"})
+        continue
+    crop = img.crop((left, top, right, bottom))
+    stat = ImageStat.Stat(crop)
+    stddev = sum(stat.stddev) / max(1, len(stat.stddev))
+    brightness = sum(stat.mean) / max(1, len(stat.mean))
+    painted = stddev >= minimum
+    results.append({
+      **item,
+      "painted": painted,
+      "meanStddev": round(stddev, 5),
+      "meanBrightness": round(brightness, 5),
+      "cropSize": {"width": crop.size[0], "height": crop.size[1]},
+      "reason": None if painted else "flat_or_blank",
+    })
+print(json.dumps({
+  "ok": all(item.get("painted") is True for item in results),
+  "pixelScale": round(scale, 5),
+  "elements": results,
+}))
+`;
+  try {
+    return JSON.parse(execFileSync(CAPTURE_PYTHON_BIN, ["-c", py], { stdio: "pipe", encoding: "utf8" }).trim() || "{}");
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      elements: [],
+    };
+  }
+}
+
+async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, resourceFailures = []) {
+  const config = normalizeStrictReadinessConfig(auditConfig);
+  const startedAt = Date.now();
+  const deadline = startedAt + config.timeoutMs;
+  let lastSnapshot = null;
+  let stableCount = 0;
+  let attempts = 0;
+
+  while (Date.now() < deadline) {
+    attempts += 1;
+    const snapshot = await page.evaluate(async ({ selector, criticalSelectors }) => {
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const visibleBox = (node) => {
+        if (!(node instanceof Element)) return null;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        const left = Math.max(0, rect.left);
+        const top = Math.max(0, rect.top);
+        const right = Math.min(viewportWidth, rect.right);
+        const bottom = Math.min(viewportHeight, rect.bottom);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0) return null;
+        if (right - left < 16 || bottom - top < 16) return null;
+        return { left, top, width: right - left, height: bottom - top };
+      };
+      const safeUrl = (value) => {
+        try {
+          const parsed = new URL(String(value || ""), window.location.href);
+          return `${parsed.origin}${parsed.pathname}`;
+        } catch {
+          return String(value || "").split(/[?#]/)[0];
+        }
+      };
+      const activateImage = async (img) => {
+        if (!(img instanceof HTMLImageElement)) return false;
+        const current = img.getAttribute("src") || "";
+        const lazySrc = img.getAttribute("data-lazy-src") || img.getAttribute("data-src") || img.getAttribute("data-original");
+        const lazySrcset = img.getAttribute("data-lazy-srcset") || img.getAttribute("data-srcset");
+        img.loading = "eager";
+        img.fetchPriority = "high";
+        if (lazySrc && (!current || current.startsWith("data:") || /placeholder|blank/i.test(current))) img.src = lazySrc;
+        if (lazySrcset && !img.srcset) img.srcset = lazySrcset;
+        const picture = img.closest("picture");
+        picture?.querySelectorAll("source").forEach((source) => {
+          const candidate = source.getAttribute("data-srcset") || source.getAttribute("data-lazy-srcset");
+          if (candidate && !source.getAttribute("srcset")) source.setAttribute("srcset", candidate);
+        });
+        try {
+          if (typeof img.decode === "function") await img.decode();
+        } catch {}
+        if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) return true;
+        await new Promise((resolve) => {
+          const done = () => resolve();
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+          window.setTimeout(done, 1400);
+        });
+        return Boolean(img.complete && img.naturalWidth > 1 && img.naturalHeight > 1);
+      };
+      const loadUrl = async (url) => {
+        if (!url) return false;
+        return await new Promise((resolve) => {
+          const image = new Image();
+          const done = (value) => resolve(value);
+          image.onload = () => done(true);
+          image.onerror = () => done(false);
+          window.setTimeout(() => done(false), 1800);
+          image.src = url;
+        });
+      };
+
+      let fontsReady = true;
+      try {
+        if (document.fonts?.ready) await document.fonts.ready;
+        fontsReady = document.fonts ? document.fonts.status === "loaded" : true;
+      } catch {
+        fontsReady = false;
+      }
+
+      const explicit = new Set();
+      for (const criticalSelector of criticalSelectors) {
+        try {
+          document.querySelectorAll(criticalSelector).forEach((node) => explicit.add(node));
+        } catch {}
+      }
+      try {
+        const slot = document.querySelector(selector);
+        if (slot) {
+          explicit.add(slot);
+          slot.querySelectorAll("img,video,picture,[style*='background-image']").forEach((node) => explicit.add(node));
+        }
+      } catch {}
+
+      const nodes = new Set(Array.from(document.querySelectorAll("img,video,canvas,iframe,main [class],aside [class],header [class],[style*='background-image']")));
+      explicit.forEach((node) => nodes.add(node));
+      const elements = [];
+      for (const node of nodes) {
+        const box = visibleBox(node);
+        if (!box) continue;
+        const isExplicit = explicit.has(node);
+        if (node instanceof HTMLImageElement) {
+          const loaded = await activateImage(node);
+          const source = safeUrl(node.currentSrc || node.getAttribute("src") || node.getAttribute("data-lazy-src") || node.getAttribute("data-src"));
+          if (!source || /perrengue-sublogo\.png$|transparent|spacer/i.test(source)) continue;
+          elements.push({ kind: "image", selector: isExplicit ? "critical" : "visible", source, box, loaded, paintRequired: isExplicit || box.width * box.height >= 10000 });
+          continue;
+        }
+        if (node instanceof HTMLVideoElement) {
+          node.preload = "auto";
+          try { if (node.readyState < 2) node.load(); } catch {}
+          const poster = safeUrl(node.poster || "");
+          const loaded = node.readyState >= 2 || node.currentTime > 0.2 || (poster ? await loadUrl(poster) : false);
+          elements.push({ kind: "video", selector: isExplicit ? "critical" : "visible", source: safeUrl(node.currentSrc || node.querySelector("source")?.getAttribute("src") || poster), box, loaded, paintRequired: false });
+          continue;
+        }
+        if (node instanceof HTMLCanvasElement || node instanceof HTMLIFrameElement) {
+          elements.push({
+            kind: node instanceof HTMLCanvasElement ? "canvas" : "iframe",
+            selector: isExplicit ? "critical" : "visible",
+            source: node instanceof HTMLIFrameElement ? safeUrl(node.src) : "canvas",
+            box,
+            loaded: node instanceof HTMLCanvasElement ? node.width > 1 && node.height > 1 : true,
+            paintRequired: isExplicit || box.width * box.height >= 10000,
+          });
+          continue;
+        }
+        if (node instanceof HTMLElement) {
+          const match = window.getComputedStyle(node).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/i);
+          if (!match?.[1]) continue;
+          const source = safeUrl(match[1]);
+          const loaded = await loadUrl(match[1]);
+          elements.push({ kind: "background", selector: isExplicit ? "critical" : "visible", source, box, loaded, paintRequired: isExplicit || box.width * box.height >= 10000 });
+        }
+      }
+      const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+      const signature = JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth,
+        viewportHeight,
+        documentHeight,
+        boxes: elements.map((item) => [item.kind, Math.round(item.box.left), Math.round(item.box.top), Math.round(item.box.width), Math.round(item.box.height)]),
+      });
+      const viewportSignature = JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth,
+        viewportHeight,
+        documentHeight,
+      });
+      return { fontsReady, elements, signature, viewportSignature, viewportWidth, viewportHeight, documentHeight };
+    }, { selector: slotSelector, criticalSelectors: config.criticalContentSelectors });
+
+    const allLoaded = snapshot.fontsReady && snapshot.elements.every((item) => item.loaded === true);
+    stableCount = snapshot.signature === lastSnapshot?.signature ? stableCount + 1 : 1;
+    lastSnapshot = snapshot;
+    if (allLoaded && stableCount >= config.layoutStableSamples) {
+      const failedSources = new Set(resourceFailures.map((item) => item.url));
+      const criticalFailures = snapshot.elements.filter((item) => failedSources.has(item.source) && item.loaded !== true);
+      const ignoredLoadedResourceFailures = snapshot.elements.filter((item) => failedSources.has(item.source) && item.loaded === true);
+      return {
+        mode: config.mode,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        fontsReady: snapshot.fontsReady,
+        layoutStable: true,
+        criticalElementsTotal: snapshot.elements.length,
+        criticalElementsLoaded: snapshot.elements.filter((item) => item.loaded).length,
+        criticalElementsPainted: 0,
+        failedResources: criticalFailures,
+        ignoredLoadedResourceFailures,
+        elements: snapshot.elements,
+        viewportWidth: snapshot.viewportWidth,
+        signature: snapshot.signature,
+        viewportSignature: snapshot.viewportSignature,
+        approved: criticalFailures.length === 0,
+      };
+    }
+    await page.waitForTimeout(config.layoutStableIntervalMs);
+  }
+
+  return {
+    mode: config.mode,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    fontsReady: lastSnapshot?.fontsReady === true,
+    layoutStable: false,
+    criticalElementsTotal: lastSnapshot?.elements?.length ?? 0,
+    criticalElementsLoaded: lastSnapshot?.elements?.filter((item) => item.loaded).length ?? 0,
+    criticalElementsPainted: 0,
+    failedResources: resourceFailures,
+    elements: lastSnapshot?.elements ?? [],
+    viewportWidth: lastSnapshot?.viewportWidth ?? 0,
+    signature: lastSnapshot?.signature ?? null,
+    viewportSignature: lastSnapshot?.viewportSignature ?? null,
+    approved: false,
+  };
+}
+
+async function captureStrictReadinessCandidate(page, viewportPng, slotSelector, auditConfig, resourceFailures = []) {
+  const config = normalizeStrictReadinessConfig(auditConfig);
+  if (config.mode !== "strict-visible") return null;
+  const totalAttempts = config.captureRetryCount + 1;
+  const perAttemptTimeoutMs = Math.max(5_000, Math.floor(config.timeoutMs / totalAttempts));
+  const attemptAuditConfig = {
+    ...auditConfig,
+    readinessTimeoutMs: perAttemptTimeoutMs,
+  };
+  let latest = null;
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    latest = await waitForFinalViewportReadiness(page, slotSelector, attemptAuditConfig, resourceFailures);
+    latest.attempts = attempt;
+    if (latest.layoutStable && latest.fontsReady && latest.failedResources.length === 0) {
+      await page.screenshot({ path: viewportPng });
+      const paintTargets = latest.elements.filter((item) => item.paintRequired === true);
+      const pixelAudit = auditVisibleMediaPixels(viewportPng, paintTargets, {
+        viewportWidthCss: latest.viewportWidth,
+        minContentStddev: config.minContentStddev,
+      });
+      const after = await page.evaluate(() => JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        documentHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+      }));
+      latest.pixelAudit = pixelAudit;
+      latest.criticalElementsPainted = Array.isArray(pixelAudit.elements)
+        ? pixelAudit.elements.filter((item) => item.painted === true).length
+        : 0;
+      latest.finalViewportChanged = latest.viewportSignature !== after;
+      latest.approved = !latest.finalViewportChanged && (!config.requirePainted || pixelAudit.ok === true);
+      if (latest.approved) return latest;
+    }
+    if (attempt <= config.captureRetryCount) {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("resize"));
+        window.dispatchEvent(new Event("scroll"));
+      });
+      await page.waitForTimeout(config.layoutStableIntervalMs * attempt);
+    }
+  }
+  return latest;
 }
 
 async function assertStickyHeaderInViewport(page, mapping) {
@@ -4989,6 +5373,8 @@ async function main() {
   let lastSelectorFailure = null;
   let frameSelection = null;
   let visualAudit = null;
+  let readinessAudit = null;
+  let finalReadinessAudit = null;
   let creativePlacementAudit = null;
   let headerAdPolicyAudit = null;
   let finalPngHeaderAdPolicyAudit = null;
@@ -5021,6 +5407,25 @@ async function main() {
   }
   const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+  const resourceFailures = [];
+  const recordResourceFailure = (url, resourceType, status, reason) => {
+    if (!url || !["image", "media", "font"].includes(resourceType)) return;
+    let sanitizedUrl = String(url).split(/[?#]/)[0];
+    try {
+      const parsed = new URL(url);
+      sanitizedUrl = `${parsed.origin}${parsed.pathname}`;
+    } catch {}
+    if (resourceFailures.some((item) => item.url === sanitizedUrl && item.status === status && item.reason === reason)) return;
+    resourceFailures.push({ url: sanitizedUrl, resourceType, status, reason });
+  };
+  page.on("requestfailed", (request) => {
+    recordResourceFailure(request.url(), request.resourceType(), null, request.failure()?.errorText || "request_failed");
+  });
+  page.on("response", (response) => {
+    if (response.status() < 400) return;
+    const request = response.request();
+    recordResourceFailure(response.url(), request.resourceType(), response.status(), `http_${response.status()}`);
+  });
 
   try {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
@@ -5055,7 +5460,8 @@ async function main() {
       Pragma: "no-cache",
     });
 
-    for (const candidateUrl of candidateUrls) {
+    for (const originalCandidateUrl of candidateUrls) {
+      const candidateUrl = appendCaptureRetryQuery(originalCandidateUrl, args.captureAttempt);
       try {
         await page.goto(candidateUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
         await dismissCookieConsent(page, mapping);
@@ -5435,6 +5841,37 @@ async function main() {
       throw new Error(`capture_audit_failed: final_viewport_target_not_visible: ${finalViewportTargetAudit.reason || "unknown"} selector=${finalViewportTargetSelector}`);
     }
     stickyHeaderViewportAudit = await assertStickyHeaderInViewport(page, mapping);
+    const readinessStage = trace.start("critical_assets");
+    readinessAudit = await captureStrictReadinessCandidate(
+      page,
+      viewportPng,
+      resolvedSlotSelector,
+      mapping.auditConfig,
+      resourceFailures,
+    );
+    if (readinessAudit && readinessAudit.approved !== true) {
+      const failedPixel = readinessAudit.pixelAudit?.elements?.find((item) => item.painted !== true);
+      const notLoaded = readinessAudit.elements?.find((item) => item.loaded !== true);
+      const code = !readinessAudit.fontsReady
+        ? "readiness_timeout"
+        : notLoaded?.kind === "background"
+          ? "critical_background_not_loaded"
+          : notLoaded
+            ? "critical_image_not_loaded"
+            : !readinessAudit.layoutStable
+              ? "layout_not_stable"
+              : readinessAudit.finalViewportChanged
+                ? "final_viewport_changed"
+        : readinessAudit.failedResources?.length
+          ? "resource_request_failed"
+          : failedPixel?.kind === "background"
+            ? "critical_background_not_loaded"
+            : "critical_image_not_painted";
+      const failedSource = notLoaded?.source || failedPixel?.source || JSON.stringify(readinessAudit.failedResources || []);
+      trace.finish(readinessStage, "error", readinessAudit, code, failedSource || "readiness gate failed");
+      throw new Error(`${code}: ${failedSource}`);
+    }
+    trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
@@ -5450,7 +5887,9 @@ async function main() {
         error: contextScreenshotError instanceof Error ? contextScreenshotError.message : String(contextScreenshotError),
       };
     }
-    await page.screenshot({ path: viewportPng });
+    if (!readinessAudit) {
+      await page.screenshot({ path: viewportPng });
+    }
     trace.finish(slotCapturedStage, "ok", {
       slotVisibility,
       viewportImagesLoaded: visualAudit?.viewportImagesLoaded ?? null,
@@ -5621,6 +6060,24 @@ async function main() {
       const details = finalPngSlotAudit.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
       throw new Error(`capture_audit_failed: final_png_slot_audit_failed: ${details}`);
     }
+    if (readinessAudit) {
+      const config = normalizeStrictReadinessConfig(mapping.auditConfig);
+      const paintTargets = readinessAudit.elements.filter((item) => item.paintRequired === true);
+      const finalPixelAudit = auditVisibleMediaPixels(finalPng, paintTargets, {
+        viewportWidthCss: readinessAudit.viewportWidth,
+        topOffsetPx: Number(desktopFrameMetadata.chromeFrameHeight ?? 0),
+        minContentStddev: config.minContentStddev,
+      });
+      finalReadinessAudit = {
+        ...readinessAudit,
+        finalPixelAudit,
+        approved: readinessAudit.approved === true && (!config.requirePainted || finalPixelAudit.ok === true),
+      };
+      if (!finalReadinessAudit.approved) {
+        const failed = finalPixelAudit.elements?.find((item) => item.painted !== true);
+        throw new Error(`critical_image_not_painted: final_png ${failed?.source || finalPixelAudit.error || "unknown"}`);
+      }
+    }
     const shouldAuditPerrengueHeaderAdPolicy = mapping.domain === "perrenguematogrosso.com" &&
       mapping.scrollMode === "top" &&
       mapping.slotSelector !== "#cod5-bottom-popup-ad .g.g-9";
@@ -5670,6 +6127,7 @@ async function main() {
         requireNoOverlay: mapping.auditConfig?.requireNoOverlay !== false,
         requireNo404: mapping.auditConfig?.requireNo404 !== false,
         requireVideoControls: /VIDEO/i.test(insertion.localFormatoNormalizado || insertion.localFormato || ""),
+        requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,
@@ -5765,6 +6223,7 @@ async function main() {
       frameSelectionDowngradeReason: frameSelection.frameSelectionDowngradeReason || null,
       videoProof,
       visualAudit,
+      readinessAudit: finalReadinessAudit || readinessAudit,
       pendingLogFlush,
       slotPng,
       contextPng,
@@ -5775,7 +6234,8 @@ async function main() {
     writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
 
     if (args.apiBase && internalCaptureToken) {
-      await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
+      metadata.checklistValidation = await validateCaptureChecklist(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
+      writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
     }
 
     const uploadedStage = trace.start("uploaded");
@@ -5796,6 +6256,9 @@ async function main() {
     if (args.saveEvidence && publicUrl) {
       const title = `Print ${isoDate} - ${titleDate} [semi-auto]`;
       await upsertEvidence(args.apiBase, insertion, publicUrl, title, args.replaceExisting);
+    }
+    if (args.apiBase && internalCaptureToken) {
+      await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
     }
 
     const slotInfo = describeLocalImage(slotPng);
@@ -5967,6 +6430,7 @@ async function main() {
       uploadedUrl: publicUrl,
       metadata: metaJson,
       captureLogId: logId,
+      readinessAudit: finalReadinessAudit || readinessAudit,
       logPersistence,
       pendingLogFlush,
       retroGate,
@@ -6172,6 +6636,9 @@ if (require.main === module) {
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
     auditFinalPngSlotPixels,
+    auditVisibleMediaPixels,
+    captureStrictReadinessCandidate,
+    normalizeStrictReadinessConfig,
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
   };
