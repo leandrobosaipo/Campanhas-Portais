@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { applyPerrengueStaticRetroPreview } = require("./capture-insertion-proof.cjs");
+const {
+  applyPerrengueStaticRetroPreview,
+  normalizePerrengueWpRestBefore,
+} = require("./capture-insertion-proof.cjs");
 
 function makePost(day, title = `Post ${day}`, category = "Notícias", categorySlug = "noticias") {
   return {
@@ -92,9 +95,20 @@ function makePage(indexPayload) {
 }
 
 const mapping = { domain: "perrenguematogrosso.com", page: "home" };
+const applyPreview = (posts, captureAt) => applyPerrengueStaticRetroPreview(
+  makePage(posts),
+  mapping,
+  captureAt,
+  { adminRetroPosts: posts, requireEditorialTargets: false },
+);
+
+assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17"), "2026-07-07T19:17:00");
+assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17:32-04:00"), "2026-07-07T19:17:32");
+assert.equal(normalizePerrengueWpRestBefore("2026-07-07"), "2026-07-07T23:59:59");
+assert.equal(normalizePerrengueWpRestBefore("invalido"), "");
 
 {
-  const result = await applyPerrengueStaticRetroPreview(makePage([makePost(1)]), mapping, "2026-06-01T18:30");
+  const result = await applyPreview([makePost(1)], "2026-06-01T18:30");
   assert.equal(result.applied, true);
   assert.equal(result.sparse, true);
   assert.equal(result.postsAvailable, 1);
@@ -102,7 +116,7 @@ const mapping = { domain: "perrenguematogrosso.com", page: "home" };
 }
 
 {
-  const result = await applyPerrengueStaticRetroPreview(makePage([makePost(1), makePost(2), makePost(3)]), mapping, "2026-06-03T18:30");
+  const result = await applyPreview([makePost(1), makePost(2), makePost(3)], "2026-06-03T18:30");
   assert.equal(result.applied, true);
   assert.equal(result.sparse, true);
   assert.equal(result.postsAvailable, 3);
@@ -110,7 +124,7 @@ const mapping = { domain: "perrenguematogrosso.com", page: "home" };
 }
 
 {
-  const result = await applyPerrengueStaticRetroPreview(makePage([makePost(1), makePost(2), makePost(3), makePost(4)]), mapping, "2026-06-04T18:30");
+  const result = await applyPreview([makePost(1), makePost(2), makePost(3), makePost(4)], "2026-06-04T18:30");
   assert.equal(result.applied, true);
   assert.equal(result.sparse, false);
   assert.equal(result.postsAvailable, 4);
@@ -118,9 +132,8 @@ const mapping = { domain: "perrenguematogrosso.com", page: "home" };
 }
 
 {
-  const result = await applyPerrengueStaticRetroPreview(
-    makePage([makeMemePost(4), makePost(3), makeMemePost(2), makePost(1)]),
-    mapping,
+  const result = await applyPreview(
+    [makeMemePost(4), makePost(3), makeMemePost(2), makePost(1)],
     "2026-06-04T18:30",
   );
   assert.equal(result.applied, true);
@@ -132,14 +145,14 @@ const mapping = { domain: "perrenguematogrosso.com", page: "home" };
 
 {
   await assert.rejects(
-    () => applyPerrengueStaticRetroPreview(makePage([makeMemePost(1)]), mapping, "2026-06-01T18:30"),
+    () => applyPreview([makeMemePost(1)], "2026-06-01T18:30"),
     /perrengue_static_retro_preview_failed: not_enough_editorial_retro_posts/,
   );
 }
 
 {
   await assert.rejects(
-    () => applyPerrengueStaticRetroPreview(makePage([makePost(2)]), mapping, "2026-06-01T18:30"),
+    () => applyPreview([makePost(2)], "2026-06-01T18:30"),
     /perrengue_static_retro_preview_failed: not_enough_retro_posts/,
   );
 }
