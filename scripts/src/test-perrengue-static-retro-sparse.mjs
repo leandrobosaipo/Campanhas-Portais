@@ -4,15 +4,20 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { applyPerrengueStaticRetroPreview } = require("./capture-insertion-proof.cjs");
 
-function makePost(day, title = `Post ${day}`) {
+function makePost(day, title = `Post ${day}`, category = "Notícias", categorySlug = "noticias") {
   return {
     title,
     url: `/post-${day}/`,
     image: `https://perrenguematogrosso.com/app/uploads/2026/06/post-${day}.jpg`,
     date: `2026-06-${String(day).padStart(2, "0")}T12:00:00`,
     publishedAt: `2026-06-${String(day).padStart(2, "0")}T16:00:00Z`,
-    category: "Notícias",
+    category,
+    categorySlug,
   };
+}
+
+function makeMemePost(day, title = `Meme ${day}`) {
+  return makePost(day, title, "Memes do vovô", "memes-do-vovo");
 }
 
 function makeDocument() {
@@ -110,6 +115,26 @@ const mapping = { domain: "perrenguematogrosso.com", page: "home" };
   assert.equal(result.sparse, false);
   assert.equal(result.postsAvailable, 4);
   assert.equal(result.postsRequired, 4);
+}
+
+{
+  const result = await applyPerrengueStaticRetroPreview(
+    makePage([makeMemePost(4), makePost(3), makeMemePost(2), makePost(1)]),
+    mapping,
+    "2026-06-04T18:30",
+  );
+  assert.equal(result.applied, true);
+  assert.equal(result.postsAvailable, 2);
+  assert.equal(result.totalPostsAvailable, 4);
+  assert.equal(result.excludedMemePosts, 2);
+  assert.deepEqual(result.editorialMemeLeaks, []);
+}
+
+{
+  await assert.rejects(
+    () => applyPerrengueStaticRetroPreview(makePage([makeMemePost(1)]), mapping, "2026-06-01T18:30"),
+    /perrengue_static_retro_preview_failed: not_enough_editorial_retro_posts/,
+  );
 }
 
 {
