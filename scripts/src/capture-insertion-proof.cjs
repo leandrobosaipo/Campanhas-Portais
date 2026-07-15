@@ -573,6 +573,8 @@ function normalizePerrengueWpRestBefore(captureAt) {
   return match?.[1] || "";
 }
 
+const perrengueAdminRetroPostsCache = new Map();
+
 async function fetchPerrengueAdminRetroPosts(captureAt) {
   const cutoff = parseIsoLikeDate(captureAt);
   if (!cutoff) return [];
@@ -583,6 +585,9 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
   const before = normalizePerrengueWpRestBefore(captureAt);
   if (!before) throw new Error(`perrengue_admin_retro_posts_failed: invalid_capture_at=${captureAt}`);
   const host = process.env.ADOPS_PERRENGUE_ADMIN_WP_API_BASE || "https://admin.perrenguematogrosso.com/wp-json/wp/v2/posts";
+  const cacheKey = `${host}|${after}|${before}`;
+  const cachedPosts = perrengueAdminRetroPostsCache.get(cacheKey);
+  if (Array.isArray(cachedPosts)) return cachedPosts;
   const posts = [];
   for (let pageNo = 1; pageNo <= 5; pageNo += 1) {
     const url = new URL(host);
@@ -643,6 +648,7 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
     if (editorialPosts.length >= 24 && editorialPostsWithImage.length >= 6) break;
     if (items.length < 100) break;
   }
+  perrengueAdminRetroPostsCache.set(cacheKey, posts);
   return posts;
 }
 
@@ -3606,7 +3612,24 @@ async function captureStableSlotFrame(page, selector, outputPath, options = {}) 
     const samplePath = index === sampleCount - 1
       ? outputPath
       : outputPath.replace(/\.png$/i, `-sample-${String(index + 1).padStart(2, "0")}.png`);
-    await page.locator(selector).screenshot({ path: samplePath });
+    const locator = page.locator(selector).first();
+    let captured = false;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await forceMatchedAdVisible(page);
+      try {
+        await locator.waitFor({ state: "visible", timeout: 4000 });
+        await locator.screenshot({ path: samplePath });
+        captured = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await page.waitForTimeout(250);
+      }
+    }
+    if (!captured) {
+      throw new Error(`slot_frame_not_visible: selector=${selector}; ${lastError instanceof Error ? lastError.message : String(lastError || "unknown")}`);
+    }
     samplePaths.push(samplePath);
     if (index < sampleCount - 1) {
       await page.waitForTimeout(sampleIntervalMs);
