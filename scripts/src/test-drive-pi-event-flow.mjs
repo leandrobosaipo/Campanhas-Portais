@@ -128,6 +128,28 @@ await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
   return { ok: true };
 });
 
+await check("worker-encaminha-fila-de-prints-para-api-canonica", async () => {
+  const source = read(workerSourcePath);
+  for (const route of ["print-batch", "print-backfill", "print-single"]) {
+    const marker = `if (path === "/api/ops/jobs/${route}")`;
+    const start = source.indexOf(marker);
+    assert(start >= 0, `Worker sem rota ${route}`);
+    const block = source.slice(start, start + 420);
+    assertIncludes(block, [
+      "requireOpsAuth(request, env)",
+      "privateApiEnabled(env)",
+      "proxyToPrivateApi(request, env, url, { noStore: true })",
+    ], `Proxy canônico ${route}`);
+  }
+  assertIncludes(source, [
+    'if (path === "/api/ops/jobs")',
+    'if (path === "/api/ops/queue/overview")',
+    "const opsJobProgressMatch",
+    "const opsJobMatch",
+  ], "Consultas da fila canônica");
+  return { ok: true };
+});
+
 await check("runner-executa-runtime-readiness-probe", async () => {
   const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
   assertIncludes(source, [
