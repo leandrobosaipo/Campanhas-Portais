@@ -872,6 +872,8 @@ async function proxyToPrivateApi(request: Request, env: Env, url: URL, options: 
   const method = request.method.toUpperCase();
   const headers = new Headers();
   headers.set("x-adops-api-token", env.PRIVATE_ADOPS_API_TOKEN?.trim() ?? "");
+  const authorization = request.headers.get("authorization");
+  if (authorization) headers.set("authorization", authorization);
 
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);

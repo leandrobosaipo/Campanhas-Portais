@@ -146,6 +146,8 @@ await check("worker-encaminha-fila-de-prints-para-api-canonica", async () => {
     'if (path === "/api/ops/queue/overview")',
     "const opsJobProgressMatch",
     "const opsJobMatch",
+    'request.headers.get("authorization")',
+    'headers.set("authorization", authorization)',
   ], "Consultas da fila canônica");
   return { ok: true };
 });
