@@ -531,6 +531,148 @@ paths:
               schema:
                 $ref: "#/components/schemas/Evidence"
 
+  /insertions/{id}/evidences/export.zip:
+    get:
+      operationId: exportInsertionEvidences
+      tags: [evidences]
+      summary: Export insertion evidence package
+      description: >-
+        Exports the existing full operational package by default. Use
+        mode=prints-only and variant=web to receive only optimized PNG copies;
+        canonical evidence files and audit URLs are not changed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [full, prints-only]
+            default: full
+        - name: variant
+          in: query
+          schema:
+            type: string
+            enum: [original, web]
+            default: original
+        - name: source
+          in: query
+          schema:
+            type: [string, "null"]
+      responses:
+        "200":
+          description: ZIP package
+          headers:
+            X-AdOps-Export-Images-Total:
+              schema:
+                type: integer
+            X-AdOps-Export-Images-Generated:
+              schema:
+                type: integer
+            X-AdOps-Export-Images-Failed:
+              schema:
+                type: integer
+            X-AdOps-Export-Original-Bytes:
+              schema:
+                type: integer
+            X-AdOps-Export-Output-Bytes:
+              schema:
+                type: integer
+            X-AdOps-Export-Savings-Percent:
+              schema:
+                type: number
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid export options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Insertion not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: One or more source images could not be prepared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports:
+    get:
+      operationId: exportPiSitePackage
+      tags: [evidences]
+      summary: Describe or download evidence package by PI and site
+      parameters:
+        - name: piCodigo
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: siteSigla
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: download
+          in: query
+          schema:
+            type: string
+            enum: ["0", "1"]
+            default: "0"
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [full, prints-only]
+            default: full
+        - name: variant
+          in: query
+          schema:
+            type: string
+            enum: [original, web]
+            default: original
+      responses:
+        "200":
+          description: JSON descriptor when download is not 1, otherwise a ZIP package
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: PI/site not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: One or more source images could not be prepared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /evidences/{id}:
     delete:
       operationId: deleteEvidence

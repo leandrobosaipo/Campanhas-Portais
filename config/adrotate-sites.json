@@ -565,7 +565,7 @@
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
         "scrollMode": "top",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 3200,
           "postVisualWaitMs": 3800,
