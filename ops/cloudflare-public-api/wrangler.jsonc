@@ -7,7 +7,7 @@
     "crons": ["0 22 * * *"]
   },
   "vars": {
-    "PRIVATE_ADOPS_API_BASE_URL": "http://adops-api.173.212.225.231.sslip.io:4011"
+    "PRIVATE_ADOPS_API_BASE_URL": "https://adops-api.codigo5.com.br"
   },
   "d1_databases": [
     {
