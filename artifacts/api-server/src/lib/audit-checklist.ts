@@ -49,6 +49,7 @@ type RequiredGates = {
   requireNoOverlay: boolean;
   requireNo404: boolean;
   requireVideoControls: boolean;
+  requireReadinessAudit: boolean;
   requireGifAllowedFrameRanges: boolean;
   gifAllowedFrameRanges: Array<[number, number]>;
 };
@@ -206,6 +207,7 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
     requireNoOverlay: booleanFromConfig(auditConfig, "requireNoOverlay", true),
     requireNo404: booleanFromConfig(auditConfig, "requireNo404", true),
     requireVideoControls: booleanFromConfig(auditConfig, "requireVideoControls", isVideo),
+    requireReadinessAudit: String(auditConfig.readinessMode ?? "legacy").trim().toLowerCase() === "strict-visible",
     requireGifAllowedFrameRanges: ranges.length > 0,
     gifAllowedFrameRanges: ranges,
   };
@@ -484,6 +486,8 @@ export async function validateAuditChecklist(input: {
     const creativePlacementAudit = metadataObject(metadata, "creativePlacementAudit");
     const pageScrollMetrics = metadataObject(metadata, "pageScrollMetrics");
     const videoProof = metadataObject(metadata, "videoProof");
+    const readinessAudit = metadataObject(metadata, "readinessAudit");
+    const metadataRequiredGates = metadataObject(metadata, "requiredGates");
     const matchedMediaUrl = metadataString(metadata, "matchedMediaUrl");
     const requestedCaptureAt = metadataString(metadata, "requestedCaptureAt");
 
@@ -711,6 +715,25 @@ export async function validateAuditChecklist(input: {
           "requireVideoControls",
           "Controles do vídeo ausentes",
           `videoProof inválido: ${JSON.stringify(videoProof ?? {})}.`,
+        ));
+      }
+    }
+
+    const captureRequiresReadiness = metadataRequiredGates?.requireReadinessAudit === true || readinessAudit !== null;
+    if (requiredGates.requireReadinessAudit && captureRequiresReadiness) {
+      if (!readinessAudit) {
+        blockingIssues.push(issue(
+          "readiness_audit_missing",
+          "requireReadinessAudit",
+          "Readiness da captura ausente",
+          "A captura declarou readiness estrito, mas não enviou readinessAudit.",
+        ));
+      } else if (readinessAudit.approved !== true) {
+        blockingIssues.push(issue(
+          "readiness_audit_failed",
+          "requireReadinessAudit",
+          "Conteúdo crítico não carregou",
+          `readinessAudit.approved precisa ser true. Estado: ${JSON.stringify(readinessAudit)}.`,
         ));
       }
     }

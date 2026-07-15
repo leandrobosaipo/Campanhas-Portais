@@ -18,10 +18,12 @@ import type {
 
 import type {
   Agency,
+  AuditChecklistValidation,
   BulkUpdateInsertionsBody,
   BulkUpdateResult,
   Campaign,
   CampaignDetail,
+  CaptureProofStatus,
   Client,
   ClientBreakdown,
   CompetenciaBreakdown,
@@ -37,6 +39,7 @@ import type {
   ExportInsertionEvidencesParams,
   ExportPiSitePackage200One,
   ExportPiSitePackageParams,
+  GetCaptureProofStatusParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
@@ -53,6 +56,7 @@ import type {
   UpdateClientBody,
   UpdateInsertionBody,
   UpdateSiteBody,
+  ValidateCaptureProofBody,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -1847,6 +1851,214 @@ export const useBulkUpdateInsertions = <
   TContext
 > => {
   return useMutation(getBulkUpdateInsertionsMutationOptions(options));
+};
+
+/**
+ * @summary Consult capture proof and strict readiness status
+ */
+export const getGetCaptureProofStatusUrl = (
+  id: number,
+  params: GetCaptureProofStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/insertions/${id}/capture-proof/status?${stringifiedParams}`
+    : `/api/insertions/${id}/capture-proof/status`;
+};
+
+export const getCaptureProofStatus = async (
+  id: number,
+  params: GetCaptureProofStatusParams,
+  options?: RequestInit,
+): Promise<CaptureProofStatus> => {
+  return customFetch<CaptureProofStatus>(
+    getGetCaptureProofStatusUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCaptureProofStatusQueryKey = (
+  id: number,
+  params?: GetCaptureProofStatusParams,
+) => {
+  return [
+    `/api/insertions/${id}/capture-proof/status`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetCaptureProofStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCaptureProofStatus>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  params: GetCaptureProofStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCaptureProofStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCaptureProofStatusQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCaptureProofStatus>>
+  > = ({ signal }) =>
+    getCaptureProofStatus(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCaptureProofStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCaptureProofStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCaptureProofStatus>>
+>;
+export type GetCaptureProofStatusQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Consult capture proof and strict readiness status
+ */
+
+export function useGetCaptureProofStatus<
+  TData = Awaited<ReturnType<typeof getCaptureProofStatus>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  params: GetCaptureProofStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCaptureProofStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCaptureProofStatusQueryOptions(
+    id,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Validate capture proof, including strict readiness gates
+ */
+export const getValidateCaptureProofUrl = () => {
+  return `/api/audit-checklists/validate-proof`;
+};
+
+export const validateCaptureProof = async (
+  validateCaptureProofBody: ValidateCaptureProofBody,
+  options?: RequestInit,
+): Promise<AuditChecklistValidation> => {
+  return customFetch<AuditChecklistValidation>(getValidateCaptureProofUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(validateCaptureProofBody),
+  });
+};
+
+export const getValidateCaptureProofMutationOptions = <
+  TError = ErrorType<AuditChecklistValidation>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof validateCaptureProof>>,
+    TError,
+    { data: BodyType<ValidateCaptureProofBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof validateCaptureProof>>,
+  TError,
+  { data: BodyType<ValidateCaptureProofBody> },
+  TContext
+> => {
+  const mutationKey = ["validateCaptureProof"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof validateCaptureProof>>,
+    { data: BodyType<ValidateCaptureProofBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return validateCaptureProof(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ValidateCaptureProofMutationResult = NonNullable<
+  Awaited<ReturnType<typeof validateCaptureProof>>
+>;
+export type ValidateCaptureProofMutationBody =
+  BodyType<ValidateCaptureProofBody>;
+export type ValidateCaptureProofMutationError =
+  ErrorType<AuditChecklistValidation>;
+
+/**
+ * @summary Validate capture proof, including strict readiness gates
+ */
+export const useValidateCaptureProof = <
+  TError = ErrorType<AuditChecklistValidation>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof validateCaptureProof>>,
+    TError,
+    { data: BodyType<ValidateCaptureProofBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof validateCaptureProof>>,
+  TError,
+  { data: BodyType<ValidateCaptureProofBody> },
+  TContext
+> => {
+  return useMutation(getValidateCaptureProofMutationOptions(options));
 };
 
 export const getListEvidencesUrl = (insertionId: number) => {

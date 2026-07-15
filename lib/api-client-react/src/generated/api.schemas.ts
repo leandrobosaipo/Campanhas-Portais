@@ -788,6 +788,111 @@ export interface CreateEvidenceBody {
   titulo?: string | null;
 }
 
+export type ReadinessAuditMode =
+  (typeof ReadinessAuditMode)[keyof typeof ReadinessAuditMode];
+
+export const ReadinessAuditMode = {
+  legacy: "legacy",
+  "strict-visible": "strict-visible",
+} as const;
+
+export type ReadinessAuditFailedResourcesItem = { [key: string]: unknown };
+
+export interface ReadinessAudit {
+  mode: ReadinessAuditMode;
+  attempts: number;
+  elapsedMs: number;
+  fontsReady: boolean;
+  layoutStable: boolean;
+  criticalElementsTotal: number;
+  criticalElementsLoaded: number;
+  criticalElementsPainted: number;
+  failedResources: ReadinessAuditFailedResourcesItem[];
+  approved: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * @nullable
+ */
+export type CaptureProofStatusAudit = { [key: string]: unknown } | null;
+
+export type CaptureProofStatusStatus =
+  (typeof CaptureProofStatusStatus)[keyof typeof CaptureProofStatusStatus];
+
+export const CaptureProofStatusStatus = {
+  audited: "audited",
+  audited_best_effort: "audited_best_effort",
+  invalid_audit: "invalid_audit",
+  invalid_url: "invalid_url",
+  missing: "missing",
+} as const;
+
+export type AuditChecklistValidationEvidenceStatus =
+  (typeof AuditChecklistValidationEvidenceStatus)[keyof typeof AuditChecklistValidationEvidenceStatus];
+
+export const AuditChecklistValidationEvidenceStatus = {
+  approved: "approved",
+  blocked: "blocked",
+} as const;
+
+export type AuditChecklistValidationContract = { [key: string]: unknown };
+
+/**
+ * @nullable
+ */
+export type AuditChecklistValidationAudit = { [key: string]: unknown } | null;
+
+export type AuditChecklistValidationIssuesItem = { [key: string]: unknown };
+
+export type AuditChecklistValidationBlockingIssuesItem = {
+  [key: string]: unknown;
+};
+
+export type AuditChecklistValidationWarningsItem = { [key: string]: unknown };
+
+export interface AuditChecklistValidation {
+  approved: boolean;
+  version: string;
+  insertionId: number;
+  date: string;
+  metadataPresent: boolean;
+  evidenceStatus: AuditChecklistValidationEvidenceStatus;
+  contract: AuditChecklistValidationContract;
+  /** @nullable */
+  audit?: AuditChecklistValidationAudit;
+  issues: AuditChecklistValidationIssuesItem[];
+  blockingIssues: AuditChecklistValidationBlockingIssuesItem[];
+  warnings: AuditChecklistValidationWarningsItem[];
+}
+
+export interface CaptureProofStatus {
+  insertionId: number;
+  date: string;
+  inPeriod: boolean;
+  hasMedia: boolean;
+  hasEvidenceForDate: boolean;
+  hasValidUrl: boolean;
+  isReachable: boolean;
+  /** @nullable */
+  urlStatus: number | null;
+  /** @nullable */
+  arquivoUrl: string | null;
+  readinessAudit: ReadinessAudit | null;
+  /** @nullable */
+  audit?: CaptureProofStatusAudit;
+  checklistValidation: AuditChecklistValidation;
+  status: CaptureProofStatusStatus;
+}
+
+export type ValidateCaptureProofBodyMetadata = { [key: string]: unknown };
+
+export interface ValidateCaptureProofBody {
+  insertionId: number;
+  date: string;
+  metadata?: ValidateCaptureProofBodyMetadata;
+}
+
 export interface DashboardSummary {
   totalInsercoes: number;
   ativas: number;
@@ -872,6 +977,10 @@ export type ListInsertionsParams = {
    * @nullable
    */
   atrasado?: boolean | null;
+};
+
+export type GetCaptureProofStatusParams = {
+  date: string;
 };
 
 export type ExportInsertionEvidencesParams = {

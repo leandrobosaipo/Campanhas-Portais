@@ -762,6 +762,88 @@ export const BulkUpdateInsertionsResponse = zod.object({
   updated: zod.number(),
 });
 
+/**
+ * @summary Consult capture proof and strict readiness status
+ */
+export const GetCaptureProofStatusParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetCaptureProofStatusQueryParams = zod.object({
+  date: zod.date(),
+});
+
+export const GetCaptureProofStatusResponse = zod.object({
+  insertionId: zod.number(),
+  date: zod.coerce.date(),
+  inPeriod: zod.boolean(),
+  hasMedia: zod.boolean(),
+  hasEvidenceForDate: zod.boolean(),
+  hasValidUrl: zod.boolean(),
+  isReachable: zod.boolean(),
+  urlStatus: zod.number().nullable(),
+  arquivoUrl: zod.string().nullable(),
+  readinessAudit: zod.union([
+    zod.object({
+      mode: zod.enum(["legacy", "strict-visible"]),
+      attempts: zod.number(),
+      elapsedMs: zod.number(),
+      fontsReady: zod.boolean(),
+      layoutStable: zod.boolean(),
+      criticalElementsTotal: zod.number(),
+      criticalElementsLoaded: zod.number(),
+      criticalElementsPainted: zod.number(),
+      failedResources: zod.array(zod.record(zod.string(), zod.unknown())),
+      approved: zod.boolean(),
+    }),
+    zod.null(),
+  ]),
+  audit: zod.record(zod.string(), zod.unknown()).nullish(),
+  checklistValidation: zod.object({
+    approved: zod.boolean(),
+    version: zod.string(),
+    insertionId: zod.number(),
+    date: zod.coerce.date(),
+    metadataPresent: zod.boolean(),
+    evidenceStatus: zod.enum(["approved", "blocked"]),
+    contract: zod.record(zod.string(), zod.unknown()),
+    audit: zod.record(zod.string(), zod.unknown()).nullish(),
+    issues: zod.array(zod.record(zod.string(), zod.unknown())),
+    blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
+    warnings: zod.array(zod.record(zod.string(), zod.unknown())),
+  }),
+  status: zod.enum([
+    "audited",
+    "audited_best_effort",
+    "invalid_audit",
+    "invalid_url",
+    "missing",
+  ]),
+});
+
+/**
+ * @summary Validate capture proof, including strict readiness gates
+ */
+export const ValidateCaptureProofBody = zod.object({
+  insertionId: zod.number(),
+  date: zod.coerce.date(),
+  metadata: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const ValidateCaptureProofResponse = zod.object({
+  approved: zod.boolean(),
+  version: zod.string(),
+  insertionId: zod.number(),
+  date: zod.coerce.date(),
+  metadataPresent: zod.boolean(),
+  evidenceStatus: zod.enum(["approved", "blocked"]),
+  contract: zod.record(zod.string(), zod.unknown()),
+  audit: zod.record(zod.string(), zod.unknown()).nullish(),
+  issues: zod.array(zod.record(zod.string(), zod.unknown())),
+  blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
+  warnings: zod.array(zod.record(zod.string(), zod.unknown())),
+});
+
 export const ListEvidencesParams = zod.object({
   insertionId: zod.coerce.number(),
 });

@@ -488,6 +488,62 @@ paths:
               schema:
                 $ref: "#/components/schemas/BulkUpdateResult"
 
+  /insertions/{id}/capture-proof/status:
+    get:
+      operationId: getCaptureProofStatus
+      tags: [insertions]
+      summary: Consult capture proof and strict readiness status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Capture proof status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptureProofStatus"
+        "404":
+          description: Insertion not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /audit-checklists/validate-proof:
+    post:
+      operationId: validateCaptureProof
+      tags: [insertions]
+      summary: Validate capture proof, including strict readiness gates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateCaptureProofBody"
+      responses:
+        "200":
+          description: Approved capture proof
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditChecklistValidation"
+        "422":
+          description: Capture proof blocked by the checklist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditChecklistValidation"
+
   # Evidences
   /insertions/{insertionId}/evidences:
     get:
@@ -1785,6 +1841,159 @@ components:
           type: ["string", "null"]
       required:
         - tipo
+
+    ReadinessAudit:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [legacy, strict-visible]
+        attempts:
+          type: integer
+        elapsedMs:
+          type: integer
+        fontsReady:
+          type: boolean
+        layoutStable:
+          type: boolean
+        criticalElementsTotal:
+          type: integer
+        criticalElementsLoaded:
+          type: integer
+        criticalElementsPainted:
+          type: integer
+        failedResources:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        approved:
+          type: boolean
+      required:
+        - mode
+        - attempts
+        - elapsedMs
+        - fontsReady
+        - layoutStable
+        - criticalElementsTotal
+        - criticalElementsLoaded
+        - criticalElementsPainted
+        - failedResources
+        - approved
+      additionalProperties: true
+
+    CaptureProofStatus:
+      type: object
+      properties:
+        insertionId:
+          type: integer
+        date:
+          type: string
+          format: date
+        inPeriod:
+          type: boolean
+        hasMedia:
+          type: boolean
+        hasEvidenceForDate:
+          type: boolean
+        hasValidUrl:
+          type: boolean
+        isReachable:
+          type: boolean
+        urlStatus:
+          type: [integer, "null"]
+        arquivoUrl:
+          type: [string, "null"]
+        readinessAudit:
+          oneOf:
+            - $ref: "#/components/schemas/ReadinessAudit"
+            - type: "null"
+        audit:
+          type: [object, "null"]
+          additionalProperties: true
+        checklistValidation:
+          $ref: "#/components/schemas/AuditChecklistValidation"
+        status:
+          type: string
+          enum: [audited, audited_best_effort, invalid_audit, invalid_url, missing]
+      required:
+        - insertionId
+        - date
+        - inPeriod
+        - hasMedia
+        - hasEvidenceForDate
+        - hasValidUrl
+        - isReachable
+        - urlStatus
+        - arquivoUrl
+        - readinessAudit
+        - checklistValidation
+        - status
+
+    ValidateCaptureProofBody:
+      type: object
+      properties:
+        insertionId:
+          type: integer
+        date:
+          type: string
+          format: date
+        metadata:
+          type: object
+          additionalProperties: true
+      required:
+        - insertionId
+        - date
+
+    AuditChecklistValidation:
+      type: object
+      properties:
+        approved:
+          type: boolean
+        version:
+          type: string
+        insertionId:
+          type: integer
+        date:
+          type: string
+          format: date
+        metadataPresent:
+          type: boolean
+        evidenceStatus:
+          type: string
+          enum: [approved, blocked]
+        contract:
+          type: object
+          additionalProperties: true
+        audit:
+          type: [object, "null"]
+          additionalProperties: true
+        issues:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        blockingIssues:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      required:
+        - approved
+        - version
+        - insertionId
+        - date
+        - metadataPresent
+        - evidenceStatus
+        - contract
+        - issues
+        - blockingIssues
+        - warnings
 
     DashboardSummary:
       type: object

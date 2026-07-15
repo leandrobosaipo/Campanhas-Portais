@@ -88,20 +88,32 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
   if (options?.diagnosticMode) {
     args.push("--diagnosticMode", "true");
   }
-  const { stdout } = await execFileAsync(
-    "node",
-    args,
-    {
-      cwd: runtime.projectRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
-      },
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-
-  return JSON.parse(stdout);
+  const cleanContextRetries = Math.min(2, Math.max(0, Number(process.env.ADOPS_CAPTURE_CLEAN_CONTEXT_RETRIES ?? 2)));
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= cleanContextRetries + 1; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync(
+        "node",
+        [...args, "--captureAttempt", String(attempt)],
+        {
+          cwd: runtime.projectRoot,
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
+          },
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
+      return JSON.parse(stdout);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? `${error.message}\n${String((error as any).stderr ?? "")}` : String(error);
+      const retryable = /critical_image_not_loaded|critical_image_not_painted|critical_background_not_loaded|resource_request_failed|readiness_timeout|layout_not_stable|final_viewport_changed/.test(message);
+      const permanentClientError = /http_4\d\d/.test(message);
+      if (!retryable || permanentClientError || attempt > cleanContextRetries) throw error;
+    }
+  }
+  throw lastError;
 }
 
 export function loadLocalCaptureMetadata(insertionId: number, dateKey: string) {

@@ -95,3 +95,40 @@ Antes de fechar ZIP ou envio:
 A rotina `capture-insertion-proof.cjs` deve chamar limpeza de overlays bloqueantes antes da auditoria visual e imediatamente antes do screenshot final.
 
 Se houver `slot_position_mismatch` em GIF mas o criativo estiver legivel e alinhado visualmente, pode ser usado um limiar temporario de similaridade apenas para a captura pontual, registrando que a configuracao foi restaurada em seguida. Nao deixar tolerancia relaxada como default permanente.
+
+## Readiness estrito do frame final
+
+`networkidle` nao comprova que imagens visiveis foram pintadas no PNG. Portais com lazy loading, CDN lenta ou mudanca de layout devem usar:
+
+```json
+{
+  "readinessMode": "strict-visible",
+  "criticalContentSelectors": [
+    "[data-cod5-pagespeed-frame=\"home-hero\"] img.wp-post-image"
+  ],
+  "readinessTimeoutMs": 45000,
+  "layoutStableSamples": 3,
+  "layoutStableIntervalMs": 350,
+  "captureRetryCount": 2,
+  "requireCriticalContentPainted": true
+}
+```
+
+O gate roda depois do scroll definitivo e imediatamente antes do screenshot. Ele aguarda fontes, `img.decode()`, `picture/srcset`, fundos, poster/frame de video, canvas e iframe visiveis; depois valida estabilidade e pixels no PNG candidato e no PNG com moldura.
+
+Recursos fora do viewport, analytics e requisicoes continuas nao bloqueiam. Imagem visivel quebrada, regiao uniforme ou mudanca do viewport bloqueiam a captura antes do upload e da substituicao da evidencia.
+
+Fluxo operacional:
+
+```text
+print-single/backfill -> critical_assets -> layout_stability -> visual_preflight
+-> capture -> final_png_validation -> validate-proof -> upload -> upsert evidence
+```
+
+Consultar o resultado em:
+
+- `GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD`, campo `readinessAudit`;
+- `POST /api/audit-checklists/validate-proof`, que exige `readinessAudit.approved=true` para capturas novas em regra estrita;
+- `GET /api/ops/jobs/{jobId}/progress`, para o estágio operacional.
+
+Uma evidencia existente so e substituida depois que o candidato local passa no checklist. Falhas de readiness ficam em log diagnostico e preservam o arquivo anterior.

@@ -652,6 +652,9 @@ async function resolveEvidenceAuditStatus(
     isReachable,
     urlStatus,
     arquivoUrl,
+    readinessAudit: metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).readinessAudit ?? null
+      : null,
     audit,
     checklistValidation,
     status,
@@ -1731,6 +1734,9 @@ router.get("/insertions/:id/capture-proof/status", async (req, res): Promise<voi
     isReachable,
     urlStatus,
     arquivoUrl,
+    readinessAudit: metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).readinessAudit ?? null
+      : null,
     audit,
     checklistValidation,
     status,
