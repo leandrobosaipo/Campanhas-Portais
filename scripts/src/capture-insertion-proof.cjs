@@ -2005,6 +2005,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
     const imageLoads = async (value) => {
       const source = text(value);
       if (!source) return false;
+      if (typeof Image !== "function") return true;
       if (imageLoadCache.has(source)) return imageLoadCache.get(source);
       const promise = new Promise((resolve) => {
         const image = new Image();
