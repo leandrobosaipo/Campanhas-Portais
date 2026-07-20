@@ -11,7 +11,11 @@ const require = createRequire(import.meta.url);
 const bundledPython = "/Users/leandrobosaipo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3";
 const pythonBin = process.env.ADOPS_CAPTURE_PYTHON || (existsSync(bundledPython) ? bundledPython : "python3");
 process.env.ADOPS_CAPTURE_PYTHON = pythonBin;
-const { auditVisibleMediaPixels, captureStrictReadinessCandidate } = require("./capture-insertion-proof.cjs");
+const {
+  applyPerrengueStaticRetroPreview,
+  auditVisibleMediaPixels,
+  captureStrictReadinessCandidate,
+} = require("./capture-insertion-proof.cjs");
 const workDir = mkdtempSync(path.join(tmpdir(), "adops-readiness-"));
 const colorPng = path.join(workDir, "color.png");
 const blankPng = path.join(workDir, "blank.png");
@@ -33,6 +37,8 @@ const pages = {
   delayed: `<!doctype html><main><div class="hero"><img class="featured" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="/color.png" /></div><div id="slot"><img src="/color.png"></div><div class="background-proof"></div><video class="video-proof" poster="/color.png" muted></video><img class="offscreen" loading="lazy" src="/never.png"></main>`,
   blank: `<!doctype html><main><div class="hero"><img class="featured" src="/blank.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
   broken: `<!doctype html><main><div class="hero"><img class="featured" src="/missing.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
+  missing: `<!doctype html><main><div class="hero"></div><div id="slot"><img src="/color.png"></div></main>`,
+  retro: `<!doctype html><main><section><article class="group"><a href="/"><div data-cod5-pagespeed-frame="home-hero"><img class="wp-post-image" src="/color.png"></div><h3>Atual</h3></a></article></section><div class="cod5-home-now-list"><ol></ol></div><div id="slot"><img src="/color.png"></div></main>`,
 };
 
 const server = createServer((req, res) => {
@@ -119,7 +125,32 @@ try {
   assert.equal(broken.approved, false, "imagem crítica quebrada deve ser reprovada");
   assert.ok(broken.criticalElementsLoaded < broken.criticalElementsTotal || broken.layoutStable === false);
 
-  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "blank_painted", "broken_visible", "offscreen_ignored"] }, null, 2));
+  const missing = await runFixture("missing");
+  assert.equal(missing.approved, false, "seletor de imagem crítica ausente deve reprovar a captura");
+  assert.deepEqual(missing.missingCriticalSelectors, [".hero img.featured"]);
+
+  const retroPage = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
+  try {
+    await retroPage.goto(`${baseUrl}/retro`, { waitUntil: "domcontentloaded" });
+    const retro = await applyPerrengueStaticRetroPreview(
+      retroPage,
+      { domain: "perrenguematogrosso.com", page: "home" },
+      "2026-07-16T19:00:00-04:00",
+      {
+        adminRetroPosts: [
+          { title: "Capa quebrada", slug: "capa-quebrada", date: "2026-07-16T18:00:00-04:00", category: "Notícias", categorySlug: "noticias", image: `${baseUrl}/missing.png` },
+          { title: "Capa válida", slug: "capa-valida", date: "2026-07-16T17:00:00-04:00", category: "Notícias", categorySlug: "noticias", image: `${baseUrl}/color.png` },
+        ],
+      },
+    );
+    assert.equal(retro.applied, true, "preview retroativo deve descartar capa quebrada e usar mídia válida");
+    assert.deepEqual(retro.invalidImagePosts, ["capa-quebrada"]);
+    assert.equal(await retroPage.locator('[data-cod5-pagespeed-frame="home-hero"] img').getAttribute("src"), `${baseUrl}/color.png`);
+  } finally {
+    await retroPage.close();
+  }
+
+  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

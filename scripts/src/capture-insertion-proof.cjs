@@ -2001,7 +2001,42 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
     const leadArticles = leadSection
       ? Array.from(leadSection.querySelectorAll("article.group")).slice(0, 6)
       : [];
-    const leadPosts = posts.filter((post) => post.image);
+    const imageLoadCache = new Map();
+    const imageLoads = async (value) => {
+      const source = text(value);
+      if (!source) return false;
+      if (imageLoadCache.has(source)) return imageLoadCache.get(source);
+      const promise = new Promise((resolve) => {
+        const image = new Image();
+        let settled = false;
+        const done = (loaded) => {
+          if (settled) return;
+          settled = true;
+          resolve(loaded === true && image.naturalWidth > 1 && image.naturalHeight > 1);
+        };
+        image.onload = () => done(true);
+        image.onerror = () => done(false);
+        window.setTimeout(() => done(false), 5000);
+        image.src = source;
+      });
+      imageLoadCache.set(source, promise);
+      return promise;
+    };
+    const leadPosts = [];
+    const invalidImagePosts = [];
+    for (const post of posts.filter((candidate) => candidate.image)) {
+      if (await imageLoads(post.image)) leadPosts.push(post);
+      else invalidImagePosts.push(postSlug(post));
+      if (leadPosts.length >= Math.max(leadArticles.length, 6)) break;
+    }
+    if (leadPosts.length < 1) {
+      return {
+        applied: false,
+        reason: "retro_editorial_images_unavailable",
+        invalidImagePosts: invalidImagePosts.slice(0, 12),
+        posts: posts.length,
+      };
+    }
     leadArticles.forEach((article, index) => updateArticle(article, leadPosts[index] || pickPost(index), { hero: index === 0 }));
 
     const nowList = document.querySelector(".cod5-home-now-list ol");
@@ -2122,6 +2157,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
       editorialContentMatches,
       postsRequired: minRequiredPosts,
       adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
+      invalidImagePosts: invalidImagePosts.slice(0, 12),
     };
   }, { captureAt, adminRetroPosts });
 
@@ -4888,10 +4924,19 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
       }
 
       const explicit = new Set();
+      const criticalSelectorAudit = [];
       for (const criticalSelector of criticalSelectors) {
         try {
-          document.querySelectorAll(criticalSelector).forEach((node) => explicit.add(node));
-        } catch {}
+          const matches = Array.from(document.querySelectorAll(criticalSelector));
+          matches.forEach((node) => explicit.add(node));
+          criticalSelectorAudit.push({
+            selector: criticalSelector,
+            matches: matches.length,
+            visibleMatches: matches.filter((node) => visibleBox(node)).length,
+          });
+        } catch {
+          criticalSelectorAudit.push({ selector: criticalSelector, matches: 0, visibleMatches: 0 });
+        }
       }
       try {
         const slot = document.querySelector(selector);
@@ -4958,10 +5003,25 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
         viewportHeight,
         documentHeight,
       });
-      return { fontsReady, elements, signature, viewportSignature, viewportWidth, viewportHeight, documentHeight };
+      const missingCriticalSelectors = criticalSelectorAudit
+        .filter((item) => item.matches < 1 || item.visibleMatches < 1)
+        .map((item) => item.selector);
+      return {
+        fontsReady,
+        elements,
+        signature,
+        viewportSignature,
+        viewportWidth,
+        viewportHeight,
+        documentHeight,
+        criticalSelectorAudit,
+        missingCriticalSelectors,
+      };
     }, { selector: slotSelector, criticalSelectors: config.criticalContentSelectors });
 
-    const allLoaded = snapshot.fontsReady && snapshot.elements.every((item) => item.loaded === true);
+    const allLoaded = snapshot.fontsReady &&
+      snapshot.missingCriticalSelectors.length === 0 &&
+      snapshot.elements.every((item) => item.loaded === true);
     stableCount = snapshot.signature === lastSnapshot?.signature ? stableCount + 1 : 1;
     lastSnapshot = snapshot;
     if (allLoaded && stableCount >= config.layoutStableSamples) {
@@ -4983,6 +5043,8 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
         viewportWidth: snapshot.viewportWidth,
         signature: snapshot.signature,
         viewportSignature: snapshot.viewportSignature,
+        criticalSelectorAudit: snapshot.criticalSelectorAudit,
+        missingCriticalSelectors: snapshot.missingCriticalSelectors,
         approved: criticalFailures.length === 0,
       };
     }
@@ -5003,6 +5065,8 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
     viewportWidth: lastSnapshot?.viewportWidth ?? 0,
     signature: lastSnapshot?.signature ?? null,
     viewportSignature: lastSnapshot?.viewportSignature ?? null,
+    criticalSelectorAudit: lastSnapshot?.criticalSelectorAudit ?? [],
+    missingCriticalSelectors: lastSnapshot?.missingCriticalSelectors ?? config.criticalContentSelectors,
     approved: false,
   };
 }
@@ -5020,7 +5084,7 @@ async function captureStrictReadinessCandidate(page, viewportPng, slotSelector, 
   for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
     latest = await waitForFinalViewportReadiness(page, slotSelector, attemptAuditConfig, resourceFailures);
     latest.attempts = attempt;
-    if (latest.layoutStable && latest.fontsReady && latest.failedResources.length === 0) {
+    if (latest.approved === true && latest.layoutStable && latest.fontsReady && latest.failedResources.length === 0) {
       await page.screenshot({ path: viewportPng });
       const paintTargets = latest.elements.filter((item) => item.paintRequired === true);
       const pixelAudit = auditVisibleMediaPixels(viewportPng, paintTargets, {
