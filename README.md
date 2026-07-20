@@ -12,6 +12,7 @@ Comece por:
 - `docs/START_HERE_ADOPS.md`
 - `docs/PROJECT_MAP_ADOPS.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
+- `docs/adops/evidence-print-delivery-api.md`
 
 Documentacao operacional publicada pela API:
 
