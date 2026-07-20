@@ -248,6 +248,11 @@ Nao repita datas ja entregues depois de falha parcial.
 - `retro_editorial_images_unavailable`: as capas historicas retornadas pelo
   WordPress nao carregaram; o runner descarta essas capas e falha se nenhuma
   alternativa valida existir;
+- `retro_editorial_audit_missing`: provas do Perrengue sem confirmacao de que
+  Destaques e Agora foram reconstruidos com o conjunto editorial correto sao
+  bloqueadas, inclusive provas antigas;
+- `retro_editorial_meme_leak`: Memes do Vovo apareceu em Destaques ou Agora;
+  a prova deve ser regenerada e nao pode entrar no pacote do cliente;
 - seletor critico ausente ou fora do frame: a captura e reprovada antes do
   upload, mesmo quando as outras imagens e o anuncio carregaram;
 - `spawnSync python3 E2BIG`: payload visual excedeu o limite de argumentos; a
