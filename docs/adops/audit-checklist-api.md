@@ -6,6 +6,10 @@ Centralizar a decisao de evidencia valida no AdOps.
 
 Nenhum print deve ser considerado `audited` apenas porque a imagem existe ou a URL responde `200`.
 
+O checklist tambem e o gate obrigatorio antes de baixar o `arquivoUrl`, montar a
+pasta do cliente ou criar `telegram-send-evidence`. Consulte o fluxo completo em
+[`evidence-print-delivery-api.md`](./evidence-print-delivery-api.md).
+
 A validacao oficial agora resolve o contrato por:
 
 ```text

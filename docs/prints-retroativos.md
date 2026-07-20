@@ -7,6 +7,9 @@ Permitir gerar provas visuais retroativas com data e hora simuladas, para que o 
 - as noticias publicadas ate o momento simulado
 - a data/hora exibida no cabecalho e na moldura do desktop em pt-BR
 
+O contrato atualizado de API, checklist, extracao, nomes e entrega esta em
+[`adops/evidence-print-delivery-api.md`](./adops/evidence-print-delivery-api.md).
+
 ## Como funciona
 1. O AdOps passa `captureAt` para a rotina de captura.
 2. A rotina adiciona `adops_preview_at` na URL aberta pelo Playwright.
@@ -66,6 +69,15 @@ Nos portais publicos, o modo retroativo ja foi validado em Perrengue e OMT.
 4. O sistema gera apenas os dias passados que ainda estao sem print valido.
 5. Os horarios sao distribuidos automaticamente na janela `18:00 <= captureAt < 22:00`, variando por insercao e dia.
 6. Dias que ja possuem print valido entram como `ja existentes` e nao sao sobrescritos.
+
+### Entrega ao cliente
+
+- O pacote interno `export.zip` inclui README, Analytics e documentos operacionais.
+- A pasta do cliente deve ser montada apenas com os `arquivoUrl` aprovados.
+- Use uma pasta por insercao/posicao.
+- Inclua portal, PI, posicao e data no nome de cada PNG.
+- Nao use `retroativo`, `retroativos` ou `evidencias` nos nomes.
+- Valide que as noticias e a capa pertencem ao instante historico solicitado.
 
 ## Caso validado
 - Site: `Perrengue`

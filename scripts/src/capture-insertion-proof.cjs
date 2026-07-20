@@ -4740,18 +4740,18 @@ function normalizeStrictReadinessConfig(auditConfig = {}) {
 }
 
 function auditVisibleMediaPixels(pngPath, elements, options = {}) {
-  const payload = Buffer.from(JSON.stringify({
+  const payload = JSON.stringify({
     pngPath,
     elements,
     viewportWidthCss: Number(options.viewportWidthCss || 0),
     topOffsetPx: Number(options.topOffsetPx || 0),
     minContentStddev: Number(options.minContentStddev ?? 4),
-  }), "utf8").toString("base64");
+  });
   const py = `
-import base64, json, os
+import json, os, sys
 from PIL import Image, ImageStat
 
-payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
+payload = json.load(sys.stdin)
 path = payload["pngPath"]
 if not os.path.exists(path):
     print(json.dumps({"ok": False, "error": "missing_file", "elements": []}))
@@ -4793,7 +4793,12 @@ print(json.dumps({
 }))
 `;
   try {
-    return JSON.parse(execFileSync(CAPTURE_PYTHON_BIN, ["-c", py], { stdio: "pipe", encoding: "utf8" }).trim() || "{}");
+    return JSON.parse(execFileSync(CAPTURE_PYTHON_BIN, ["-c", py], {
+      input: payload,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    }).trim() || "{}");
   } catch (error) {
     return {
       ok: false,

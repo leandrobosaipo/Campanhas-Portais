@@ -13,6 +13,10 @@ Este runbook consolida os endpoints que outro agente, terminal, Telegram, WhatsA
 - resolver e validar checklist de auditoria;
 - acompanhar fila e progresso.
 
+Para o contrato completo de captura, auditoria, nomes de arquivos, pasta limpa,
+ZIP operacional e envio ao Telegram, consulte
+[`evidence-print-delivery-api.md`](./evidence-print-delivery-api.md).
+
 ## Glossário rápido
 
 - `PI`: identificação comercial da campanha enviada pela agência ou cliente.

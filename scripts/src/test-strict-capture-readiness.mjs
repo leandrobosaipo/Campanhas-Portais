@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const bundledPython = "/Users/leandrobosaipo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3";
 const pythonBin = process.env.ADOPS_CAPTURE_PYTHON || (existsSync(bundledPython) ? bundledPython : "python3");
 process.env.ADOPS_CAPTURE_PYTHON = pythonBin;
-const { captureStrictReadinessCandidate } = require("./capture-insertion-proof.cjs");
+const { auditVisibleMediaPixels, captureStrictReadinessCandidate } = require("./capture-insertion-proof.cjs");
 const workDir = mkdtempSync(path.join(tmpdir(), "adops-readiness-"));
 const colorPng = path.join(workDir, "color.png");
 const blankPng = path.join(workDir, "blank.png");
@@ -92,6 +92,18 @@ async function runFixture(name) {
 }
 
 try {
+  const largeDataSource = `data:image/png;base64,${"A".repeat(1024 * 1024)}`;
+  const largePayloadAudit = auditVisibleMediaPixels(colorPng, [{
+    kind: "image",
+    source: largeDataSource,
+    box: { left: 0, top: 0, width: 320, height: 180 },
+    paintRequired: true,
+  }], {
+    viewportWidthCss: 320,
+    minContentStddev: 4,
+  });
+  assert.equal(largePayloadAudit.ok, true, "fontes data: grandes devem ser auditadas sem exceder o limite de argumentos do sistema");
+
   const delayed = await runFixture("delayed");
   assert.equal(delayed.approved, true, "imagem lazy atrasada e mídia fora da tela devem ser aceitas");
   assert.equal(delayed.layoutStable, true);
@@ -107,7 +119,7 @@ try {
   assert.equal(broken.approved, false, "imagem crítica quebrada deve ser reprovada");
   assert.ok(broken.criticalElementsLoaded < broken.criticalElementsTotal || broken.layoutStable === false);
 
-  console.log(JSON.stringify({ ok: true, cases: ["delayed_lazy", "background", "video_poster", "blank_painted", "broken_visible", "offscreen_ignored"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "blank_painted", "broken_visible", "offscreen_ignored"] }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
