@@ -245,6 +245,11 @@ Nao repita datas ja entregues depois de falha parcial.
 
 - `critical_image_not_loaded`: recurso critico nao terminou de carregar;
 - `critical_image_not_painted`: recurso existe no DOM, mas nao foi confirmado no PNG;
+- `retro_editorial_images_unavailable`: as capas historicas retornadas pelo
+  WordPress nao carregaram; o runner descarta essas capas e falha se nenhuma
+  alternativa valida existir;
+- seletor critico ausente ou fora do frame: a captura e reprovada antes do
+  upload, mesmo quando as outras imagens e o anuncio carregaram;
 - `spawnSync python3 E2BIG`: payload visual excedeu o limite de argumentos; a
   implementacao envia o JSON ao Python por `stdin` para evitar recorrencia;
 - `capture_metadata_missing`: captura falhou antes de persistir metadata;
