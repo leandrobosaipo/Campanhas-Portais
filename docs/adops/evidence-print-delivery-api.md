@@ -228,7 +228,7 @@ Payload:
 2. bloqueia `approved=false`;
 3. consulta `capture-proof/status`;
 4. envia `arquivoUrl` pelo bridge ou diretamente;
-5. registra resposta e `messageId` em `ops_jobs`.
+5. registra a confirmacao retornada pelo adaptador em `ops_jobs`.
 
 Envie um canario e confirme:
 
@@ -236,8 +236,14 @@ Envie um canario e confirme:
 status=completed
 result.execution.checklist.approved=true
 result.execution.telegram.ok=true
-result.execution.telegram.messageId presente
 ```
+
+`messageId` e opcional no contrato. O envio direto pode devolve-lo, mas o
+bridge Cloudflare `/ops/resend-print` confirma o `sendPhoto` aguardado com
+`ok=true` e `message=print-resent` sem necessariamente propagar o identificador
+da mensagem. A ausencia de `messageId`, isoladamente, nao representa falha.
+Quando o adaptador o retornar, ele deve ser preservado no resultado do job para
+rastreabilidade.
 
 Nao repita datas ja entregues depois de falha parcial.
 
