@@ -651,6 +651,26 @@ export async function validateAuditChecklist(input: {
         `retroGate.ok precisa ser true. Estado: ${JSON.stringify(retroGate ?? {})}.`,
       ));
     }
+    if (contract.insertion.siteSigla === "PERRENGUE") {
+      const editorialMemeLeaks = Array.isArray(retroGate?.editorialMemeLeaks)
+        ? retroGate.editorialMemeLeaks
+        : null;
+      if (retroGate?.editorialContentMatches !== true || editorialMemeLeaks === null) {
+        blockingIssues.push(issue(
+          "retro_editorial_audit_missing",
+          "retroGate",
+          "Auditoria editorial retroativa ausente",
+          "Perrengue exige editorialContentMatches=true e editorialMemeLeaks presente antes de liberar a prova.",
+        ));
+      } else if (editorialMemeLeaks.length > 0) {
+        blockingIssues.push(issue(
+          "retro_editorial_meme_leak",
+          "retroGate",
+          "Memes do Vovo em area editorial bloqueada",
+          `Destaques e Agora nao podem conter Memes do Vovo. Ocorrencias: ${JSON.stringify(editorialMemeLeaks)}.`,
+        ));
+      }
+    }
 
     if (creativePlacementAudit?.ok !== true) {
       blockingIssues.push(issue(
