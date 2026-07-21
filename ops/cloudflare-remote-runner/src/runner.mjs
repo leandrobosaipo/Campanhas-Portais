@@ -2669,38 +2669,91 @@ function compactAdrotateRelation(relation) {
 }
 
 function sitePublicHomeUrl(site) {
-  const domain = firstNonEmptyString(site?.domain, site?.dominio, site?.url);
+  const domain = firstNonEmptyString(site?.siteUrl, site?.domain, site?.dominio, site?.url);
   if (!domain) return null;
   if (/^https?:\/\//i.test(domain)) return new URL("/", domain).toString();
   return `https://${domain.replace(/^\/+|\/+$/g, "")}/`;
 }
 
-async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename }) {
-  const url = sitePublicHomeUrl(site);
-  if (!url) return { ok: false, url: null, error: "site_public_url_missing" };
+function extractSameOriginArticleCandidates(homeUrl, html, limit = 12) {
+  const home = new URL(homeUrl);
+  const ignoredPrefixes = [
+    "/blog/", "/categoria/", "/category/", "/tag/", "/author/", "/busca/",
+    "/midia-kit/", "/quem-somos/", "/fale-conosco/", "/politica-de-privacidade/",
+    "/cod5-status/", "/feed/", "/comments/", "/wp/", "/wp-json/", "/assets/",
+  ];
+  const urls = [];
+  const seen = new Set();
+  for (const match of String(html || "").matchAll(/\bhref=["']([^"'#]+)["']/gi)) {
+    let candidate;
+    try {
+      candidate = new URL(match[1], home);
+    } catch {
+      continue;
+    }
+    if (candidate.origin !== home.origin || candidate.pathname === "/") continue;
+    if (ignoredPrefixes.some((prefix) => candidate.pathname.startsWith(prefix))) continue;
+    if (!/^\/[a-z0-9][a-z0-9-]+\/$/i.test(candidate.pathname)) continue;
+    candidate.search = "";
+    candidate.hash = "";
+    const normalized = candidate.toString();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    urls.push(normalized);
+    if (urls.length >= limit) break;
+  }
+  return urls;
+}
+
+async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename, page }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl) return { ok: false, url: null, error: "site_public_url_missing" };
+  const needsArticle = String(page || "").toLowerCase() === "article";
   let lastResult = null;
   for (let attempt = 1; attempt <= 8; attempt += 1) {
-    const attemptUrl = new URL(url);
-    attemptUrl.searchParams.set("cod5_adops_verify", `${insertionId}-${attempt}-${Date.now()}`);
-    const response = await fetch(attemptUrl, {
+    const homeAttemptUrl = new URL(homeUrl);
+    homeAttemptUrl.searchParams.set("cod5_adops_verify", `${insertionId}-${attempt}-${Date.now()}`);
+    const homeResponse = await fetch(homeAttemptUrl, {
       redirect: "follow",
       headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" },
       signal: AbortSignal.timeout(30000),
     });
-    const html = await response.text();
-    const mediaFound = Boolean(mediaBasename && html.includes(mediaBasename));
-    const insertionFound = html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`);
-    const adFound = Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)));
-    lastResult = {
-      ok: response.ok && (mediaFound || insertionFound || adFound),
-      url: response.url,
-      status: response.status,
-      mediaFound,
-      insertionFound,
-      adFound,
-      attempts: attempt,
-    };
-    if (lastResult.ok) return lastResult;
+    const homeHtml = await homeResponse.text();
+    const validationUrls = needsArticle
+      ? [
+          ...extractSameOriginArticleCandidates(homeUrl, homeHtml),
+          firstNonEmptyString(site?.artigoExemploUrl, site?.articleFallbackUrl),
+        ].filter(Boolean)
+      : [homeResponse.url];
+    const triedUrls = [];
+    for (const candidateUrl of validationUrls) {
+      const candidate = new URL(candidateUrl);
+      candidate.searchParams.set("cod5_adops_verify", `${insertionId}-${attempt}-${Date.now()}`);
+      const response = candidate.origin === new URL(homeResponse.url).origin && candidate.pathname === new URL(homeResponse.url).pathname
+        ? homeResponse
+        : await fetch(candidate, {
+            redirect: "follow",
+            headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" },
+            signal: AbortSignal.timeout(30000),
+          });
+      const html = response === homeResponse ? homeHtml : await response.text();
+      const mediaFound = Boolean(mediaBasename && html.includes(mediaBasename));
+      const insertionFound = html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`);
+      const adFound = Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)));
+      triedUrls.push(response.url);
+      lastResult = {
+        ok: response.ok && (mediaFound || insertionFound || adFound),
+        url: response.url,
+        status: response.status,
+        page: needsArticle ? "article" : "home",
+        mediaFound,
+        insertionFound,
+        adFound,
+        attempts: attempt,
+        triedUrls,
+      };
+      if (lastResult.ok) return lastResult;
+    }
     await sleep(750);
   }
   return lastResult;
@@ -3349,6 +3402,11 @@ async function executeAdrotateLinkJob(payload) {
   }
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? null;
   const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const restrictedKvm8Gateway = String(site.sshUser || "") === "cod5adops"
+    && String(site.sshHost || "") === "93.127.210.71";
+  const commandPiCodigo = restrictedKvm8Gateway
+    ? piCodigo.replace(/\s+/g, "-").replace(/[^A-Za-z0-9._/-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+    : piCodigo;
 
   const args = [
     shellEscape(site.phpBin ?? "php"),
@@ -3361,7 +3419,7 @@ async function executeAdrotateLinkJob(payload) {
     String(adId),
     `--insertion=${String(insertionId)}`,
     `--campaign=${String(campaignId)}`,
-    `--pi=${shellEscape(piCodigo)}`,
+    `--pi=${shellEscape(commandPiCodigo)}`,
     `--external-key=${shellEscape(`adops-${insertionId}`)}`,
   ];
   if (mediaBasename) args.push(`--media-basename=${shellEscape(mediaBasename)}`);
@@ -3397,6 +3455,7 @@ async function executeAdrotateLinkJob(payload) {
     adId,
     campaignId,
     piCodigo,
+    commandPiCodigo,
     siteId,
     siteSigla,
     mediaBasename,
@@ -3447,6 +3506,8 @@ async function executeAdrotatePublishJob(payload) {
     throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
   }
   const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const restrictedKvm8Gateway = String(site.sshUser || "") === "cod5adops"
+    && String(site.sshHost || "") === "93.127.210.71";
   const publishPayload = buildAdrotatePublishPayload({
     insertion,
     campaign,
@@ -3467,7 +3528,7 @@ async function executeAdrotatePublishJob(payload) {
     '--payload-json="$tmp_payload"',
     ...(apply ? ["--apply"] : []),
   ].join(" ");
-  const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla)
+  const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla) || restrictedKvm8Gateway
     ? null
     : Buffer.from(await readFile(path.join(PROJECT_ROOT, "ops/wordpress/adrotate-adops.php"))).toString("base64");
   const wpCliBase = [
@@ -3492,15 +3553,22 @@ async function executeAdrotatePublishJob(payload) {
     'rm -f "$tmp_plugin"',
     `${wpCliBase} help adops-adrotate-publish >/dev/null 2>&1`,
   ].join(" && ");
-  const remoteCommand = [
-    `rm -f ${staleMuPluginTargets.map(shellEscape).join(" ")}`,
-    remotePluginSyncCommand,
-    'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
-    `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
-    `${wpCliCommand}; rc=$?`,
-    'rm -f "$tmp_payload"',
-    "exit $rc",
-  ].join(" && ");
+  const remoteCommand = restrictedKvm8Gateway
+    ? [
+        wpCliBase,
+        "adops-adrotate-publish",
+        `--payload-json=${shellEscape(payloadJson)}`,
+        ...(apply ? ["--apply"] : []),
+      ].join(" ")
+    : [
+        `rm -f ${staleMuPluginTargets.map(shellEscape).join(" ")}`,
+        remotePluginSyncCommand,
+        'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
+        `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
+        `${wpCliCommand}; rc=$?`,
+        'rm -f "$tmp_payload"',
+        "exit $rc",
+      ].join(" && ");
 
   const headlessReadiness = String(siteSigla || "").toUpperCase() === "PERRENGUE"
     ? await validatePerrengueHeadlessRebuildReadiness()
@@ -3546,11 +3614,12 @@ async function executeAdrotatePublishJob(payload) {
     : null;
   const exactLiveCount = relationAfter?.exactLiveMatches?.length ?? 0;
   const publicHtmlValidation = apply && wpCliPublished
-    ? await validatePublishedAdHtml({
+      ? await validatePublishedAdHtml({
         site,
         insertionId,
         adId: wpCliResult.ad_id,
         mediaBasename: publishPayload.media_basename,
+        page: publishPayload.page,
       }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
     : null;
   const activeToday = todayInCuiaba() >= String(insertion.periodoInicio || "") && todayInCuiaba() <= String(insertion.periodoFim || "");
@@ -3963,7 +4032,7 @@ async function executeDrivePiIngest(payload) {
       intakeLock: intakeLock.key,
       applied,
     });
-    if (payload?.publish !== true) {
+    if (payload?.publish !== true && payload?.generateEvidence === true) {
       evidenceCoverage = await ensureDrivePiEvidenceCoverage(applied);
       await notifyDrivePiStageTelegram(payload, "evidence_checked", {
         piCodigo: fields.piCodigo,
@@ -5147,6 +5216,7 @@ async function main() {
 }
 
 export {
+  extractSameOriginArticleCandidates,
   extractUrlsFromText,
   extractMediaLinksFromText,
   filterSiteInsertions,
