@@ -2712,6 +2712,14 @@ function evaluateFinalPngSlotAuditResult(payload = {}) {
   };
 }
 
+function resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit) {
+  if (finalViewportTargetAudit?.box) return finalViewportTargetAudit.box;
+  if (Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]) {
+    return creativePlacementAudit.targetInsideBoxes[0];
+  }
+  return creativePlacementAudit?.slotBox || null;
+}
+
 function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMetadata, options = {}) {
   const chromeFrameHeight = Number(desktopFrameMetadata?.chromeFrameHeight ?? 0);
   const frameWidth = Number(desktopFrameMetadata?.frameTemplateSize?.width ?? 0);
@@ -5020,14 +5028,15 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
       };
     }, { selector: slotSelector, criticalSelectors: config.criticalContentSelectors });
 
+    const blockingElements = snapshot.elements.filter((item) => item.paintRequired === true || item.selector === "critical");
     const allLoaded = snapshot.fontsReady &&
       snapshot.missingCriticalSelectors.length === 0 &&
-      snapshot.elements.every((item) => item.loaded === true);
+      blockingElements.every((item) => item.loaded === true);
     stableCount = snapshot.signature === lastSnapshot?.signature ? stableCount + 1 : 1;
     lastSnapshot = snapshot;
     if (allLoaded && stableCount >= config.layoutStableSamples) {
       const failedSources = new Set(resourceFailures.map((item) => item.url));
-      const criticalFailures = snapshot.elements.filter((item) => failedSources.has(item.source) && item.loaded !== true);
+      const criticalFailures = blockingElements.filter((item) => failedSources.has(item.source) && item.loaded !== true);
       const ignoredLoadedResourceFailures = snapshot.elements.filter((item) => failedSources.has(item.source) && item.loaded === true);
       return {
         mode: config.mode,
@@ -5061,7 +5070,9 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
     criticalElementsTotal: lastSnapshot?.elements?.length ?? 0,
     criticalElementsLoaded: lastSnapshot?.elements?.filter((item) => item.loaded).length ?? 0,
     criticalElementsPainted: 0,
-    failedResources: resourceFailures,
+    failedResources: (lastSnapshot?.elements ?? [])
+      .filter((item) => (item.paintRequired === true || item.selector === "critical") && item.loaded !== true)
+      .filter((item) => resourceFailures.some((failure) => failure.url === item.source)),
     elements: lastSnapshot?.elements ?? [],
     viewportWidth: lastSnapshot?.viewportWidth ?? 0,
     signature: lastSnapshot?.signature ?? null,
@@ -6463,9 +6474,7 @@ async function main() {
       ...desktopFrameMetadata,
     });
 
-    const finalPngSlotAuditBox = Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]
-      ? creativePlacementAudit.targetInsideBoxes[0]
-      : (finalViewportTargetAudit?.box || creativePlacementAudit?.slotBox);
+    const finalPngSlotAuditBox = resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit);
     const finalPngSlotAudit = auditFinalPngSlotPixels(
       finalPng,
       slotPng,
@@ -7060,6 +7069,7 @@ if (require.main === module) {
     normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
+    resolveFinalPngSlotAuditBox,
     auditFinalPngSlotPixels,
     auditVisibleMediaPixels,
     captureStrictReadinessCandidate,
