@@ -4876,6 +4876,7 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
   let lastSnapshot = null;
   let stableCount = 0;
   let attempts = 0;
+  const signatureHistory = [];
 
   while (Date.now() < deadline) {
     attempts += 1;
@@ -5013,7 +5014,7 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
         }
       }
       const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
-      const stableElements = elements.filter((item) => item.paintRequired === true || item.selector === "critical");
+      const stableElements = elements.filter((item) => item.selector === "critical");
       const signature = JSON.stringify({
         scrollX: Math.round(window.scrollX),
         scrollY: Math.round(window.scrollY),
@@ -5048,6 +5049,8 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
       snapshot.missingCriticalSelectors.length === 0 &&
       blockingElements.every((item) => item.loaded === true);
     stableCount = snapshot.signature === lastSnapshot?.signature ? stableCount + 1 : 1;
+    signatureHistory.push(snapshot.signature);
+    if (signatureHistory.length > 8) signatureHistory.shift();
     lastSnapshot = snapshot;
     if (allLoaded && stableCount >= config.layoutStableSamples) {
       const failedSources = new Set(resourceFailures.map((item) => item.url));
@@ -5094,6 +5097,7 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
     viewportSignature: lastSnapshot?.viewportSignature ?? null,
     criticalSelectorAudit: lastSnapshot?.criticalSelectorAudit ?? [],
     missingCriticalSelectors: lastSnapshot?.missingCriticalSelectors ?? config.criticalContentSelectors,
+    signatureHistory,
     approved: false,
   };
 }
