@@ -69,6 +69,14 @@ const readiness = runner.validateDrivePiPackageReadiness(
 assert.equal(readiness.ok, false);
 assert(readiness.issues.includes("insertion_media_url_missing_after_processing"));
 
+assert.deepEqual(
+  runner.extractSameOriginArticleCandidates(
+    "https://perrenguematogrosso.com/",
+    '<a href="/categoria/noticias/">Categoria</a><a href="/noticia-recente/">Notícia</a><a href="https://externo.example/post/">Externo</a><a href="/noticia-recente/">Duplicado</a>',
+  ),
+  ["https://perrenguematogrosso.com/noticia-recente/"],
+);
+
 const [publicApi, privateApi, capture, adrotatePlugin, perrenguePluginDeploy] = await Promise.all([
   readFile(path.join(root, "ops/cloudflare-public-api/src/index.ts"), "utf8"),
   readFile(path.join(root, "artifacts/api-server/src/routes/ops.ts"), "utf8"),
@@ -96,7 +104,7 @@ assert(perrenguePluginDeploy.includes("legacy_target"), "deploy PMT deve remover
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
-for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644"]) {
+for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
 }
 assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("echo WP_CONTENT_DIR;"));
