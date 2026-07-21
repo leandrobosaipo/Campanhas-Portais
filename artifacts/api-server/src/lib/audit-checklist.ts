@@ -20,6 +20,7 @@ import {
   parseDateOnly,
 } from "./capture-audit";
 import { loadLocalCaptureMetadata } from "./local-capture-runtime";
+import { resolveChecklistFinalProofStyle } from "./proof-style-contract";
 
 export const AUDIT_CHECKLIST_VERSION = "audit-checklist-v1" as const;
 const REQUIRED_FRAME_TEMPLATE = "windows11-chrome-light-similar-v4";
@@ -771,7 +772,7 @@ export async function validateAuditChecklist(input: {
       }
     }
 
-    if (resolvedRule.proofStyle === "viewport_with_slot_inset" || metadataString(metadata, "finalProofStyle") === "viewport_with_slot_inset") {
+    if (resolveChecklistFinalProofStyle(resolvedRule.proofStyle, metadata) === "viewport_with_slot_inset") {
       blockingIssues.push(issue(
         "proof_style_inset_forbidden",
         "proofStyle",
