@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveChecklistFinalProofStyle } from "../../artifacts/api-server/src/lib/proof-style-contract";
+import {
+  requiresPerrengueHomeEditorialAudit,
+  resolveChecklistFinalProofStyle,
+} from "../../artifacts/api-server/src/lib/proof-style-contract";
 
 test("metadata final replaces a legacy inset rule after capture downgrade", () => {
   assert.equal(
@@ -25,4 +28,10 @@ test("captured inset remains blocking regardless of rule", () => {
     resolveChecklistFinalProofStyle("viewport_only", { finalProofStyle: "viewport_with_slot_inset" }),
     "viewport_with_slot_inset",
   );
+});
+
+test("Perrengue editorial audit applies only to home sections", () => {
+  assert.equal(requiresPerrengueHomeEditorialAudit("PERRENGUE", "home"), true);
+  assert.equal(requiresPerrengueHomeEditorialAudit("PERRENGUE", "article"), false);
+  assert.equal(requiresPerrengueHomeEditorialAudit("ROO", "home"), false);
 });
