@@ -6309,7 +6309,14 @@ async function main() {
           : failedPixel?.kind === "background"
             ? "critical_background_not_loaded"
             : "critical_image_not_painted";
-      const failedSource = notLoaded?.source || failedPixel?.source || JSON.stringify(readinessAudit.failedResources || []);
+      const failedSource = notLoaded?.source || failedPixel?.source || (
+        code === "layout_not_stable"
+          ? JSON.stringify({
+              signatures: readinessAudit.signatureHistory || [],
+              missingCriticalSelectors: readinessAudit.missingCriticalSelectors || [],
+            })
+          : JSON.stringify(readinessAudit.failedResources || [])
+      );
       trace.finish(readinessStage, "error", readinessAudit, code, failedSource || "readiness gate failed");
       throw new Error(`${code}: ${failedSource}`);
     }
@@ -6469,6 +6476,14 @@ async function main() {
     const effectiveProofStyle = proofStyleContract.finalProofStyle;
     finalProofStyle = effectiveProofStyle;
 
+    if (!existsSync(viewportPng)) {
+      await page.screenshot({ path: viewportPng });
+      artifactRecords.viewportRecapturedBeforeCompose = {
+        reason: "approved_viewport_artifact_missing",
+        capturedAt: new Date().toISOString(),
+      };
+    }
+
     const finalComposedStage = trace.start("final_composed");
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
@@ -6477,7 +6492,7 @@ async function main() {
       tabTitle: mapping.browserTitle,
       hostLabel: mapping.hostLabel,
       addressText: buildAddressText(finalPageUrl, mapping.hostLabel),
-      viewportPng,
+      slotPng,
       proofStyle: effectiveProofStyle,
       scrollMetrics: pageScrollMetrics,
       viewportTrimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
