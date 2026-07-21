@@ -10,7 +10,6 @@ import {
   extractPiDigits,
   loadCurrentSheetCampaigns,
   normalizeForMatch,
-  normalizeFormato,
   todayInCuiaba,
   type CurrentSheetCampaignRow,
 } from "./current-sheet-campaigns";
@@ -22,6 +21,7 @@ import {
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
 import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
+import { isFormatCompatible, selectBestAdopsMatch } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
 
@@ -199,17 +199,6 @@ function clampRequiredDates(row: CurrentSheetCampaignRow, targetDate: string) {
   return eachIsoDay(row.periodoInicio, end);
 }
 
-function isFormatCompatible(sheetFormat: string, adopsFormat: string | null | undefined) {
-  const sheet = normalizeFormato(sheetFormat);
-  const adops = normalizeFormato(adopsFormat);
-  if (!sheet || !adops) return false;
-  if (sheet === adops) return true;
-  if (sheet === "TOPO" && adops.includes("TOPO")) return true;
-  if (sheet === "LATERAL" && adops.includes("LATERAL")) return true;
-  if (sheet === "VIDEO" && adops.includes("VIDEO")) return true;
-  return false;
-}
-
 function isCampaignNameCompatible(sheetName: string, adopsName: string | null | undefined) {
   const sheet = normalizeForMatch(sheetName);
   const adops = normalizeForMatch(adopsName);
@@ -354,35 +343,6 @@ function findAdopsMatches(row: CurrentSheetCampaignRow, insertions: MinimalEnric
     const insertionPi = extractPiDigits(insertion.campaign?.piCodigo);
     return siteSigla === row.blockSite && insertionPi === piDigits;
   });
-}
-
-function periodsOverlap(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion) {
-  if (!row.periodoInicio || !row.periodoFim || !insertion.periodoInicio || !insertion.periodoFim) return false;
-  return insertion.periodoInicio <= row.periodoFim && insertion.periodoFim >= row.periodoInicio;
-}
-
-function scoreAdopsMatch(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion) {
-  let score = 0;
-  const adopsFormat = insertion.localFormatoNormalizado ?? insertion.localFormato;
-  if (isFormatCompatible(row.localFormato, adopsFormat)) score += 100;
-  if (insertion.periodoInicio === row.periodoInicio && insertion.periodoFim === row.periodoFim) score += 60;
-  else if (periodsOverlap(row, insertion)) score += 30;
-  if (insertion.mediaUrl) score += 20;
-  if (insertion.bannerPublicadoNoSite === true) score += 20;
-  if (["publicado", "em_veiculacao", "publicado_no_site"].includes(normalizeForMatch(insertion.statusNormalizado))) score += 10;
-  return score;
-}
-
-function selectBestAdopsMatch(row: CurrentSheetCampaignRow, matches: MinimalEnrichedInsertion[]) {
-  const compatible = matches.filter((insertion) => isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
-  if (compatible.length === 0) return { insertion: null, compatible };
-  const ranked = compatible
-    .map((insertion) => ({ insertion, score: scoreAdopsMatch(row, insertion) }))
-    .sort((a, b) => b.score - a.score || b.insertion.id - a.insertion.id);
-  if (ranked.length === 1) return { insertion: ranked[0]!.insertion, compatible };
-  const [best, second] = ranked;
-  if (best && second && best.score > second.score) return { insertion: best.insertion, compatible };
-  return { insertion: null, compatible };
 }
 
 async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: CurrentSheetCampaignRow, targetDate: string, includeEvidence: boolean) {

@@ -27,6 +27,7 @@
     "test:git-platform-pilot": "node ./src/test-git-platform-pilot.mjs",
     "test:api-bundle-runtime": "node ./src/test-api-bundle-runtime.mjs",
     "test:evidence-web-export": "node --import tsx --test ./src/test-evidence-web-export.ts",
+    "test:campaign-operations-ranking": "node --import tsx --test ./src/test-campaign-operations-match-ranking.ts",
     "test:strict-capture-readiness": "node ./src/test-strict-capture-readiness.mjs",
     "intake:spm-whatsapp-print-2026-06-03": "node ./src/create-spm-whatsapp-print-intakes-2026-06-03.mjs",
     "import:d1-control-plane": "node ./src/import-d1-control-plane-to-postgres.mjs",
