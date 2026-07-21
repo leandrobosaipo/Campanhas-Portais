@@ -20,7 +20,10 @@ import {
   parseDateOnly,
 } from "./capture-audit";
 import { loadLocalCaptureMetadata } from "./local-capture-runtime";
-import { resolveChecklistFinalProofStyle } from "./proof-style-contract";
+import {
+  requiresPerrengueHomeEditorialAudit,
+  resolveChecklistFinalProofStyle,
+} from "./proof-style-contract";
 
 export const AUDIT_CHECKLIST_VERSION = "audit-checklist-v1" as const;
 const REQUIRED_FRAME_TEMPLATE = "windows11-chrome-light-similar-v4";
@@ -652,7 +655,7 @@ export async function validateAuditChecklist(input: {
         `retroGate.ok precisa ser true. Estado: ${JSON.stringify(retroGate ?? {})}.`,
       ));
     }
-    if (contract.insertion.siteSigla === "PERRENGUE") {
+    if (requiresPerrengueHomeEditorialAudit(contract.insertion.siteSigla, resolvedRule.page)) {
       const editorialMemeLeaks = Array.isArray(retroGate?.editorialMemeLeaks)
         ? retroGate.editorialMemeLeaks
         : null;

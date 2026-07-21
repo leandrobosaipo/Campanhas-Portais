@@ -7,3 +7,8 @@ export function resolveChecklistFinalProofStyle(
     : "";
   return capturedStyle || String(resolvedRuleProofStyle || "").trim();
 }
+
+export function requiresPerrengueHomeEditorialAudit(siteSigla: string, page: string) {
+  return String(siteSigla || "").trim().toUpperCase() === "PERRENGUE"
+    && String(page || "").trim().toLowerCase() === "home";
+}
