@@ -15,6 +15,7 @@ const {
   applyPerrengueStaticRetroPreview,
   auditVisibleMediaPixels,
   captureStrictReadinessCandidate,
+  resolveFinalPngSlotAuditBox,
 } = require("./capture-insertion-proof.cjs");
 const workDir = mkdtempSync(path.join(tmpdir(), "adops-readiness-"));
 const colorPng = path.join(workDir, "color.png");
@@ -38,6 +39,7 @@ const pages = {
   blank: `<!doctype html><main><div class="hero"><img class="featured" src="/blank.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
   broken: `<!doctype html><main><div class="hero"><img class="featured" src="/missing.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
   missing: `<!doctype html><main><div class="hero"></div><div id="slot"><img src="/color.png"></div></main>`,
+  abortedVideo: `<!doctype html><main><div class="hero"><img class="featured" src="/color.png" /></div><div id="slot"><img src="/color.png"></div><video class="video-proof" src="/aborted.mp4" muted></video></main>`,
   retro: `<!doctype html><main><section><article class="group"><a href="/"><div data-cod5-pagespeed-frame="home-hero"><img class="wp-post-image" src="/color.png"></div><h3>Atual</h3></a></article></section><div class="cod5-home-now-list"><ol></ol></div><div id="slot"><img src="/color.png"></div></main>`,
 };
 
@@ -59,6 +61,10 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.url === "/never.png") return;
+  if (req.url === "/aborted.mp4") {
+    req.socket.destroy();
+    return;
+  }
   const key = String(req.url || "").slice(1);
   if (pages[key]) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -117,6 +123,19 @@ try {
   assert.ok(delayed.elements.some((item) => item.kind === "background" && item.loaded));
   assert.ok(delayed.elements.some((item) => item.kind === "video" && item.loaded));
 
+  const abortedVideo = await runFixture("abortedVideo");
+  assert.equal(abortedVideo.approved, true, "vídeo editorial não crítico abortado não deve bloquear imagens e slot críticos");
+
+  const finalBox = { left: 20, top: 40, width: 300, height: 90 };
+  assert.equal(
+    resolveFinalPngSlotAuditBox(
+      { box: finalBox },
+      { targetInsideBoxes: [{ left: 20, top: 240, width: 300, height: 90 }], slotBox: null },
+    ),
+    finalBox,
+    "auditoria final deve usar a posição posterior ao último scroll",
+  );
+
   const blank = await runFixture("blank");
   assert.equal(blank.approved, false, "imagem carregada no DOM, mas visualmente vazia, deve ser reprovada");
   assert.ok(blank.pixelAudit.elements.some((item) => item.painted === false));
@@ -150,7 +169,7 @@ try {
     await retroPage.close();
   }
 
-  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "aborted_noncritical_video", "final_viewport_box", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
