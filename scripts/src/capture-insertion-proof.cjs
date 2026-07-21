@@ -2749,6 +2749,14 @@ function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMe
     width: Math.max(1, Math.round(slotWidth * pixelScale)),
     height: Math.max(1, Math.round(slotHeight * pixelScale)),
   };
+  const referenceCropBox = options.referenceIsViewport === true
+    ? {
+        left: cropBox.left,
+        top: Math.max(0, Math.round(slotTop * pixelScale)),
+        width: cropBox.width,
+        height: cropBox.height,
+      }
+    : null;
   if (frameWidth > 0 && cropBox.left >= frameWidth) {
     return evaluateFinalPngSlotAuditResult({
       finalProofStyle: options.finalProofStyle,
@@ -2759,7 +2767,7 @@ function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMe
     });
   }
 
-  const payload = Buffer.from(JSON.stringify({ finalPng, referencePng, cropBox }), "utf8").toString("base64");
+  const payload = Buffer.from(JSON.stringify({ finalPng, referencePng, cropBox, referenceCropBox }), "utf8").toString("base64");
   const py = `
 import base64, json, os
 from PIL import Image, ImageChops, ImageStat
@@ -2768,6 +2776,7 @@ payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
 final_path = payload["finalPng"]
 reference_path = payload["referencePng"]
 crop = payload["cropBox"]
+reference_crop = payload.get("referenceCropBox")
 if not os.path.exists(final_path) or not os.path.exists(reference_path):
     print(json.dumps({"similarityScore": None, "error": "missing_file"}))
     raise SystemExit(0)
@@ -2783,7 +2792,14 @@ if right <= left or bottom <= top:
     raise SystemExit(0)
 
 final_crop = final_img.crop((left, top, right, bottom))
-reference_ref = reference_img.resize(final_crop.size)
+if reference_crop:
+    ref_left = max(0, int(reference_crop["left"]))
+    ref_top = max(0, int(reference_crop["top"]))
+    ref_right = min(reference_img.size[0], ref_left + max(1, int(reference_crop["width"])))
+    ref_bottom = min(reference_img.size[1], ref_top + max(1, int(reference_crop["height"])))
+    reference_ref = reference_img.crop((ref_left, ref_top, ref_right, ref_bottom)).resize(final_crop.size)
+else:
+    reference_ref = reference_img.resize(final_crop.size)
 diff = ImageChops.difference(final_crop, reference_ref)
 stat = ImageStat.Stat(diff)
 mean = sum(stat.mean) / len(stat.mean)
@@ -4997,20 +5013,19 @@ async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, re
         }
       }
       const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+      const stableElements = elements.filter((item) => item.paintRequired === true || item.selector === "critical");
       const signature = JSON.stringify({
         scrollX: Math.round(window.scrollX),
         scrollY: Math.round(window.scrollY),
         viewportWidth,
         viewportHeight,
-        documentHeight,
-        boxes: elements.map((item) => [item.kind, Math.round(item.box.left), Math.round(item.box.top), Math.round(item.box.width), Math.round(item.box.height)]),
+        boxes: stableElements.map((item) => [item.kind, Math.round(item.box.left), Math.round(item.box.top), Math.round(item.box.width), Math.round(item.box.height)]),
       });
       const viewportSignature = JSON.stringify({
         scrollX: Math.round(window.scrollX),
         scrollY: Math.round(window.scrollY),
         viewportWidth,
         viewportHeight,
-        documentHeight,
       });
       const missingCriticalSelectors = criticalSelectorAudit
         .filter((item) => item.matches < 1 || item.visibleMatches < 1)
@@ -5108,7 +5123,6 @@ async function captureStrictReadinessCandidate(page, viewportPng, slotSelector, 
         scrollY: Math.round(window.scrollY),
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
-        documentHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
       }));
       latest.pixelAudit = pixelAudit;
       latest.criticalElementsPainted = Array.isArray(pixelAudit.elements)
@@ -6268,7 +6282,7 @@ async function main() {
     const readinessStage = trace.start("critical_assets");
     readinessAudit = await captureStrictReadinessCandidate(
       page,
-      viewportPng,
+      slotPng,
       resolvedSlotSelector,
       mapping.auditConfig,
       resourceFailures,
@@ -6459,7 +6473,7 @@ async function main() {
       tabTitle: mapping.browserTitle,
       hostLabel: mapping.hostLabel,
       addressText: buildAddressText(finalPageUrl, mapping.hostLabel),
-      slotPng,
+      viewportPng,
       proofStyle: effectiveProofStyle,
       scrollMetrics: pageScrollMetrics,
       viewportTrimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
@@ -6477,14 +6491,15 @@ async function main() {
     const finalPngSlotAuditBox = resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit);
     const finalPngSlotAudit = auditFinalPngSlotPixels(
       finalPng,
-      slotPng,
+      viewportPng,
       finalPngSlotAuditBox,
       desktopFrameMetadata,
       {
         finalProofStyle,
         minSimilarity: Number(mapping.auditConfig?.finalPngSlotMinSimilarity ?? 0.82),
         minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
-        comparedTo: "slotPng",
+        comparedTo: "viewportPng",
+        referenceIsViewport: true,
         viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
       },
     );

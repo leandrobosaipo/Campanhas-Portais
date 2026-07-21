@@ -13,6 +13,7 @@ const pythonBin = process.env.ADOPS_CAPTURE_PYTHON || (existsSync(bundledPython)
 process.env.ADOPS_CAPTURE_PYTHON = pythonBin;
 const {
   applyPerrengueStaticRetroPreview,
+  auditFinalPngSlotPixels,
   auditVisibleMediaPixels,
   captureStrictReadinessCandidate,
   resolveFinalPngSlotAuditBox,
@@ -20,6 +21,8 @@ const {
 const workDir = mkdtempSync(path.join(tmpdir(), "adops-readiness-"));
 const colorPng = path.join(workDir, "color.png");
 const blankPng = path.join(workDir, "blank.png");
+const viewportPng = path.join(workDir, "viewport.png");
+const composedPng = path.join(workDir, "composed.png");
 
 execFileSync(pythonBin, ["-c", `
 from PIL import Image, ImageDraw
@@ -30,6 +33,12 @@ for x in range(0, 320, 16):
 draw.rectangle((40, 40, 280, 140), fill="#f4d35e")
 color.save(${JSON.stringify(colorPng)})
 Image.new("RGB", (320, 180), "#eeeeee").save(${JSON.stringify(blankPng)})
+viewport = Image.new("RGB", (800, 600), "#f2f2f2")
+viewport.paste(color.resize((300, 90)), (20, 40))
+viewport.save(${JSON.stringify(viewportPng)})
+composed = Image.new("RGB", (800, 700), "#ffffff")
+composed.paste(viewport, (0, 100))
+composed.save(${JSON.stringify(composedPng)})
 `]);
 
 const colorBuffer = readFileSync(colorPng);
@@ -40,6 +49,7 @@ const pages = {
   broken: `<!doctype html><main><div class="hero"><img class="featured" src="/missing.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
   missing: `<!doctype html><main><div class="hero"></div><div id="slot"><img src="/color.png"></div></main>`,
   abortedVideo: `<!doctype html><main><div class="hero"><img class="featured" src="/color.png" /></div><div id="slot"><img src="/color.png"></div><video class="video-proof" src="/aborted.mp4" muted></video></main>`,
+  dynamicHeight: `<!doctype html><main><div class="hero"><img class="featured" src="/color.png" /></div><div id="slot"><img src="/color.png"></div><div id="offscreen" style="height:2200px"></div><script>setInterval(() => { document.querySelector('#offscreen').style.height = document.querySelector('#offscreen').style.height === '2200px' ? '2300px' : '2200px'; }, 80)</script></main>`,
   retro: `<!doctype html><main><section><article class="group"><a href="/"><div data-cod5-pagespeed-frame="home-hero"><img class="wp-post-image" src="/color.png"></div><h3>Atual</h3></a></article></section><div class="cod5-home-now-list"><ol></ol></div><div id="slot"><img src="/color.png"></div></main>`,
 };
 
@@ -126,6 +136,18 @@ try {
   const abortedVideo = await runFixture("abortedVideo");
   assert.equal(abortedVideo.approved, true, "vídeo editorial não crítico abortado não deve bloquear imagens e slot críticos");
 
+  const dynamicHeight = await runFixture("dynamicHeight");
+  assert.equal(dynamicHeight.approved, true, "mudança fora do viewport não deve reprovar um quadro final estável");
+
+  const finalPngAudit = auditFinalPngSlotPixels(
+    composedPng,
+    viewportPng,
+    { left: 20, top: 40, width: 300, height: 90 },
+    { chromeFrameHeight: 100, frameTemplateSize: { width: 800 } },
+    { finalProofStyle: "viewport_only", viewportWidthCss: 800, referenceIsViewport: true, comparedTo: "viewportPng" },
+  );
+  assert.equal(finalPngAudit.ok, true, "PNG final deve corresponder ao mesmo recorte do viewport, inclusive para mídia animada");
+
   const finalBox = { left: 20, top: 40, width: 300, height: 90 };
   assert.equal(
     resolveFinalPngSlotAuditBox(
@@ -169,7 +191,7 @@ try {
     await retroPage.close();
   }
 
-  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "aborted_noncritical_video", "final_viewport_box", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "aborted_noncritical_video", "dynamic_document_height", "final_png_viewport_crop", "final_viewport_box", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
