@@ -153,7 +153,7 @@ Apply após confirmação humana:
 curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: reconcile-1809-apply-90718-v1" \
+  -H "Idempotency-Key: ${IDEMPOTENCY_KEY}" \
   "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-reconcile" \
   -d '{
     "insertionId":1809,
