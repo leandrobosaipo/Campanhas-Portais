@@ -3906,9 +3906,15 @@ async function executeDrivePiIngest(payload) {
     ? await validateDrivePiDedupeSafety(fields)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
-  const explicitPublishFlow = payload?.publish === true && /api-publish$/.test(String(payload?.source || ""));
+  // The protected drive-pi-publish endpoint is an explicit mutation request even
+  // when publish=false. That mode updates AdOps/media only and must not touch
+  // AdRotate, cache or evidence for an expired campaign.
+  const explicitPublishFlow = /api-publish$/.test(String(payload?.source || ""));
   const strictExplicitPublishFlow = explicitPublishFlow && payload?.strictInsertionScope === true && Array.isArray(payload?.parsedPi?.insertions);
-  const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && (explicitPublishFlow || ADOPS_PI_AGENT_AUTO_APPLY);
+  const mutationEnabled = !preflightOnly && (
+    explicitPublishFlow
+    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)
+  );
   let preApplySyncPlanilha = { skipped: true, reason: strictExplicitPublishFlow
     ? "Sync da planilha ignorado porque parsedPi.insertions define o escopo canônico estrito."
     : "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };

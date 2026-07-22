@@ -718,6 +718,27 @@ curl -fsSL -X POST \
   }'
 ```
 
+Para campanha encerrada ou quando a publicação já está correta, use o modo
+**somente AdOps**. Ele importa/comprime a mídia e atualiza campanha/inserção,
+mas não toca no AdRotate, cache nem evidências:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-publish" \
+  -d '{
+    "folderUrl": "https://drive.google.com/drive/folders/ID_DA_PASTA",
+    "parsedPi": {},
+    "resolveMedia": true,
+    "strictInsertionScope": true,
+    "allowPdfInsertions": false,
+    "publish": false,
+    "generateEvidence": false,
+    "purgeCache": false
+  }'
+```
+
 Regras:
 
 - `parsedPi.insertions` é canônico quando informado;
@@ -727,7 +748,13 @@ Regras:
 - GIF/imagem do Perrengue é importado no WordPress VM8 e usa a URL pública do anexo;
 - vídeo passa pelo compressor e pelo Spaces/CDN;
 - no Perrengue, a evidência só roda depois do rebuild headless e da validação do HTML público;
-- `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` continua obrigatório.
+- chamadas autenticadas do endpoint protegido `drive-pi-publish` são pedidos
+  explícitos de mutação e não dependem das flags de mutação automática
+  `ADOPS_DRIVE_PI_ALLOW_MUTATION` ou `ADOPS_PI_AGENT_AUTO_APPLY`;
+- `publish=false` limita a mutação ao AdOps/mídia e não executa AdRotate,
+  purge/rebuild nem geração de evidência;
+- eventos automáticos do monitor continuam dependendo de
+  `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` e `ADOPS_PI_AGENT_AUTO_APPLY=true`.
 
 ### 4. Como aceitar campanha ativa ou futura
 
