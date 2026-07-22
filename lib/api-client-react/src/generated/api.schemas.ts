@@ -5,6 +5,61 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+export interface DrivePiReconcileBody {
+  /** @minimum 1 */
+  insertionId: number;
+  apply?: boolean;
+  /** @nullable */
+  canonicalPi?: string | null;
+  /** @nullable */
+  selectedDriveFileId?: string | null;
+  /**
+   * Canonical public HTTPS URL. Google Drive view URLs are rejected.
+   * @nullable
+   */
+  mediaUrl?: string | null;
+  /** @nullable */
+  confirmationNote?: string | null;
+  /** @nullable */
+  idempotencyKey?: string | null;
+}
+
+export interface OpsJobAccepted {
+  ok: boolean;
+  jobId: string;
+  kind: string;
+  status: string;
+  duplicate: boolean;
+  apply: boolean;
+  requiredFollowUp: string[];
+}
+
+export interface OpsRuntimeTopology {
+  version: string;
+  generatedAt: string;
+  noSecretValues: boolean;
+  canonicalRepository: string;
+  [key: string]: unknown;
+}
+
+export type MediaConsistencyResultStatus =
+  (typeof MediaConsistencyResultStatus)[keyof typeof MediaConsistencyResultStatus];
+
+export const MediaConsistencyResultStatus = {
+  consistent: "consistent",
+  needs_confirmation: "needs_confirmation",
+} as const;
+
+export interface MediaConsistencyResult {
+  version: string;
+  generatedAt: string;
+  status: MediaConsistencyResultStatus;
+  approved: boolean;
+  issues: string[];
+  nextAction: string;
+  [key: string]: unknown;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -932,6 +987,15 @@ export interface CompetenciaBreakdown {
   concluidas: number;
   atrasadas: number;
 }
+
+export type GetActiveCampaignOperationsParams = {
+  date?: string;
+  siteSigla?: string;
+  includeEvidence?: boolean;
+  refreshDrive?: boolean;
+};
+
+export type GetActiveCampaignOperations200 = { [key: string]: unknown };
 
 export type ListCampaignsParams = {
   /**

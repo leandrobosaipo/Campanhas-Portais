@@ -16,6 +16,80 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
+ * @summary Get the sanitized runtime topology and permission boundaries
+ */
+export const GetOpsRuntimeTopologyResponse = zod.object({
+  version: zod.string(),
+  generatedAt: zod.coerce.date(),
+  noSecretValues: zod.boolean(),
+  canonicalRepository: zod.string().url(),
+});
+
+/**
+ * @summary Preview or apply a human-confirmed PI/media reconciliation
+ */
+export const createDrivePiReconcileJobHeaderIdempotencyKeyMin = 8;
+export const createDrivePiReconcileJobHeaderIdempotencyKeyMax = 160;
+
+export const CreateDrivePiReconcileJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createDrivePiReconcileJobHeaderIdempotencyKeyMin)
+    .max(createDrivePiReconcileJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createDrivePiReconcileJobBodyApplyDefault = false;
+
+export const CreateDrivePiReconcileJobBody = zod.object({
+  insertionId: zod.number().min(1),
+  apply: zod.boolean().default(createDrivePiReconcileJobBodyApplyDefault),
+  canonicalPi: zod.string().nullish(),
+  selectedDriveFileId: zod.string().nullish(),
+  mediaUrl: zod
+    .string()
+    .url()
+    .nullish()
+    .describe(
+      "Canonical public HTTPS URL. Google Drive view URLs are rejected.",
+    ),
+  confirmationNote: zod.string().nullish(),
+  idempotencyKey: zod.string().nullish(),
+});
+
+export const CreateDrivePiReconcileJobResponse = zod.object({
+  ok: zod.boolean(),
+  jobId: zod.string(),
+  kind: zod.string(),
+  status: zod.string(),
+  duplicate: zod.boolean(),
+  apply: zod.boolean(),
+  requiredFollowUp: zod.array(zod.string()),
+});
+
+/**
+ * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
+ */
+export const getActiveCampaignOperationsQueryIncludeEvidenceDefault = true;
+export const getActiveCampaignOperationsQueryRefreshDriveDefault = false;
+
+export const GetActiveCampaignOperationsQueryParams = zod.object({
+  date: zod.date().optional(),
+  siteSigla: zod.coerce.string().optional(),
+  includeEvidence: zod.coerce
+    .boolean()
+    .default(getActiveCampaignOperationsQueryIncludeEvidenceDefault),
+  refreshDrive: zod.coerce
+    .boolean()
+    .default(getActiveCampaignOperationsQueryRefreshDriveDefault),
+});
+
+export const GetActiveCampaignOperationsResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * @summary List all sites
  */
 export const ListSitesResponseItem = zod.object({
@@ -733,6 +807,22 @@ export const UpdateInsertionResponse = zod.object({
 
 export const DeleteInsertionParams = zod.object({
   id: zod.coerce.number(),
+});
+
+/**
+ * @summary Compare Drive media, AdOps media and the public AdRotate slot
+ */
+export const GetInsertionMediaConsistencyParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetInsertionMediaConsistencyResponse = zod.object({
+  version: zod.string(),
+  generatedAt: zod.coerce.date(),
+  status: zod.enum(["consistent", "needs_confirmation"]),
+  approved: zod.boolean(),
+  issues: zod.array(zod.string()),
+  nextAction: zod.string(),
 });
 
 /**

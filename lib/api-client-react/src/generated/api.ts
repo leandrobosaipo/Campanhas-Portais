@@ -34,11 +34,14 @@ import type {
   CreateInsertionBody,
   CreateSiteBody,
   DashboardSummary,
+  DrivePiReconcileBody,
   ErrorResponse,
   Evidence,
   ExportInsertionEvidencesParams,
   ExportPiSitePackage200One,
   ExportPiSitePackageParams,
+  GetActiveCampaignOperations200,
+  GetActiveCampaignOperationsParams,
   GetCaptureProofStatusParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
@@ -49,6 +52,9 @@ import type {
   InsertionWithRelations,
   ListCampaignsParams,
   ListInsertionsParams,
+  MediaConsistencyResult,
+  OpsJobAccepted,
+  OpsRuntimeTopology,
   Site,
   SiteBreakdown,
   UpdateAgencyBody,
@@ -136,6 +142,277 @@ export function useHealthCheck<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getHealthCheckQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the sanitized runtime topology and permission boundaries
+ */
+export const getGetOpsRuntimeTopologyUrl = () => {
+  return `/api/ops/runtime-topology`;
+};
+
+export const getOpsRuntimeTopology = async (
+  options?: RequestInit,
+): Promise<OpsRuntimeTopology> => {
+  return customFetch<OpsRuntimeTopology>(getGetOpsRuntimeTopologyUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpsRuntimeTopologyQueryKey = () => {
+  return [`/api/ops/runtime-topology`] as const;
+};
+
+export const getGetOpsRuntimeTopologyQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpsRuntimeTopology>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpsRuntimeTopology>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpsRuntimeTopologyQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpsRuntimeTopology>>
+  > = ({ signal }) => getOpsRuntimeTopology({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpsRuntimeTopology>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpsRuntimeTopologyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpsRuntimeTopology>>
+>;
+export type GetOpsRuntimeTopologyQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the sanitized runtime topology and permission boundaries
+ */
+
+export function useGetOpsRuntimeTopology<
+  TData = Awaited<ReturnType<typeof getOpsRuntimeTopology>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpsRuntimeTopology>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpsRuntimeTopologyQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Preview or apply a human-confirmed PI/media reconciliation
+ */
+export const getCreateDrivePiReconcileJobUrl = () => {
+  return `/api/ops/jobs/drive-pi-reconcile`;
+};
+
+export const createDrivePiReconcileJob = async (
+  drivePiReconcileBody: DrivePiReconcileBody,
+  options?: RequestInit,
+): Promise<OpsJobAccepted> => {
+  return customFetch<OpsJobAccepted>(getCreateDrivePiReconcileJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(drivePiReconcileBody),
+  });
+};
+
+export const getCreateDrivePiReconcileJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createDrivePiReconcileJob>>,
+    TError,
+    { data: BodyType<DrivePiReconcileBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createDrivePiReconcileJob>>,
+  TError,
+  { data: BodyType<DrivePiReconcileBody> },
+  TContext
+> => {
+  const mutationKey = ["createDrivePiReconcileJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createDrivePiReconcileJob>>,
+    { data: BodyType<DrivePiReconcileBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createDrivePiReconcileJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateDrivePiReconcileJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createDrivePiReconcileJob>>
+>;
+export type CreateDrivePiReconcileJobMutationBody =
+  BodyType<DrivePiReconcileBody>;
+export type CreateDrivePiReconcileJobMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Preview or apply a human-confirmed PI/media reconciliation
+ */
+export const useCreateDrivePiReconcileJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createDrivePiReconcileJob>>,
+    TError,
+    { data: BodyType<DrivePiReconcileBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createDrivePiReconcileJob>>,
+  TError,
+  { data: BodyType<DrivePiReconcileBody> },
+  TContext
+> => {
+  return useMutation(getCreateDrivePiReconcileJobMutationOptions(options));
+};
+
+/**
+ * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
+ */
+export const getGetActiveCampaignOperationsUrl = (
+  params?: GetActiveCampaignOperationsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/campaign-operations/active?${stringifiedParams}`
+    : `/api/campaign-operations/active`;
+};
+
+export const getActiveCampaignOperations = async (
+  params?: GetActiveCampaignOperationsParams,
+  options?: RequestInit,
+): Promise<GetActiveCampaignOperations200> => {
+  return customFetch<GetActiveCampaignOperations200>(
+    getGetActiveCampaignOperationsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetActiveCampaignOperationsQueryKey = (
+  params?: GetActiveCampaignOperationsParams,
+) => {
+  return [
+    `/api/campaign-operations/active`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetActiveCampaignOperationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getActiveCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetActiveCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getActiveCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetActiveCampaignOperationsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getActiveCampaignOperations>>
+  > = ({ signal }) =>
+    getActiveCampaignOperations(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getActiveCampaignOperations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetActiveCampaignOperationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getActiveCampaignOperations>>
+>;
+export type GetActiveCampaignOperationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
+ */
+
+export function useGetActiveCampaignOperations<
+  TData = Awaited<ReturnType<typeof getActiveCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetActiveCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getActiveCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetActiveCampaignOperationsQueryOptions(
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -1765,6 +2042,98 @@ export const useDeleteInsertion = <
 > => {
   return useMutation(getDeleteInsertionMutationOptions(options));
 };
+
+/**
+ * @summary Compare Drive media, AdOps media and the public AdRotate slot
+ */
+export const getGetInsertionMediaConsistencyUrl = (id: number) => {
+  return `/api/insertions/${id}/media-consistency`;
+};
+
+export const getInsertionMediaConsistency = async (
+  id: number,
+  options?: RequestInit,
+): Promise<MediaConsistencyResult> => {
+  return customFetch<MediaConsistencyResult>(
+    getGetInsertionMediaConsistencyUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetInsertionMediaConsistencyQueryKey = (id: number) => {
+  return [`/api/insertions/${id}/media-consistency`] as const;
+};
+
+export const getGetInsertionMediaConsistencyQueryOptions = <
+  TData = Awaited<ReturnType<typeof getInsertionMediaConsistency>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInsertionMediaConsistency>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetInsertionMediaConsistencyQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getInsertionMediaConsistency>>
+  > = ({ signal }) =>
+    getInsertionMediaConsistency(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getInsertionMediaConsistency>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetInsertionMediaConsistencyQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getInsertionMediaConsistency>>
+>;
+export type GetInsertionMediaConsistencyQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Compare Drive media, AdOps media and the public AdRotate slot
+ */
+
+export function useGetInsertionMediaConsistency<
+  TData = Awaited<ReturnType<typeof getInsertionMediaConsistency>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getInsertionMediaConsistency>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetInsertionMediaConsistencyQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Bulk update multiple insertions

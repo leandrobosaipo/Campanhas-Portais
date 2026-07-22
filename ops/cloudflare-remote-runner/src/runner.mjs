@@ -82,7 +82,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -4482,7 +4482,8 @@ function namedChecks(items) {
 
 async function executeRuntimeReadinessProbe() {
   const driveOAuthReady = Boolean(GOOGLE_DRIVE_REFRESH_TOKEN && GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET);
-  const googleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const directGoogleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const googleDriveReady = !DRIVE_PI_MONITOR_ENABLED || directGoogleDriveReady;
   const telegramDirectReady = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_DEFAULT_GROUP_ID);
   const telegramBridgeConfigured = Boolean(ADOPS_TELEGRAM_BOT_URL);
   const perrengueSshEnvName = "ADOPS_PERRENGUE_SSH_KEY_PATH";
@@ -4497,6 +4498,8 @@ async function executeRuntimeReadinessProbe() {
       privateApiReady: Boolean(PRIVATE_ADOPS_API_BASE_URL && PRIVATE_ADOPS_API_TOKEN),
       opsApiReady: Boolean(OPS_API_BASE_URL && OPS_API_TOKEN),
       googleDriveReady,
+      directGoogleDriveReady,
+      googleDriveRequired: DRIVE_PI_MONITOR_ENABLED,
       telegramReady: telegramBridgeConfigured || telegramDirectReady,
       telegramBridgeConfigured,
       telegramDirectReady,
@@ -4580,6 +4583,85 @@ async function executeRuntimeReadinessProbe() {
     ],
   };
   return { stage: "completed", runnerRuntimeReadiness };
+}
+
+async function executeDrivePiReconcile(payload) {
+  const insertionId = Number(payload?.insertionId || 0);
+  if (!Number.isInteger(insertionId) || insertionId <= 0) {
+    throw new Error("drive-pi-reconcile exige insertionId positivo.");
+  }
+  const apply = payload?.apply === true;
+  const canonicalPi = String(payload?.canonicalPi || "").trim() || null;
+  const mediaUrl = String(payload?.mediaUrl || "").trim() || null;
+  const selectedDriveFileId = String(payload?.selectedDriveFileId || "").trim() || null;
+  const confirmationNote = String(payload?.confirmationNote || "").trim() || null;
+  const before = await privateApiGet(`/api/insertions/${insertionId}`);
+  const consistency = await privateApiGet(`/api/insertions/${insertionId}/media-consistency`);
+  const driveFiles = Array.isArray(consistency?.drive?.mediaFiles) ? consistency.drive.mediaFiles : [];
+  const selectedDriveFile = selectedDriveFileId
+    ? driveFiles.find((file) => String(file?.id || "") === selectedDriveFileId) || null
+    : null;
+
+  if (selectedDriveFileId && !selectedDriveFile) {
+    throw new Error(`Arquivo Drive ${selectedDriveFileId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
+  }
+
+  const proposal = {
+    campaignPatch: canonicalPi && canonicalPi !== before?.piCodigo ? { piCodigo: canonicalPi } : null,
+    insertionPatch: mediaUrl && mediaUrl !== before?.mediaUrl ? { mediaUrl } : null,
+    selectedDriveFile: selectedDriveFile ? { id: selectedDriveFile.id, name: selectedDriveFile.name, path: selectedDriveFile.path } : null,
+    requiresDrivePublish: Boolean(selectedDriveFile && !mediaUrl),
+  };
+
+  if (!apply) {
+    return {
+      stage: "preview_ready",
+      mode: "preview",
+      insertionId,
+      consistency,
+      proposal,
+      mutated: false,
+    };
+  }
+  if (!confirmationNote || confirmationNote.length < 8) {
+    throw new Error("Reconciliação apply exige confirmationNote rastreável.");
+  }
+  if (consistency?.issues?.includes("source_pi_conflict") && !canonicalPi) {
+    throw new Error("Conflito de PI exige canonicalPi explícita antes da mutação.");
+  }
+  if (mediaUrl) {
+    const parsed = new URL(mediaUrl);
+    if (parsed.protocol !== "https:" || /(^|\.)drive\.google\.com$/i.test(parsed.hostname) || /(^|\.)docs\.google\.com$/i.test(parsed.hostname)) {
+      throw new Error("mediaUrl deve ser HTTPS pública canônica e não pode ser URL de visualização do Drive.");
+    }
+    const probe = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30_000) });
+    if (!probe.ok) throw new Error(`mediaUrl canônica não respondeu HTTP válido: ${probe.status}.`);
+  }
+
+  const applied = [];
+  if (proposal.campaignPatch) {
+    await privateApiPatch(`/api/campaigns/${before.campanhaId}`, proposal.campaignPatch);
+    applied.push("campaign.piCodigo");
+  }
+  if (proposal.insertionPatch) {
+    const note = [
+      String(before?.observacoes || "").trim(),
+      `Reconciliação de fontes aplicada em ${new Date().toISOString()}: ${confirmationNote}`,
+    ].filter(Boolean).join("\n");
+    await privateApiPatch(`/api/insertions/${insertionId}`, { ...proposal.insertionPatch, observacoes: note });
+    applied.push("insertion.mediaUrl");
+  }
+
+  return {
+    stage: "completed",
+    mode: "apply",
+    insertionId,
+    consistencyBefore: consistency,
+    proposal,
+    applied,
+    mutated: applied.length > 0,
+    after: await privateApiGet(`/api/insertions/${insertionId}`),
+  };
 }
 
 async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
@@ -5061,6 +5143,9 @@ async function handleJob(job) {
   }
   if (job.kind === "adrotate-publish") {
     return executeAdrotatePublishJob(payload);
+  }
+  if (job.kind === "drive-pi-reconcile") {
+    return executeDrivePiReconcile(payload);
   }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);

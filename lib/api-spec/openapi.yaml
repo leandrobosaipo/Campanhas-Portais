@@ -24,6 +24,8 @@ tags:
     description: Evidence/print management
   - name: dashboard
     description: Dashboard & analytics
+  - name: operations
+    description: Operational diagnostics, topology and queued jobs
 
 paths:
   /healthz:
@@ -39,6 +41,92 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /ops/runtime-topology:
+    get:
+      operationId: getOpsRuntimeTopology
+      tags: [operations]
+      summary: Get the sanitized runtime topology and permission boundaries
+      responses:
+        "200":
+          description: Runtime topology without secret values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpsRuntimeTopology"
+
+  /ops/jobs/drive-pi-reconcile:
+    post:
+      operationId: createDrivePiReconcileJob
+      tags: [operations]
+      summary: Preview or apply a human-confirmed PI/media reconciliation
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 160
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrivePiReconcileBody"
+      responses:
+        "200":
+          description: Existing idempotent job returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpsJobAccepted"
+        "202":
+          description: Reconciliation job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpsJobAccepted"
+        "400":
+          description: Invalid or unsafe payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /campaign-operations/active:
+    get:
+      operationId: getActiveCampaignOperations
+      tags: [operations]
+      summary: Compare active sheet rows with exact Drive folders, AdOps and evidence
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: siteSigla
+          in: query
+          schema:
+            type: string
+        - name: includeEvidence
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: refreshDrive
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Active and upcoming campaign diagnostics, including PI identity per source
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
 
   # Sites
   /sites:
@@ -469,6 +557,30 @@ paths:
         "204":
           description: Deleted
 
+  /insertions/{id}/media-consistency:
+    get:
+      operationId: getInsertionMediaConsistency
+      tags: [operations, insertions]
+      summary: Compare Drive media, AdOps media and the public AdRotate slot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Media and PI consistency diagnosis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaConsistencyResult"
+        "404":
+          description: Insertion not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /insertions/bulk-update:
     post:
       operationId: bulkUpdateInsertions
@@ -839,6 +951,106 @@ paths:
 
 components:
   schemas:
+    DrivePiReconcileBody:
+      type: object
+      properties:
+        insertionId:
+          type: integer
+          minimum: 1
+        apply:
+          type: boolean
+          default: false
+        canonicalPi:
+          type: ["string", "null"]
+        selectedDriveFileId:
+          type: ["string", "null"]
+        mediaUrl:
+          type: ["string", "null"]
+          format: uri
+          description: Canonical public HTTPS URL. Google Drive view URLs are rejected.
+        confirmationNote:
+          type: ["string", "null"]
+        idempotencyKey:
+          type: ["string", "null"]
+      required:
+        - insertionId
+
+    OpsJobAccepted:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+        kind:
+          type: string
+        status:
+          type: string
+        duplicate:
+          type: boolean
+        apply:
+          type: boolean
+        requiredFollowUp:
+          type: array
+          items:
+            type: string
+      required:
+        - ok
+        - jobId
+        - kind
+        - status
+        - duplicate
+        - apply
+        - requiredFollowUp
+
+    OpsRuntimeTopology:
+      type: object
+      additionalProperties: true
+      properties:
+        version:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        noSecretValues:
+          type: boolean
+        canonicalRepository:
+          type: string
+          format: uri
+      required:
+        - version
+        - generatedAt
+        - noSecretValues
+        - canonicalRepository
+
+    MediaConsistencyResult:
+      type: object
+      additionalProperties: true
+      properties:
+        version:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [consistent, needs_confirmation]
+        approved:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: string
+        nextAction:
+          type: string
+      required:
+        - version
+        - generatedAt
+        - status
+        - approved
+        - issues
+        - nextAction
+
     HealthStatus:
       type: object
       properties:

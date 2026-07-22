@@ -57,6 +57,14 @@ export function normalizeLocalFormato(value: string | null | undefined): string 
     .trim();
 }
 
+function canonicalFormatKey(value: string | null | undefined) {
+  const normalized = normalizeLocalFormato(value);
+  if (["INTERNO", "INTERNO NOTICIA", "INTERNO NOTICIAS", "BANNER INTERNO NOTICIA", "BANNER INTERNO NOTICIAS"].includes(normalized)) {
+    return "INTERNO DE NOTICIAS";
+  }
+  return normalized;
+}
+
 export function getSiteIntegrations() {
   return loadRawConfig();
 }
@@ -93,8 +101,8 @@ export function getSiteIntegration(siteSigla: string | null | undefined): SiteIn
 export function getSiteFormatMapping(siteSigla: string | null | undefined, localFormato: string | null | undefined): SiteFormatMapping | null {
   const site = getSiteIntegration(siteSigla);
   if (!site) return null;
-  const normalized = normalizeLocalFormato(localFormato);
-  return site.formatMappings.find((item) => item.aliases.some((alias) => normalizeLocalFormato(alias) === normalized)) ?? null;
+  const normalized = canonicalFormatKey(localFormato);
+  return site.formatMappings.find((item) => item.aliases.some((alias) => canonicalFormatKey(alias) === normalized)) ?? null;
 }
 
 type FormatMappingContext = {
@@ -126,13 +134,13 @@ export function getSiteFormatMappingByContext(
 ): SiteFormatMapping | null {
   const site = getSiteIntegration(siteSigla);
   if (!site) return null;
-  const normalized = normalizeLocalFormato(localFormato);
+  const normalized = canonicalFormatKey(localFormato);
   const inferredPage = inferPageFromContext(context);
   const slotSelector = String(context.slotSelector ?? "").trim();
   const contextSelector = String(context.contextSelector ?? "").trim();
 
   let candidates = site.formatMappings.filter((item) =>
-    item.aliases.some((alias) => normalizeLocalFormato(alias) === normalized),
+    item.aliases.some((alias) => canonicalFormatKey(alias) === normalized),
   );
   if (!candidates.length && slotSelector) {
     candidates = site.formatMappings.filter((item) => item.slotSelector === slotSelector);

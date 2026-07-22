@@ -19,8 +19,9 @@ A pasta antiga do OpenClaw é apenas origem histórica:
 ## O que existe
 
 - Frontend do painel AdOps.
-- API privada no VPS.
-- Worker público Cloudflare.
+- API e runners no Mac Mini, implantados pelo Portainer endpoint 3.
+- Cloudflare apenas como DNS, Tunnel, Access e cache seletivo.
+- Monitor interno como único dono das credenciais do Google Drive.
 - Runner remoto de jobs.
 - Integração com planilha.
 - Integração com AdRotate nos portais.
@@ -88,12 +89,12 @@ PI/PDF/Drive
 
 ## Fontes de verdade
 
-1. PDF/email da PI.
-2. Pasta Drive da PI.
-3. Planilha operacional.
-4. AdOps.
-5. AdRotate/portal.
-6. WhatsApp como evidência operacional quando a mídia chegou fora do Drive.
+1. PDF/email da PI para identidade comercial.
+2. Planilha operacional para período, portal e posição.
+3. AdOps.
+4. AdRotate/portal como estado de publicação.
+5. Pasta e mídia do Drive como localização, sujeitas a erro de nome.
+6. WhatsApp como confirmação operacional quando houver conflito ou mídia fora do Drive.
 
 Se houver divergência, não escolher no chute. Registrar o conflito e corrigir com base na PI.
 
@@ -129,6 +130,7 @@ node --check scripts/src/capture-insertion-proof.cjs
 - `docs/PROJECT_MAP_ADOPS.md`
 - `docs/runbook-nova-pi-evidencias.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
+- `docs/adops/runtime-topology-and-permissions.md`
 - `docs/base-de-conhecimento-do-projeto.md`
 - `docs/status-do-projeto.md`
 - `docs/prints-retroativos.md`

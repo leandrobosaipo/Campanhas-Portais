@@ -55,8 +55,57 @@ export type DriveCampaignMediaMatch = {
   pdfFiles: DriveCampaignFile[];
   textFiles: DriveCampaignFile[];
   otherFiles: DriveCampaignFile[];
+  sourceIdentity: {
+    requestedPi: string | null;
+    folderPiCandidates: string[];
+    pdfPiCandidates: string[];
+    mediaPiCandidates: string[];
+    exactPiFolder: boolean;
+    piConflict: boolean;
+  };
   warnings: string[];
 };
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+export function extractDrivePiCandidates(value: string | null | undefined) {
+  const normalized = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  return uniqueStrings(
+    [...normalized.matchAll(/\bPI\s*[-_:]?\s*(\d{3,})\b/g)].map((match) => match[1]),
+  );
+}
+
+function campaignFolderPath(path: string) {
+  const pieces = path.split("/").filter(Boolean);
+  const piIndex = pieces.findIndex((piece) => extractDrivePiCandidates(piece).length > 0);
+  if (piIndex >= 0) return `/${pieces.slice(0, piIndex + 1).join("/")}`;
+  return nearestFolderPath(path);
+}
+
+function sourceIdentity(
+  requestedPi: string | null,
+  folderPath: string | null,
+  mediaFiles: DriveCampaignFile[],
+  pdfFiles: DriveCampaignFile[],
+) {
+  const folderPiCandidates = extractDrivePiCandidates(folderPath);
+  const pdfPiCandidates = uniqueStrings(pdfFiles.flatMap((file) => extractDrivePiCandidates(file.name)));
+  const mediaPiCandidates = uniqueStrings(mediaFiles.flatMap((file) => extractDrivePiCandidates(file.name)));
+  const observed = uniqueStrings([...folderPiCandidates, ...pdfPiCandidates, ...mediaPiCandidates]);
+  return {
+    requestedPi,
+    folderPiCandidates,
+    pdfPiCandidates,
+    mediaPiCandidates,
+    exactPiFolder: Boolean(requestedPi && folderPiCandidates.includes(requestedPi)),
+    piConflict: observed.length > 1 || Boolean(requestedPi && observed.length && observed.some((candidate) => candidate !== requestedPi)),
+  };
+}
 
 function extension(name: string) {
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -236,6 +285,15 @@ function scoreCampaignItem(item: DriveRawItem, input: { piCodigo: string; campai
   return 0;
 }
 
+function scoreCampaignFolder(folderPath: string, files: DriveRawItem[], input: { piCodigo: string; campaignName: string; siteSigla: string }) {
+  const requestedPi = extractPiDigits(input.piCodigo);
+  const folderPis = extractDrivePiCandidates(folderPath);
+  if (requestedPi && folderPis.includes(requestedPi)) return 1_000;
+  const filePis = uniqueStrings(files.flatMap((item) => extractDrivePiCandidates(`${item.path ?? ""} ${item.name}`)));
+  if (requestedPi && filePis.includes(requestedPi)) return 800;
+  return Math.max(0, ...files.map((item) => scoreCampaignItem(item, input)));
+}
+
 export async function findDriveCampaignMedia(input: {
   siteSigla: string;
   piCodigo: string;
@@ -286,15 +344,25 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
   }
 
   const scoped = portalItems(items, input.siteSigla);
-  const scored = scoped
-    .map((item) => ({ item, score: scoreCampaignItem(item, input) }))
+  const grouped = new Map<string, DriveRawItem[]>();
+  for (const item of scoped) {
+    const normalized = normalizeDriveItem(item);
+    const folderPath = normalized.kind === "folder" ? normalized.path : campaignFolderPath(normalized.path);
+    if (!folderPath) continue;
+    const current = grouped.get(folderPath) ?? [];
+    current.push(item);
+    grouped.set(folderPath, current);
+  }
+  const scored = Array.from(grouped.entries())
+    .map(([folderPath, files]) => ({ folderPath, files, score: scoreCampaignFolder(folderPath, files, input) }))
     .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || (a.item.path ?? "").localeCompare(b.item.path ?? ""));
+    .sort((a, b) => b.score - a.score || a.folderPath.localeCompare(b.folderPath));
 
   if (!scored.length) {
     return {
@@ -307,17 +375,15 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
   }
 
   const bestScore = scored[0]!.score;
   const best = scored.filter((entry) => entry.score === bestScore);
-  const folderPaths = Array.from(new Set(best.map((entry) => {
-    const file = normalizeDriveItem(entry.item);
-    return file.kind === "folder" ? file.path : nearestFolderPath(file.path);
-  }).filter((value): value is string => Boolean(value))));
-  const folderPath = folderPaths.length === 1 ? folderPaths[0]! : nearestFolderPath(normalizeDriveItem(best[0]!.item).path);
+  const folderPaths = best.map((entry) => entry.folderPath);
+  const folderPath = folderPaths[0] ?? null;
   const folderId = scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && item.path === folderPath)?.id ?? null;
   const folderPrefix = folderPath ? `${folderPath}/` : "";
   const files = scoped
@@ -329,6 +395,10 @@ export async function findDriveCampaignMedia(input: {
   const pdfFiles = files.filter((item) => item.kind === "pdf");
   const textFiles = files.filter((item) => item.kind === "text");
   const otherFiles = files.filter((item) => item.kind === "other");
+  const identity = sourceIdentity(extractPiDigits(input.piCodigo), folderPath, mediaFiles, pdfFiles);
+  if (identity.piConflict) {
+    warnings.push(`Divergência de PI detectada entre planilha/pedido e nomes da pasta ou arquivos: solicitado ${identity.requestedPi ?? "sem PI"}; pasta ${identity.folderPiCandidates.join(", ") || "sem PI"}; PDF ${identity.pdfPiCandidates.join(", ") || "sem PI"}.`);
+  }
 
   return {
     version: DRIVE_CAMPAIGN_MEDIA_VERSION,
@@ -340,6 +410,7 @@ export async function findDriveCampaignMedia(input: {
     pdfFiles,
     textFiles,
     otherFiles,
+    sourceIdentity: identity,
     warnings,
   };
 }

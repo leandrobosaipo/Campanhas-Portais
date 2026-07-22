@@ -75,11 +75,36 @@ Mapeamento:
 - `PNMT` -> `/PNMT`
 - `PPMT` -> `/PMMT` ou `/PPMT`
 
-O match da campanha usa:
+O match da campanha usa uma única pasta exata. Ele não agrega todos os arquivos
+do mês. A ordem é:
 
-1. número da PI no caminho da pasta ou arquivo;
-2. número da PI no nome do PDF ou mídia;
+1. número da PI no nome da pasta da campanha;
+2. número da PI no nome do PDF ou mídia dentro dessa pasta;
 3. tokens do nome da campanha dentro do portal.
+
+Empate entre pastas retorna `ambiguous`. Arquivos de outra PI do mesmo mês não
+entram no resultado.
+
+Cada item retorna `sourceIdentity`:
+
+```json
+{
+  "sources": {
+    "sheetPi": "90718",
+    "driveFolderPiCandidates": ["90708"],
+    "drivePdfPiCandidates": ["90718"],
+    "adopsPi": "90718"
+  },
+  "observedPiCandidates": ["90718", "90708"],
+  "canonicalPi": "90718",
+  "decision": "needs_confirmation",
+  "reason": "Planilha e PDF concordam, mas o nome da pasta ou da mídia no Drive usa outra PI. Confirme antes de alterar ou publicar."
+}
+```
+
+`canonicalPi` é uma recomendação de leitura, não autorização para mutar. Quando
+`decision=needs_confirmation`, a API adiciona
+`requiredActions[]=confirm_source_identity`.
 
 Arquivos classificados:
 
@@ -99,6 +124,7 @@ Arquivos classificados:
 - `divergent_format`: formato da planilha diverge do AdOps.
 - `drive_missing`: pasta/mídia não localizada no índice do Drive.
 - `ambiguous_drive_match`: mais de uma pasta candidata no Drive.
+- `source_conflict`: planilha, pasta, PDF ou AdOps usam números de PI diferentes.
 - `blocked`: há problema objetivo que impede automação segura.
 
 ## Regras de aceite visual e publicação
@@ -149,6 +175,17 @@ Exemplo:
 ```
 
 Use a ação sugerida somente depois de revisar `blockingIssues`.
+
+Para conflitos de fonte ou mídia:
+
+```bash
+GET  /api/insertions/{id}/media-consistency
+POST /api/ops/jobs/drive-pi-reconcile
+```
+
+O segundo endpoint usa `preview` por padrão. `apply=true` exige confirmação
+humana registrada, PI e/ou URL canônica explícita e chave idempotente. Consulte
+[`runtime-topology-and-permissions.md`](./runtime-topology-and-permissions.md).
 
 ## Campanhas futuras
 
