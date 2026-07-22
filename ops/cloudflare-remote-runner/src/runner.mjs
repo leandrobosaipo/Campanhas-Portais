@@ -4086,7 +4086,7 @@ async function executeDrivePiIngest(payload) {
       ? "O fluxo de publicação valida a relação por inserção após o AdRotate."
       : "Nenhuma alteração nova aplicada no AdOps.",
   };
-  if (hasAdOpsChanges && payload?.publish !== true) {
+  if (hasAdOpsChanges && payload?.publish !== true && !strictExplicitPublishFlow) {
     try {
       reconcile = await executeReconcilePlanilhaAdrotate();
     } catch (error) {
