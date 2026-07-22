@@ -205,6 +205,23 @@ await check("runner-expõe-candidatos-de-midia-no-preflight", async () => {
   return { ok: true };
 });
 
+await check("reconcile-valida-arquivo-por-atestado-do-preflight", async () => {
+  const runner = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  const api = read(apiOpsRoutePath);
+  assertIncludes(runner, [
+    "sourcePreflightJobId",
+    "preflightJob?.kind !== \"drive-pi-ingest\"",
+    "execution?.preflightOnly !== true",
+    "preflightFolderId !== resolvedFolderId",
+    "preflightCandidates.find",
+  ], "Runner preflight attestation");
+  assertIncludes(api, [
+    "const sourcePreflightJobId = readOptionalString(req.body?.sourcePreflightJobId)",
+    "sourcePreflightJobId,",
+  ], "API preflight attestation");
+  return { ok: true };
+});
+
 await check("drive-pi-preflight-preserva-pacote-e-fallback-pi-sem-ia", async () => {
   const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
   assertIncludes(source, [

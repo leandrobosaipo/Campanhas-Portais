@@ -635,6 +635,11 @@ para registrar qual arquivo foi confirmado visualmente antes de importar ou
 publicar. O `webViewLink` serve apenas para conferência; nunca deve ser salvo
 como `mediaUrl` do anúncio.
 
+Se o arquivo estiver nessa lista, mas ainda não aparecer no snapshot de
+inventário, passe o ID desse preflight como `sourcePreflightJobId` junto com
+`selectedDriveFileId` no preview de `drive-pi-reconcile`. A API não aceita um
+job de outra pasta, incompleto ou que não liste o arquivo escolhido.
+
 Pendência comum:
 
 - `drive_folder_empty_or_not_shared`: a API conseguiu receber a pasta, mas o

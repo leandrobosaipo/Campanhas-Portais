@@ -46,6 +46,12 @@ export const CreateDrivePiReconcileJobBody = zod.object({
   apply: zod.boolean().default(createDrivePiReconcileJobBodyApplyDefault),
   canonicalPi: zod.string().nullish(),
   selectedDriveFileId: zod.string().nullish(),
+  sourcePreflightJobId: zod
+    .string()
+    .nullish()
+    .describe(
+      "Completed drive-pi-ingest preflight job used to attest the selected file when the inventory snapshot has not indexed it yet.",
+    ),
   mediaUrl: zod
     .string()
     .url()

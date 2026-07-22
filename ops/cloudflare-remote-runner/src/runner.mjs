@@ -4602,13 +4602,29 @@ async function executeDrivePiReconcile(payload) {
   const canonicalPi = String(payload?.canonicalPi || "").trim() || null;
   const mediaUrl = String(payload?.mediaUrl || "").trim() || null;
   const selectedDriveFileId = String(payload?.selectedDriveFileId || "").trim() || null;
+  const sourcePreflightJobId = String(payload?.sourcePreflightJobId || "").trim() || null;
   const confirmationNote = String(payload?.confirmationNote || "").trim() || null;
   const before = await privateApiGet(`/api/insertions/${insertionId}`);
   const consistency = await privateApiGet(`/api/insertions/${insertionId}/media-consistency`);
   const driveFiles = Array.isArray(consistency?.drive?.mediaFiles) ? consistency.drive.mediaFiles : [];
-  const selectedDriveFile = selectedDriveFileId
+  let selectedDriveFile = selectedDriveFileId
     ? driveFiles.find((file) => String(file?.id || "") === selectedDriveFileId) || null
     : null;
+
+  if (selectedDriveFileId && !selectedDriveFile && sourcePreflightJobId) {
+    const preflightJob = await privateApiGet(`/api/ops/jobs/${encodeURIComponent(sourcePreflightJobId)}`);
+    const execution = preflightJob?.result?.execution;
+    const preflightCandidates = Array.isArray(execution?.mediaCandidates) ? execution.mediaCandidates : [];
+    const resolvedFolderId = String(consistency?.drive?.folderId || "").trim();
+    const preflightFolderId = String(execution?.driveFileId || "").trim();
+    if (preflightJob?.kind !== "drive-pi-ingest" || preflightJob?.status !== "completed" || execution?.preflightOnly !== true) {
+      throw new Error(`Job ${sourcePreflightJobId} não é um preflight Drive concluído.`);
+    }
+    if (!resolvedFolderId || preflightFolderId !== resolvedFolderId) {
+      throw new Error(`Preflight ${sourcePreflightJobId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
+    }
+    selectedDriveFile = preflightCandidates.find((file) => String(file?.driveFileId || "") === selectedDriveFileId) || null;
+  }
 
   if (selectedDriveFileId && !selectedDriveFile) {
     throw new Error(`Arquivo Drive ${selectedDriveFileId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
@@ -4617,7 +4633,12 @@ async function executeDrivePiReconcile(payload) {
   const proposal = {
     campaignPatch: canonicalPi && canonicalPi !== before?.piCodigo ? { piCodigo: canonicalPi } : null,
     insertionPatch: mediaUrl && mediaUrl !== before?.mediaUrl ? { mediaUrl } : null,
-    selectedDriveFile: selectedDriveFile ? { id: selectedDriveFile.id, name: selectedDriveFile.name, path: selectedDriveFile.path } : null,
+    selectedDriveFile: selectedDriveFile ? {
+      id: selectedDriveFile.id ?? selectedDriveFile.driveFileId,
+      name: selectedDriveFile.name,
+      path: selectedDriveFile.path,
+      sourcePreflightJobId,
+    } : null,
     requiresDrivePublish: Boolean(selectedDriveFile && !mediaUrl),
   };
 

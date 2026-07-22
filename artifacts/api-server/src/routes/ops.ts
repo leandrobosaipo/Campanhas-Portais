@@ -2140,6 +2140,7 @@ router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
   const apply = req.body?.apply === true;
   const canonicalPi = readOptionalString(req.body?.canonicalPi);
   const selectedDriveFileId = readOptionalString(req.body?.selectedDriveFileId);
+  const sourcePreflightJobId = readOptionalString(req.body?.sourcePreflightJobId);
   const mediaUrl = readOptionalString(req.body?.mediaUrl);
   const confirmationNote = readOptionalString(req.body?.confirmationNote);
 
@@ -2176,7 +2177,7 @@ router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
 
   const requestedKey = readOptionalString(req.headers["idempotency-key"]) ?? readOptionalString(req.body?.idempotencyKey);
   const idempotencyKey = requestedKey ?? createHash("sha256")
-    .update(JSON.stringify({ insertionId, apply, canonicalPi, selectedDriveFileId, mediaUrl }))
+    .update(JSON.stringify({ insertionId, apply, canonicalPi, selectedDriveFileId, sourcePreflightJobId, mediaUrl }))
     .digest("hex");
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
     res.status(400).json({ error: "bad_request", details: "Idempotency-Key inválida." });
@@ -2189,6 +2190,7 @@ router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
     mode: apply ? "apply" : "preview",
     canonicalPi,
     selectedDriveFileId,
+    sourcePreflightJobId,
     mediaUrl,
     confirmationNote,
     source: "macmini-api",
