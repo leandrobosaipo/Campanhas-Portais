@@ -92,6 +92,8 @@ Principais causas:
 - `contextSelector ausente`: informe a área visual de contexto.
 - `slotSelector ausente`: informe o seletor do anúncio.
 - `articleFallbackUrl` inválido: página interna precisa de URL exemplo do mesmo domínio.
+- `articleFallbackUrl` de outro portal: bloqueie a amostra. HTML de outro domínio
+  nunca comprova mídia, posição ou publicação do portal configurado.
 - `scrollMode inválido`: use `top` ou `slot`.
 - `proofStyle inválido`: use `viewport_only` ou `viewport_with_slot_inset`.
 

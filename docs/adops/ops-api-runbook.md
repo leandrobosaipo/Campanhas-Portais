@@ -629,12 +629,22 @@ Aceite do preflight:
 - sem `rollout_blocked`;
 - `reviewReasons` contendo `preflight_only` quando tudo está pronto para aplicação.
 
+O resultado também retorna `result.execution.mediaCandidates`. Cada item contém
+`driveFileId`, `name`, `path`, `mimeType`, `webViewLink` e `size`. Use essa lista
+para registrar qual arquivo foi confirmado visualmente antes de importar ou
+publicar. O `webViewLink` serve apenas para conferência; nunca deve ser salvo
+como `mediaUrl` do anúncio.
+
 Pendência comum:
 
 - `drive_folder_empty_or_not_shared`: a API conseguiu receber a pasta, mas o
   runner não listou PDF/mídia. Normalmente a pasta não está compartilhada com a
   credencial Google Drive do runner/monitor. Corrija o compartilhamento da
   pasta e rode o preflight novamente.
+- `mediaCandidates=[]` apesar de existir arte na conversa: confira se o arquivo
+  ainda está na pasta, se não foi movido ou apagado e se a conta do monitor tem
+  acesso. Print de WhatsApp confirma a escolha, mas não substitui o arquivo
+  acessível para importação.
 
 ### 2. Intake/cadastro operacional
 
