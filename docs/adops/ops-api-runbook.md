@@ -752,7 +752,7 @@ Regras:
   explícitos de mutação e não dependem das flags de mutação automática
   `ADOPS_DRIVE_PI_ALLOW_MUTATION` ou `ADOPS_PI_AGENT_AUTO_APPLY`;
 - `publish=false` limita a mutação ao AdOps/mídia e não executa AdRotate,
-  purge/rebuild nem geração de evidência;
+  reconciliação geral por SSH, purge/rebuild nem geração de evidência;
 - eventos automáticos do monitor continuam dependendo de
   `ADOPS_DRIVE_PI_ALLOW_MUTATION=true` e `ADOPS_PI_AGENT_AUTO_APPLY=true`.
 
