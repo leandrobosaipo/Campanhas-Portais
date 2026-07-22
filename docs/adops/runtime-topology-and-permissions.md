@@ -165,7 +165,10 @@ curl -fsSL -X POST \
 
 Para trocar mídia, `mediaUrl` deve ser HTTPS pública e canônica. `drive.google.com` e `docs.google.com` são rejeitados.
 
-Se existe apenas `selectedDriveFileId`, sem URL pública, use `drive-pi-publish` para importar/comprimir e publicar a mídia. `drive-pi-reconcile` não transforma `webViewLink` em mídia.
+Se existe apenas `selectedDriveFileId`, sem URL pública, use `drive-pi-publish`
+para importar/comprimir a mídia. Em campanha encerrada, envie `publish=false`,
+`generateEvidence=false` e `purgeCache=false`: o job atualiza somente o AdOps e
+não toca no AdRotate. `drive-pi-reconcile` não transforma `webViewLink` em mídia.
 
 Antes de selecionar o arquivo, rode `drive-pi-preflight` e confira
 `result.execution.mediaCandidates`. A confirmação operacional deve registrar o

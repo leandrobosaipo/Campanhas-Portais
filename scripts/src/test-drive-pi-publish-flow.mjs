@@ -104,11 +104,16 @@ assert(perrenguePluginDeploy.includes("legacy_target"), "deploy PMT deve remover
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
+const runnerSource = await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8");
 for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
-  assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem marcador ${marker}`);
+  assert(runnerSource.includes(marker), `runner sem marcador ${marker}`);
 }
-assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("echo WP_CONTENT_DIR;"));
-assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("staleMuPluginTargets"));
+assert(runnerSource.includes('const explicitPublishFlow = /api-publish$/.test'), "drive-pi-publish com publish=false deve permitir atualização somente no AdOps");
+assert(!runnerSource.includes('const explicitPublishFlow = payload?.publish === true && /api-publish$/.test'), "mutação explícita não pode depender de publicar no AdRotate");
+assert(runnerSource.includes("explicitPublishFlow\n    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)"), "endpoint protegido explícito deve ser independente das flags de automação");
+assert(runnerSource.includes("if (hasAdOpsChanges && payload?.publish === true)"), "AdRotate deve continuar condicionado a publish=true");
+assert(runnerSource.includes("echo WP_CONTENT_DIR;"));
+assert(runnerSource.includes("staleMuPluginTargets"));
 for (const marker of ["application/vnd.google-apps.document", "/export?mimeType="]) {
   assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes(marker), `runner sem suporte a observação Google Docs: ${marker}`);
 }
