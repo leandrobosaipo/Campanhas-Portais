@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -2199,6 +2199,16 @@ export default {
         return jsonNoStore({ ok: true, jobId, kind: "drive-inventory-refresh", status: "queued" }, { status: 202 });
       }
 
+      if (path === "/api/ops/jobs/drive-pi-reconcile") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+        return jsonNoStore({
+          error: "private_api_unavailable",
+          details: "A reconciliação de fonte e mídia depende da API principal hospedada.",
+        }, { status: 503 });
+      }
+
       if (path === "/api/ops/jobs/telegram-send-evidence") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
@@ -2516,6 +2526,14 @@ export default {
     if (path === "/api/ops/drive-inventory/status") {
       if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       return jsonNoStore({ ok: false, snapshotStatus: "unavailable", snapshotAt: null, snapshotAgeSeconds: null, stale: true, itemCount: 0 });
+    }
+
+    if (path === "/api/ops/runtime-readiness" || path === "/api/ops/runtime-topology") {
+      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+      return jsonNoStore({
+        error: "private_api_unavailable",
+        details: "A topologia e o readiness dependem da API principal hospedada.",
+      }, { status: 503 });
     }
 
     const analyticsRequirementsMatch = path.match(/^\/api\/analytics\/insertions\/(\d+)\/requirements$/);
