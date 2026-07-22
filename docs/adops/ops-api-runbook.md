@@ -123,6 +123,16 @@ Conferir prontidão de integrações sem expor segredos:
 curl -fsSL "$ADOPS_API_BASE_URL/api/ops/runtime-readiness"
 ```
 
+Conferir onde cada serviço roda e quais mutações são permitidas:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/runtime-topology"
+```
+
+Contrato detalhado:
+
+- [`runtime-topology-and-permissions.md`](./runtime-topology-and-permissions.md)
+
 Esse endpoint responde apenas nomes e presença/ausência de variáveis de
 ambiente. Ele serve para saber se o runtime atual consegue operar API, Drive,
 Telegram, runner e política de mutação. Ele nunca deve retornar valores de
@@ -164,15 +174,10 @@ O resultado esperado fica em `result.execution.runnerRuntimeReadiness`. Ele
 também só retorna nomes e presença/ausência de variáveis, nunca valores de
 segredo.
 
-No deploy por volume do Mac Mini, o runner principal deve montar o volume
-externo `adops-drive-pi-monitor-data` em `/data:ro` e usar, por padrão:
-
-```text
-GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE=/data/secrets/google-drive-service-account.json
-```
-
-Se `runnerRuntimeReadiness.capabilities.googleDriveReady=false`, confira esse
-mount antes de mexer em código ou banco.
+No modo canônico `DRIVE_INTEGRATION_MODE=monitor`, somente
+`adops-drive-pi-monitor` possui credenciais Google. API e runner consomem
+snapshot/download interno. Um mount legado no runner deve ser tratado como
+compatibilidade temporária, não como arquitetura final.
 
 Consultar job:
 
@@ -249,6 +254,39 @@ ops/portainer/adops-stack/.env.perrengue-vm8-portainer
 
 O primeiro administra o proprio AdOps. O segundo e o bloco que precisa estar
 mesclado no `adops.env` para permitir publicacao PMT via API.
+
+## Divergência entre planilha, pasta, PDF e mídia
+
+Diagnóstico por campanha:
+
+```bash
+curl -fsSL \
+  "$ADOPS_API_BASE_URL/api/campaign-operations/active?date=2026-07-22&includeEvidence=true&refreshDrive=false"
+```
+
+Diagnóstico por inserção:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/insertions/INSERCAO_ID/media-consistency"
+```
+
+Preview de reconciliação:
+
+```bash
+curl -fsSL -X POST \
+  -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: reconcile-INSERCAO_ID-preview-v1" \
+  "$ADOPS_API_BASE_URL/api/ops/jobs/drive-pi-reconcile" \
+  -d '{"insertionId":INSERCAO_ID,"apply":false}'
+```
+
+Nunca aplique enquanto `sourceIdentity.decision=needs_confirmation`. Depois da
+confirmação, repita com `apply=true`, `canonicalPi` e/ou `mediaUrl` canônica e
+`confirmationNote`. URL do Google Drive não é mídia pública válida.
+
+Se a confirmação escolher um arquivo bruto do Drive, use `drive-pi-publish`
+para importar/comprimir. `drive-pi-reconcile` não pula esse processamento.
 
 Antes de gerar evidencia PMT:
 
@@ -803,7 +841,7 @@ O `.env` privado deve ficar fora do Git. Use:
 
 1. Criar testes de API para os wrappers `/ops/jobs/*`.
 2. Garantir que o deploy público use `OPS_JOB_KINDS` com todos os jobs:
-   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe`.
+   `sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe`.
 3. Criar adaptador Telegram chamando estes endpoints.
 4. Criar adaptador WhatsApp chamando estes endpoints.
 5. Criar painel autenticado consumindo o catálogo JSON, sem rotas novas fora da API.

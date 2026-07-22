@@ -33,6 +33,7 @@ type RequiredAction =
   | "review_period_divergence"
   | "review_format_divergence"
   | "review_drive_ambiguity"
+  | "confirm_source_identity"
   | "review_live_slot_conflict";
 
 type OperationStatus =
@@ -45,6 +46,7 @@ type OperationStatus =
   | "divergent_format"
   | "drive_missing"
   | "ambiguous_drive_match"
+  | "source_conflict"
   | "blocked";
 
 type SuggestedJob = {
@@ -101,6 +103,7 @@ export type CampaignOperationItem = {
     blockSite: string;
     rowNumber: number;
   };
+  sourceIdentity: SourceIdentityDecision;
   drive: DriveCampaignMediaMatch & {
     mediaMatchesFormat: boolean;
   };
@@ -145,6 +148,7 @@ export type CampaignOperationUpcomingItem = {
     blockSite: string;
     rowNumber: number;
   };
+  sourceIdentity: SourceIdentityDecision;
   drive: DriveCampaignMediaMatch & {
     mediaMatchesFormat: boolean;
   };
@@ -159,6 +163,19 @@ export type CampaignOperationUpcomingItem = {
   };
   requiredActions: RequiredAction[];
   blockingIssues: string[];
+};
+
+export type SourceIdentityDecision = {
+  sources: {
+    sheetPi: string | null;
+    driveFolderPiCandidates: string[];
+    drivePdfPiCandidates: string[];
+    adopsPi: string | null;
+  };
+  observedPiCandidates: string[];
+  canonicalPi: string | null;
+  decision: "confirmed" | "needs_confirmation" | "insufficient_data";
+  reason: string;
 };
 
 export type CampaignOperationsActiveResult = {
@@ -208,6 +225,54 @@ function isCampaignNameCompatible(sheetName: string, adopsName: string | null | 
 
 function unique<T>(values: T[]) {
   return Array.from(new Set(values));
+}
+
+function resolveSourceIdentity(
+  row: CurrentSheetCampaignRow,
+  drive: DriveCampaignMediaMatch,
+  insertion: MinimalEnrichedInsertion | null,
+): SourceIdentityDecision {
+  const sheetPi = extractPiDigits(row.piCodigo);
+  const adopsPi = extractPiDigits(insertion?.campaign?.piCodigo);
+  const folderPis = drive.sourceIdentity.folderPiCandidates;
+  const pdfPis = drive.sourceIdentity.pdfPiCandidates;
+  const observedPiCandidates = unique([sheetPi, ...folderPis, ...pdfPis, adopsPi].filter((value): value is string => Boolean(value)));
+  const sheetAndPdfAgree = Boolean(sheetPi && pdfPis.includes(sheetPi));
+
+  if (observedPiCandidates.length === 0) {
+    return {
+      sources: { sheetPi, driveFolderPiCandidates: folderPis, drivePdfPiCandidates: pdfPis, adopsPi },
+      observedPiCandidates,
+      canonicalPi: null,
+      decision: "insufficient_data",
+      reason: "Nenhuma fonte contém um número de PI reconhecível.",
+    };
+  }
+  if (observedPiCandidates.length === 1) {
+    return {
+      sources: { sheetPi, driveFolderPiCandidates: folderPis, drivePdfPiCandidates: pdfPis, adopsPi },
+      observedPiCandidates,
+      canonicalPi: observedPiCandidates[0]!,
+      decision: "confirmed",
+      reason: "As fontes com PI identificável concordam.",
+    };
+  }
+  if (sheetAndPdfAgree && (!adopsPi || adopsPi === sheetPi)) {
+    return {
+      sources: { sheetPi, driveFolderPiCandidates: folderPis, drivePdfPiCandidates: pdfPis, adopsPi },
+      observedPiCandidates,
+      canonicalPi: sheetPi,
+      decision: "needs_confirmation",
+      reason: "Planilha e PDF concordam, mas o nome da pasta ou da mídia no Drive usa outra PI. Confirme antes de alterar ou publicar.",
+    };
+  }
+  return {
+    sources: { sheetPi, driveFolderPiCandidates: folderPis, drivePdfPiCandidates: pdfPis, adopsPi },
+    observedPiCandidates,
+    canonicalPi: null,
+    decision: "needs_confirmation",
+    reason: "As fontes divergem e não há maioria canônica segura para mutação automática.",
+  };
 }
 
 type LiveAdSlot = {
@@ -464,6 +529,7 @@ export async function getActiveCampaignOperations(options: {
       refreshDrive: options.refreshDrive === true,
     });
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
     const evidence = await resolveEvidence(insertion, row, date, includeEvidence);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
@@ -478,6 +544,10 @@ export async function getActiveCampaignOperations(options: {
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
+    }
+    if (sourceIdentity.decision === "needs_confirmation") {
+      requiredActions.push("confirm_source_identity");
+      blockingIssues.push(sourceIdentity.reason);
     }
     if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
@@ -500,6 +570,7 @@ export async function getActiveCampaignOperations(options: {
     if (!insertion) statuses.push("needs_create_in_adops");
     if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) statuses.push("drive_missing");
     if (drive.status === "ambiguous") statuses.push("ambiguous_drive_match");
+    if (sourceIdentity.decision === "needs_confirmation") statuses.push("source_conflict");
     if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat && !hasAdopsMedia))) statuses.push("needs_media");
     if (!insertion || insertion.bannerPublicadoNoSite !== true) statuses.push("needs_publication");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) statuses.push("needs_evidence");
@@ -531,6 +602,7 @@ export async function getActiveCampaignOperations(options: {
         blockSite: row.blockSite,
         rowNumber: row.rowNumber,
       },
+      sourceIdentity,
       drive: {
         ...drive,
         mediaMatchesFormat,
@@ -562,6 +634,7 @@ export async function getActiveCampaignOperations(options: {
       refreshDrive: options.refreshDrive === true,
     });
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
@@ -574,6 +647,10 @@ export async function getActiveCampaignOperations(options: {
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
+    }
+    if (sourceIdentity.decision === "needs_confirmation") {
+      requiredActions.push("confirm_source_identity");
+      blockingIssues.push(sourceIdentity.reason);
     }
     if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
@@ -611,6 +688,7 @@ export async function getActiveCampaignOperations(options: {
         blockSite: row.blockSite,
         rowNumber: row.rowNumber,
       },
+      sourceIdentity,
       drive: {
         ...drive,
         mediaMatchesFormat,

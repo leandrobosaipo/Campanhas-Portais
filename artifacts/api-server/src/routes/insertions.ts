@@ -61,6 +61,8 @@ import {
   resolveDeliveryPiCode,
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
+import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
+import { mediaNamesCompatible } from "../lib/media-consistency";
 
 const router: IRouter = Router();
 
@@ -1327,6 +1329,10 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     positionLabel,
     pageLabel,
     adrotateGroupId: groupId,
+    mappingStatus: groupId == null ? "unresolved" : "resolved",
+    blockingIssues: groupId == null
+      ? [{ code: "format_mapping_unresolved", message: `Nenhum grupo AdRotate foi resolvido para ${siteSigla ?? "portal ausente"} / ${positionLabel ?? "formato ausente"}.` }]
+      : [],
     mediaUrl: insertion.mediaUrl,
     mediaBasename,
     plannedSelf,
@@ -1334,6 +1340,93 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     historicalAdminMatches,
     fallbackCandidates,
   });
+});
+
+router.get("/insertions/:id/media-consistency", async (req, res): Promise<void> => {
+  const params = GetInsertionRelationParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, params.data.id));
+  if (!rawInsertion) {
+    res.status(404).json({ error: "Insertion not found" });
+    return;
+  }
+
+  try {
+    const insertion = await enrichInsertion(rawInsertion);
+    const siteSigla = insertion.siteSigla ?? null;
+    const localFormato = insertion.localFormatoNormalizado ?? insertion.localFormato;
+    const groupId = getAdRotateGroupId(siteSigla, localFormato);
+    const drive = siteSigla
+      ? await findDriveCampaignMedia({
+          siteSigla,
+          piCodigo: insertion.piCodigo ?? "",
+          campaignName: insertion.campanhaName ?? "",
+          refreshDrive: false,
+        })
+      : null;
+    const live = siteSigla
+      ? await fetchLivePreview(siteSigla)
+      : { items: [], warnings: ["Inserção sem portal vinculado."] };
+    const driveMedia = drive?.mediaFiles ?? [];
+    const matchingDriveMedia = driveMedia.filter((file) => mediaNamesCompatible(insertion.mediaUrl, file.name));
+    const liveInGroup = live.items.filter((item) => groupId != null && item.groupId === groupId).map((item) => ({
+      ...item,
+      matchesAdopsMedia: mediaNamesCompatible(insertion.mediaUrl, item.mediaUrl),
+    }));
+    const issues: string[] = [];
+    const warnings: string[] = [];
+
+    if (!siteSigla) issues.push("site_missing");
+    if (!groupId) issues.push("format_mapping_unresolved");
+    if (!insertion.mediaUrl) issues.push("adops_media_missing");
+    if (!drive || drive.status === "not_found" || drive.status === "unavailable") issues.push("drive_campaign_folder_missing");
+    if (drive?.sourceIdentity.piConflict) issues.push("source_pi_conflict");
+    if (driveMedia.length > 1) issues.push("drive_media_ambiguous");
+    if (insertion.mediaUrl && driveMedia.length && matchingDriveMedia.length === 0) issues.push("adops_drive_media_mismatch");
+    if (insertion.bannerPublicadoNoSite && groupId && insertion.mediaUrl && !liveInGroup.some((item) => item.matchesAdopsMedia)) {
+      warnings.push("public_media_not_observed_in_single_rotation_sample");
+    }
+
+    res.json({
+      version: "media-consistency-v1",
+      generatedAt: new Date().toISOString(),
+      insertion: {
+        id: insertion.id,
+        campaignId: insertion.campanhaId,
+        campaignName: insertion.campanhaName,
+        piCodigo: insertion.piCodigo,
+        siteSigla,
+        localFormato,
+        groupId,
+        mediaUrl: insertion.mediaUrl,
+        mediaBasename: basename(String(insertion.mediaUrl ?? "")) || null,
+        published: insertion.bannerPublicadoNoSite === true,
+      },
+      drive,
+      comparison: {
+        matchingDriveMedia: matchingDriveMedia.map((file) => ({ id: file.id, name: file.name, path: file.path })),
+        liveInExpectedGroup: liveInGroup,
+      },
+      status: issues.length ? "needs_confirmation" : "consistent",
+      approved: issues.length === 0,
+      issues,
+      warnings,
+      nextAction: issues.includes("adops_drive_media_mismatch") || issues.includes("drive_media_ambiguous") || issues.includes("source_pi_conflict")
+        ? "confirm_sources_before_mutation"
+        : issues.length
+          ? "repair_publication_or_mapping"
+          : "none",
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "media_consistency_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 router.post("/integrations/adrotate/media/sync-related", async (req, res): Promise<void> => {

@@ -13,6 +13,7 @@ Comece por:
 - `docs/PROJECT_MAP_ADOPS.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
 - `docs/adops/evidence-print-delivery-api.md`
+- `docs/adops/runtime-topology-and-permissions.md`
 
 Documentacao operacional publicada pela API:
 
@@ -37,6 +38,8 @@ O fluxo hospedado cobre:
 - purge de cache e validacao de HTML publico;
 - prints individuais, retroativos e validacao por checklist;
 - fila assincrona com progresso e diagnostico de prontidao do runner.
+- diagnóstico de divergência de PI por planilha, pasta, PDF e AdOps, com confirmação humana antes de mutação;
+- diagnóstico de consistência de mídia entre Drive, AdOps, AdRotate e HTML público;
 - inventario persistido e idempotente do Google Drive, sem credencial na API publica;
 - CI com codegen, typecheck, builds, testes de Drive/captura e varredura de secrets;
 - deploy imutavel por SHA no Portainer, iniciado manualmente no ambiente GitHub `production`.

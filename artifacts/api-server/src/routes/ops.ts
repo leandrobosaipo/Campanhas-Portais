@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
@@ -17,6 +17,7 @@ type JobKind =
   | "reconcile-adrotate"
   | "adrotate-link"
   | "adrotate-publish"
+  | "drive-pi-reconcile"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -75,6 +76,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "reconcile-adrotate",
   "adrotate-link",
   "adrotate-publish",
+  "drive-pi-reconcile",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
@@ -190,14 +192,20 @@ function buildOpsRuntimeReadiness(
   runnerLiveness: RunnerLiveness,
   driveInventory: Awaited<ReturnType<typeof getDriveInventoryStatus>>,
 ) {
-  const driveChecks = buildEnvChecks([
-    { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Ler PI e mídia do Google Drive via service account inline." },
-    { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Ler PI e mídia do Google Drive via arquivo service account." },
-    { name: "GOOGLE_DRIVE_ACCESS_TOKEN", requiredFor: "Ler PI e mídia do Google Drive via access token." },
-    { name: "GOOGLE_DRIVE_REFRESH_TOKEN", requiredFor: "Renovar OAuth do Google Drive." },
-    { name: "GOOGLE_DRIVE_CLIENT_ID", requiredFor: "Renovar OAuth do Google Drive." },
-    { name: "GOOGLE_DRIVE_CLIENT_SECRET", requiredFor: "Renovar OAuth do Google Drive." },
-  ]);
+  const monitorMode = process.env.DRIVE_INTEGRATION_MODE === "monitor";
+  const driveChecks: RuntimeEnvCheck[] = monitorMode
+    ? [
+        { name: "DRIVE_INTEGRATION_MODE", present: true, requiredFor: "Obrigar API e runner a consumir o snapshot do monitor interno." },
+        { name: "DRIVE_INVENTORY_SNAPSHOT", present: driveInventory.snapshotStatus !== "unavailable", requiredFor: "Consultar Drive sem credencial Google na API pública." },
+      ]
+    : buildEnvChecks([
+        { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", requiredFor: "Compatibilidade legada: leitura direta do Drive pela API." },
+        { name: "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", requiredFor: "Compatibilidade legada: leitura direta do Drive pela API." },
+        { name: "GOOGLE_DRIVE_ACCESS_TOKEN", requiredFor: "Compatibilidade legada: leitura direta do Drive pela API." },
+        { name: "GOOGLE_DRIVE_REFRESH_TOKEN", requiredFor: "Compatibilidade legada: renovar OAuth do Drive." },
+        { name: "GOOGLE_DRIVE_CLIENT_ID", requiredFor: "Compatibilidade legada: renovar OAuth do Drive." },
+        { name: "GOOGLE_DRIVE_CLIENT_SECRET", requiredFor: "Compatibilidade legada: renovar OAuth do Drive." },
+      ]);
   const telegramChecks = buildEnvChecks([
     { name: "ADOPS_TELEGRAM_BOT_URL", requiredFor: "Enviar evidência pelo bridge/bot interno." },
     { name: "TELEGRAM_BOT_TOKEN", requiredFor: "Enviar evidência direto pela API do Telegram." },
@@ -220,7 +228,6 @@ function buildOpsRuntimeReadiness(
     { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
   ]);
   const driveOAuthReady = allEnvPresent(["GOOGLE_DRIVE_REFRESH_TOKEN", "GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET"]);
-  const monitorMode = process.env.DRIVE_INTEGRATION_MODE === "monitor";
   const directGoogleDriveReady = anyEnvPresent(["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE", "GOOGLE_DRIVE_ACCESS_TOKEN"]) || driveOAuthReady;
   const googleDriveReady = monitorMode ? driveInventory.snapshotStatus !== "unavailable" : directGoogleDriveReady;
   const telegramDirectReady = allEnvPresent(["TELEGRAM_BOT_TOKEN", "TELEGRAM_DEFAULT_GROUP_ID"]);
@@ -258,6 +265,38 @@ function buildOpsRuntimeReadiness(
       piAgentAutoApply: process.env.ADOPS_PI_AGENT_AUTO_APPLY === "true",
       adrotateSshConfigured: envIsPresent("ADOPS_PERRENGUE_SSH_KEY_PATH"),
     },
+    services: [
+      {
+        id: "api",
+        location: "macmini-portainer-endpoint-3",
+        ready: envIsPresent("OPS_API_TOKEN") && anyEnvPresent(["PRIVATE_ADOPS_API_TOKEN", "ADOPS_INTERNAL_API_TOKEN"]),
+        owns: ["rest-contracts", "postgres-control-plane", "ops-job-queue"],
+        mayMutate: ["adops-postgres", "ops-job-queue"],
+        mustNotOwn: ["google-drive-credentials", "wordpress-admin-credentials", "telegram-bot-token-when-bridge-is-used"],
+      },
+      {
+        id: "runner",
+        location: "macmini-portainer-endpoint-3",
+        ready: runnerLiveness.hasRecentRunner,
+        owns: ["job-execution", "adrotate-publication", "capture", "telegram-delivery"],
+        mayMutate: ["adrotate", "wordpress-media", "cloudflare-cache", "evidence-storage"],
+      },
+      {
+        id: "drive-monitor",
+        location: "macmini-portainer-endpoint-3-internal-network",
+        ready: driveInventory.snapshotStatus !== "unavailable",
+        owns: ["google-drive-credentials", "drive-inventory-snapshot", "internal-file-download"],
+        mayMutate: ["drive-inventory-snapshot", "ops-job-queue"],
+      },
+      {
+        id: "perrengue-wordpress",
+        location: "hostinger-vm8-portainer",
+        ready: runnerLiveness.hasRecentRunner,
+        readinessNote: "Acesso Portainer/WP-CLI é validado pelo job runtime-readiness-probe; heartbeat confirma apenas liveness do runner.",
+        owns: ["perrengue-adrotate", "wordpress-media", "headless-rebuild-webhook"],
+        mayMutate: ["perrengue-adrotate", "perrengue-wordpress-media", "perrengue-static-export"],
+      },
+    ],
     categories: [
       { id: "auth", title: "Autenticacao da API", checks: authChecks },
       { id: "google-drive", title: "Google Drive e PI", checks: driveChecks },
@@ -268,6 +307,45 @@ function buildOpsRuntimeReadiness(
     runnerLiveness,
     driveInventory,
     warnings,
+  };
+}
+
+function buildRuntimeTopology() {
+  return {
+    version: "adops-runtime-topology-v1",
+    generatedAt: nowIso(),
+    noSecretValues: true,
+    canonicalRepository: "https://github.com/leandrobosaipo/Campanhas-Portais",
+    controlPlane: {
+      host: "Mac Mini Código5",
+      deployment: "Portainer endpoint 3",
+      services: ["adops-api", "adops-runner", "adops-print-single-runner", "adops-drive-pi-monitor", "adops-web", "postgresql"],
+    },
+    edge: {
+      provider: "Cloudflare",
+      responsibilities: ["dns", "tunnel", "access", "selective-cache-purge"],
+      prohibitedResponsibilities: ["google-drive-credential-owner", "adrotate-database-owner", "long-running-capture-runner"],
+    },
+    perrengue: {
+      host: "Hostinger VM8",
+      deployment: "Portainer VM8",
+      wordpressContainer: "cod5-pro119-perrenguematogrosso-app",
+      wordpressPath: "/app/web/wp",
+      flow: ["adops-api", "runner", "portainer-vm8", "wordpress-adrotate", "headless-rebuild-webhook", "static-public-site"],
+    },
+    credentialOwnership: {
+      googleDrive: "adops-drive-pi-monitor",
+      operationsApi: "adops-api-and-authorized-clients",
+      internalApi: "api-runner-monitor-service-to-service",
+      adrotateAndWordpress: "adops-runner",
+      telegram: "adops-runner-or-internal-bridge",
+    },
+    mutationPolicy: {
+      defaultMode: "preview",
+      requirements: ["explicit-apply", "validated-input", "idempotency-key", "audit-log"],
+      sourceConflict: "block-until-human-confirmation",
+      driveWebViewLinkAsMedia: "prohibited",
+    },
   };
 }
 
@@ -374,6 +452,15 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
     running: "Enviando evidencia no Telegram",
+    completed: "Concluido",
+    failed: "Falhou",
+  },
+  "drive-pi-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Comparando fontes",
+    preview_ready: "Preview pronto",
+    applying: "Aplicando confirmação",
     completed: "Concluido",
     failed: "Falhou",
   },
@@ -648,6 +735,23 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
     [id, kind, JSON.stringify(payload), requestedBy, now, now],
   );
   return id;
+}
+
+async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string) {
+  const existing = await pool.query<{ id: string; status: JobStatus }>(
+    `SELECT id, status
+       FROM ops_jobs
+      WHERE kind = $1
+        AND payload_json::jsonb ->> 'idempotencyKey' = $2
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [kind, idempotencyKey],
+  );
+  if (existing.rows[0]) {
+    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+  }
+  const jobId = await createOpsJob(kind, { ...payload, idempotencyKey }, requestedBy);
+  return { jobId, status: "ready_for_runner" as const, duplicate: false };
 }
 
 async function getOpsJob(id: string) {
@@ -999,6 +1103,10 @@ router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
   res.json(buildOpsRuntimeReadiness(runnerLiveness, driveInventory));
 });
 
+router.get("/ops/runtime-topology", (_req, res): void => {
+  res.json(buildRuntimeTopology());
+});
+
 router.post("/ops/runner/heartbeat", async (req, res): Promise<void> => {
   const runnerId = readOptionalString(req.body?.runnerId);
   if (!runnerId || !/^[a-zA-Z0-9._:-]{1,120}$/.test(runnerId)) {
@@ -1107,6 +1215,14 @@ function buildOpsApiCatalog() {
         purpose: "Conferir prontidao de API, Drive, Telegram, runner e politica de mutacao sem expor valores de segredo.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/runtime-readiness`,
+      },
+      {
+        id: "runtime-topology",
+        method: "GET",
+        path: "/api/ops/runtime-topology",
+        purpose: "Mostrar onde cada serviço roda, quais credenciais possui e quais mutações pode executar, sem expor segredos.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/runtime-topology`,
       },
       {
         id: "drive-inventory-status",
@@ -1273,6 +1389,22 @@ function buildOpsApiCatalog() {
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-pi-publish -d '{"folderUrl":"https://drive.google.com/drive/folders/ID_DA_PASTA","parsedPi":{},"resolveMedia":true,"strictInsertionScope":true,"allowPdfInsertions":false,"publish":true,"generateEvidence":true,"purgeCache":true}'`,
       },
       {
+        id: "media-consistency",
+        method: "GET",
+        path: "/api/insertions/{id}/media-consistency",
+        purpose: "Comparar PI, pasta exata, nomes de mídia, mediaUrl do AdOps e slot público antes de qualquer mutação.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/insertions/1800/media-consistency`,
+      },
+      {
+        id: "drive-pi-reconcile",
+        method: "POST",
+        path: "/api/ops/jobs/drive-pi-reconcile",
+        purpose: "Gerar preview ou aplicar uma confirmação humana de PI/mediaUrl com idempotência e trilha de auditoria.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H "Idempotency-Key: reconcile-1800-preview-v1" ${base}/api/ops/jobs/drive-pi-reconcile -d '{"insertionId":1800,"apply":false}'`,
+      },
+      {
         id: "drive-pi-event",
         method: "POST",
         path: "/api/ops/drive-pi-events",
@@ -1436,6 +1568,18 @@ function buildOpsQuickstart() {
         { label: "Só repetir com apply=true depois de revisar o diagnóstico", command: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/adrotate-link -d '{"insertionId":1663,"adId":160,"apply":true}'` },
       ],
       acceptance: ["sem nova inserção duplicada", "grupo/slot resolvido pelo checklist", "HTML público confere mídia e link"],
+    },
+    {
+      id: "confirmar-divergencia-de-fontes",
+      title: "Confirmar divergência entre planilha, Drive, PDF e mídia publicada",
+      when: "Use quando números de PI ou versões da arte divergem. O fluxo bloqueia mutação até uma pessoa confirmar.",
+      steps: [
+        { label: "Consultar campanhas e identidade por fonte", command: command("active-campaign-operations") },
+        { label: "Comparar pasta, arquivos, AdOps e site", command: command("media-consistency") },
+        { label: "Gerar preview idempotente", command: command("drive-pi-reconcile") },
+        { label: "Após confirmação, repetir com apply=true, canonicalPi/mediaUrl e confirmationNote", command: null },
+      ],
+      acceptance: ["confirmação humana registrada", "nenhuma URL Google Drive salva como mídia", "reconsulta sem conflito inesperado"],
     },
   ];
   return {
@@ -1989,6 +2133,75 @@ router.post("/ops/jobs/drive-pi-preflight", async (req, res): Promise<void> => {
 
 router.post("/ops/jobs/drive-pi-publish", async (req, res): Promise<void> => {
   await createDrivePiFolderJob(req, res, { preflightOnly: false, publishFlow: true });
+});
+
+router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
+  const insertionId = readOptionalNumber(req.body?.insertionId);
+  const apply = req.body?.apply === true;
+  const canonicalPi = readOptionalString(req.body?.canonicalPi);
+  const selectedDriveFileId = readOptionalString(req.body?.selectedDriveFileId);
+  const mediaUrl = readOptionalString(req.body?.mediaUrl);
+  const confirmationNote = readOptionalString(req.body?.confirmationNote);
+
+  if (!insertionId || insertionId <= 0) {
+    res.status(400).json({ error: "bad_request", details: "Informe insertionId positivo." });
+    return;
+  }
+  if (canonicalPi && !/\d{3,}/.test(canonicalPi)) {
+    res.status(400).json({ error: "bad_request", details: "canonicalPi deve conter ao menos três dígitos." });
+    return;
+  }
+  if (mediaUrl) {
+    try {
+      const parsed = new URL(mediaUrl);
+      if (parsed.protocol !== "https:" || /(^|\.)drive\.google\.com$/i.test(parsed.hostname) || /(^|\.)docs\.google\.com$/i.test(parsed.hostname)) {
+        throw new Error("invalid_media_url");
+      }
+    } catch {
+      res.status(400).json({
+        error: "bad_request",
+        details: "mediaUrl deve ser HTTPS pública e canônica. URL de visualização do Google Drive não é aceita.",
+      });
+      return;
+    }
+  }
+  if (apply && !canonicalPi && !mediaUrl) {
+    res.status(400).json({ error: "bad_request", details: "apply=true exige canonicalPi e/ou mediaUrl explícita." });
+    return;
+  }
+  if (apply && (!confirmationNote || confirmationNote.length < 8)) {
+    res.status(400).json({ error: "bad_request", details: "apply=true exige confirmationNote rastreável." });
+    return;
+  }
+
+  const requestedKey = readOptionalString(req.headers["idempotency-key"]) ?? readOptionalString(req.body?.idempotencyKey);
+  const idempotencyKey = requestedKey ?? createHash("sha256")
+    .update(JSON.stringify({ insertionId, apply, canonicalPi, selectedDriveFileId, mediaUrl }))
+    .digest("hex");
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
+    res.status(400).json({ error: "bad_request", details: "Idempotency-Key inválida." });
+    return;
+  }
+
+  const result = await createIdempotentOpsJob("drive-pi-reconcile", {
+    insertionId,
+    apply,
+    mode: apply ? "apply" : "preview",
+    canonicalPi,
+    selectedDriveFileId,
+    mediaUrl,
+    confirmationNote,
+    source: "macmini-api",
+  }, "ops-api", idempotencyKey);
+  res.status(result.duplicate ? 200 : 202).json({
+    ok: true,
+    kind: "drive-pi-reconcile",
+    apply,
+    ...result,
+    requiredFollowUp: apply
+      ? ["review_job_result", "recheck_campaign_operations", "recheck_media_consistency"]
+      : ["obtain_human_confirmation", "rerun_with_apply_true"],
+  });
 });
 
 async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean; publishFlow: boolean }) {

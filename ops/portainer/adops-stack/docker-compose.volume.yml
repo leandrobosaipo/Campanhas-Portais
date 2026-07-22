@@ -113,7 +113,7 @@ services:
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}

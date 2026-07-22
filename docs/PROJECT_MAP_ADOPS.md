@@ -38,10 +38,16 @@
 ## Serviços vivos
 
 - Painel: `https://adops-campanhas-portais.pages.dev`
-- API pública: `https://adops-api-public.leandro471.workers.dev`
-- VPS/Easypanel:
-  - `codigo5_adops-api`
-  - `codigo5_adops-runner`
+- API canônica: `https://adops-api.codigo5.com.br`
+- Mac Mini / Portainer endpoint 3:
+  - `adops-api`
+  - `adops-runner`
+  - `adops-print-single-runner`
+  - `adops-drive-pi-monitor`
+  - `adops-web`
+  - PostgreSQL
+- Cloudflare: DNS, Tunnel, Access e cache seletivo; não executa o compute canônico.
+- PMT/Perrengue: WordPress/AdRotate no Portainer Hostinger VM8, container `cod5-pro119-perrenguematogrosso-app`, path `/app/web/wp`.
 - WordPress/AdRotate:
   - Perrengue
   - O Matogrossense
@@ -222,7 +228,9 @@ Não criar regra duplicada publicada para a mesma chave.
 
 ## Deploy
 
-Cloudflare Worker:
+O deploy canônico da aplicação usa Mac Mini / Portainer. Workers abaixo são legado ou componentes auxiliares e não devem ser tratados como fonte do compute atual.
+
+Cloudflare Worker legado/auxiliar:
 
 ```bash
 cd ops/cloudflare-public-api
