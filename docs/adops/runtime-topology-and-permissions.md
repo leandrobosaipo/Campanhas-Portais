@@ -172,6 +172,13 @@ Antes de selecionar o arquivo, rode `drive-pi-preflight` e confira
 `driveFileId` e o nome exato do arquivo. Se o candidato não estiver mais
 acessível, não reutilize uma URL antiga apenas porque o criativo parece parecido.
 
+Quando o arquivo aparece no preflight, mas ainda não entrou no snapshot do
+inventário, envie também `sourcePreflightJobId` no `drive-pi-reconcile`. O runner
+aceita o job apenas se ele estiver `completed`, for `drive-pi-ingest`, tiver
+`preflightOnly=true`, pertencer à mesma pasta exata e listar o
+`selectedDriveFileId`. Isso preserva a separação de credenciais: o runner geral
+não recebe acesso direto ao Google Drive.
+
 ## Idempotência e auditoria
 
 - `preview` é o padrão;

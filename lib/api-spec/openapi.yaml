@@ -964,6 +964,9 @@ components:
           type: ["string", "null"]
         selectedDriveFileId:
           type: ["string", "null"]
+        sourcePreflightJobId:
+          type: ["string", "null"]
+          description: Completed drive-pi-ingest preflight job used to attest the selected file when the inventory snapshot has not indexed it yet.
         mediaUrl:
           type: ["string", "null"]
           format: uri

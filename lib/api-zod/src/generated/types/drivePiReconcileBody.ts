@@ -15,6 +15,11 @@ export interface DrivePiReconcileBody {
   /** @nullable */
   selectedDriveFileId?: string | null;
   /**
+   * Completed drive-pi-ingest preflight job used to attest the selected file when the inventory snapshot has not indexed it yet.
+   * @nullable
+   */
+  sourcePreflightJobId?: string | null;
+  /**
    * Canonical public HTTPS URL. Google Drive view URLs are rejected.
    * @nullable
    */
