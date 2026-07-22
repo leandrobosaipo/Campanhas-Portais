@@ -167,6 +167,11 @@ Para trocar mídia, `mediaUrl` deve ser HTTPS pública e canônica. `drive.googl
 
 Se existe apenas `selectedDriveFileId`, sem URL pública, use `drive-pi-publish` para importar/comprimir e publicar a mídia. `drive-pi-reconcile` não transforma `webViewLink` em mídia.
 
+Antes de selecionar o arquivo, rode `drive-pi-preflight` e confira
+`result.execution.mediaCandidates`. A confirmação operacional deve registrar o
+`driveFileId` e o nome exato do arquivo. Se o candidato não estiver mais
+acessível, não reutilize uma URL antiga apenas porque o criativo parece parecido.
+
 ## Idempotência e auditoria
 
 - `preview` é o padrão;

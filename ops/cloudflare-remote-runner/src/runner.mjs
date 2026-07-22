@@ -3930,6 +3930,14 @@ async function executeDrivePiIngest(payload) {
   const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;
   const reviewReasons = buildDrivePiReviewReasons({
     packageClassification,
+    mediaCandidates: (Array.isArray(packageContext?.media) ? packageContext.media : []).map((item) => ({
+      driveFileId: item?.driveFileId ?? null,
+      name: item?.name ?? null,
+      path: item?.path ?? null,
+      mimeType: item?.mimeType ?? null,
+      webViewLink: item?.webViewLink ?? null,
+      size: item?.size ?? null,
+    })),
     packageReadiness,
     validation,
     rollout,

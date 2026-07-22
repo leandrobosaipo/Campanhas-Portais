@@ -191,6 +191,17 @@ await check("runner-executa-runtime-readiness-probe", async () => {
   return { ok: true };
 });
 
+await check("runner-expõe-candidatos-de-midia-no-preflight", async () => {
+  const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  assertIncludes(source, [
+    "mediaCandidates:",
+    "packageContext?.media",
+    "driveFileId: item?.driveFileId",
+    "webViewLink: item?.webViewLink",
+  ], "Drive PI media candidates");
+  return { ok: true };
+});
+
 await check("drive-pi-preflight-preserva-pacote-e-fallback-pi-sem-ia", async () => {
   const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
   assertIncludes(source, [

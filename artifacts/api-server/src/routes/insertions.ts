@@ -1156,14 +1156,28 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
   const supportedGroups = getSupportedGroupIds(siteSigla);
   const articleGroups = siteConfig.formatMappings.filter((item) => item.page === "article").map((item) => item.groupId);
   const detectedArticleUrl = extractFirstArticleUrl(homeHtml, siteConfig.domain);
-  let articleUrl = detectedArticleUrl ?? siteConfig.articleFallbackUrl;
+  const isSameSiteUrl = (value: string | null | undefined) => {
+    if (!value) return false;
+    try {
+      const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+      const expected = siteConfig.domain.toLowerCase().replace(/^www\./, "");
+      return hostname === expected || hostname.endsWith(`.${expected}`);
+    } catch {
+      return false;
+    }
+  };
+  const safeFallbackUrl = isSameSiteUrl(siteConfig.articleFallbackUrl) ? siteConfig.articleFallbackUrl : null;
+  if (siteConfig.articleFallbackUrl && !safeFallbackUrl) {
+    warnings.push("URL interna de fallback ignorada porque pertence a outro portal.");
+  }
+  let articleUrl = detectedArticleUrl ?? safeFallbackUrl;
   let articleItems: Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }> = [];
 
   if (articleUrl) {
     let articleHtml = await fetch(articleUrl).then((response) => response.text());
     articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
-    if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && siteConfig.articleFallbackUrl && articleUrl !== siteConfig.articleFallbackUrl) {
-      articleUrl = siteConfig.articleFallbackUrl;
+    if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && safeFallbackUrl && articleUrl !== safeFallbackUrl) {
+      articleUrl = safeFallbackUrl;
       articleHtml = await fetch(articleUrl).then((response) => response.text());
       articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
       warnings.push("Usando URL interna de fallback para verificar posições de página interna.");
