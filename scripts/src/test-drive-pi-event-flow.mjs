@@ -193,12 +193,15 @@ await check("runner-executa-runtime-readiness-probe", async () => {
 
 await check("runner-expõe-candidatos-de-midia-no-preflight", async () => {
   const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
-  assertIncludes(source, [
+  const finalReturnStart = source.indexOf("return {\n    stage: finalStatus");
+  assert(finalReturnStart >= 0, "Retorno final do Drive PI não encontrado");
+  const finalReturn = source.slice(finalReturnStart, finalReturnStart + 1800);
+  assertIncludes(finalReturn, [
     "mediaCandidates:",
     "packageContext?.media",
     "driveFileId: item?.driveFileId",
     "webViewLink: item?.webViewLink",
-  ], "Drive PI media candidates");
+  ], "Retorno final Drive PI media candidates");
   return { ok: true };
 });
 
