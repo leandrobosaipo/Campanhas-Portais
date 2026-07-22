@@ -152,6 +152,31 @@ await check("worker-encaminha-fila-de-prints-para-api-canonica", async () => {
   return { ok: true };
 });
 
+await check("worker-encaminha-contratos-de-conflito-para-api-canonica", async () => {
+  const source = read(workerSourcePath);
+  assertIncludes(source, [
+    'if (path === "/api/ops/jobs/drive-pi-reconcile")',
+    'path === "/api/ops/runtime-readiness"',
+    'path === "/api/ops/runtime-topology"',
+    '"drive-pi-reconcile"',
+  ], "Proxy público dos contratos de conflito");
+
+  for (const marker of [
+    'if (path === "/api/ops/jobs/drive-pi-reconcile")',
+    'if (path === "/api/ops/runtime-readiness" || path === "/api/ops/runtime-topology")',
+  ]) {
+    const start = source.indexOf(marker);
+    assert(start >= 0, `Worker sem rota ${marker}`);
+    const block = source.slice(start, start + 620);
+    assertIncludes(block, [
+      "privateApiEnabled(env)",
+      "proxyToPrivateApi(request, env, url, { noStore: true })",
+      'error: "private_api_unavailable"',
+    ], `Proxy canônico ${marker}`);
+  }
+  return { ok: true };
+});
+
 await check("runner-executa-runtime-readiness-probe", async () => {
   const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
   assertIncludes(source, [
