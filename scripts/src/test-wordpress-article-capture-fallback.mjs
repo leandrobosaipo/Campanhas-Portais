@@ -15,6 +15,7 @@ const {
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteConfig = JSON.parse(await readFile(path.join(projectRoot, "config/adrotate-sites.json"), "utf8"));
 assert.equal(siteConfig.AFL.disableOriginOverride, true);
+assert.equal(siteConfig.OMT.disableOriginOverride, true);
 
 const mapping = {
   homeUrl: "https://afolhalivre.com/",
