@@ -15,8 +15,19 @@ const {
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteConfig = JSON.parse(await readFile(path.join(projectRoot, "config/adrotate-sites.json"), "utf8"));
+const captureSource = await readFile(path.join(projectRoot, "scripts/src/capture-insertion-proof.cjs"), "utf8");
 assert.equal(siteConfig.AFL.disableOriginOverride, true);
 assert.equal(siteConfig.OMT.disableOriginOverride, true);
+assert.match(
+  captureSource,
+  /captureStrictReadinessCandidate\(\s*page,\s*viewportPng,/,
+  "strict readiness must write the current viewport artifact",
+);
+assert.doesNotMatch(
+  captureSource,
+  /captureStrictReadinessCandidate\(\s*page,\s*slotPng,/,
+  "strict readiness must not overwrite the slot artifact",
+);
 assert.equal(
   normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/825x120.gif?v=1"),
   normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/825x120.gif?v=2"),

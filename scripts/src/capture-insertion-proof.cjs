@@ -6032,6 +6032,9 @@ async function main() {
   const viewportPng = path.join(outDir, `${isoDate}-viewport.png`);
   const finalPng = path.join(outDir, `${isoDate}-proof.png`);
   const metaJson = path.join(outDir, `${isoDate}-meta.json`);
+  for (const artifactPath of [slotPng, contextPng, viewportPng, finalPng, metaJson]) {
+    rmSync(artifactPath, { force: true });
+  }
   const trace = createStageRecorder();
   const artifactRecords = {};
   let logId = null;
@@ -6524,7 +6527,7 @@ async function main() {
     const readinessStage = trace.start("critical_assets");
     readinessAudit = await captureStrictReadinessCandidate(
       page,
-      slotPng,
+      viewportPng,
       resolvedSlotSelector,
       mapping.auditConfig,
       resourceFailures,

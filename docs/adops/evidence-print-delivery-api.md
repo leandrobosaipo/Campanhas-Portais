@@ -158,6 +158,10 @@ grupo durante a composicao. Os controles originais continuam visiveis, mas o
 timer do template nao consegue substituir o criativo entre a auditoria e o
 screenshot.
 
+Cada tentativa remove os artefatos temporarios anteriores antes de navegar. O
+readiness grava exclusivamente o viewport candidato; ele nao pode sobrescrever
+o recorte do slot nem reutilizar um viewport de uma tentativa anterior.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
