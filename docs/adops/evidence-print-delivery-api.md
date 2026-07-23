@@ -141,6 +141,12 @@ O OMT segue a mesma regra. O IP legado pode redirecionar a captura para
 servindo os grupos AdRotate normalmente. Evidencias do OMT devem usar o dominio
 publico; `originIp` permanece apenas como referencia operacional.
 
+Quando `mediaUrl` estiver cadastrada, a captura identifica o criativo por
+`origem + caminho completo` da URL e ignora apenas query de cache. O basename
+nao basta: arquivos genericos como `825x120.gif` podem existir em campanhas
+diferentes no mesmo carrossel. A ausencia da URL exata bloqueia a evidencia em
+vez de aceitar outro anuncio com nome parecido.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |

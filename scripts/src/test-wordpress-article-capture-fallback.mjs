@@ -10,12 +10,21 @@ const {
   fetchWordPressArticleCandidates,
   isRejectedArticleCandidateUrl,
   auditArticleCandidatePage,
+  normalizeMediaIdentityUrl,
 } = require("./capture-insertion-proof.cjs");
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const siteConfig = JSON.parse(await readFile(path.join(projectRoot, "config/adrotate-sites.json"), "utf8"));
 assert.equal(siteConfig.AFL.disableOriginOverride, true);
 assert.equal(siteConfig.OMT.disableOriginOverride, true);
+assert.equal(
+  normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/825x120.gif?v=1"),
+  normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/825x120.gif?v=2"),
+);
+assert.notEqual(
+  normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/825x120.gif"),
+  normalizeMediaIdentityUrl("https://cdn.perrenguematogrosso.com/app/uploads/2026/07/govmt_mt_e_tolerancia_zero_nos_crimes_ambientais_banner_825x120.gif"),
+);
 
 const mapping = {
   homeUrl: "https://afolhalivre.com/",
