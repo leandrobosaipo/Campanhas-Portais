@@ -126,6 +126,11 @@ estiver indisponivel, a descoberta pela home continua como fallback. Se ambas
 falharem, o job termina sem salvar evidencia. Uma materia posterior ao
 `captureAt` nunca deve ser usada para preencher uma prova historica.
 
+Depois da navegacao, o candidato ainda precisa manter a origem do portal, conter
+estrutura editorial e nao pode redirecionar para `cgi-sys`, login, admin ou tela
+de conta suspensa. Um `HTTP 200` nessas telas nao e aceito como pagina valida; o
+capturador tenta a proxima materia elegivel.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |

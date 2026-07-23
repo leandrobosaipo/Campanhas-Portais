@@ -5,6 +5,8 @@ const require = createRequire(import.meta.url);
 const {
   buildWordPressArticleApiUrl,
   fetchWordPressArticleCandidates,
+  isRejectedArticleCandidateUrl,
+  auditArticleCandidatePage,
 } = require("./capture-insertion-proof.cjs");
 
 const mapping = {
@@ -64,5 +66,55 @@ const fallback = await fetchWordPressArticleCandidates(
   async () => ({ ok: false }),
 );
 assert.deepEqual(fallback, []);
+
+assert.equal(
+  isRejectedArticleCandidateUrl(
+    "https://afolhalivre.com/cgi-sys/suspendedpage.cgi",
+    mapping,
+  ),
+  true,
+);
+assert.equal(
+  isRejectedArticleCandidateUrl(
+    "https://externo.example/materia/",
+    mapping,
+  ),
+  true,
+);
+assert.equal(
+  isRejectedArticleCandidateUrl(
+    "https://afolhalivre.com/materia-valida/",
+    mapping,
+  ),
+  false,
+);
+
+const rejectedPage = {
+  url: () => "https://afolhalivre.com/cgi-sys/suspendedpage.cgi",
+  evaluate: async () => {
+    throw new Error("evaluate should not run for rejected URL");
+  },
+};
+assert.deepEqual(
+  await auditArticleCandidatePage(rejectedPage, { ...mapping, page: "article" }),
+  {
+    ok: false,
+    reason: "invalid_article_url",
+    currentUrl: "https://afolhalivre.com/cgi-sys/suspendedpage.cgi",
+  },
+);
+
+const validPage = {
+  url: () => "https://afolhalivre.com/materia-valida/",
+  evaluate: async () => ({
+    title: "Matéria válida",
+    hasEditorialContent: true,
+    suspended: false,
+  }),
+};
+assert.equal(
+  (await auditArticleCandidatePage(validPage, { ...mapping, page: "article" })).ok,
+  true,
+);
 
 console.log("ok: WordPress article capture fallback preserves date and same-origin safety");
