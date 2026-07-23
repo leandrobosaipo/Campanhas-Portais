@@ -131,6 +131,11 @@ estrutura editorial e nao pode redirecionar para `cgi-sys`, login, admin ou tela
 de conta suspensa. Um `HTTP 200` nessas telas nao e aceito como pagina valida; o
 capturador tenta a proxima materia elegivel.
 
+Na AFL, `disableOriginOverride=true` e obrigatorio. O IP de origem pode responder
+com `cgi-sys/suspendedpage.cgi` para o navegador headless, embora o dominio
+publico esteja normal. A captura usa o dominio publico com cache bust; o IP
+continua documentado apenas para operacao SSH/WordPress.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
