@@ -5588,9 +5588,11 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
     }
 
     const adWrapper = node.closest(".g-dyn");
+    let adGroup = null;
     if (adWrapper instanceof HTMLElement) {
       const group = adWrapper.parentElement;
       if (group instanceof HTMLElement) {
+        adGroup = group;
         Array.from(group.children).forEach((child) => {
           if (!(child instanceof HTMLElement) || !child.classList.contains("g-dyn")) return;
           if (child === adWrapper) {
@@ -5610,7 +5612,33 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       }
     }
 
+    if (node instanceof HTMLImageElement && adGroup instanceof HTMLElement) {
+      const previousOverlay = adGroup.querySelector(':scope > [data-adops-reference-frame-overlay="1"]');
+      if (previousOverlay) previousOverlay.remove();
+      const overlay = document.createElement("div");
+      overlay.setAttribute("data-adops-reference-frame-overlay", "1");
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.style.setProperty("position", "absolute", "important");
+      overlay.style.setProperty("inset", "0", "important");
+      overlay.style.setProperty("z-index", "20", "important");
+      overlay.style.setProperty("display", "block", "important");
+      overlay.style.setProperty("overflow", "hidden", "important");
+      overlay.style.setProperty("pointer-events", "none", "important");
+      const overlayImage = document.createElement("img");
+      overlayImage.alt = "Publicidade";
+      overlayImage.decoding = "sync";
+      overlayImage.loading = "eager";
+      overlayImage.style.setProperty("display", "block", "important");
+      overlayImage.style.setProperty("width", "100%", "important");
+      overlayImage.style.setProperty("height", "100%", "important");
+      overlayImage.style.setProperty("object-fit", "fill", "important");
+      overlay.appendChild(overlayImage);
+      adGroup.appendChild(overlay);
+      node = overlayImage;
+    }
+
     const referenceFrameAnchor =
+      adGroup ||
       node.closest('[data-adops-capture-ad="1"]') ||
       node.parentElement ||
       node;

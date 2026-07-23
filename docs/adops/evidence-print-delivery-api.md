@@ -153,6 +153,11 @@ tambem compara os pixels do PNG final diretamente com o quadro escolhido do
 GIF. Uma troca tardia do criativo falha com
 `final_png_creative_identity_failed` e preserva a evidencia anterior.
 
+No carrossel estatico do PMT, o quadro aprovado e fixado sobre a area real do
+grupo durante a composicao. Os controles originais continuam visiveis, mas o
+timer do template nao consegue substituir o criativo entre a auditoria e o
+screenshot.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
