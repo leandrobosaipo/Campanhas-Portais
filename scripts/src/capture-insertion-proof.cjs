@@ -699,6 +699,58 @@ async function fetchAflRetroPosts(captureAt) {
   return posts;
 }
 
+function buildWordPressArticleApiUrl(mapping, captureAt) {
+  if (!mapping?.homeUrl) return null;
+  let apiUrl;
+  try {
+    apiUrl = new URL(mapping.articleApiUrl || "/wp-json/wp/v2/posts", mapping.homeUrl);
+  } catch {
+    return null;
+  }
+  const rawCaptureAt = String(captureAt || "").trim();
+  if (rawCaptureAt) {
+    const before = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(rawCaptureAt)
+      ? `${rawCaptureAt}:59`
+      : rawCaptureAt;
+    apiUrl.searchParams.set("before", before);
+  }
+  apiUrl.searchParams.set("per_page", "12");
+  apiUrl.searchParams.set("order", "desc");
+  apiUrl.searchParams.set("orderby", "date");
+  apiUrl.searchParams.set("status", "publish");
+  apiUrl.searchParams.set("_fields", "link,date,status");
+  return apiUrl.toString();
+}
+
+async function fetchWordPressArticleCandidates(mapping, captureAt, previewSignature, fetchImpl = fetch) {
+  const apiUrl = buildWordPressArticleApiUrl(mapping, captureAt);
+  if (!apiUrl) return [];
+  try {
+    const response = await fetchImpl(apiUrl, {
+      headers: { "user-agent": "adops-capture-article-resolver/1.0" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) return [];
+    const items = await response.json().catch(() => []);
+    if (!Array.isArray(items)) return [];
+    const portalOrigin = new URL(mapping.homeUrl).origin;
+    return items
+      .filter((item) => item?.status === "publish" && item?.link)
+      .map((item) => {
+        try {
+          const articleUrl = new URL(item.link, mapping.homeUrl);
+          return articleUrl.origin === portalOrigin ? articleUrl.toString() : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .map((url) => appendPreviewParams(url, captureAt, previewSignature));
+  } catch {
+    return [];
+  }
+}
+
 async function resolvePageUrls(page, mapping, previewOptions) {
   if (mapping.auditConfig?.preferArticleFallbackForRetro === true && mapping.articleFallbackUrl) {
     return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
@@ -706,6 +758,13 @@ async function resolvePageUrls(page, mapping, previewOptions) {
   if (mapping.pageUrl !== "__LATEST_ARTICLE__") {
     return [appendPreviewParams(mapping.pageUrl, previewOptions.captureAt, previewOptions.previewSignature)];
   }
+
+  const apiCandidates = await fetchWordPressArticleCandidates(
+    mapping,
+    previewOptions.captureAt,
+    previewOptions.previewSignature,
+  );
+  if (apiCandidates.length > 0) return apiCandidates;
 
   await page.goto(appendPreviewParams(mapping.homeUrl, previewOptions.captureAt, previewOptions.previewSignature), { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForTimeout(1200);
@@ -7100,6 +7159,8 @@ if (require.main === module) {
   module.exports = {
     applyAflRetroPreview,
     applyPerrengueStaticRetroPreview,
+    buildWordPressArticleApiUrl,
+    fetchWordPressArticleCandidates,
     normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,

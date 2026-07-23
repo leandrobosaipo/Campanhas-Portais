@@ -17,6 +17,12 @@ O contrato atualizado de API, checklist, extracao, nomes e entrega esta em
 4. O tema usa esse timestamp no cabecalho.
 5. O AdRotate usa esse timestamp para validar schedule dos anuncios.
 6. O WordPress limita os loops de posts para exibir apenas conteudo publicado ate aquele momento.
+7. Para banner interno, o capturador consulta os posts publicados ate `captureAt`
+   em `/wp-json/wp/v2/posts`; a descoberta pela home fica como fallback.
+
+O resolvedor de pagina interna aceita apenas materia publicada no mesmo dominio.
+Se nao existir materia elegivel para a data, o print falha em vez de reutilizar
+uma materia atual ou de outro portal.
 
 ## Estado atual
 - AdOps aceita `captureAt` na captura individual e em lote.
