@@ -147,6 +147,12 @@ nao basta: arquivos genericos como `825x120.gif` podem existir em campanhas
 diferentes no mesmo carrossel. A ausencia da URL exata bloqueia a evidencia em
 vez de aceitar outro anuncio com nome parecido.
 
+Em banners animados, o quadro selecionado permanece travado ate a composicao
+final, mesmo quando o carrossel altera o `src` do mesmo elemento. O runner
+tambem compara os pixels do PNG final diretamente com o quadro escolhido do
+GIF. Uma troca tardia do criativo falha com
+`final_png_creative_identity_failed` e preserva a evidencia anterior.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
