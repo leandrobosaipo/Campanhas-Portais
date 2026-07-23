@@ -108,6 +108,24 @@ O runner assina o preview historico, aplica a data ao portal, limita os posts ao
 instante solicitado e valida a qualificacao historica do anuncio. O print deve
 mostrar noticias diferentes quando os dias tiverem conteudo editorial diferente.
 
+Para posicoes de pagina interna (`page=article`), o capturador resolve a materia
+pela API WordPress do proprio portal:
+
+```text
+GET /wp-json/wp/v2/posts
+  ?before=YYYY-MM-DDTHH:mm:ss
+  &per_page=12
+  &order=desc
+  &orderby=date
+  &status=publish
+  &_fields=link,date,status
+```
+
+Somente links publicados e do mesmo dominio sao aceitos. Se a API WordPress
+estiver indisponivel, a descoberta pela home continua como fallback. Se ambas
+falharem, o job termina sem salvar evidencia. Uma materia posterior ao
+`captureAt` nunca deve ser usada para preencher uma prova historica.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
@@ -268,6 +286,9 @@ Nao repita datas ja entregues depois de falha parcial.
 - `final_viewport_changed`: viewport mudou entre validacao e screenshot;
 - `resource_request_failed`: recurso critico falhou na rede;
 - `content_time_mismatch`: noticias ou data da pagina nao correspondem ao dia;
+- `article_not_found`: a API WordPress e a home nao forneceram materia interna
+  valida para a data; confirmar REST API, cache e links editoriais antes de
+  repetir o print;
 - `telegramReady=false`: rode o probe no runner e corrija o bridge antes do envio.
 
 Em falha, consulte o log da insercao/data, corrija a causa e use `print-single`

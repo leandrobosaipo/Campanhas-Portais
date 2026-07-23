@@ -32,6 +32,7 @@
     "test:adrotate-format-aliases": "ADOPS_PROJECT_ROOT=.. node --import tsx --test ./src/test-adrotate-format-aliases.ts",
     "test:media-consistency": "node --import tsx --test ./src/test-media-consistency.ts",
     "test:strict-capture-readiness": "node ./src/test-strict-capture-readiness.mjs",
+    "test:wordpress-article-capture-fallback": "node ./src/test-wordpress-article-capture-fallback.mjs",
     "intake:spm-whatsapp-print-2026-06-03": "node ./src/create-spm-whatsapp-print-intakes-2026-06-03.mjs",
     "import:d1-control-plane": "node ./src/import-d1-control-plane-to-postgres.mjs",
     "test:public-auth-smoke": "node ./src/test-adops-public-auth.mjs",
