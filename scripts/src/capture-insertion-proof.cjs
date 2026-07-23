@@ -751,6 +751,39 @@ async function fetchWordPressArticleCandidates(mapping, captureAt, previewSignat
   }
 }
 
+function isRejectedArticleCandidateUrl(candidateUrl, mapping) {
+  try {
+    const current = new URL(candidateUrl);
+    const expected = new URL(mapping.homeUrl);
+    if (current.origin !== expected.origin) return true;
+    return /\/cgi-sys\/|suspendedpage\.cgi|\/wp-login\.php|\/wp-admin\//i.test(current.pathname);
+  } catch {
+    return true;
+  }
+}
+
+async function auditArticleCandidatePage(page, mapping) {
+  if (mapping?.page !== "article" && mapping?.pageUrl !== "__LATEST_ARTICLE__") {
+    return { ok: true, skipped: true };
+  }
+  const currentUrl = page.url();
+  if (isRejectedArticleCandidateUrl(currentUrl, mapping)) {
+    return { ok: false, reason: "invalid_article_url", currentUrl };
+  }
+  const audit = await page.evaluate(() => {
+    const title = String(document.title || "").trim();
+    const bodyText = String(document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+    const hasEditorialContent = Boolean(document.querySelector(
+      "main article, article, .entry-content, [itemtype*='Article'], [itemtype*='NewsArticle']",
+    ));
+    const suspended = /account suspended|suspended page|conta suspensa|site suspenso/i.test(`${title} ${bodyText}`);
+    return { title, hasEditorialContent, suspended };
+  });
+  if (audit.suspended) return { ok: false, reason: "suspended_article_page", currentUrl, ...audit };
+  if (!audit.hasEditorialContent) return { ok: false, reason: "article_content_missing", currentUrl, ...audit };
+  return { ok: true, currentUrl, ...audit };
+}
+
 async function resolvePageUrls(page, mapping, previewOptions) {
   if (mapping.auditConfig?.preferArticleFallbackForRetro === true && mapping.articleFallbackUrl) {
     return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
@@ -5965,6 +5998,10 @@ async function main() {
       const candidateUrl = appendCaptureRetryQuery(originalCandidateUrl, args.captureAttempt);
       try {
         await page.goto(candidateUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+        const articleCandidateAudit = await auditArticleCandidatePage(page, mapping);
+        if (!articleCandidateAudit.ok) {
+          throw new Error(`article_candidate_rejected:${articleCandidateAudit.reason}:${articleCandidateAudit.currentUrl}`);
+        }
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping) });
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
@@ -7161,6 +7198,8 @@ if (require.main === module) {
     applyPerrengueStaticRetroPreview,
     buildWordPressArticleApiUrl,
     fetchWordPressArticleCandidates,
+    isRejectedArticleCandidateUrl,
+    auditArticleCandidatePage,
     normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
