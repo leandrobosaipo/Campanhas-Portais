@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const {
@@ -8,6 +11,10 @@ const {
   isRejectedArticleCandidateUrl,
   auditArticleCandidatePage,
 } = require("./capture-insertion-proof.cjs");
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const siteConfig = JSON.parse(await readFile(path.join(projectRoot, "config/adrotate-sites.json"), "utf8"));
+assert.equal(siteConfig.AFL.disableOriginOverride, true);
 
 const mapping = {
   homeUrl: "https://afolhalivre.com/",

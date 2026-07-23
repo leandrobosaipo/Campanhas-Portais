@@ -378,6 +378,7 @@
     "browserTitle": "A Folha Livre",
     "hostLabel": "afolhalivre.com",
     "originIp": "66.253.112.200",
+    "disableOriginOverride": true,
     "previewSecret": "adops-preview-afl-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
