@@ -5610,6 +5610,53 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       }
     }
 
+    const referenceFrameAnchor =
+      node.closest('[data-adops-capture-ad="1"]') ||
+      node.parentElement ||
+      node;
+    const installReferenceFrameLock = (mediaKind) => {
+      const enforceReferenceFrame = () => {
+        if (!(referenceFrameAnchor instanceof HTMLElement) || !referenceFrameAnchor.isConnected) return;
+        let target = referenceFrameAnchor.querySelector('[data-adops-reference-frame-locked="1"]');
+        if (!(target instanceof HTMLElement)) {
+          target = mediaKind === "video"
+            ? referenceFrameAnchor.querySelector("video")
+            : referenceFrameAnchor.querySelector("img");
+        }
+        if (mediaKind === "image" && target instanceof HTMLImageElement) {
+          target.setAttribute("data-adops-reference-frame-locked", "1");
+          if (target.getAttribute("src") !== dataUrl) target.setAttribute("src", dataUrl);
+          target.removeAttribute("srcset");
+          target.removeAttribute("data-src");
+          target.removeAttribute("data-lazy-src");
+          target.removeAttribute("data-srcset");
+          target.removeAttribute("data-lazy-srcset");
+          target.removeAttribute("loading");
+          target.style.setProperty("display", "block", "important");
+          target.style.setProperty("opacity", "1", "important");
+          target.style.setProperty("visibility", "visible", "important");
+          target.style.setProperty("transform", "none", "important");
+          target.style.setProperty("transition", "none", "important");
+          target.style.setProperty("animation", "none", "important");
+        } else if (mediaKind === "video" && target instanceof HTMLVideoElement) {
+          target.setAttribute("data-adops-reference-frame-locked", "1");
+          if (target.getAttribute("poster") !== dataUrl) target.setAttribute("poster", dataUrl);
+          target.style.setProperty("display", "block", "important");
+          target.style.setProperty("opacity", "1", "important");
+          target.style.setProperty("visibility", "visible", "important");
+          target.style.setProperty("transform", "none", "important");
+          target.style.setProperty("transition", "none", "important");
+          target.style.setProperty("animation", "none", "important");
+        }
+      };
+      enforceReferenceFrame();
+      if (window.__adopsReferenceFrameLockInterval) {
+        window.clearInterval(window.__adopsReferenceFrameLockInterval);
+      }
+      window.__adopsReferenceFrameLockInterval = window.setInterval(enforceReferenceFrame, 60);
+      return true;
+    };
+
     if (node instanceof HTMLImageElement) {
       node.setAttribute("src", dataUrl);
       node.removeAttribute("srcset");
@@ -5627,6 +5674,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       node.style.transition = "none";
       node.style.animation = "none";
       node.style.transform = "none";
+      const referenceFrameLocked = installReferenceFrameLock("image");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = node.getBoundingClientRect();
       return {
@@ -5635,6 +5683,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
         width: rect.width,
         height: rect.height,
         adRotateItemFrozen: Boolean(adWrapper instanceof HTMLElement),
+        referenceFrameLocked,
       };
     }
     if (node instanceof HTMLVideoElement) {
@@ -5645,6 +5694,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       node.style.filter = "none";
       node.style.transition = "none";
       node.style.animation = "none";
+      const referenceFrameLocked = installReferenceFrameLock("video");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = node.getBoundingClientRect();
       return {
@@ -5653,6 +5703,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
         width: rect.width,
         height: rect.height,
         adRotateItemFrozen: Boolean(adWrapper instanceof HTMLElement),
+        referenceFrameLocked,
       };
     }
     return { ok: false, reason: "unsupported_media_tag", tag: node.tagName };
@@ -6685,6 +6736,28 @@ async function main() {
       const details = finalPngSlotAudit.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
       throw new Error(`capture_audit_failed: final_png_slot_audit_failed: ${details}`);
     }
+    const finalPngCreativeIdentityAudit =
+      gifSourceAllowed && frameSelection?.chosenPngPath
+        ? auditFinalPngSlotPixels(
+            finalPng,
+            frameSelection.chosenPngPath,
+            finalPngSlotAuditBox,
+            desktopFrameMetadata,
+            {
+              finalProofStyle,
+              minSimilarity: Number(mapping.auditConfig?.finalPngCreativeMinSimilarity ?? 0.82),
+              minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
+              comparedTo: "selectedGifFrame",
+              viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
+            },
+          )
+        : null;
+    if (finalPngCreativeIdentityAudit && !finalPngCreativeIdentityAudit.ok) {
+      const details = finalPngCreativeIdentityAudit.issues
+        .map((item) => `${item.code}: ${item.detail}`)
+        .join("; ");
+      throw new Error(`capture_audit_failed: final_png_creative_identity_failed: ${details}`);
+    }
     if (readinessAudit) {
       const config = normalizeStrictReadinessConfig(mapping.auditConfig);
       const paintTargets = readinessAudit.elements.filter((item) => item.paintRequired === true);
@@ -6808,6 +6881,7 @@ async function main() {
       proofStyleDowngradeReason,
       auditInsetSuppressed: proofStyleContract.auditInsetSuppressed,
       finalPngSlotAudit,
+      finalPngCreativeIdentityAudit,
       finalPngHeaderAdPolicyAudit,
       adClass: match.adClass || null,
       matchedAdSelector,
