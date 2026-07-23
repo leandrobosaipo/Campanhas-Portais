@@ -211,6 +211,17 @@ function getMediaBasename(urlString) {
   return path.basename(explicitFilename || url.pathname);
 }
 
+function normalizeMediaIdentityUrl(value, baseUrl = "https://adops.invalid/") {
+  const raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, baseUrl);
+    return `${parsed.origin}${decodeURIComponent(parsed.pathname)}`.toLowerCase();
+  } catch {
+    return raw.split(/[?#]/)[0].toLowerCase();
+  }
+}
+
 function isGifUrl(value) {
   const raw = String(value || "");
   return /^data:image\/gif/i.test(raw) || /(?:[?&#]|^)filename=[^&#]+\.gif/i.test(raw) || /\.gif(?:[?#].*)?$/i.test(raw);
@@ -860,10 +871,29 @@ async function resolvePageUrls(page, mapping, previewOptions) {
   throw new Error("Não foi possível localizar uma matéria para capturar o banner interno.");
 }
 
-async function findCreativeMatch(page, slotSelector, mediaBasename) {
+async function findCreativeMatch(page, slotSelector, mediaBasename, expectedMediaUrl = null) {
+  const expectedMediaKey = normalizeMediaIdentityUrl(expectedMediaUrl);
   return await page.evaluate(function (payload) {
     var slotSelector = payload.slotSelector;
     var mediaBasename = payload.mediaBasename;
+    var expectedMediaKey = payload.expectedMediaKey;
+    function normalizeMediaKey(value) {
+      var raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+      if (!raw) return "";
+      try {
+        var parsed = new URL(raw, window.location.href);
+        return (parsed.origin + decodeURIComponent(parsed.pathname)).toLowerCase();
+      } catch {
+        return raw.split(/[?#]/)[0].toLowerCase();
+      }
+    }
+    function mediaMatch(value) {
+      var normalized = normalizeMediaKey(value);
+      return {
+        exact: Boolean(expectedMediaKey && normalized === expectedMediaKey),
+        basename: Boolean(mediaBasename && String(value || "").toLowerCase().indexOf(String(mediaBasename).toLowerCase()) !== -1),
+      };
+    }
     function visibilityMetrics(node) {
       if (!(node instanceof HTMLElement)) {
         return {
@@ -1001,7 +1031,8 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
           mediaNode.getAttribute("data-lazy-srcset") ||
           mediaNode.getAttribute("poster") ||
           "";
-        if (!mediaValue || String(mediaValue).indexOf(mediaBasename) === -1) continue;
+        var directMatch = mediaMatch(mediaValue);
+        if (!mediaValue || (expectedMediaKey ? !directMatch.exact : !directMatch.basename)) continue;
         var carrier = mediaNode.closest(".g-dyn, .g-single") || mediaNode.closest(".g") || mediaNode;
         if (!(carrier instanceof HTMLElement)) continue;
         var mediaRect = mediaNode.getBoundingClientRect();
@@ -1014,6 +1045,7 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
           slot: slot,
           item: carrier,
           mediaMatched: true,
+          exactMediaMatched: directMatch.exact,
           hasAdClass: hasAdClass(carrier),
           score: scoreInfo.score + scoreBoost,
           slotMetrics: scoreInfo.slotMetrics,
@@ -1025,18 +1057,24 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
         var item = items[i];
         var content = collect(item);
         var mediaValues = collectMediaValues(item);
-        var mediaMatched = mediaValues.some(function(value) {
-          return String(value || "").indexOf(mediaBasename) !== -1;
+        var exactMediaMatched = mediaValues.some(function(value) {
+          return mediaMatch(value).exact;
         });
+        var mediaMatched = expectedMediaKey
+          ? exactMediaMatched
+          : mediaValues.some(function(value) {
+              return mediaMatch(value).basename;
+            });
         var adClassCandidate = hasAdClass(item);
         available.push(content);
-        if ((mediaMatched || (adClassCandidate && content.indexOf(mediaBasename) !== -1))
+        if ((mediaMatched || (!expectedMediaKey && adClassCandidate && content.indexOf(mediaBasename) !== -1))
         ) {
           var candidateScore = scoreMatch(slot, item);
           matchedCandidates.push({
             slot: slot,
             item: item,
             mediaMatched: mediaMatched,
+            exactMediaMatched: exactMediaMatched,
             hasAdClass: adClassCandidate,
             score: candidateScore.score,
             slotMetrics: candidateScore.slotMetrics,
@@ -1054,6 +1092,9 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       return { ok: false, reason: placeholderOnly ? "placeholder_only" : "creative_not_found", available: available };
     }
     matchedCandidates.sort(function (a, b) {
+      if (Number(b.exactMediaMatched) !== Number(a.exactMediaMatched)) {
+        return Number(b.exactMediaMatched) - Number(a.exactMediaMatched);
+      }
       if (Number(b.mediaMatched) !== Number(a.mediaMatched)) {
         return Number(b.mediaMatched) - Number(a.mediaMatched);
       }
@@ -1144,12 +1185,16 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       var urls = collectMediaUrls(mediaNodes[mediaIndex]);
       for (var urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
         if (!mediaUrl) mediaUrl = urls[urlIndex];
-        if (urls[urlIndex].toLowerCase().indexOf(mediaBasename) !== -1) {
+        var currentMatch = mediaMatch(urls[urlIndex]);
+        if ((expectedMediaKey && currentMatch.exact) || (!expectedMediaKey && currentMatch.basename)) {
           mediaUrl = urls[urlIndex];
           break;
         }
       }
-      if (mediaUrl && mediaUrl.toLowerCase().indexOf(mediaBasename) !== -1) break;
+      if (mediaUrl) {
+        var selectedMatch = mediaMatch(mediaUrl);
+        if ((expectedMediaKey && selectedMatch.exact) || (!expectedMediaKey && selectedMatch.basename)) break;
+      }
     }
 
     Array.prototype.slice.call(document.querySelectorAll("[data-adops-capture-slot]")).forEach(function (node) {
@@ -1168,12 +1213,13 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       slotSelector: '[data-adops-capture-slot="1"]',
       contextSelector: '[data-adops-capture-context="1"]',
       mediaUrl: mediaUrl,
+      exactMediaMatched: matchedCandidates[0].exactMediaMatched === true,
       matchScore: matchedCandidates[0].score,
       slotTop: matchedCandidates[0].slotMetrics.top,
       slotVisibleRatio: matchedCandidates[0].slotMetrics.visibleRatio,
       slotInFooter: matchedCandidates[0].slotMetrics.inFooter,
     };
-  }, { slotSelector, mediaBasename });
+  }, { slotSelector, mediaBasename, expectedMediaKey });
 }
 
 async function forceMatchedAdVisible(page) {
@@ -1320,9 +1366,10 @@ async function forceMatchedAdVisible(page) {
   });
 }
 
-async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) {
+async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename, expectedMediaUrl = null) {
   const allowSameMediaOutsideSlot = process.env.ADOPS_CAPTURE_ALLOW_SAME_MEDIA_OUTSIDE_SLOT === "1";
-  return await page.evaluate(({ slotSelector, mediaBasename, allowSameMediaOutsideSlot }) => {
+  const expectedMediaKey = normalizeMediaIdentityUrl(expectedMediaUrl);
+  return await page.evaluate(({ slotSelector, mediaBasename, expectedMediaKey, allowSameMediaOutsideSlot }) => {
     const basename = String(mediaBasename || "").toLowerCase();
     const issues = [];
     const toBox = (node) => {
@@ -1385,6 +1432,21 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
 	        ""
 	      );
 	    };
+    const normalizeMediaKey = (value) => {
+      const raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+      if (!raw) return "";
+      try {
+        const parsed = new URL(raw, window.location.href);
+        return `${parsed.origin}${decodeURIComponent(parsed.pathname)}`.toLowerCase();
+      } catch {
+        return raw.split(/[?#]/)[0].toLowerCase();
+      }
+    };
+    const isTargetMedia = (node) => {
+      const value = mediaValue(node);
+      if (expectedMediaKey) return normalizeMediaKey(value) === expectedMediaKey;
+      return value.toLowerCase().includes(basename);
+    };
     const slot = document.querySelector(slotSelector);
     if (!(slot instanceof HTMLElement)) {
       return {
@@ -1400,9 +1462,9 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
     const allMedia = Array.from(document.querySelectorAll("img, video")).filter((node) => node instanceof HTMLElement);
     const slotMedia = allMedia.filter((node) => slot.contains(node));
     const visibleSlotMedia = slotMedia.filter(isVisible);
-    const visibleTargetsInside = visibleSlotMedia.filter((node) => mediaValue(node).toLowerCase().includes(basename));
-    const visibleConflictsInside = visibleSlotMedia.filter((node) => !mediaValue(node).toLowerCase().includes(basename));
-    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && mediaValue(node).toLowerCase().includes(basename));
+    const visibleTargetsInside = visibleSlotMedia.filter(isTargetMedia);
+    const visibleConflictsInside = visibleSlotMedia.filter((node) => !isTargetMedia(node));
+    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && isTargetMedia(node));
 
     if (visibleTargetsInside.length !== 1) {
       issues.push({
@@ -1428,6 +1490,7 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
       issues,
       slotSelector,
       mediaBasename,
+      expectedMediaKey,
       slotBox,
       targetInsideCount: visibleTargetsInside.length,
       conflictInsideCount: visibleConflictsInside.length,
@@ -1443,16 +1506,16 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
         mediaValue: mediaValue(node).slice(0, 500),
       })).slice(0, 8),
     };
-  }, { slotSelector, mediaBasename, allowSameMediaOutsideSlot });
+  }, { slotSelector, mediaBasename, expectedMediaKey, allowSameMediaOutsideSlot });
 }
 
-async function auditMatchedCreativePlacementWithRetry(page, slotSelector, mediaBasename, options = {}) {
+async function auditMatchedCreativePlacementWithRetry(page, slotSelector, mediaBasename, expectedMediaUrl = null, options = {}) {
   const attempts = Math.max(1, Number(options.attempts ?? 4));
   const waitMs = Math.max(0, Number(options.waitMs ?? 550));
   let audit = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     await forceMatchedAdVisible(page);
-    audit = await auditMatchedCreativePlacement(page, slotSelector, mediaBasename);
+    audit = await auditMatchedCreativePlacement(page, slotSelector, mediaBasename, expectedMediaUrl);
     audit.attempts = attempt;
     if (audit.ok) return audit;
     if (attempt < attempts) {
@@ -6014,7 +6077,7 @@ async function main() {
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
         retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
         await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
-        const candidateMatch = await findCreativeMatch(page, mapping.slotSelector, mediaBasename);
+        const candidateMatch = await findCreativeMatch(page, mapping.slotSelector, mediaBasename, insertion.mediaUrl);
         if (candidateMatch.ok) {
           targetUrl = candidateUrl;
           resolvedMediaSelector = await resolveVisibleMediaSelector(page, mediaBasename, {
@@ -6134,7 +6197,7 @@ async function main() {
     retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
     await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
-    creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, {
+    creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, insertion.mediaUrl, {
       attempts: Number(mapping.auditConfig?.creativePlacementAuditAttempts ?? 4),
       waitMs: Number(mapping.auditConfig?.creativePlacementAuditRetryWaitMs ?? 550),
     });
@@ -7210,5 +7273,6 @@ if (require.main === module) {
     normalizeStrictReadinessConfig,
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
+    normalizeMediaIdentityUrl,
   };
 }
