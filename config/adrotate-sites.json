@@ -213,6 +213,7 @@
     "browserTitle": "O Matogrossense",
     "hostLabel": "omatogrossense.com",
     "originIp": "66.253.112.200",
+    "disableOriginOverride": true,
     "previewSecret": "adops-preview-omt-2026-c5",
     "pageDateSelectors": [
       "time[data-omt-live-datestamp='1']",

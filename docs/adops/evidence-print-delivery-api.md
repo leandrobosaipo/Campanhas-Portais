@@ -136,6 +136,11 @@ com `cgi-sys/suspendedpage.cgi` para o navegador headless, embora o dominio
 publico esteja normal. A captura usa o dominio publico com cache bust; o IP
 continua documentado apenas para operacao SSH/WordPress.
 
+O OMT segue a mesma regra. O IP legado pode redirecionar a captura para
+`cgi-sys/suspendedpage.cgi`, enquanto `https://omatogrossense.com/` continua
+servindo os grupos AdRotate normalmente. Evidencias do OMT devem usar o dominio
+publico; `originIp` permanece apenas como referencia operacional.
+
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |
