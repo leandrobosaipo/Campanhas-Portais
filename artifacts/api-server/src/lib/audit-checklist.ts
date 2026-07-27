@@ -55,6 +55,7 @@ type RequiredGates = {
   requireVideoControls: boolean;
   requireReadinessAudit: boolean;
   requireAbsoluteEditorialDates: boolean;
+  requireVisiblePageDate: boolean;
   requireGifAllowedFrameRanges: boolean;
   gifAllowedFrameRanges: Array<[number, number]>;
 };
@@ -214,6 +215,7 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
     requireVideoControls: booleanFromConfig(auditConfig, "requireVideoControls", isVideo),
     requireReadinessAudit: String(auditConfig.readinessMode ?? "legacy").trim().toLowerCase() === "strict-visible",
     requireAbsoluteEditorialDates: booleanFromConfig(auditConfig, "requireAbsoluteEditorialDates", false),
+    requireVisiblePageDate: booleanFromConfig(auditConfig, "requireVisiblePageDate", false),
     requireGifAllowedFrameRanges: ranges.length > 0,
     gifAllowedFrameRanges: ranges,
   };
@@ -685,6 +687,21 @@ export async function validateAuditChecklist(input: {
           "requireAbsoluteEditorialDates",
           "Data editorial absoluta ausente",
           "A prova histórica precisa registrar ao menos uma data editorial absoluta visível.",
+        ));
+      }
+    }
+    if (requiredGates.requireVisiblePageDate) {
+      const visiblePageDateAudit = metadataObject(metadata, "visiblePageDateAudit");
+      if (
+        metadataRequiredGates?.requireVisiblePageDate !== true ||
+        visiblePageDateAudit?.ok !== true ||
+        visiblePageDateAudit?.skipped === true
+      ) {
+        blockingIssues.push(issue(
+          "visible_page_time_missing",
+          "requireVisiblePageDate",
+          "Data e hora do site ausentes",
+          `A barra visível de data/hora precisa corresponder à captura. Estado: ${JSON.stringify(visiblePageDateAudit ?? {})}.`,
         ));
       }
     }
