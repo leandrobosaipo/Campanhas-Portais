@@ -584,7 +584,8 @@
           "domFrameMinNonBgRatio": 0.03,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true
+          "requireSlotVisibleInViewport": true,
+          "requireAbsoluteEditorialDates": true
         }
       },
       {
