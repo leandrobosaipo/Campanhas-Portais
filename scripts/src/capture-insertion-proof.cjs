@@ -1962,7 +1962,10 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
 }
 
 async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt) {
-  if (!captureAt || !String(mapping?.domain || "").includes("omatogrossense.com")) {
+  const requireVisiblePageDate =
+    String(mapping?.domain || "").includes("omatogrossense.com") ||
+    mapping?.auditConfig?.requireVisiblePageDate === true;
+  if (!captureAt || !requireVisiblePageDate) {
     return { ok: true, skipped: true };
   }
   const [targetDate] = String(captureAt).split("T");
@@ -1996,7 +1999,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
     };
   }, { selectors, expectedDate, expectedTexts });
   if (!audit.ok) {
-    throw new Error(`capture_audit_failed: omt_visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
+    throw new Error(`capture_audit_failed: visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
   }
   return audit;
 }
@@ -5659,6 +5662,10 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
     }
 
     if (node instanceof HTMLImageElement && adGroup instanceof HTMLElement) {
+      const adGroupPosition = window.getComputedStyle(adGroup).position;
+      if (!adGroupPosition || adGroupPosition === "static") {
+        adGroup.style.setProperty("position", "relative", "important");
+      }
       const previousOverlay = adGroup.querySelector(':scope > [data-adops-reference-frame-overlay="1"]');
       if (previousOverlay) previousOverlay.remove();
       const overlay = document.createElement("div");
@@ -6933,6 +6940,7 @@ async function main() {
         requireVideoControls: /VIDEO/i.test(insertion.localFormatoNormalizado || insertion.localFormato || ""),
         requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
         requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,

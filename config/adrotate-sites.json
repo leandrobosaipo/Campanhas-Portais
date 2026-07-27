@@ -586,7 +586,10 @@
           "allowViewportImageMisses": 1,
           "requireSlotVisibleInViewport": true,
           "requireAbsoluteEditorialDates": true,
-          "finalPngCreativeMinSimilarity": 0.78
+          "finalPngCreativeMinSimilarity": 0.78,
+          "requireStickyHeaderInViewport": true,
+          "stickyHeaderExpected": "logo_menu_datetime",
+          "requireVisiblePageDate": true
         }
       },
       {

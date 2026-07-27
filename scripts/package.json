@@ -43,6 +43,7 @@
     "test:perrengue-static-retro-sparse": "node ./src/test-perrengue-static-retro-sparse.mjs",
     "test:perrengue-header-ad-policy": "node ./src/test-perrengue-header-ad-policy.mjs",
     "test:perrengue-popup-capture-rule": "node ./src/test-perrengue-popup-capture-rule.mjs",
+    "test:pnmt-topbar-capture-rule": "node ./src/test-pnmt-topbar-capture-rule.mjs",
     "test:final-proof-style-contract": "node ./src/test-final-proof-style-contract.mjs && node --import tsx --test ./src/test-proof-style-checklist.ts",
     "test:gif-capture-only-short-frames": "node ./src/test-gif-capture-only-short-frames.mjs",
     "test:windows-frame-template": "node ./src/test-windows-frame-template.mjs",
