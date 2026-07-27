@@ -86,6 +86,11 @@ function parseIsoLikeDate(value: string | null | undefined) {
     const fallback = new Date(`${numeric[3]}-${month}-${day}T${hour}:${numeric[5]}:${numeric[6] ?? "00"}-04:00`);
     if (!Number.isNaN(fallback.getTime())) return fallback;
   }
+  const localIso = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (localIso) {
+    const fallback = new Date(`${localIso[1]}T${localIso[2]}:${localIso[3]}:${localIso[4] ?? "00"}-04:00`);
+    if (!Number.isNaN(fallback.getTime())) return fallback;
+  }
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
   return null;

@@ -2637,6 +2637,12 @@ function parseIsoLikeDate(value) {
     if (!Number.isNaN(candidate.getTime())) return candidate;
   }
 
+  const localIso = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (localIso) {
+    const candidate = new Date(`${localIso[1]}T${localIso[2]}:${localIso[3]}:${localIso[4] ?? "00"}-04:00`);
+    if (!Number.isNaN(candidate.getTime())) return candidate;
+  }
+
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
