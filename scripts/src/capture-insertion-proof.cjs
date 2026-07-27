@@ -2693,6 +2693,20 @@ function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
   };
 }
 
+function evaluateRelativeContentTimeline(contentRelativeTimeSamples, requireAbsoluteEditorialDates = false) {
+  const relativeSamples = Array.isArray(contentRelativeTimeSamples)
+    ? contentRelativeTimeSamples
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
+  return {
+    ok: !requireAbsoluteEditorialDates || relativeSamples.length === 0,
+    required: requireAbsoluteEditorialDates === true,
+    relativeSamples,
+  };
+}
+
 function evaluateRetroCaptureGate(payload) {
   const requestedCaptureAt = payload.requestedCaptureAt;
   if (!requestedCaptureAt) {
@@ -2701,6 +2715,10 @@ function evaluateRetroCaptureGate(payload) {
       issues: [],
       codes: [],
       contentTimeline: { ok: true, maxObserved: null, futureSamples: [] },
+      relativeContentTimeline: evaluateRelativeContentTimeline(
+        payload.contentRelativeTimeSamples,
+        payload.requireAbsoluteEditorialDates,
+      ),
     };
   }
   const issues = [];
@@ -2726,6 +2744,16 @@ function evaluateRetroCaptureGate(payload) {
       detail: `maxObserved=${contentTimeline.maxObserved || "n/a"} futureSamples=${contentTimeline.futureSamples.join(" | ") || "n/a"}`,
     });
   }
+  const relativeContentTimeline = evaluateRelativeContentTimeline(
+    payload.contentRelativeTimeSamples,
+    payload.requireAbsoluteEditorialDates,
+  );
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      detail: `historical proof requires absolute editorial dates; relativeSamples=${relativeContentTimeline.relativeSamples.join(" | ")}`,
+    });
+  }
   if (payload.requireSlotVisibleInViewport && !payload.slotVisibility?.mostlyVisible) {
     issues.push({
       code: "slot_position_mismatch",
@@ -2749,6 +2777,7 @@ function evaluateRetroCaptureGate(payload) {
     issues,
     codes: issues.map((item) => item.code),
     contentTimeline,
+    relativeContentTimeline,
   };
 }
 
@@ -4619,6 +4648,7 @@ function compactMetadataForPersistence(metadata) {
   return {
     ...metadata,
     contentDateSamples: [],
+    contentRelativeTimeSamples: [],
     dynamicFields: [],
     gifFrameCandidates: [],
     domFrameSamples: [],
@@ -6068,6 +6098,7 @@ async function main() {
   let systemDateTime = null;
   let metadata = null;
   let contentDateSamples = [];
+  let contentRelativeTimeSamples = [];
   let retroGate = null;
   let retroPreview = null;
   let pendingLogFlush = { flushed: 0, kept: 0 };
@@ -6624,8 +6655,9 @@ async function main() {
       return visibleCandidates[0] || hiddenCandidates[0] || null;
     }, pageDateSelectors);
 
-    contentDateSamples = await page.evaluate(() => {
-      const samples = [];
+    const contentTimeSamples = await page.evaluate(() => {
+      const absolute = [];
+      const relative = [];
       const selectors = [
         "main article[data-adops-retro-post-date]",
         "main [data-adops-retro-post-date]",
@@ -6640,7 +6672,7 @@ async function main() {
       const pushValue = (value) => {
         const trimmed = String(value || "").trim();
         if (!trimmed) return;
-        if (!samples.includes(trimmed)) samples.push(trimmed);
+        if (!absolute.includes(trimmed)) absolute.push(trimmed);
       };
       for (const selector of selectors) {
         const nodes = Array.from(document.querySelectorAll(selector)).slice(0, 40);
@@ -6656,8 +6688,24 @@ async function main() {
           }
         }
       }
-      return samples.slice(0, 25);
+      for (const node of Array.from(document.querySelectorAll("main article *")).slice(0, 800)) {
+        if (!(node instanceof HTMLElement) || node.children.length > 0) continue;
+        const text = node.textContent?.replace(/\s+/g, " ").trim() || "";
+        if (!text) continue;
+        if (/(\d{4}-\d{2}-\d{2})|(\d{2}\/\d{2}\/\d{4})|(\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(\s+de)?\s+\d{4})/i.test(text)) {
+          pushValue(text);
+        }
+        if (/\b(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(text) && !relative.includes(text)) {
+          relative.push(text);
+        }
+      }
+      return {
+        absolute: absolute.slice(0, 25),
+        relative: relative.slice(0, 10),
+      };
     });
+    contentDateSamples = contentTimeSamples.absolute;
+    contentRelativeTimeSamples = contentTimeSamples.relative;
 
     systemDateTime = new Intl.DateTimeFormat("pt-BR", {
       timeZone: "America/Cuiaba",
@@ -6677,6 +6725,8 @@ async function main() {
       pageDateObserved,
       pageDateText,
       contentDateSamples,
+      contentRelativeTimeSamples,
+      requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
       requireDomFrameSimilarity: frameSelection?.frameSelectionMode === "gif_source",
@@ -6857,6 +6907,7 @@ async function main() {
         requireNo404: mapping.auditConfig?.requireNo404 !== false,
         requireVideoControls: /VIDEO/i.test(insertion.localFormatoNormalizado || insertion.localFormato || ""),
         requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
+        requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,
@@ -6882,6 +6933,7 @@ async function main() {
       pageDateText,
       pageDateObserved,
       contentDateSamples,
+      contentRelativeTimeSamples,
       retroGate,
       visiblePageDateAudit,
       creativePlacementAudit,
@@ -7084,6 +7136,7 @@ async function main() {
             pageDateObserved,
             pageDateCanonical: effectiveCaptureAt,
             contentDateSamples,
+            contentRelativeTimeSamples,
             retroGate,
             slotVisibility,
             pageScrollMetrics,
@@ -7259,6 +7312,7 @@ async function main() {
               pageDateObserved,
               pageDateCanonical: effectiveCaptureAt,
               contentDateSamples,
+              contentRelativeTimeSamples,
               retroGate,
               slotVisibility,
               pageScrollMetrics,
@@ -7319,6 +7373,7 @@ async function main() {
                   pageDateObserved,
                   pageDateCanonical: effectiveCaptureAt,
                   contentDateSamples,
+                  contentRelativeTimeSamples,
                   retroGate,
                   slotVisibility,
                   finalProofStyle,
@@ -7379,5 +7434,8 @@ if (require.main === module) {
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
     normalizeMediaIdentityUrl,
+    evaluateContentTimeline,
+    evaluateRelativeContentTimeline,
+    evaluateRetroCaptureGate,
   };
 }

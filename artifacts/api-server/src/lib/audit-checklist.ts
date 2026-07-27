@@ -54,6 +54,7 @@ type RequiredGates = {
   requireNo404: boolean;
   requireVideoControls: boolean;
   requireReadinessAudit: boolean;
+  requireAbsoluteEditorialDates: boolean;
   requireGifAllowedFrameRanges: boolean;
   gifAllowedFrameRanges: Array<[number, number]>;
 };
@@ -212,6 +213,7 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
     requireNo404: booleanFromConfig(auditConfig, "requireNo404", true),
     requireVideoControls: booleanFromConfig(auditConfig, "requireVideoControls", isVideo),
     requireReadinessAudit: String(auditConfig.readinessMode ?? "legacy").trim().toLowerCase() === "strict-visible",
+    requireAbsoluteEditorialDates: booleanFromConfig(auditConfig, "requireAbsoluteEditorialDates", false),
     requireGifAllowedFrameRanges: ranges.length > 0,
     gifAllowedFrameRanges: ranges,
   };
@@ -492,6 +494,9 @@ export async function validateAuditChecklist(input: {
     const videoProof = metadataObject(metadata, "videoProof");
     const readinessAudit = metadataObject(metadata, "readinessAudit");
     const metadataRequiredGates = metadataObject(metadata, "requiredGates");
+    const relativeContentTimeline = isPlainObject(retroGate?.relativeContentTimeline)
+      ? retroGate.relativeContentTimeline
+      : null;
     const matchedMediaUrl = metadataString(metadata, "matchedMediaUrl");
     const requestedCaptureAt = metadataString(metadata, "requestedCaptureAt");
 
@@ -654,6 +659,26 @@ export async function validateAuditChecklist(input: {
         "Data/hora retroativa falhou",
         `retroGate.ok precisa ser true. Estado: ${JSON.stringify(retroGate ?? {})}.`,
       ));
+    }
+    if (requiredGates.requireAbsoluteEditorialDates) {
+      if (
+        metadataRequiredGates?.requireAbsoluteEditorialDates !== true ||
+        !relativeContentTimeline
+      ) {
+        blockingIssues.push(issue(
+          "relative_content_time_audit_missing",
+          "requireAbsoluteEditorialDates",
+          "Auditoria de datas editoriais ausente",
+          "A prova histórica precisa registrar a varredura de textos relativos antes de ser aprovada.",
+        ));
+      } else if (relativeContentTimeline.ok !== true) {
+        blockingIssues.push(issue(
+          "relative_content_time_unresolved",
+          "requireAbsoluteEditorialDates",
+          "Data editorial relativa na prova",
+          `A prova histórica ainda contém texto relativo: ${JSON.stringify(relativeContentTimeline.relativeSamples ?? [])}.`,
+        ));
+      }
     }
     if (requiresPerrengueHomeEditorialAudit(contract.insertion.siteSigla, resolvedRule.page)) {
       const editorialMemeLeaks = Array.isArray(retroGate?.editorialMemeLeaks)

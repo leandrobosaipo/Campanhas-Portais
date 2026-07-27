@@ -255,6 +255,9 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const contentDateSamples = Array.isArray(metadata.contentDateSamples)
     ? metadata.contentDateSamples.filter((value: unknown) => typeof value === "string")
     : [];
+  const contentRelativeTimeSamples = Array.isArray(metadata.contentRelativeTimeSamples)
+    ? metadata.contentRelativeTimeSamples.filter((value: unknown) => typeof value === "string")
+    : [];
   const slotVisibility = metadata.slotVisibility && typeof metadata.slotVisibility === "object"
     ? metadata.slotVisibility
     : {};
@@ -281,6 +284,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     requireLegibleFrame?: boolean;
     requireIdentityFrame?: boolean;
     requireSlotVisibleInViewport?: boolean;
+    requireAbsoluteEditorialDates?: boolean;
     gifAllowedFrameRanges?: Array<[number, number]>;
   };
   const desktopMatches = requestedCaptureAt
@@ -366,6 +370,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
+  const requireAbsoluteEditorialDates = effectiveAuditConfig.requireAbsoluteEditorialDates === true;
+  const relativeContentTimeline = {
+    ok: !requireAbsoluteEditorialDates || contentRelativeTimeSamples.length === 0,
+    required: requireAbsoluteEditorialDates,
+    relativeSamples: contentRelativeTimeSamples.slice(0, 10),
+  };
   const visualsOk = Boolean(
     visualAuditAvailable &&
     viewportImagesOk &&
@@ -403,6 +413,13 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       code: "content_time_mismatch",
       label: "Conteúdo da página não está retroativo",
       detail: `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`,
+    });
+  }
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      label: "Data editorial relativa na prova",
+      detail: `A prova histórica exige datas absolutas, mas contém: ${relativeContentTimeline.relativeSamples.join(" | ")}.`,
     });
   }
   if (requireSlotVisibleInViewport && !slotMostlyVisible) {
@@ -589,6 +606,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       resolvedGroupId: resolvedMapping?.groupId ?? null,
     },
     contentTimeline,
+    relativeContentTimeline,
     mediaProof: {
       ok: mediaMatchesInsertion,
       mediaBasename: mediaBasename || null,
@@ -618,7 +636,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
     visualsOk,
     issues,
-    ok: desktopMatches && pageMatches && visualsOk && contentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: desktopMatches && pageMatches && visualsOk && contentTimeline.ok && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

@@ -38,6 +38,7 @@ jobs:
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
       - run: pnpm --dir scripts run test:strict-capture-readiness
+      - run: pnpm --dir scripts run test:retro-content-time
       - run: pnpm --dir scripts run test:perrengue-static-retro-sparse
       - run: pnpm --filter @workspace/adops run build
       - run: pnpm --dir scripts run test:runtime-auth
