@@ -679,6 +679,14 @@ export async function validateAuditChecklist(input: {
           `A prova histórica ainda contém texto relativo: ${JSON.stringify(relativeContentTimeline.relativeSamples ?? [])}.`,
         ));
       }
+      if (!audit.contentTimeline?.maxObserved) {
+        blockingIssues.push(issue(
+          "absolute_content_time_missing",
+          "requireAbsoluteEditorialDates",
+          "Data editorial absoluta ausente",
+          "A prova histórica precisa registrar ao menos uma data editorial absoluta visível.",
+        ));
+      }
     }
     if (requiresPerrengueHomeEditorialAudit(contract.insertion.siteSigla, resolvedRule.page)) {
       const editorialMemeLeaks = Array.isArray(retroGate?.editorialMemeLeaks)

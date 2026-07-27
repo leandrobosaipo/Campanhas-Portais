@@ -2750,6 +2750,12 @@ function evaluateRetroCaptureGate(payload) {
       detail: `maxObserved=${contentTimeline.maxObserved || "n/a"} futureSamples=${contentTimeline.futureSamples.join(" | ") || "n/a"}`,
     });
   }
+  if (payload.requireAbsoluteEditorialDates && !contentTimeline.maxObserved) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      detail: "historical proof requires at least one visible absolute editorial date",
+    });
+  }
   const relativeContentTimeline = evaluateRelativeContentTimeline(
     payload.contentRelativeTimeSamples,
     payload.requireAbsoluteEditorialDates,
@@ -6694,8 +6700,17 @@ async function main() {
           }
         }
       }
-      for (const node of Array.from(document.querySelectorAll("main article *")).slice(0, 800)) {
+      for (const node of Array.from(document.querySelectorAll("main *")).slice(0, 1200)) {
         if (!(node instanceof HTMLElement) || node.children.length > 0) continue;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          Number(style.opacity || "1") <= 0 ||
+          rect.width <= 0 ||
+          rect.height <= 0
+        ) continue;
         const text = node.textContent?.replace(/\s+/g, " ").trim() || "";
         if (!text) continue;
         if (/(\d{4}-\d{2}-\d{2})|(\d{2}\/\d{2}\/\d{4})|(\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(\s+de)?\s+\d{4})/i.test(text)) {

@@ -41,6 +41,17 @@ const rejected = evaluateRetroCaptureGate({
 assert.equal(rejected.ok, false);
 assert.ok(rejected.codes.includes("relative_content_time_unresolved"));
 
+const missingAbsolute = evaluateRetroCaptureGate({
+  requestedCaptureAt: "2026-07-15T19:06",
+  systemDateTime: "quarta-feira, 15/07/2026, 19:06",
+  pageDateObserved: "2026-07-15T19:06:00-04:00",
+  contentDateSamples: [],
+  contentRelativeTimeSamples: [],
+  requireAbsoluteEditorialDates: true,
+});
+assert.equal(missingAbsolute.ok, false);
+assert.ok(missingAbsolute.codes.includes("absolute_content_time_missing"));
+
 const approved = evaluateRetroCaptureGate({
   requestedCaptureAt: "2026-07-15T19:06",
   systemDateTime: "quarta-feira, 15/07/2026, 19:06",

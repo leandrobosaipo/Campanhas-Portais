@@ -20,3 +20,20 @@ test("API audit rejects relative editorial dates required by PNMT", () => {
   assert.equal(audit.relativeContentTimeline.ok, false);
   assert.ok(audit.issues.some((item) => item.code === "relative_content_time_unresolved"));
 });
+
+test("API audit rejects PNMT proof without an absolute editorial date", () => {
+  const audit = evaluateCaptureMetadata({
+    siteSigla: "PNMT",
+    format: "MEGABANNER TOPO",
+    requestedCaptureAt: "2026-07-15T19:06",
+    systemDateTime: "quarta-feira, 15/07/2026, 19:06",
+    pageDateObserved: "2026-07-15T19:06:00-04:00",
+    contentDateSamples: [],
+    contentRelativeTimeSamples: [],
+    visualAudit: {},
+    slotVisibility: {},
+  }, "2026-07-15");
+
+  assert.equal(audit.ok, false);
+  assert.ok(audit.issues.some((item) => item.code === "absolute_content_time_missing"));
+});

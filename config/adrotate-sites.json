@@ -585,7 +585,8 @@
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
           "requireSlotVisibleInViewport": true,
-          "requireAbsoluteEditorialDates": true
+          "requireAbsoluteEditorialDates": true,
+          "finalPngCreativeMinSimilarity": 0.78
         }
       },
       {
