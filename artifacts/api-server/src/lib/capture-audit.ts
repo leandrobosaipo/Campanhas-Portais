@@ -420,6 +420,13 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       detail: `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`,
     });
   }
+  if (requireAbsoluteEditorialDates && !contentTimeline.maxObserved) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      label: "Data editorial absoluta ausente",
+      detail: "A prova histórica precisa conter ao menos uma data editorial absoluta visível.",
+    });
+  }
   if (!relativeContentTimeline.ok) {
     issues.push({
       code: "relative_content_time_unresolved",
@@ -641,7 +648,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
     visualsOk,
     issues,
-    ok: desktopMatches && pageMatches && visualsOk && contentTimeline.ok && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: desktopMatches && pageMatches && visualsOk && contentTimeline.ok && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 
