@@ -4659,8 +4659,12 @@ function compactMetadataForPersistence(metadata) {
     : null;
   return {
     ...metadata,
-    contentDateSamples: [],
-    contentRelativeTimeSamples: [],
+    contentDateSamples: Array.isArray(metadata.contentDateSamples)
+      ? metadata.contentDateSamples.slice(0, 25)
+      : [],
+    contentRelativeTimeSamples: Array.isArray(metadata.contentRelativeTimeSamples)
+      ? metadata.contentRelativeTimeSamples.slice(0, 10)
+      : [],
     dynamicFields: [],
     gifFrameCandidates: [],
     domFrameSamples: [],
@@ -7458,5 +7462,6 @@ if (require.main === module) {
     evaluateContentTimeline,
     evaluateRelativeContentTimeline,
     evaluateRetroCaptureGate,
+    compactMetadataForPersistence,
   };
 }
