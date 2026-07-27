@@ -6,6 +6,7 @@ const {
   evaluateContentTimeline,
   evaluateRelativeContentTimeline,
   evaluateRetroCaptureGate,
+  compactMetadataForPersistence,
 } = require("./capture-insertion-proof.cjs");
 
 assert.equal(
@@ -63,5 +64,14 @@ const approved = evaluateRetroCaptureGate({
 assert.equal(approved.ok, true);
 assert.equal(approved.contentTimeline.maxObserved, "2026-07-15T20:12:00.000Z");
 assert.equal(approved.relativeContentTimeline.ok, true);
+
+const compact = compactMetadataForPersistence({
+  contentDateSamples: Array.from({ length: 30 }, (_, index) => `15/07/2026 ${index}:00`),
+  contentRelativeTimeSamples: Array.from({ length: 15 }, (_, index) => `há ${index + 1} dias`),
+});
+assert.equal(compact.contentDateSamples.length, 25);
+assert.equal(compact.contentRelativeTimeSamples.length, 10);
+assert.equal(compact.contentDateSamples[0], "15/07/2026 0:00");
+assert.equal(compact.contentRelativeTimeSamples[0], "há 1 dias");
 
 console.log("ok: retro proofs reject unresolved relative editorial dates");

@@ -170,6 +170,8 @@ uma data absoluta visivel; a ausencia retorna
 `absolute_content_time_missing`. O checklist exige o registro dessa varredura;
 metadado antigo sem o gate retorna
 `relative_content_time_audit_missing` ate a evidencia ser regenerada.
+O payload persistido conserva no maximo 25 amostras absolutas e 10 relativas,
+quantidade suficiente para a auditoria sem carregar o metadado completo da DOM.
 
 ### Jobs e progresso
 
