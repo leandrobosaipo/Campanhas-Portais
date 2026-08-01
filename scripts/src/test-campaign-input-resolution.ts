@@ -75,6 +75,28 @@ test("Drive accepts explicit and bare PI folder names", async () => {
   assert.equal(match.mediaFiles[0]?.size, "1024");
 });
 
+test("nested folders under one PI collapse into a single campaign candidate", async () => {
+  const items = [
+    folder("portal", "/PERRENGUE"),
+    folder("campaign", "/PERRENGUE/AGOSTO/PI 17046 CLIENTE"),
+    folder("desktop", "/PERRENGUE/AGOSTO/PI 17046 CLIENTE/DESKTOP"),
+    folder("mobile", "/PERRENGUE/AGOSTO/PI 17046 CLIENTE/MOBILE"),
+    image("desktop-creative", "/PERRENGUE/AGOSTO/PI 17046 CLIENTE/DESKTOP/banner.gif"),
+    image("mobile-creative", "/PERRENGUE/AGOSTO/PI 17046 CLIENTE/MOBILE/banner.gif"),
+  ];
+  const match = await findDriveCampaignMedia({
+    siteSigla: "PERRENGUE",
+    piCodigo: "PI 17046",
+    campaignName: "CLIENTE",
+    inventoryItems: items,
+  });
+  assert.equal(match.status, "matched");
+  assert.equal(match.folderPath, "/PERRENGUE/AGOSTO/PI 17046 CLIENTE");
+  assert.equal(match.candidates.length, 1);
+  assert.equal(match.mediaFiles.length, 2);
+  assert.equal(match.safeToApply, true);
+});
+
 test("PI found only in a file safely selects its parent campaign folder", async () => {
   const items = [
     folder("portal", "/PERRENGUE"),

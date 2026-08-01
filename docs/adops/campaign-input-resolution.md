@@ -61,7 +61,11 @@ Prioridade do match:
 
 Match somente por nome da campanha nunca libera aplicação. Empate, conflito de PI ou múltiplas pastas mantém `safeToApply=false` e expõe `drive.candidates`.
 
+Uma pasta identificada pela PI é a raiz da campanha. Subpastas como `DESKTOP`, `MOBILE`, `VÍDEO` e `APROVADO` são agrupadas nessa mesma raiz e não podem virar candidatas concorrentes. Um empate só é real quando a mesma PI aparece em duas raízes diferentes dentro do portal.
+
 Imagens, vídeos, PDFs, documentos e outros arquivos são listados separadamente. Stories, Reels e peças sociais não substituem automaticamente uma mídia de site.
+
+Em produção, `DRIVE_INTEGRATION_MODE=monitor` faz a API ler o snapshot persistido pelo monitor no banco. O modo `legacy` existe apenas para rollback e tenta usar o índice histórico em arquivo; não deve ser mantido como modo normal quando o monitor e o snapshot estiverem saudáveis.
 
 ## Como adicionar uma variação de posição
 
@@ -79,8 +83,9 @@ Quando a nova posição representa outro slot real, ela exige uma regra nova e v
 1. Se mudou apenas o nome da pasta do portal, acrescente o caminho em `drivePathAliases`.
 2. Preserve os aliases antigos enquanto ainda existirem materiais neles.
 3. Teste uma pasta com PI no nome e outra com PI apenas no arquivo.
-4. Confirme que pastas empatadas retornam `ambiguous`.
-5. Não use fuzzy match de campanha para publicar automaticamente.
+4. Teste também uma PI com subpastas de variações criativas e confirme uma única raiz candidata.
+5. Confirme que raízes realmente empatadas retornam `ambiguous`.
+6. Não use fuzzy match de campanha para publicar automaticamente.
 
 ## Como tratar bloqueios
 

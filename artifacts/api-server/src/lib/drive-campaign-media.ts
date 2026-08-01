@@ -96,12 +96,12 @@ export function extractDrivePiCandidates(value: string | null | undefined) {
   return uniqueStrings([...explicit, ...bareSegments]);
 }
 
-function campaignFolderPath(path: string) {
+function campaignFolderPath(path: string, itemIsFolder = false) {
   const pieces = path.split("/").filter(Boolean);
-  const folderPieces = pieces.slice(0, -1);
+  const folderPieces = itemIsFolder ? pieces : pieces.slice(0, -1);
   const piIndex = folderPieces.findIndex((piece) => extractDrivePiCandidates(piece).length > 0);
   if (piIndex >= 0) return `/${pieces.slice(0, piIndex + 1).join("/")}`;
-  return nearestFolderPath(path);
+  return itemIsFolder ? path : nearestFolderPath(path);
 }
 
 function sourceIdentity(
@@ -387,7 +387,10 @@ export async function findDriveCampaignMedia(input: {
   const grouped = new Map<string, DriveRawItem[]>();
   for (const item of scoped) {
     const normalized = normalizeDriveItem(item);
-    const folderPath = normalized.kind === "folder" ? normalized.path : campaignFolderPath(normalized.path);
+    // Collapse a PI folder and every nested subfolder/file into one campaign
+    // root. Treating each nested folder as a candidate creates false ties for
+    // otherwise exact PI matches (for example, PI 17046/desktop and /mobile).
+    const folderPath = campaignFolderPath(normalized.path, normalized.kind === "folder");
     if (!folderPath) continue;
     const current = grouped.get(folderPath) ?? [];
     current.push(item);
