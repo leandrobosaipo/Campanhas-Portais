@@ -38,32 +38,41 @@ upload_to_volume() {
   local mount_path="$3"
   local tar_path="$4"
   local prepare_command="${5:-}"
-  local container_name="adops-volume-upload-${volume}-${STAMP}"
+  local verify_command="${6:-}"
+  local container_name="adops-volume-upload-${volume}"
   local body code container_id
   body="$(mktemp)"
-  code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 30 \
-    -X POST \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n --arg name "$container_name" --arg image "$image" --arg volume "$volume" --arg target "$mount_path" '{
-      Image: $image,
-      Cmd: ["sh", "-lc", "sleep 300"],
-      HostConfig: {
-        Binds: [($volume + ":" + $target)]
-      }
-    }')" \
-    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/create?name=${container_name}" || true)"
-  if [[ ! "$code" =~ ^2 ]]; then
+  container_id="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+    | jq -r --arg name "/${container_name}" '.[] | select(.Names[]? == $name) | .Id' | head -n 1)"
+  if [[ -z "$container_id" ]]; then
+    code="$(curl -sS -o "$body" -w '%{http_code}' --connect-timeout 12 --max-time 90 \
+      -X POST \
+      -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n --arg image "$image" --arg volume "$volume" --arg target "$mount_path" '{
+        Image: $image,
+        Cmd: ["sh", "-lc", "sleep 900"],
+        HostConfig: { Binds: [($volume + ":" + $target)] }
+      }')" \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/create?name=${container_name}" || true)"
+    if [[ "$code" =~ ^2 ]] && jq -e '.Id | strings | length > 0' "$body" >/dev/null 2>&1; then
+      container_id="$(jq -r '.Id' "$body")"
+    else
+      printf 'Container create returned HTTP=%s; reconciling by deterministic name.\n' "$code" >&2
+      container_id="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+        | jq -r --arg name "/${container_name}" '.[] | select(.Names[]? == $name) | .Id' | head -n 1)"
+    fi
+  fi
+  if [[ -z "$container_id" ]]; then
     printf 'Container create failed for volume=%s HTTP=%s\n' "$volume" "$code" >&2
     sed -n '1,60p' "$body" >&2
     rm -f "$body"
     exit 1
   fi
-  container_id="$(jq -r '.Id' "$body")"
   rm -f "$body"
 
-  curl -sS --max-time 30 -X POST -H "X-API-Key: ${PORTAINER_API_KEY}" \
-    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start" >/dev/null
+  curl -sS --connect-timeout 12 --max-time 90 -X POST -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start" >/dev/null || true
 
   code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 180 \
     -X PUT \
@@ -81,13 +90,14 @@ upload_to_volume() {
   fi
   rm -f "$body"
 
-  if [[ -n "$prepare_command" ]]; then
+  run_in_upload_container() {
+    local command="$1"
     local exec_id exit_code
     exec_id="$(curl -fsS --max-time 30 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
-      -d "$(jq -n --arg command "$prepare_command" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:"/app",Cmd:["sh","-lc",$command]}')" \
+      -d "$(jq -n --arg command "$command" --arg workingDir "$mount_path" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:$workingDir,Cmd:["sh","-lc",$command]}')" \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/exec" | jq -r '.Id')"
     curl -fsS --max-time 300 \
       -X POST \
@@ -97,7 +107,14 @@ upload_to_volume() {
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
     exit_code="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json" | jq -r '.ExitCode')"
-    [[ "$exit_code" == "0" ]] || { printf 'Runtime dependency install failed for volume=%s.\n' "$volume" >&2; exit 1; }
+    [[ "$exit_code" == "0" ]] || { printf 'Upload container command failed for volume=%s.\n' "$volume" >&2; return 1; }
+  }
+
+  if [[ -n "$prepare_command" ]]; then
+    run_in_upload_container "$prepare_command"
+  fi
+  if [[ -n "$verify_command" ]]; then
+    run_in_upload_container "$verify_command"
   fi
 
   curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
@@ -141,7 +158,9 @@ COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_ROOT/artifacts/adops/dist/public" -
 tar --no-xattrs -C "$RELEASE_DIR" -rf "$WEB_TAR" cod5-release.json
 
 upload_to_volume "$APP_VOLUME" mcr.microsoft.com/playwright:v1.59.1-noble /app "$APP_TAR" \
-  'corepack enable && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile'
-upload_to_volume "$WEB_VOLUME" nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR"
+  'corepack enable && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile' \
+  'test -s /app/cod5-release.json && test -s /app/artifacts/api-server/dist/index.mjs && test -d /app/node_modules'
+upload_to_volume "$WEB_VOLUME" nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR" "" \
+  'test -s /usr/share/nginx/html/cod5-release.json && test -s /usr/share/nginx/html/index.html'
 
 printf 'Runtime volumes are ready on endpoint %s app=%s web=%s\n' "$ENDPOINT_ID" "$APP_VOLUME" "$WEB_VOLUME"

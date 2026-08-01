@@ -26,7 +26,7 @@ cleanup() {
       bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >/dev/null 2>&1 || true
   fi
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
-    NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+    NEW_MONITOR_HEALTH="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
       | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Status' | head -n 1 || true)"
     if [[ "$NEW_MONITOR_HEALTH" != *"(healthy)"* ]]; then
       portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
@@ -40,10 +40,10 @@ trap cleanup EXIT
 
 STACK_ENV_FILE="${ADOPS_STACK_ENV_FILE:-}"
 if [[ -z "$STACK_ENV_FILE" || ! -f "$STACK_ENV_FILE" ]]; then
-  STACK_ID="$(portainer_curl "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
+  STACK_ID="$(portainer_get_json "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
   [[ -n "$STACK_ID" ]] || { printf 'AdOps stack not found in Portainer.\n' >&2; exit 1; }
   DISCOVERED_ENV="$(mktemp)"
-  portainer_curl "${PORTAINER_API}/stacks/${STACK_ID}" \
+  portainer_get_json "${PORTAINER_API}/stacks/${STACK_ID}" \
     | jq -r '.Env[] | select(.name | test("^[A-Z0-9_]+$")) | "\(.name)=\(.value)"' \
     > "$DISCOVERED_ENV"
   chmod 600 "$DISCOVERED_ENV"
@@ -65,7 +65,7 @@ PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
 PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-legacy}"
 PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
 
-CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
 [[ -n "$POSTGRES_ID" ]] || { printf 'adops-postgres container not found.\n' >&2; exit 1; }
 
@@ -90,7 +90,7 @@ export ADOPS_WEB_PUBLIC_VOLUME="${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public_${AD
 VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
   bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
 
-CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 LEGACY_MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor") | .Id' | head -n 1)"
 if [[ -n "$LEGACY_MONITOR_ID" ]]; then
   LEGACY_MONITOR_RUNNING="$(printf '%s' "$CONTAINERS" | jq -r --arg id "$LEGACY_MONITOR_ID" '.[] | select(.Id == $id) | .State == "running"')"
@@ -131,13 +131,13 @@ for attempt in $(seq 1 60); do
   sleep 5
 done
 
-CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-runner") | .Id' | head -n 1)"
 MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Id' | head -n 1)"
 [[ -n "$RUNNER_ID" && -n "$MONITOR_ID" ]] || { printf 'Dedicated Drive monitor containers not found.\n' >&2; exit 1; }
 
-RUNNER_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
-MONITOR_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
+RUNNER_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
+MONITOR_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
 printf '%s' "$RUNNER_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0] | select(startswith("GOOGLE_DRIVE_"))] | length == 0)' >/dev/null
 printf '%s' "$MONITOR_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0]] | index("GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE") != null) and (.HostConfig.PortBindings | length == 0)' >/dev/null
 

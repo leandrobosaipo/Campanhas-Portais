@@ -98,6 +98,20 @@ SOURCE_DATABASE_URL=...
 TARGET_DATABASE_URL=...
 ```
 
+## Deploy imutável e retomável
+
+`scripts/deploy-production.sh` cria volumes identificados pelo SHA da release. O upload usa containers auxiliares com nome determinístico por volume.
+
+Se Cloudflare/Portainer devolver timeout ou `524` depois de criar o container, a repetição consulta o nome existente e retoma o mesmo volume. Respostas não JSON nunca são enviadas diretamente ao `jq`.
+
+O stack só é trocado depois de validar:
+
+- manifesto `cod5-release.json` nos dois volumes;
+- bundle da API e dependências no volume da aplicação;
+- `index.html` no volume web.
+
+Se o smoke falhar depois da troca, o trap restaura os volumes anteriores. Não remova os volumes da release anterior antes do aceite público.
+
 O script gera relatório em:
 
 ```text

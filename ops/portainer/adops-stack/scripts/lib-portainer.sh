@@ -24,10 +24,34 @@ portainer_endpoint_id() {
     return
   fi
 
-  curl -sS -H "X-API-Key: ${PORTAINER_API_KEY}" "${PORTAINER_API}/endpoints" \
+  portainer_get_json "${PORTAINER_API}/endpoints" \
     | jq -r '[.[] | select(.Status == 1)] | sort_by(.Id) | .[0].Id'
 }
 
 portainer_curl() {
-  curl -sS -H "X-API-Key: ${PORTAINER_API_KEY}" "$@"
+  curl -fsS --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
+    --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" \
+    -H "X-API-Key: ${PORTAINER_API_KEY}" "$@"
+}
+
+portainer_get_json() {
+  local url="$1"
+  local attempt body code
+  body="$(mktemp)"
+  for attempt in 1 2 3 4; do
+    code="$(curl -sS -o "$body" -w '%{http_code}' \
+      --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
+      --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" \
+      -H "X-API-Key: ${PORTAINER_API_KEY}" "$url" || true)"
+    if [[ "$code" =~ ^2 ]] && jq -e . "$body" >/dev/null 2>&1; then
+      cat "$body"
+      rm -f "$body"
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  printf 'Portainer GET did not return valid JSON: HTTP=%s url=%s\n' "$code" "$url" >&2
+  sed -n '1,20p' "$body" >&2
+  rm -f "$body"
+  return 1
 }
