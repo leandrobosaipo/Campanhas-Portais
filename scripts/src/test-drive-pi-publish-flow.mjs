@@ -113,6 +113,10 @@ assert(!runnerSource.includes('const explicitPublishFlow = payload?.publish === 
 assert(runnerSource.includes("explicitPublishFlow\n    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)"), "endpoint protegido explícito deve ser independente das flags de automação");
 assert(runnerSource.includes("if (hasAdOpsChanges && payload?.publish === true)"), "AdRotate deve continuar condicionado a publish=true");
 assert(runnerSource.includes("if (hasAdOpsChanges && payload?.publish !== true && !strictExplicitPublishFlow)"), "modo AdOps-only estrito não deve executar reconciliação SSH geral");
+assert(
+  sheetSync.includes('TOPO: "MEGABANNER TOPO"') && currentSheetCampaigns.includes('TOPO: "MEGABANNER TOPO"'),
+  "Planilha e API devem converter TOPO para o formato canônico MEGABANNER TOPO antes do checklist AdRotate.",
+);
 assert(runnerSource.includes("echo WP_CONTENT_DIR;"));
 assert(runnerSource.includes("staleMuPluginTargets"));
 for (const marker of ["application/vnd.google-apps.document", "/export?mimeType="]) {

@@ -267,6 +267,7 @@ function normalizeFormato(value: string): string {
     "LATERAL": "LATERAL",
     "LATERAL PRIMEIRA DOBRA": "LATERAL PRIMEIRA DOBRA",
     "TOPO LATERAL": "TOPO LATERAL",
+    TOPO: "MEGABANNER TOPO",
     "HOME 1": "HOME 1",
     "HOME 2": "HOME 2",
     "HOME 3": "HOME 3",

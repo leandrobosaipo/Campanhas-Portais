@@ -226,7 +226,7 @@ export function normalizeFormato(value: string | null | undefined) {
     LATERAL: "LATERAL",
     "LATERAL PRIMEIRA DOBRA": "LATERAL PRIMEIRA DOBRA",
     "TOPO LATERAL": "TOPO LATERAL",
-    TOPO: "TOPO",
+    TOPO: "MEGABANNER TOPO",
     "HOME 1": "HOME 1",
     "HOME 2": "HOME 2",
     "HOME 3": "HOME 3",
