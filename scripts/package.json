@@ -28,6 +28,8 @@
     "test:api-bundle-runtime": "node ./src/test-api-bundle-runtime.mjs",
     "test:evidence-web-export": "node --import tsx --test ./src/test-evidence-web-export.ts",
     "test:campaign-operations-ranking": "node --import tsx --test ./src/test-campaign-operations-match-ranking.ts",
+    "test:campaign-input-resolution": "DATABASE_URL=postgresql://localhost/adops_input_resolution_test ADOPS_PROJECT_ROOT=.. node --import tsx --test ./src/test-campaign-input-resolution.ts",
+    "test:ops-openapi-contract": "DATABASE_URL=postgresql://localhost/adops_openapi_contract_test ADOPS_PROJECT_ROOT=.. node --import tsx --test ./src/test-ops-openapi-contract.ts",
     "test:drive-source-conflicts": "DATABASE_URL=postgresql://localhost/adops_source_conflict_test node --import tsx --test ./src/test-drive-source-conflicts.ts",
     "test:adrotate-format-aliases": "ADOPS_PROJECT_ROOT=.. node --import tsx --test ./src/test-adrotate-format-aliases.ts",
     "test:media-consistency": "node --import tsx --test ./src/test-media-consistency.ts",

@@ -1183,7 +1183,7 @@ router.get("/ops/docs", (_req, res): void => {
 </html>`);
 });
 
-function buildOpsApiCatalog() {
+export function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
   const sections = [
@@ -1306,7 +1306,7 @@ function buildOpsApiCatalog() {
         id: "active-campaign-operations",
         method: "GET",
         path: "/api/campaign-operations/active?date=YYYY-MM-DD",
-        purpose: "Ler a aba do mês corrente, cruzar com Drive, AdOps e evidências, e retornar ações recomendadas sem criar jobs.",
+        purpose: "Ler a aba do mês corrente, resolver posição por portal, cruzar candidatos do Drive, AdOps e evidências, e retornar bloqueios sem criar jobs.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08"`,
       },
@@ -1314,7 +1314,7 @@ function buildOpsApiCatalog() {
         id: "active-campaign-operations-site",
         method: "GET",
         path: "/api/campaign-operations/active?date=YYYY-MM-DD&siteSigla=PERRENGUE",
-        purpose: "Filtrar o diagnóstico operacional por portal.",
+        purpose: "Filtrar o diagnóstico por portal, preservando valor bruto, resolução da posição e candidatos do Drive.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08&siteSigla=PERRENGUE"`,
       },
@@ -1484,7 +1484,7 @@ function buildOpsApiCatalog() {
   })));
   return {
     ok: true,
-    version: "adops-ops-api-catalog-v2",
+    version: "adops-ops-api-catalog-v3",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     auth: {
@@ -1584,7 +1584,7 @@ function buildOpsQuickstart() {
   ];
   return {
     ok: true,
-    version: "adops-ops-quickstart-v2",
+    version: "adops-ops-quickstart-v3",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     tokenEnv: "OPS_API_TOKEN",
@@ -1610,6 +1610,7 @@ function buildOpsQuickstart() {
       "Campanha futura é aceita por adId, groupId e período administrativo; não exigir HTML antes da data de início.",
       "Aceitar print somente com validate-proof.approved=true.",
       "Usar campaign-operations/active para saber o que está ativo, pendente de cadastro, publicação ou evidência antes de criar jobs.",
+      "Nunca aplicar posição ambígua, match do Drive somente por nome da campanha ou conflito de PI; revisar candidates e blockingIssues.",
       "Se regra de slot, período, mídia ou checklist falhar, corrigir a fonte antes do lote.",
       "Em divergência de fonte, prioridade: PDF/email da PI, planilha, AdOps, AdRotate, HTML público.",
     ],
@@ -1643,26 +1644,37 @@ function openApiSchemaForExample(value: unknown): Record<string, unknown> {
   return {};
 }
 
-function buildOpsOpenApiDocument() {
+export function buildOpsOpenApiDocument() {
   const catalog = buildOpsApiCatalog();
   const paths: Record<string, Record<string, unknown>> = {};
   for (const endpoint of catalog.endpoints) {
     const method = String(endpoint.method).toLowerCase();
-    const pathKey = endpoint.path.replace(/\{([^}]+)\}/g, "{$1}");
-    const pathParams = Array.from(endpoint.path.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
+    const [pathTemplate, queryTemplate = ""] = endpoint.path.split("?");
+    const pathKey = pathTemplate!.replace(/\{([^}]+)\}/g, "{$1}");
+    const pathParams = Array.from(pathTemplate!.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
+    const queryParams = queryTemplate.split("&").filter(Boolean).map((item) => {
+      const [name, example = ""] = item.split("=");
+      return {
+        name,
+        in: "query",
+        required: false,
+        schema: { type: "string" },
+        ...(example && !/[{}]/.test(example) && !/YYYY|true\|false/.test(example) ? { example } : {}),
+      };
+    });
     const bodyExample = method === "post" ? parseCurlBodyExample(endpoint.curl) : null;
     paths[pathKey] ??= {};
-    paths[pathKey][method] = {
+    const operation: Record<string, any> = {
       summary: endpoint.purpose,
       description: `${endpoint.sectionTitle}. ${endpoint.purpose}`,
       tags: [endpoint.sectionTitle],
       security: endpoint.authRequired ? [{ bearerAuth: [] }] : [],
-      parameters: pathParams.map((name) => ({
+      parameters: [...pathParams.map((name) => ({
         name,
         in: "path",
         required: true,
         schema: { type: "string" },
-      })),
+      })), ...queryParams],
       ...(bodyExample ? {
         requestBody: {
           required: true,
@@ -1675,7 +1687,10 @@ function buildOpsOpenApiDocument() {
         },
       } : {}),
       responses: {
-        "200": { description: "Resposta bem-sucedida." },
+        "200": endpoint.id.startsWith("active-campaign-operations") ? {
+          description: "Diagnóstico read-only campaign-operations-v2.",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CampaignOperationsV2" } } },
+        } : { description: "Resposta bem-sucedida." },
         "202": { description: "Job criado para execução assíncrona." },
         "400": { description: "Payload inválido." },
         "401": { description: "Token operacional ausente ou inválido." },
@@ -1683,6 +1698,14 @@ function buildOpsOpenApiDocument() {
       },
       "x-curl": endpoint.curl,
     };
+    const previous = paths[pathKey][method] as { parameters?: Array<Record<string, any>> } | undefined;
+    if (previous?.parameters) {
+      const merged = [...previous.parameters, ...operation.parameters].filter((parameter, index, all) =>
+        all.findIndex((candidate) => candidate.name === parameter.name && candidate.in === parameter.in) === index,
+      );
+      operation.parameters = merged;
+    }
+    paths[pathKey][method] = operation;
   }
   return {
     openapi: "3.1.0",
@@ -1704,6 +1727,66 @@ function buildOpsOpenApiDocument() {
           type: "http",
           scheme: "bearer",
           bearerFormat: "OPS_API_TOKEN",
+        },
+      },
+      schemas: {
+        CampaignOperationsV2: {
+          type: "object",
+          required: ["version", "date", "summary", "items", "upcomingItems"],
+          properties: {
+            version: { type: "string", const: "campaign-operations-v2" },
+            date: { type: "string", format: "date" },
+            summary: { type: "object", additionalProperties: true },
+            items: { type: "array", items: { $ref: "#/components/schemas/CampaignOperationItemV2" } },
+            upcomingItems: { type: "array", items: { $ref: "#/components/schemas/CampaignOperationItemV2" } },
+          },
+          additionalProperties: true,
+        },
+        CampaignOperationItemV2: {
+          type: "object",
+          required: ["siteSigla", "piCodigo", "format", "drive", "requiredActions", "blockingIssues"],
+          properties: {
+            siteSigla: { type: "string" },
+            piCodigo: { type: "string" },
+            format: {
+              type: "object",
+              properties: {
+                sheet: { type: "string" },
+                normalized: { type: "string" },
+                resolution: { $ref: "#/components/schemas/FormatResolution" },
+              },
+              additionalProperties: true,
+            },
+            drive: { $ref: "#/components/schemas/DriveCampaignMatch" },
+            requiredActions: { type: "array", items: { type: "string" } },
+            blockingIssues: { type: "array", items: { type: "string" } },
+          },
+          additionalProperties: true,
+        },
+        FormatResolution: {
+          type: "object",
+          required: ["status", "method", "rawFormat", "lexicalKey", "candidates", "safeToApply"],
+          properties: {
+            status: { type: "string", enum: ["resolved", "ambiguous", "unresolved"] },
+            method: { type: "string", enum: ["exact_alias", "normalized_alias", "context", "dimension", "none"] },
+            rawFormat: { type: "string" },
+            lexicalKey: { type: "string" },
+            canonicalFormat: { type: ["string", "null"] },
+            groupId: { type: ["integer", "null"] },
+            candidates: { type: "array", items: { type: "object", additionalProperties: true } },
+            safeToApply: { type: "boolean" },
+          },
+        },
+        DriveCampaignMatch: {
+          type: "object",
+          required: ["status", "candidates", "matchMethod", "safeToApply"],
+          properties: {
+            status: { type: "string", enum: ["matched", "not_found", "ambiguous", "unavailable"] },
+            matchMethod: { type: "string", enum: ["folder_pi", "file_pi", "campaign_tokens", "none"] },
+            candidates: { type: "array", items: { type: "object", additionalProperties: true } },
+            safeToApply: { type: "boolean" },
+          },
+          additionalProperties: true,
         },
       },
     },

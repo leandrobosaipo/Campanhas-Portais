@@ -8,6 +8,9 @@
     "articleFallbackUrl": "https://perrenguematogrosso.com/festa-celebracao-307-anos-cuiaba-parque-das-aguas-video/",
     "browserTitle": "Perrengue Mato Grosso",
     "hostLabel": "perrenguematogrosso.com",
+    "drivePathAliases": [
+      "/PERRENGUE"
+    ],
     "originIp": "186.209.113.107",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-perr-2026-c5",
@@ -59,6 +62,9 @@
         "groupId": 1,
         "aliases": [
           "MEGABANNER TOPO"
+        ],
+        "inputAliases": [
+          "TOPO"
         ],
         "page": "home",
         "slotSelector": ".g.g-1",
@@ -212,6 +218,10 @@
     "articleFallbackUrl": null,
     "browserTitle": "O Matogrossense",
     "hostLabel": "omatogrossense.com",
+    "drivePathAliases": [
+      "/O MATOGROSSENSE",
+      "/OMT"
+    ],
     "originIp": "66.253.112.200",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-omt-2026-c5",
@@ -378,6 +388,9 @@
     "articleFallbackUrl": null,
     "browserTitle": "A Folha Livre",
     "hostLabel": "afolhalivre.com",
+    "drivePathAliases": [
+      "/AFL"
+    ],
     "originIp": "66.253.112.200",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-afl-2026-c5",
@@ -420,6 +433,9 @@
           "MEGABANNER TOPO",
           "MEGABANNER",
           "MEGABANNER TPO"
+        ],
+        "inputAliases": [
+          "TOPO"
         ],
         "page": "home",
         "slotSelector": ".g.g-1",
@@ -530,6 +546,9 @@
     "articleFallbackUrl": "https://portalnortemt.com/ex-jogadores-do-manchester-united-criticam-postura-da-argentina-na-final-da-copa/",
     "browserTitle": "Portal Norte MT",
     "hostLabel": "portalnortemt.com",
+    "drivePathAliases": [
+      "/PNMT"
+    ],
     "originIp": "66.253.112.200",
     "previewSecret": "adops-preview-pnmt-2026-c5",
     "pageDateSelectors": [
@@ -570,6 +589,9 @@
         "aliases": [
           "MEGABANNER TOPO",
           "MEGABANNER"
+        ],
+        "inputAliases": [
+          "TOPO"
         ],
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
@@ -664,6 +686,10 @@
     "articleFallbackUrl": null,
     "browserTitle": "Portal Pantanal MT",
     "hostLabel": "portalpantanalmt.com",
+    "drivePathAliases": [
+      "/PMMT",
+      "/PPMT"
+    ],
     "originIp": "66.253.112.200",
     "previewSecret": "adops-preview-ppmt-2026-c5",
     "pageDateSelectors": [
@@ -703,6 +729,9 @@
         "groupId": 1,
         "aliases": [
           "MEGABANNER TOPO"
+        ],
+        "inputAliases": [
+          "TOPO"
         ],
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
@@ -820,6 +849,10 @@
     "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
     "browserTitle": "Roo Notícias",
     "hostLabel": "roonoticias.com",
+    "drivePathAliases": [
+      "/ROO NOTICIAS",
+      "/ROO"
+    ],
     "originIp": "66.253.112.200",
     "previewSecret": "adops-preview-roo-2026-c5",
     "pageDateSelectors": [
@@ -860,6 +893,9 @@
         "aliases": [
           "MEGABANNER TOPO",
           "MEGABANNER"
+        ],
+        "inputAliases": [
+          "TOPO"
         ],
         "page": "home",
         "slotSelector": ".g.g-1",

@@ -4,6 +4,7 @@ import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const configPath = path.join(repoRoot, "config/adrotate-sites.json");
+const knownDriftPath = path.join(repoRoot, "config/capture-rules-known-drift.json");
 const API_BASE = (process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api.codigo5.com.br/api").replace(/\/$/, "");
 const STRICT = process.env.ADOPS_CAPTURE_RULE_AUDIT_STRICT !== "0";
 
@@ -30,6 +31,13 @@ function issue(severity, code, message, details = {}) {
   return { severity, code, message, details };
 }
 
+function matchesKnownDrift(item, baseline) {
+  if (item.severity !== "error" || item.code !== baseline.code) return false;
+  return Object.entries(baseline)
+    .filter(([key]) => key !== "code")
+    .every(([key, value]) => JSON.stringify(item.details?.[key]) === JSON.stringify(value));
+}
+
 function addToMap(map, key, value) {
   const bucket = map.get(key) || [];
   bucket.push(value);
@@ -46,6 +54,7 @@ function flattenJsonConfig(config) {
         siteSigla,
         groupId: Number(mapping.groupId),
         aliases: Array.isArray(mapping.aliases) ? mapping.aliases : [],
+        inputAliases: Array.isArray(mapping.inputAliases) ? mapping.inputAliases : [],
         page: String(mapping.page || "home"),
         slotSelector: String(mapping.slotSelector || ""),
         contextSelector: normalizeContextSelector(mapping),
@@ -135,7 +144,7 @@ function auditRuleSet(name, rules) {
     addToMap(bySiteGroup, `${rule.siteSigla}:${rule.groupId}`, rule);
     addToMap(bySitePageSlot, `${rule.siteSigla}:${rule.page}:${rule.slotSelector}`, rule);
 
-    for (const alias of rule.aliases) {
+    for (const alias of [...rule.aliases, ...(rule.inputAliases || [])]) {
       const normalizedAlias = normalizeText(alias);
       if (!normalizedAlias) continue;
       addToMap(bySiteAlias, `${rule.siteSigla}:${normalizedAlias}`, rule);
@@ -157,7 +166,7 @@ function auditRuleSet(name, rules) {
       issues.push(issue("error", "duplicate_site_page_slot", `${name}: o mesmo slotSelector aponta para grupos diferentes em ${key}.`, {
         key,
         groupIds,
-        rules: bucket.map((item) => ({ id: item.id, groupId: item.groupId, aliases: item.aliases })),
+        rules: bucket.map((item) => ({ id: item.id, groupId: item.groupId, aliases: item.aliases, inputAliases: item.inputAliases || [] })),
       }));
     }
   }
@@ -221,22 +230,35 @@ function compareJsonAndApi(jsonRules, apiRules) {
 
 const startedAt = Date.now();
 const config = JSON.parse(await readFile(configPath, "utf8"));
+const knownDrift = JSON.parse(await readFile(knownDriftPath, "utf8"));
 const jsonRules = flattenJsonConfig(config);
 const allApiRules = await fetchRules(null);
 const apiRules = allApiRules.filter((rule) => rule.statusPublished === true);
 
-const issues = [
+const observedIssues = [
   ...auditRuleSet("JSON", jsonRules),
   ...auditRuleSet("API publicada", apiRules),
   ...auditNonPublishedRules(allApiRules),
   ...compareJsonAndApi(jsonRules, apiRules),
 ];
+const issues = observedIssues.map((item) => {
+  const baseline = knownDrift.issues.find((entry) => matchesKnownDrift(item, entry));
+  if (!baseline) return item;
+  return {
+    ...item,
+    severity: "warning",
+    code: "known_baseline_drift",
+    message: `${item.message} Divergência conhecida; os valores precisam continuar exatamente iguais à baseline para não bloquear.`,
+    details: { ...item.details, originalCode: item.code, baselineVersion: knownDrift.version },
+  };
+});
 
 const errors = issues.filter((item) => item.severity === "error");
 const warnings = issues.filter((item) => item.severity === "warning");
 const summary = {
   ok: errors.length === 0,
   strict: STRICT,
+  knownDriftBaseline: { version: knownDrift.version, reviewedAt: knownDrift.reviewedAt },
   apiBase: API_BASE,
   durationMs: Date.now() - startedAt,
   totals: {

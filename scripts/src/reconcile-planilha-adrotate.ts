@@ -5,6 +5,7 @@ import path from "node:path";
 import * as XLSX from "xlsx";
 import { eq, and } from "drizzle-orm";
 import { db, campaignsTable, insertionsTable, sitesTable } from "@workspace/db";
+import { resolveSiteFormat } from "../../artifacts/api-server/src/lib/adrotate-sites";
 
 type RawRow = {
   sourceSheet: string;
@@ -337,7 +338,11 @@ function deriveCompetenciaFromPeriodo(competenciaSheet: string, inicio: string |
   return `${sheetMonth}/${sheetYear}`;
 }
 
-function normalizeFormato(value: string): string {
+function normalizeFormato(value: string, siteSigla?: string | null): string {
+  if (siteSigla) {
+    const resolution = resolveSiteFormat(siteSigla, value);
+    if (resolution.canonicalFormat) return resolution.canonicalFormat;
+  }
   const normalized = normalizeForMatch(value).replace(/\./g, "").replace(/\s+/g, " ");
   const direct: Record<string, string> = {
     "MEGA BANNER TOPO": "MEGABANNER TOPO",
@@ -450,9 +455,7 @@ async function loadRawRows() {
 
 function localGroupId(siteSigla: string | null | undefined, formato: string | null | undefined) {
   if (!siteSigla || !formato) return null;
-  const bySite = ADROTATE_GROUPS[siteSigla];
-  if (!bySite) return null;
-  return bySite[normalizeFormato(formato)] ?? null;
+  return resolveSiteFormat(siteSigla, formato).groupId;
 }
 
 function extractPiNumber(value: string | null | undefined) {
@@ -531,7 +534,7 @@ async function main() {
       row.siteSigla,
       normalizeTextKey(row.campanha),
       normalizeTextKey(normalizePi(row.peca, row.agenciaValor)),
-      normalizeTextKey(normalizeFormato(row.local)),
+      normalizeTextKey(normalizeFormato(row.local, row.siteSigla)),
       row.competenciaResolved,
     ].join("|");
     const current = groupedRows.get(key) ?? [];
@@ -564,7 +567,7 @@ async function main() {
       const candidates = campaignInsertions
         .filter((item) => {
           const candidateSite = item.siteId ? siteById.get(item.siteId) : null;
-          return candidateSite?.sigla === site?.sigla && normalizeTextKey(normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "")) === formatKey;
+          return candidateSite?.sigla === site?.sigla && normalizeTextKey(normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "", site?.sigla)) === formatKey;
         })
         .sort((a, b) => `${a.periodoInicio ?? ""}|${a.periodoFim ?? ""}|${a.id}`.localeCompare(`${b.periodoInicio ?? ""}|${b.periodoFim ?? ""}|${b.id}`));
 

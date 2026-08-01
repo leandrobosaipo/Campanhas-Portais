@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { inferClientProfileFromPiReference, type InferredClientProfile } from "./lib/pi-client-cnpj";
+import { resolveSiteFormat } from "../../artifacts/api-server/src/lib/adrotate-sites";
 
 type RawRow = {
   sourceSheet: string;
@@ -250,7 +251,11 @@ function deriveCompetenciaFromPeriodo(
   return `${sheetMonth}/${sheetYear}`;
 }
 
-function normalizeFormato(value: string): string {
+function normalizeFormato(value: string, siteSigla?: string | null): string {
+  if (siteSigla) {
+    const resolution = resolveSiteFormat(siteSigla, value);
+    if (resolution.canonicalFormat) return resolution.canonicalFormat;
+  }
   const normalized = normalizeForMatch(value).replace(/\./g, "").replace(/\s+/g, " ");
   const direct: Record<string, string> = {
     "MEGA BANNER TOPO": "MEGABANNER TOPO",
@@ -635,7 +640,7 @@ async function main() {
       createdCampaigns += 1;
     }
 
-    const localFormatoNormalizado = normalizeFormato(row.local);
+    const localFormatoNormalizado = normalizeFormato(row.local, row.siteSigla);
     const insertionIdentityInBatch = `${campaign.id}|${siteId}|${localFormatoNormalizado}|${row.inicio}|${row.fim}`;
     if (processedInsertionKeys.has(insertionIdentityInBatch)) {
       warnings.push(
@@ -659,7 +664,7 @@ async function main() {
       );
     const existing = existingInsertions.find((item) =>
       item.siteId === siteId &&
-      normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "") === localFormatoNormalizado &&
+      normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "", row.siteSigla) === localFormatoNormalizado &&
       item.periodoInicio === row.inicio &&
       item.periodoFim === row.fim,
     );

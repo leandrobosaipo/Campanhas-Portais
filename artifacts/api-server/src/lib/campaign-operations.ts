@@ -23,7 +23,7 @@ import { validateAuditChecklist } from "./audit-checklist";
 import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
 import { isFormatCompatible, selectBestAdopsMatch } from "./campaign-operations-matching";
 
-export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
+export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v2" as const;
 
 type RequiredAction =
   | "create_campaign_or_insertion"
@@ -97,6 +97,7 @@ export type CampaignOperationItem = {
     sheet: string;
     adops: string | null;
     normalized: string;
+    resolution: CurrentSheetCampaignRow["formatResolution"];
   };
   sheetSource: {
     sheetName: string;
@@ -142,6 +143,7 @@ export type CampaignOperationUpcomingItem = {
     sheet: string;
     adops: string | null;
     normalized: string;
+    resolution: CurrentSheetCampaignRow["formatResolution"];
   };
   sheetSource: {
     sheetName: string;
@@ -549,6 +551,12 @@ export async function getActiveCampaignOperations(options: {
       requiredActions.push("confirm_source_identity");
       blockingIssues.push(sourceIdentity.reason);
     }
+    if (row.formatResolution.status !== "resolved") {
+      requiredActions.push("review_format_divergence");
+      blockingIssues.push(row.formatResolution.status === "ambiguous"
+        ? "A posição da planilha corresponde a mais de uma regra do portal. Confirme o grupo antes de publicar."
+        : "A posição da planilha não corresponde a nenhuma regra conhecida do portal.");
+    }
     if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
@@ -596,6 +604,7 @@ export async function getActiveCampaignOperations(options: {
         sheet: row.localFormato,
         adops: insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? null,
         normalized: row.localFormatoNormalizado,
+        resolution: row.formatResolution,
       },
       sheetSource: {
         sheetName: row.sheetName,
@@ -652,6 +661,12 @@ export async function getActiveCampaignOperations(options: {
       requiredActions.push("confirm_source_identity");
       blockingIssues.push(sourceIdentity.reason);
     }
+    if (row.formatResolution.status !== "resolved") {
+      requiredActions.push("review_format_divergence");
+      blockingIssues.push(row.formatResolution.status === "ambiguous"
+        ? "A posição da planilha corresponde a mais de uma regra do portal. Confirme o grupo antes de publicar."
+        : "A posição da planilha não corresponde a nenhuma regra conhecida do portal.");
+    }
     if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
@@ -682,6 +697,7 @@ export async function getActiveCampaignOperations(options: {
         sheet: row.localFormato,
         adops: insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? null,
         normalized: row.localFormatoNormalizado,
+        resolution: row.formatResolution,
       },
       sheetSource: {
         sheetName: row.sheetName,
