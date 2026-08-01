@@ -97,6 +97,23 @@ test("nested folders under one PI collapse into a single campaign candidate", as
   assert.equal(match.safeToApply, true);
 });
 
+test("inconsistent trailing spaces in Drive paths do not create a false PI tie", async () => {
+  const match = await findDriveCampaignMedia({
+    siteSigla: "PERRENGUE",
+    piCodigo: "PI 17046",
+    campaignName: "CLIENTE",
+    inventoryItems: [
+      folder("campaign", "/PERRENGUE/AGOSTO /PI 17046 - CLIENTE"),
+      image("creative", "/PERRENGUE/AGOSTO /PI 17046 - CLIENTE /banner.gif"),
+    ],
+  });
+  assert.equal(match.status, "matched");
+  assert.equal(match.folderPath, "/PERRENGUE/AGOSTO/PI 17046 - CLIENTE");
+  assert.equal(match.candidates.length, 1);
+  assert.equal(match.mediaFiles.length, 1);
+  assert.equal(match.safeToApply, true);
+});
+
 test("PI found only in a file safely selects its parent campaign folder", async () => {
   const items = [
     folder("portal", "/PERRENGUE"),

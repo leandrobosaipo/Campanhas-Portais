@@ -63,6 +63,8 @@ Match somente por nome da campanha nunca libera aplicação. Empate, conflito de
 
 Uma pasta identificada pela PI é a raiz da campanha. Subpastas como `DESKTOP`, `MOBILE`, `VÍDEO` e `APROVADO` são agrupadas nessa mesma raiz e não podem virar candidatas concorrentes. Um empate só é real quando a mesma PI aparece em duas raízes diferentes dentro do portal.
 
+Espaços extras no início ou no fim dos nomes das pastas são ignorados somente durante a comparação. A API preserva nomes, IDs e links originais; essa normalização evita empates invisíveis sem renomear nada no Drive.
+
 Imagens, vídeos, PDFs, documentos e outros arquivos são listados separadamente. Stories, Reels e peças sociais não substituem automaticamente uma mídia de site.
 
 Em produção, `DRIVE_INTEGRATION_MODE=monitor` faz a API ler o snapshot persistido pelo monitor no banco. O modo `legacy` existe apenas para rollback e tenta usar o índice histórico em arquivo; não deve ser mantido como modo normal quando o monitor e o snapshot estiverem saudáveis.

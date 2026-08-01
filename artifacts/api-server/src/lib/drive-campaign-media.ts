@@ -84,6 +84,14 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
+function canonicalDrivePath(path: string) {
+  const pieces = path
+    .split("/")
+    .filter(Boolean)
+    .map((piece) => piece.trim().replace(/\s+/g, " "));
+  return pieces.length ? `/${pieces.join("/")}` : "/";
+}
+
 export function extractDrivePiCandidates(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .normalize("NFD")
@@ -97,11 +105,12 @@ export function extractDrivePiCandidates(value: string | null | undefined) {
 }
 
 function campaignFolderPath(path: string, itemIsFolder = false) {
-  const pieces = path.split("/").filter(Boolean);
+  const canonicalPath = canonicalDrivePath(path);
+  const pieces = canonicalPath.split("/").filter(Boolean);
   const folderPieces = itemIsFolder ? pieces : pieces.slice(0, -1);
   const piIndex = folderPieces.findIndex((piece) => extractDrivePiCandidates(piece).length > 0);
   if (piIndex >= 0) return `/${pieces.slice(0, piIndex + 1).join("/")}`;
-  return itemIsFolder ? path : nearestFolderPath(path);
+  return itemIsFolder ? canonicalPath : nearestFolderPath(canonicalPath);
 }
 
 function sourceIdentity(
@@ -424,7 +433,7 @@ export async function findDriveCampaignMedia(input: {
   const best = scored.filter((entry) => entry.score === bestScore);
   const candidates = scored.slice(0, 10).map((entry) => ({
     folderPath: entry.folderPath,
-    folderId: scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && item.path === entry.folderPath)?.id ?? null,
+    folderId: scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && canonicalDrivePath(item.path ?? `/${item.name}`) === entry.folderPath)?.id ?? null,
     score: entry.score,
     matchMethod: campaignMatchMethod(entry.score),
     fileCount: entry.files.length,
@@ -432,11 +441,14 @@ export async function findDriveCampaignMedia(input: {
   const exactIdentityMatch = best.length === 1 && bestScore >= 800;
   const folderPaths = best.map((entry) => entry.folderPath);
   const folderPath = exactIdentityMatch ? folderPaths[0] ?? null : null;
-  const folderId = scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && item.path === folderPath)?.id ?? null;
+  const folderId = scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && canonicalDrivePath(item.path ?? `/${item.name}`) === folderPath)?.id ?? null;
   const folderPrefix = folderPath ? `${folderPath}/` : "";
   const files = folderPath
     ? scoped
-      .filter((item) => item.path === folderPath || item.path?.startsWith(folderPrefix))
+      .filter((item) => {
+        const itemPath = canonicalDrivePath(item.path ?? `/${item.name}`);
+        return itemPath === folderPath || itemPath.startsWith(folderPrefix);
+      })
       .map(normalizeDriveItem)
       .filter((item) => item.kind !== "folder")
     : [];
