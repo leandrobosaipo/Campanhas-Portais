@@ -110,6 +110,8 @@ O stack só é trocado depois de validar:
 - bundle da API e dependências no volume da aplicação;
 - `index.html` no volume web.
 
+Quando `DRIVE_INTEGRATION_MODE` não é informado no terminal, o deploy preserva o modo já configurado no stack; ele não regride automaticamente para `legacy`.
+
 Se o smoke falhar depois da troca, o trap restaura os volumes anteriores. Não remova os volumes da release anterior antes do aceite público.
 
 O script gera relatório em:
