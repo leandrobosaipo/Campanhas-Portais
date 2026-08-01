@@ -22,6 +22,7 @@ Documentacao operacional publicada pela API:
 - [Swagger UI](https://adops-api.codigo5.com.br/api/ops/docs)
 - [OpenAPI JSON](https://adops-api.codigo5.com.br/api/ops/openapi.json)
 - [Campanhas ativas e proximas](https://adops-api.codigo5.com.br/api/campaign-operations/active?date=2026-07-10&includeEvidence=true)
+- [Resolução de posições e materiais do Drive](docs/adops/campaign-input-resolution.md)
 
 ## Recursos operacionais atuais
 

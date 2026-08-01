@@ -264,6 +264,15 @@ curl -fsSL \
   "$ADOPS_API_BASE_URL/api/campaign-operations/active?date=2026-07-22&includeEvidence=true&refreshDrive=false"
 ```
 
+Antes de criar job, confira também:
+
+- `format.resolution.safeToApply=true`;
+- `drive.safeToApply=true` quando a mídia depender do Drive;
+- `drive.matchMethod` diferente de `campaign_tokens`;
+- `blockingIssues=[]`.
+
+Novas grafias da planilha devem entrar como `inputAliases` na regra existente do portal. Não altere o alias canônico, grupo ou seletor somente para aceitar outra forma de escrever. Consulte [`campaign-input-resolution.md`](./campaign-input-resolution.md).
+
 Diagnóstico por inserção:
 
 ```bash

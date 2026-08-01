@@ -1,6 +1,6 @@
 # API de Campanhas Ativas
 
-Endpoint read-only para cruzar planilha do mês corrente, índice do Google Drive, cadastro AdOps e evidências.
+Endpoint read-only `campaign-operations-v2` para cruzar planilha do mês corrente, índice do Google Drive, cadastro AdOps e evidências sem escolher silenciosamente uma posição ou pasta ambígua.
 
 ## Endpoint
 
@@ -23,6 +23,32 @@ A resposta sempre separa:
 - `items`: campanhas ativas na data consultada;
 - `upcomingItems`: campanhas da mesma aba que ainda vão entrar no ar, com início posterior à data consultada e horizonte padrão de 45 dias.
 - `snapshotStatus`, `snapshotAt`, `snapshotAgeSeconds`, `stale` e `refreshJobId`: saúde e atualização do inventário do Drive.
+
+Cada item preserva o valor original da planilha em `format.sheet` e detalha a decisão em `format.resolution`. A resposta v2 mantém os campos da v1 e adiciona diagnóstico.
+
+```json
+{
+  "format": {
+    "sheet": "TOPO",
+    "normalized": "MEGABANNER TOPO",
+    "resolution": {
+      "status": "resolved",
+      "method": "exact_alias",
+      "rawFormat": "TOPO",
+      "canonicalFormat": "MEGABANNER TOPO",
+      "groupId": 1,
+      "safeToApply": true,
+      "candidates": [
+        {
+          "groupId": 1,
+          "canonicalFormat": "MEGABANNER TOPO",
+          "page": "home"
+        }
+      ]
+    }
+  }
+}
+```
 
 Exemplos:
 
@@ -80,10 +106,12 @@ do mês. A ordem é:
 
 1. número da PI no nome da pasta da campanha;
 2. número da PI no nome do PDF ou mídia dentro dessa pasta;
-3. tokens do nome da campanha dentro do portal.
+3. tokens do nome da campanha dentro do portal, somente como sugestão bloqueada.
 
 Empate entre pastas retorna `ambiguous`. Arquivos de outra PI do mesmo mês não
 entram no resultado.
+
+`drive.candidates` mostra até dez pastas consideradas, com pontuação e método. `safeToApply=true` exige uma única identidade exata por pasta ou arquivo e ausência de conflito entre PIs. Um match somente por tokens da campanha permanece `ambiguous`.
 
 Cada item retorna `sourceIdentity`:
 
@@ -126,6 +154,8 @@ Arquivos classificados:
 - `ambiguous_drive_match`: mais de uma pasta candidata no Drive.
 - `source_conflict`: planilha, pasta, PDF ou AdOps usam números de PI diferentes.
 - `blocked`: há problema objetivo que impede automação segura.
+
+Detalhes e exemplos de variações ficam em [`campaign-input-resolution.md`](./campaign-input-resolution.md).
 
 ## Regras de aceite visual e publicação
 
