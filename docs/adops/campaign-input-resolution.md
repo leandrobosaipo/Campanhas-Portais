@@ -95,6 +95,7 @@ Quando a nova posição representa outro slot real, ela exige uma regra nova e v
 - `format.resolution.status=unresolved`: confirmar se é nova grafia ou novo slot.
 - `drive.status=ambiguous`: revisar `candidates`, PI da pasta, PDF e nomes das mídias.
 - `drive.matchMethod=campaign_tokens`: confirmar a PI; não aplicar.
+- Uma única sugestão por nome continua `ambiguous`; quantidade de candidatos não substitui confirmação da PI.
 - `sourceIdentity.decision=needs_confirmation`: registrar confirmação humana antes de qualquer mutação.
 - `blockingIssues` não vazio: nenhuma ação sugerida deve ser executada automaticamente.
 

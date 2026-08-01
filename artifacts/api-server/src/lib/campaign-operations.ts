@@ -500,6 +500,21 @@ function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedI
   return jobs;
 }
 
+function driveAmbiguityMessage(drive: DriveCampaignMediaMatch) {
+  if (drive.sourceIdentity.piConflict) {
+    return "As PIs observadas na pasta ou nos arquivos do Drive são conflitantes. Confirme a identidade antes de publicar.";
+  }
+  const topScore = drive.candidates[0]?.score ?? null;
+  const topCandidateCount = topScore === null ? 0 : drive.candidates.filter((candidate) => candidate.score === topScore).length;
+  if (topCandidateCount > 1) {
+    return "Drive retornou mais de uma pasta candidata com a mesma prioridade para a campanha.";
+  }
+  if (drive.matchMethod === "campaign_tokens") {
+    return "Drive encontrou apenas uma sugestão pelo nome da campanha, sem confirmar a PI. Revise a pasta antes de publicar.";
+  }
+  return "A pasta sugerida pelo Drive não confirmou uma identidade única de PI. Revise a origem antes de publicar.";
+}
+
 export async function getActiveCampaignOperations(options: {
   date?: string;
   refreshDrive?: boolean;
@@ -545,7 +560,7 @@ export async function getActiveCampaignOperations(options: {
     if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
-      blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
+      blockingIssues.push(driveAmbiguityMessage(drive));
     }
     if (sourceIdentity.decision === "needs_confirmation") {
       requiredActions.push("confirm_source_identity");
@@ -655,7 +670,7 @@ export async function getActiveCampaignOperations(options: {
     if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
-      blockingIssues.push("Drive retornou mais de uma pasta candidata para a campanha.");
+      blockingIssues.push(driveAmbiguityMessage(drive));
     }
     if (sourceIdentity.decision === "needs_confirmation") {
       requiredActions.push("confirm_source_identity");
