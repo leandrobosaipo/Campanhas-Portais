@@ -59,6 +59,7 @@ import {
   prepareEvidenceImage,
   resolveDeliveryDateRange,
   resolveDeliveryPiCode,
+  selectCanonicalEvidencePerDate,
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
@@ -2897,7 +2898,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     let zipPath: string | null = null;
     try {
       for (const insertion of exportableInsertions) {
-        const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        const evidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
         if (!evidences.length) {
           skippedInsertionIds.push(insertion.id);
           continue;
@@ -3085,7 +3087,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     let zipPath: string | null = null;
     try {
       for (const insertion of exportableInsertions) {
-        const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        const evidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
         for (const evidence of evidences) {
           const dateKey = getEvidenceDateKey(evidence.titulo);
           if (dateKey) allEvidenceDates.push(dateKey);
@@ -3185,7 +3188,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
 
   try {
     for (const insertion of exportableInsertions) {
-      const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+      const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+      const evidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
       const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
       const printGroupFolder = resolveOperationalPrintFolder(insertion);
       const insertionFolder = safeFileName(
