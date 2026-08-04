@@ -18,6 +18,12 @@ export type SiteAuditConfig = {
   postVisualWaitMs?: number;
   viewportTrimBottomPx?: number;
   allowViewportImageMisses?: number;
+  requireSignedRetroPreview?: boolean;
+  requireRetroContentProof?: boolean;
+  minRetroContentMatches?: number;
+  allowAuditedReconstruction?: boolean;
+  retroContentCardSelectors?: string[];
+  retroContentDateSelectors?: string[];
 };
 
 export type SiteConsentConfig = {

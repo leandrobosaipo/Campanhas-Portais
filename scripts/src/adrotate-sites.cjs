@@ -1,7 +1,9 @@
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 
-const CONFIG_PATH = path.resolve(__dirname, "../../config/adrotate-sites.json");
+const CONFIG_PATH = process.env.ADOPS_SITES_CONFIG_PATH
+  ? path.resolve(process.env.ADOPS_SITES_CONFIG_PATH)
+  : path.resolve(__dirname, "../../config/adrotate-sites.json");
 
 function loadConfig() {
   return JSON.parse(readFileSync(CONFIG_PATH, "utf8"));

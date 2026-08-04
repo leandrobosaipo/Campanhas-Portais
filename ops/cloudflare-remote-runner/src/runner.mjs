@@ -5072,12 +5072,21 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
         ...(alternateCaptureAt ? { captureAt: alternateCaptureAt } : {}),
         replace: true,
         force: true,
+        candidate: true,
+        promote: true,
       });
     } catch (error) {
       lastError = error;
       const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`)
         .catch(() => null);
-      if (status?.status === "audited") {
+      const proof = status?.audit?.retroContentProof;
+      if (
+        status?.status === "audited"
+        && proof?.status === "approved"
+        && proof?.futureCount === 0
+        && typeof proof?.manifestHash === "string"
+        && proof.manifestHash.length === 64
+      ) {
         return { ok: true, recoveredAfterError: true, capture: { status: "ok" } };
       }
       if (attempt >= maxAttempts) break;
@@ -5131,7 +5140,13 @@ async function ensureInsertionCaptureCoverage(insertion) {
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    if (status?.status === "audited") continue;
+    const proof = status?.audit?.retroContentProof;
+    const strictAuditApproved = status?.status === "audited"
+      && proof?.status === "approved"
+      && proof?.futureCount === 0
+      && typeof proof?.manifestHash === "string"
+      && proof.manifestHash.length === 64;
+    if (strictAuditApproved) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
     const result = await captureProofWithRetry(insertion.id, targetDate);
@@ -5141,9 +5156,16 @@ async function ensureInsertionCaptureCoverage(insertion) {
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => item?.status !== "audited");
+  const failed = finalStatuses.filter((item) => {
+    const proof = item?.audit?.retroContentProof;
+    return item?.status !== "audited"
+      || proof?.status !== "approved"
+      || proof?.futureCount !== 0
+      || typeof proof?.manifestHash !== "string"
+      || proof.manifestHash.length !== 64;
+  });
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem auditoria válida.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
   }
 
   return {
