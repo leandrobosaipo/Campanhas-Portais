@@ -145,6 +145,23 @@ export function resolveDeliveryPosition(insertion: EvidenceDeliveryInsertion) {
   );
 }
 
+export function groupByDeliveryPosition<T>(
+  items: T[],
+  resolvePosition: (item: T) => string | null | undefined,
+) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const position = deliverySegment(resolvePosition(item), "POSICAO");
+    const current = groups.get(position) ?? [];
+    current.push(item);
+    groups.set(position, current);
+  }
+  return Array.from(groups.entries()).map(([position, groupedItems]) => ({
+    position,
+    items: groupedItems,
+  }));
+}
+
 export function resolveDeliveryDateRange(
   insertion: EvidenceDeliveryInsertion,
   evidenceDates: Array<string | null | undefined>,
