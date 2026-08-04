@@ -129,14 +129,16 @@ node --check scripts/src/capture-insertion-proof.cjs
 O caminho canônico é assíncrono e idempotente:
 
 ```text
-POST /api/pi-site-exports/jobs  (mode=full-pdf, variant=web)
+POST /api/pi-site-exports/jobs  (mode=delivery, variant=web, sendTelegram=true)
   -> GET /api/pi-site-exports/jobs/{jobId}
   -> status=completed
-  -> GET /api/pi-site-exports/jobs/{jobId}/download
+  -> GET /api/pi-site-exports/jobs/{jobId}/download  (ZIP só com imagens)
+  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF separado)
 ```
 
-Esse fluxo mantém os PNGs auditados intactos e monta a cópia de entrega com
-JPEGs progressivos, PDF, manifestos de auditoria, contact sheet e checksums.
+Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
+jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e
+`PI-<codigo>-<portal>.pdf` separado; ambos são enviados ao Telegram.
 Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
 
 - Swagger: `https://adops-api.codigo5.com.br/api/docs`

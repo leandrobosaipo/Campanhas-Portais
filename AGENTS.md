@@ -92,18 +92,23 @@ Para qualquer entrega final de evidências, usar somente o fluxo assíncrono da 
 
 ```text
 POST /api/pi-site-exports/jobs
-  mode=full-pdf
+  mode=delivery
   variant=web
+  sendTelegram=true
   Idempotency-Key=<chave estável>
 GET /api/pi-site-exports/jobs/{jobId}
 GET /api/pi-site-exports/jobs/{jobId}/download
+GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
 - Não montar o pacote final manualmente quando a API estiver disponível.
 - Não usar o endpoint síncrono para pacotes grandes.
 - Preservar os PNGs auditados no storage; a compressão ocorre apenas na cópia de entrega.
-- O ZIP final deve conter PDF, JPEGs progressivos independentes, auditoria, contact sheet e `SHA256SUMS.txt`.
-- Antes de liberar: `status=completed`, páginas do PDF = JPEGs, zero PNG na cópia web, checksums válidos e amostragem visual com topbar/domínio/data/hora/banner visíveis.
+- O ZIP destinado à jornalista contém somente JPEGs progressivos, organizados por posição. Não incluir PDF, JSON, CSV, README, manifestos, auditoria ou contact sheet.
+- O PDF é um artefato separado. A API envia ZIP e PDF ao Telegram no mesmo grupo de mídia quando `sendTelegram=true`.
+- Nomes externos devem ser neutros: `PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>.pdf`. Não usar `final`, `revisada`, `auditada` ou equivalentes em pastas e arquivos.
+- Auditoria, logs, checksums e fontes PNG continuam internos ao AdOps e não entram no pacote da jornalista.
+- Antes de liberar: `status=completed`, páginas do PDF = JPEGs, ZIP sem PNG/PDF/JSON/TXT/CSV e amostragem visual com topbar/domínio/data/hora/banner visíveis.
 - Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
 
 ## Gate obrigatório de captura/auditoria

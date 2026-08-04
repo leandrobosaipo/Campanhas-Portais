@@ -185,12 +185,13 @@ def build_openapi_document() -> dict[str, Any]:
     if "post" in export_job_path:
         export_job_path["post"].update({
             "tags": ["Entrega de evidências"],
-            "summary": "Solicitar pacote auditado, comprimido e com PDF",
+            "summary": "Solicitar entrega de imagens e PDF",
             "description": (
                 "Endpoint canônico para entrega final. Cria um job idempotente, "
                 "retorna 202 e deve ser acompanhado pelo endpoint de status. "
-                "O padrão full-pdf/web preserva os PNGs auditados de origem e gera "
-                "uma cópia cliente em JPEG progressivo, PDF e ZIP com checksums."
+                "O padrão delivery/web preserva os PNGs auditados de origem, gera "
+                "um ZIP somente com JPEGs e publica o PDF separadamente. Por padrão, "
+                "os dois documentos também são enviados ao Telegram."
             ),
             "parameters": [{
                 "name": "Idempotency-Key",
@@ -219,12 +220,13 @@ def build_openapi_document() -> dict[str, Any]:
                 "application/json": {
                     "schema": {"$ref": "#/components/schemas/PiSiteExportJobRequest"},
                     "examples": {
-                        "pacote_web_completo": {
+                        "entrega_para_jornalista": {
                             "value": {
                                 "piCodigo": "14609",
                                 "siteSigla": "AFL",
-                                "mode": "full-pdf",
+                                "mode": "delivery",
                                 "variant": "web",
+                                "sendTelegram": True,
                             }
                         }
                     },
@@ -266,6 +268,22 @@ def build_openapi_document() -> dict[str, Any]:
             },
         })
 
+    export_pdf_path = paths.get("/api/pi-site-exports/jobs/{jobId}/pdf", {})
+    if "get" in export_pdf_path:
+        export_pdf_path["get"].update({
+            "tags": ["Entrega de evidências"],
+            "summary": "Baixar o PDF separado da entrega",
+            "responses": {
+                "302": {
+                    "description": "Redireciona para o PDF publicado.",
+                    "headers": {"Location": {"schema": {"type": "string", "format": "uri"}}},
+                },
+                "404": {"description": "Job não encontrado."},
+                "409": {"description": "PDF ainda não está pronto."},
+                "500": {"description": "Falha ao resolver o PDF."},
+            },
+        })
+
     export_sync_path = paths.get("/api/pi-site-exports", {})
     if "get" in export_sync_path:
         export_sync_path["get"].update({
@@ -276,7 +294,7 @@ def build_openapi_document() -> dict[str, Any]:
                 {"name": "piCodigo", "in": "query", "required": True, "schema": {"type": "string", "minLength": 1}},
                 {"name": "siteSigla", "in": "query", "required": True, "schema": {"type": "string", "minLength": 2}},
                 {"name": "download", "in": "query", "required": False, "schema": {"type": "string", "enum": ["0", "1"], "default": "0"}},
-                {"name": "mode", "in": "query", "required": False, "schema": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"], "default": "full"}},
+                {"name": "mode", "in": "query", "required": False, "schema": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"], "default": "full"}},
                 {"name": "variant", "in": "query", "required": False, "schema": {"type": "string", "enum": ["original", "web"]}},
                 {"name": "pdfMaxWidth", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1920}},
                 {"name": "pdfQuality", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 45, "maximum": 85, "default": 68}},
@@ -410,13 +428,15 @@ def build_openapi_document() -> dict[str, Any]:
                     "properties": {
                         "piCodigo": {"type": "string", "minLength": 1},
                         "siteSigla": {"type": "string", "minLength": 2},
-                        "mode": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"], "default": "full-pdf"},
+                        "mode": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"], "default": "delivery"},
                         "variant": {"type": "string", "enum": ["original", "web"], "default": "web"},
                         "pdfMaxWidth": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1920},
                         "pdfQuality": {"type": "integer", "minimum": 45, "maximum": 85, "default": 68},
                         "pdfResolution": {"type": "integer", "minimum": 72, "maximum": 180, "default": 120},
                         "imageMaxWidth": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1600},
                         "imageQuality": {"type": "integer", "minimum": 45, "maximum": 90, "default": 72},
+                        "sendTelegram": {"type": "boolean", "default": True},
+                        "chatId": {"type": ["string", "null"], "description": "Destino opcional; omita para usar o grupo padrão."},
                         "source": {"type": "string", "maxLength": 120, "default": "api-server"},
                         "requestedBy": {"type": "string", "maxLength": 160, "default": "api-server"},
                     },
@@ -433,7 +453,7 @@ def build_openapi_document() -> dict[str, Any]:
                         "duplicate": {"type": "boolean"},
                         "piCodigo": {"type": "string"},
                         "siteSigla": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"]},
+                        "mode": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"]},
                         "variant": {"type": "string", "enum": ["original", "web"]},
                     },
                     "additionalProperties": True,
@@ -453,9 +473,12 @@ def build_openapi_document() -> dict[str, Any]:
                         "stage": {"type": ["string", "null"]},
                         "piCodigo": {"type": ["string", "null"]},
                         "siteSigla": {"type": ["string", "null"]},
-                        "mode": {"type": ["string", "null"], "enum": ["full", "prints-only", "pdf", "full-pdf", None]},
+                        "mode": {"type": ["string", "null"], "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf", None]},
                         "variant": {"type": ["string", "null"], "enum": ["original", "web", None]},
                         "downloadUrl": {"type": ["string", "null"], "format": "uri"},
+                        "pdfUrl": {"type": ["string", "null"], "format": "uri"},
+                        "artifacts": {"type": ["object", "null"], "additionalProperties": True},
+                        "telegram": {"type": ["object", "null"], "additionalProperties": True},
                         "artifactBytes": {"type": ["integer", "null"], "minimum": 1},
                         "artifactContentType": {"type": ["string", "null"]},
                         "artifactFileName": {"type": ["string", "null"]},

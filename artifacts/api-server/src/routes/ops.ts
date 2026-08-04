@@ -2126,10 +2126,10 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "Informe piCodigo e siteSigla." });
     return;
   }
-  const requestedMode = readOptionalString(req.body?.mode)?.toLowerCase() ?? "full-pdf";
-  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(requestedMode) ? requestedMode : "full-pdf";
+  const requestedMode = readOptionalString(req.body?.mode)?.toLowerCase() ?? "delivery";
+  const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(requestedMode) ? requestedMode : "delivery";
   const requestedVariant = readOptionalString(req.body?.variant)?.toLowerCase();
-  const variant = mode === "pdf" || mode === "full-pdf"
+  const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
     ? "web"
     : requestedVariant === "web"
       ? "web"
@@ -2149,6 +2149,8 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
+    sendTelegram: req.body?.sendTelegram !== false,
+    chatId: readOptionalString(req.body?.chatId),
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({
@@ -2163,6 +2165,7 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
+    sendTelegram: req.body?.sendTelegram !== false,
   });
 });
 

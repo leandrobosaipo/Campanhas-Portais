@@ -1,5 +1,9 @@
 # Plano executado — exportação auditada e comprimida
 
+> Atualização de 2026-08-04: `full-pdf` permanece como modo legado. A entrega
+> externa padrão agora usa `mode=delivery`: ZIP somente com JPEGs, PDF separado,
+> nomes neutros e envio dos dois artefatos ao Telegram.
+
 Data: 2026-07-31
 
 ## Objetivo
@@ -80,7 +84,8 @@ Content-Type: application/json
 {
   "piCodigo": "14664",
   "siteSigla": "PERRENGUE",
-  "mode": "full-pdf",
+  "mode": "delivery",
+  "sendTelegram": true,
   "variant": "web",
   "pdfMaxWidth": 1920,
   "pdfQuality": 68,
@@ -91,4 +96,5 @@ Content-Type: application/json
 ```
 
 Consultar `GET /api/pi-site-exports/jobs/{jobId}` até `status=completed` e
-baixar por `GET /api/pi-site-exports/jobs/{jobId}/download`.
+baixar o ZIP por `GET /api/pi-site-exports/jobs/{jobId}/download` e o PDF por
+`GET /api/pi-site-exports/jobs/{jobId}/pdf`.
