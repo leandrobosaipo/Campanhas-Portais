@@ -101,6 +101,11 @@ fi
 rm -f "$BODY"
 
 printf '\nContainers matching %s:\n' "$STACK_NAME"
-curl -sS --max-time 20 -H "X-API-Key: ${PORTAINER_API_KEY}" \
-  "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
-  | jq -r --arg stack "$STACK_NAME" '.[] | select((.Names[]? | contains($stack)) or (.Labels["com.docker.compose.project"] == $stack)) | "\(.Names[0] | ltrimstr("/"))\t\(.State)\t\(.Status)"'
+CONTAINERS_JSON="$(curl -fsS --max-time 20 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+  "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
+if [[ -n "$CONTAINERS_JSON" ]]; then
+  printf '%s' "$CONTAINERS_JSON" \
+    | jq -r --arg stack "$STACK_NAME" '.[] | select((.Names[]? | contains($stack)) or (.Labels["com.docker.compose.project"] == $stack)) | "\(.Names[0] | ltrimstr("/"))\t\(.State)\t\(.Status)"'
+else
+  printf 'Container listing unavailable after stack update; health gate will determine success.\n'
+fi
