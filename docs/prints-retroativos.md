@@ -213,6 +213,13 @@ artefato final no Spaces e devolve uma URL pronta, evitando timeout do
 Cloudflare em pacotes grandes. Analytics é anexo opcional e não bloqueia a
 entrega das evidências.
 
+Na reauditoria, cada data é tratada separadamente. Evidências aprovadas são
+mantidas; datas ausentes ou reprovadas são regeneradas como candidatas e só
+substituem a evidência anterior depois da aprovação. O status do job expõe
+`captureProgress` com inserção, data, quantidade processada e total. Não use o
+endpoint síncrono `fix-invalid` dentro do export assíncrono: campanhas longas
+podem ultrapassar o timeout HTTP mesmo quando as capturas continuam válidas.
+
 Para entrega à jornalista, `mode=delivery`, `variant=web` e
 `sendTelegram=true` são os padrões do contrato.
 Envie uma `Idempotency-Key` estável, faça polling até `status=completed` e só

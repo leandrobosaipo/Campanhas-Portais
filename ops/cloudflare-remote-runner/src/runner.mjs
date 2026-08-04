@@ -5312,7 +5312,7 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
     : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
-async function ensureInsertionCaptureCoverage(insertion) {
+async function ensureInsertionCaptureCoverage(insertion, onProgress = null) {
   const start = parseIsoDate(insertion.periodoInicio);
   const end = parseIsoDate(insertion.periodoFim);
   const today = parseIsoDate(new Intl.DateTimeFormat("en-CA", {
@@ -5337,33 +5337,36 @@ async function ensureInsertionCaptureCoverage(insertion) {
   const regeneratedDates = [];
   const firstPassDates = eachIsoDay(start, effectiveEnd);
   const firstPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const hasInvalid = firstPassStatuses.some((item) => item?.status === "invalid_audit" || item?.status === "invalid_url");
-  if (hasInvalid) {
-    const fixed = await privateApi(`/api/insertions/${insertion.id}/capture-proof/fix-invalid`, {});
-    if (Array.isArray(fixed?.deletedEvidenceIds)) {
-      invalidatedEvidenceIds.push(...fixed.deletedEvidenceIds);
-    }
-    if (Array.isArray(fixed?.items)) {
-      for (const item of fixed.items) {
-        if (item?.status === "ok" && item?.date) regeneratedDates.push(item.date);
-      }
-    }
-  }
-
-  const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  for (const status of secondPassStatuses) {
+  let processedDates = 0;
+  for (const status of firstPassStatuses) {
     const proof = status?.audit?.retroContentProof;
     const strictAuditApproved = status?.status === "audited"
       && proof?.status === "approved"
       && proof?.futureCount === 0
       && typeof proof?.manifestHash === "string"
       && proof.manifestHash.length === 64;
-    if (strictAuditApproved) continue;
     const targetDate = status?.date;
-    if (!targetDate) continue;
+    if (!targetDate) {
+      processedDates += 1;
+      if (typeof onProgress === "function") {
+        await onProgress({ processedDates, totalDates: firstPassDates.length, date: null, status: "skipped" });
+      }
+      continue;
+    }
+    if (strictAuditApproved) {
+      processedDates += 1;
+      if (typeof onProgress === "function") {
+        await onProgress({ processedDates, totalDates: firstPassDates.length, date: targetDate, status: "already_audited" });
+      }
+      continue;
+    }
     const result = await captureProofWithRetry(insertion.id, targetDate);
     if (result?.capture?.status === "ok" || result?.ok === true) {
       regeneratedDates.push(targetDate);
+    }
+    processedDates += 1;
+    if (typeof onProgress === "function") {
+      await onProgress({ processedDates, totalDates: firstPassDates.length, date: targetDate, status: "regenerated" });
     }
   }
 
@@ -5438,7 +5441,18 @@ async function executePiSiteExport(job) {
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
   for (const insertion of insertions) {
-    const capture = await ensureInsertionCaptureCoverage(insertion);
+    const capture = await ensureInsertionCaptureCoverage(insertion, async (captureProgress) => {
+      await progressJob(job.id, {
+        stage: "reauditando evidências",
+        ...stagePayload,
+        regeneratedDates,
+        invalidatedEvidenceIds,
+        captureProgress: {
+          insertionId: insertion.id,
+          ...captureProgress,
+        },
+      });
+    });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
