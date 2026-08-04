@@ -191,6 +191,41 @@ export function buildDeliveryPrintFileName(
   return `${site}-PI-${pi}-${position}-${dateKey}${suffix}${safeExtension}`;
 }
 
+type CanonicalEvidenceCandidate = {
+  id: number;
+  criadoEm?: Date | string | null;
+};
+
+export function selectCanonicalEvidencePerDate<T extends CanonicalEvidenceCandidate>(
+  rows: T[],
+  resolveDate: (row: T) => string | null,
+) {
+  const dated = new Map<string, T>();
+  const undated: T[] = [];
+  for (const row of rows) {
+    const date = resolveDate(row);
+    if (!date) {
+      undated.push(row);
+      continue;
+    }
+    const current = dated.get(date);
+    if (!current) {
+      dated.set(date, row);
+      continue;
+    }
+    const currentTime = new Date(current.criadoEm ?? 0).getTime();
+    const candidateTime = new Date(row.criadoEm ?? 0).getTime();
+    const candidateIsNewer = Number.isFinite(candidateTime) && Number.isFinite(currentTime)
+      ? candidateTime > currentTime || (candidateTime === currentTime && row.id > current.id)
+      : row.id > current.id;
+    if (candidateIsNewer) dated.set(date, row);
+  }
+  return [...dated.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, row]) => row)
+    .concat(undated.sort((left, right) => left.id - right.id));
+}
+
 export function isPngBuffer(value: Buffer) {
   return (
     value.length >= PNG_SIGNATURE.length &&
