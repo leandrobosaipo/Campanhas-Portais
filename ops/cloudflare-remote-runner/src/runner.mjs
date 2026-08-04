@@ -3229,7 +3229,25 @@ function selectSingleMediaCandidate(item) {
 
 async function executeMediaMonitor(job) {
   await progressJob(job.id, { stage: "scanning", stageKey: "scanning", percentTotal: 10 });
-  const snapshot = await runDrivePiMonitorOnce({ force: true });
+  const snapshot = await privateApiGet("/api/ops/drive-inventory/status");
+  if (snapshot?.snapshotStatus !== "fresh") {
+    const refresh = await request("/api/ops/jobs/drive-inventory-refresh", {
+      method: "POST",
+      body: JSON.stringify({ source: "media-monitor" }),
+    });
+    return {
+      stage: "waiting_for_inventory",
+      stageKey: "waiting_for_inventory",
+      percentTotal: 100,
+      scanned: 0,
+      waiting: [],
+      blocked: [],
+      mediaApplied: [],
+      publicationJobs: [],
+      refreshJobId: refresh?.jobId ?? null,
+      snapshotStatus: snapshot?.snapshotStatus ?? "missing",
+    };
+  }
   const today = todayInCuiaba();
   const operations = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(today)}&includeEvidence=false`);
   const active = Array.isArray(operations?.items) ? operations.items.map((item) => ({ item, upcoming: false })) : [];
@@ -3308,7 +3326,7 @@ async function executeMediaMonitor(job) {
     });
     result.publicationJobs.push({ insertionId, jobId: publish.jobId, existingMedia: false });
   }
-  return { stage: "completed", stageKey: "completed", percentTotal: 100, snapshot: { scanned: snapshot?.scanned ?? null }, ...result };
+  return { stage: "completed", stageKey: "completed", percentTotal: 100, snapshot: { status: snapshot.snapshotStatus, itemCount: snapshot.itemCount, snapshotAt: snapshot.snapshotAt }, ...result };
 }
 
 async function findOrCreateDrivePiCampaign(fields, payload) {

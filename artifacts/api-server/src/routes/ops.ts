@@ -423,6 +423,7 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     ready_for_runner: "Aguardando monitor do Drive",
     running: "Verificando novas mídias",
     scanning: "Atualizando inventário do Drive",
+    waiting_for_inventory: "Aguardando inventário atualizado",
     matching: "Conferindo PI, portal e posição",
     completed: "Fila de mídia verificada",
     failed: "Falha na fila de mídia",

@@ -15,6 +15,8 @@ Drive -> inventário -> media-monitor -> validação exata
 
 O serviço `adops-drive-pi-monitor` executa a verificação a cada 15 minutos. O intervalo é configurado por `ADOPS_MEDIA_MONITOR_INTERVAL_MS` e o padrão é `900000`.
 
+O scan do Drive acontece antes da fila. O job de mídia reutiliza o snapshot persistido e não repete a leitura dos arquivos. Se o snapshot estiver ausente ou antigo, ele agenda `drive-inventory-refresh` e aguarda o próximo ciclo.
+
 ## Endpoints
 
 Sincronizar novas entradas da planilha:
