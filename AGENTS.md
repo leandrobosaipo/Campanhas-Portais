@@ -40,6 +40,7 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Sincronização planilha/AdRotate: `docs/spec-reconcile-planilha-adrotate-v1.md`
 - Telegram: `docs/fluxos-telegram-bot-adops.md`
 - Cloudflare/VPS: `docs/operacao-pages-vps-2026-04-14.md`
+- Fila de campanhas aguardando mídia: `docs/adops/fila-midias-planilha.md`
 
 ## Fluxo para nova PI
 
@@ -53,6 +54,15 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 8. Gerar prints obrigatórios, incluindo retroativos em aberto.
 9. Validar auditoria por data.
 10. Enviar resumo e prints no Telegram quando solicitado.
+
+## Campanha cadastrada sem mídia
+
+- Consultar a planilha e sincronizar somente pelo endpoint `POST /api/ops/jobs/sync-planilha`.
+- Manter a inserção cadastrada enquanto a mídia não chega; não inventar URL nem publicar placeholder.
+- A fila oficial é `POST /api/ops/jobs/media-monitor`, executada pelo monitor do Drive a cada 15 minutos.
+- O monitor é determinístico e não usa LLM. Ele só vincula mídia quando PI, portal, posição e um único arquivo compatível estiverem resolvidos.
+- Toda mutação deve passar pela API AdOps. Agente e runner não escrevem diretamente no banco.
+- Conflito de PI, posição ambígua ou mais de um arquivo compatível bloqueiam a automação e exigem revisão humana.
 
 ## Comandos operacionais principais
 
