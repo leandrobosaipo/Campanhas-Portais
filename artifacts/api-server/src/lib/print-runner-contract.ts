@@ -15,10 +15,13 @@ export type PrintRunnerJobTarget = {
   targetDate: string;
   captureAt?: string | null;
   replaceExisting?: boolean;
+  candidateOnly?: boolean;
+  promoteCandidate?: boolean;
 };
 
 export type PrintRunnerJobPayload = {
   kind: PrintRunnerJobKind;
+  idempotencyKey?: string | null;
   competencia?: string | null;
   siteId?: number | null;
   targets: PrintRunnerJobTarget[];
@@ -34,6 +37,8 @@ export type PrintRunnerJobResultItem = {
   uploadedUrl?: string | null;
   captureLogId?: string | null;
   probableCause?: string | null;
+  retroContentProof?: Record<string, unknown> | null;
+  manifestHash?: string | null;
   reason?: string;
   error?: string;
 };
