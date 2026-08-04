@@ -33,7 +33,15 @@ function insertion(overrides: Partial<CampaignOperationMatchCandidate>): Campaig
 
 test("aceita abreviacoes comerciais da planilha", () => {
   assert.equal(isFormatCompatible("HOME 1", "MEGABANNER HOME 1"), true);
+  assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 1"), true);
+  assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 2"), false);
   assert.equal(isFormatCompatible("INTERNO", "INTERNO DE NOTICIAS"), true);
+});
+
+test("mantem a insercao canonica apos a sincronizacao normalizar HOME 1", () => {
+  const published = insertion({ id: 1854, localFormatoNormalizado: "HOME 1" });
+  const result = selectBestAdopsMatch(row("MEGABANNER HOME 1"), [published]);
+  assert.equal(result.insertion?.id, 1854);
 });
 
 test("prioriza insercao publicada em vez de duplicata cancelada", () => {

@@ -23,7 +23,9 @@ export function isFormatCompatible(sheetFormat: string, adopsFormat: string | nu
   if (!sheet || !adops) return false;
   if (sheet === adops) return true;
   if (sheet === "TOPO" && adops.includes("TOPO")) return true;
-  if (/^HOME [123]$/.test(sheet) && adops.endsWith(sheet)) return true;
+  const sheetHome = sheet.match(/(?:^| )HOME ([123])$/)?.[1];
+  const adopsHome = adops.match(/(?:^| )HOME ([123])$/)?.[1];
+  if (sheetHome && sheetHome === adopsHome) return true;
   if (sheet === "INTERNO" && adops === "INTERNO DE NOTICIAS") return true;
   if (sheet === "LATERAL" && adops.includes("LATERAL")) return true;
   if (sheet === "VIDEO" && adops.includes("VIDEO")) return true;
