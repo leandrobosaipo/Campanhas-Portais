@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "media-monitor" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "media-monitor", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -572,6 +572,15 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha na sincronização",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "media-monitor": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando monitor do Drive",
+    running: "Verificando novas mídias",
+    scanning: "Atualizando inventário do Drive",
+    matching: "Conferindo PI, portal e posição",
+    completed: "Fila de mídia verificada",
+    failed: "Falha na fila de mídia",
+  },
   "analytics-report": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -918,7 +927,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -2214,6 +2223,21 @@ export default {
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "sync-planilha", status: "queued" }, { status: 202 });
+      }
+
+      if (path === "/api/ops/jobs/media-monitor") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+        const body = await readBody(request);
+        const window = readOptionalString(body.window) ?? new Date(Math.floor(Date.now() / 900_000) * 900_000).toISOString();
+        const idempotencyKey = request.headers.get("Idempotency-Key") ?? `media-monitor:${window}`;
+        const result = await createIdempotentOpsJob(env, "media-monitor", {
+          window,
+          requestedBy: readOptionalString(body.requestedBy),
+          source: "cloudflare-protected-api",
+        }, "ops-api", idempotencyKey);
+        return jsonNoStore({ ok: true, kind: "media-monitor", ...result }, { status: result.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/drive-pi-events") {

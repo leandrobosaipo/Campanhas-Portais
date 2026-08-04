@@ -54,6 +54,7 @@ Use primeiro o runbook operacional:
 Para PI nova no Drive, use também o contrato v4:
 
 - `docs/adops/pi-automation-v4-monitor-first-ai-gate.md`
+- `docs/adops/fila-midias-planilha.md`
 - `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md`
 - `docs/adops/containerized-runner-runtime-fix-plan-2026-06-03.md`
 

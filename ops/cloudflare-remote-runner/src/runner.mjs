@@ -29,6 +29,8 @@ const DRIVE_PI_MONITOR_ROOT_FOLDER_ID = (process.env.DRIVE_PI_MONITOR_ROOT_FOLDE
 const DRIVE_PI_MONITOR_INTERVAL_MS = Number.parseInt(process.env.DRIVE_PI_MONITOR_INTERVAL_MS || "300000", 10);
 const DRIVE_PI_MONITOR_STATE_FILE = process.env.DRIVE_PI_MONITOR_STATE_FILE || "/var/lib/adops/drive-pi-monitor-state.json";
 const DRIVE_PI_MONITOR_MAX_ITEMS = Number.parseInt(process.env.DRIVE_PI_MONITOR_MAX_ITEMS || "2000", 10);
+const ADOPS_MEDIA_MONITOR_ENABLED = process.env.ADOPS_MEDIA_MONITOR_ENABLED === "true";
+const ADOPS_MEDIA_MONITOR_INTERVAL_MS = Number.parseInt(process.env.ADOPS_MEDIA_MONITOR_INTERVAL_MS || "900000", 10);
 const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "30000", 10);
 const ADOPS_DRIVE_RETRY_MAX_ATTEMPTS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_ATTEMPTS || "7", 10);
 const ADOPS_DRIVE_RETRY_BASE_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_BASE_MS || "2000", 10);
@@ -84,12 +86,13 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,media-monitor,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
 let lastWatchdogAt = 0;
 let lastDrivePiMonitorAt = 0;
+let lastMediaMonitorEnqueueAt = 0;
 let lastRunnerHeartbeatAt = 0;
 let runnerLastCycleError = null;
 let runnerLastSuccessAt = null;
@@ -3169,6 +3172,145 @@ async function executeDriveInventoryRefresh(job) {
   };
 }
 
+function mediaMonitorWindow(now = Date.now()) {
+  const interval = Math.max(60_000, ADOPS_MEDIA_MONITOR_INTERVAL_MS);
+  return new Date(Math.floor(now / interval) * interval).toISOString();
+}
+
+async function enqueueMediaMonitorIfDue(force = false) {
+  if (!ADOPS_MEDIA_MONITOR_ENABLED && !force) return null;
+  const now = Date.now();
+  if (!force && now - lastMediaMonitorEnqueueAt < ADOPS_MEDIA_MONITOR_INTERVAL_MS) return null;
+  lastMediaMonitorEnqueueAt = now;
+  return request("/api/ops/jobs/media-monitor", {
+    method: "POST",
+    headers: { "Idempotency-Key": `media-monitor:${mediaMonitorWindow(now)}` },
+    body: JSON.stringify({ requestedBy: RUNNER_ID, window: mediaMonitorWindow(now) }),
+  });
+}
+
+function buildMediaMonitorPackage(item, insertion, mediaFile) {
+  const raw = {
+    siteId: insertion.siteId ?? insertion.site?.id ?? null,
+    siteSigla: item.siteSigla,
+    localFormato: item.format?.adops ?? item.format?.sheet,
+    localFormatoNormalizado: item.format?.normalized ?? item.format?.adops,
+    periodoInicio: item.period?.start,
+    periodoFim: item.period?.end,
+    periodoOriginal: item.period?.original,
+    mediaDriveFileId: mediaFile.id,
+  };
+  return {
+    fields: { piCodigo: item.piCodigo, campaignName: item.campaignName, insertions: [raw] },
+    raw,
+    packageContext: {
+      media: [{
+        driveFileId: mediaFile.id,
+        name: mediaFile.name,
+        mimeType: mediaFile.mimeType,
+        path: mediaFile.path,
+        modifiedTime: mediaFile.modifiedTime,
+        size: mediaFile.size,
+      }],
+      textObservations: [],
+    },
+  };
+}
+
+function selectSingleMediaCandidate(item) {
+  if (item?.drive?.status !== "matched") return { ok: false, reason: `drive_${item?.drive?.status || "unavailable"}`, candidates: [] };
+  if (item?.drive?.safeToApply !== true || item?.drive?.mediaMatchesFormat !== true) return { ok: false, reason: "drive_match_not_safe", candidates: [] };
+  if (item?.drive?.sourceIdentity?.piConflict === true) return { ok: false, reason: "source_pi_conflict", candidates: [] };
+  const expectedKind = isVideoInsertion({ localFormato: item?.format?.normalized ?? item?.format?.adops }) ? "video" : "image";
+  const candidates = (Array.isArray(item?.drive?.mediaFiles) ? item.drive.mediaFiles : []).filter((file) => file?.kind === expectedKind);
+  if (candidates.length !== 1) return { ok: false, reason: candidates.length ? "multiple_media_candidates" : "media_not_arrived", candidates };
+  return { ok: true, reason: null, expectedKind, mediaFile: candidates[0], candidates };
+}
+
+async function executeMediaMonitor(job) {
+  await progressJob(job.id, { stage: "scanning", stageKey: "scanning", percentTotal: 10 });
+  const snapshot = await runDrivePiMonitorOnce({ force: true });
+  const today = todayInCuiaba();
+  const operations = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(today)}&includeEvidence=false`);
+  const active = Array.isArray(operations?.items) ? operations.items.map((item) => ({ item, upcoming: false })) : [];
+  const upcoming = Array.isArray(operations?.upcomingItems) ? operations.upcomingItems.map((item) => ({ item, upcoming: true })) : [];
+  const rows = [...active, ...upcoming];
+  const result = { scanned: rows.length, waiting: [], blocked: [], mediaApplied: [], publicationJobs: [], syncJob: null };
+
+  if (rows.some(({ item }) => item?.adops?.status === "missing")) {
+    result.syncJob = await request("/api/ops/jobs/sync-planilha", {
+      method: "POST",
+      headers: { "Idempotency-Key": `media-monitor-sheet:${today}` },
+      body: JSON.stringify({ mode: "latest", source: "media-monitor" }),
+    });
+  }
+
+  let done = 0;
+  for (const { item, upcoming: isUpcoming } of rows) {
+    done += 1;
+    await progressJob(job.id, {
+      stage: "matching",
+      stageKey: "matching",
+      percentTotal: 10 + Math.round((done / Math.max(1, rows.length)) * 70),
+      itemsDone: done,
+      itemsTotal: rows.length,
+    });
+    const insertionId = Number(item?.adops?.insertionId || 0);
+    if (!insertionId) {
+      result.waiting.push({ piCodigo: item?.piCodigo, siteSigla: item?.siteSigla, reason: "awaiting_sheet_sync" });
+      continue;
+    }
+    if (Array.isArray(item?.blockingIssues) && item.blockingIssues.length) {
+      result.blocked.push({ insertionId, piCodigo: item.piCodigo, siteSigla: item.siteSigla, reasons: item.blockingIssues });
+      continue;
+    }
+    if (item?.adops?.mediaUrl) {
+      if (item.adops.bannerPublicadoNoSite !== true) {
+        const publish = await request("/api/ops/jobs/adrotate-publish", {
+          method: "POST",
+          headers: { "Idempotency-Key": `media-monitor-publish:${insertionId}:${item.period?.start}:${item.period?.end}` },
+          body: JSON.stringify({ insertionId, apply: true, replaceExisting: true, purgeCache: true, generateEvidence: !isUpcoming, date: today }),
+        });
+        result.publicationJobs.push({ insertionId, jobId: publish.jobId, existingMedia: true });
+      }
+      continue;
+    }
+    const selection = selectSingleMediaCandidate(item);
+    if (!selection.ok) {
+      const target = selection.reason === "source_pi_conflict" ? result.blocked : result.waiting;
+      target.push({ insertionId, piCodigo: item.piCodigo, siteSigla: item.siteSigla, ...(target === result.blocked ? { reasons: [selection.reason] } : { reason: selection.reason, candidates: selection.candidates.length }) });
+      continue;
+    }
+    const expectedKind = selection.expectedKind;
+    const mediaFile = selection.mediaFile;
+    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+    const mediaPackage = buildMediaMonitorPackage(item, insertion, mediaFile);
+    const resolved = expectedKind === "video"
+      ? await resolveDrivePiVideoMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "media-monitor" })
+      : await resolveDrivePiImageMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "media-monitor" });
+    const resolvedInsertion = resolved?.fields?.insertions?.[0];
+    const mediaUrl = readStringRecord(resolvedInsertion, ["mediaUrl", "media_url"]);
+    const processingIssues = resolved?.videoMediaProcessing?.issues || resolved?.imageMediaProcessing?.issues || [];
+    if (!mediaUrl || processingIssues.length) {
+      result.blocked.push({ insertionId, piCodigo: item.piCodigo, siteSigla: item.siteSigla, reasons: processingIssues.length ? processingIssues : ["media_processing_failed"] });
+      continue;
+    }
+    const note = [
+      String(insertion?.observacoes || "").trim(),
+      `Mídia vinculada automaticamente pela fila em ${new Date().toISOString()} a partir do arquivo Drive ${mediaFile.id}.`,
+    ].filter(Boolean).join("\n");
+    await privateApiPatch(`/api/insertions/${insertionId}`, { mediaUrl, observacoes: note });
+    result.mediaApplied.push({ insertionId, piCodigo: item.piCodigo, siteSigla: item.siteSigla, driveFileId: mediaFile.id, mediaUrl });
+    const publish = await request("/api/ops/jobs/adrotate-publish", {
+      method: "POST",
+      headers: { "Idempotency-Key": `media-monitor-publish:${insertionId}:${mediaFile.id}` },
+      body: JSON.stringify({ insertionId, apply: true, replaceExisting: true, purgeCache: true, generateEvidence: !isUpcoming, date: today }),
+    });
+    result.publicationJobs.push({ insertionId, jobId: publish.jobId, existingMedia: false });
+  }
+  return { stage: "completed", stageKey: "completed", percentTotal: 100, snapshot: { scanned: snapshot?.scanned ?? null }, ...result };
+}
+
 async function findOrCreateDrivePiCampaign(fields, payload) {
   const campaigns = await privateApiGet(`/api/campaigns?competencia=${encodeURIComponent(fields.competencia)}`);
   const competenciaKey = normalizeCompetenciaKey(fields.competencia);
@@ -5505,6 +5647,9 @@ async function handleJob(job) {
   if (job.kind === "drive-pi-reconcile") {
     return executeDrivePiReconcile(payload);
   }
+  if (job.kind === "media-monitor") {
+    return executeMediaMonitor(job);
+  }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);
   }
@@ -5630,6 +5775,12 @@ async function main() {
     return;
   }
 
+  if (process.argv.includes("--media-monitor-once")) {
+    const queued = await enqueueMediaMonitorIfDue(true);
+    console.log(JSON.stringify(queued, null, 2));
+    return;
+  }
+
   console.log(`[runner] iniciado em ${RUNNER_ID}`);
   console.log(`[runner] ops=${OPS_API_BASE_URL}`);
   console.log(`[runner] privateApi=${PRIVATE_ADOPS_API_BASE_URL}`);
@@ -5643,6 +5794,7 @@ async function main() {
       await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
       await runWatchdogIfDue(false);
       await runDrivePiMonitorOnce();
+      await enqueueMediaMonitorIfDue(false);
       const handled = await runOnce();
       runnerLastCycleError = null;
       runnerLastSuccessAt = new Date().toISOString();
@@ -5670,6 +5822,7 @@ export {
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectObservedMediaLink,
+  selectSingleMediaCandidate,
   validateDrivePiPackageReadiness,
 };
 

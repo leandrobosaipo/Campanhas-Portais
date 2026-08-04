@@ -13,6 +13,7 @@ type JobKind =
   | "pi-site-export"
   | "drive-pi-ingest"
   | "drive-inventory-refresh"
+  | "media-monitor"
   | "operational-documents"
   | "reconcile-adrotate"
   | "adrotate-link"
@@ -72,6 +73,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "pi-site-export",
   "drive-pi-ingest",
   "drive-inventory-refresh",
+  "media-monitor",
   "operational-documents",
   "reconcile-adrotate",
   "adrotate-link",
@@ -416,6 +418,15 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Inventário do Drive atualizado",
     failed: "Falha ao atualizar inventário do Drive",
   },
+  "media-monitor": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando monitor do Drive",
+    running: "Verificando novas mídias",
+    scanning: "Atualizando inventário do Drive",
+    matching: "Conferindo PI, portal e posição",
+    completed: "Fila de mídia verificada",
+    failed: "Falha na fila de mídia",
+  },
   "operational-documents": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -665,7 +676,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -1239,6 +1250,14 @@ export function buildOpsApiCatalog() {
         purpose: "Enfileirar atualização idempotente do inventário do Google Drive sem fornecer credenciais à API pública.",
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-inventory-refresh -d '{}'`,
+      },
+      {
+        id: "media-monitor",
+        method: "POST",
+        path: "/api/ops/jobs/media-monitor",
+        purpose: "Verificar campanhas da planilha aguardando mídia e publicar somente correspondências exatas, sem LLM e sem banco direto.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: media-monitor:AAAA-MM-DDTHH:MM' ${base}/api/ops/jobs/media-monitor -d '{}'`,
       },
       {
         id: "ops-quickstart",
@@ -2111,12 +2130,35 @@ router.post("/ops/jobs/sync-planilha", async (req, res): Promise<void> => {
   const campaignIds = Array.isArray(req.body?.campaignIds)
     ? req.body.campaignIds.filter((item: unknown) => Number.isInteger(item))
     : null;
-  const jobId = await createOpsJob("sync-planilha", {
+  const requestedKey = readOptionalString(req.headers["idempotency-key"]);
+  const payload = {
     mode,
     campaignIds,
     source: "macmini-api",
-  }, "ops-api");
+  };
+  if (requestedKey) {
+    const result = await createIdempotentOpsJob("sync-planilha", payload, "ops-api", requestedKey);
+    res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "sync-planilha", ...result });
+    return;
+  }
+  const jobId = await createOpsJob("sync-planilha", payload, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "sync-planilha", status: "ready_for_runner" });
+});
+
+router.post("/ops/jobs/media-monitor", async (req, res): Promise<void> => {
+  const window = readOptionalString(req.body?.window) ?? new Date(Math.floor(Date.now() / 900_000) * 900_000).toISOString();
+  const requestedKey = readOptionalString(req.headers["idempotency-key"])
+    ?? `media-monitor:${createHash("sha256").update(window).digest("hex").slice(0, 24)}`;
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) {
+    res.status(400).json({ error: "bad_request", details: "Idempotency-Key inválida." });
+    return;
+  }
+  const result = await createIdempotentOpsJob("media-monitor", {
+    window,
+    source: "macmini-api",
+    requestedBy: readOptionalString(req.body?.requestedBy),
+  }, "ops-api", requestedKey);
+  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "media-monitor", ...result });
 });
 
 router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
@@ -2217,7 +2259,7 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
   const date = readOptionalString(req.body?.date);
   const captureAt = readOptionalString(req.body?.captureAt);
 
-  const jobId = await createOpsJob("adrotate-publish", {
+  const payload = {
     insertionId,
     apply,
     replaceExisting,
@@ -2227,13 +2269,16 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
     captureAt,
     mode: apply ? "apply" : "preview",
     source: "macmini-api",
-  }, "ops-api");
+  };
+  const requestedKey = readOptionalString(req.headers["idempotency-key"]);
+  const result = requestedKey
+    ? await createIdempotentOpsJob("adrotate-publish", payload, "ops-api", requestedKey)
+    : { jobId: await createOpsJob("adrotate-publish", payload, "ops-api"), status: "ready_for_runner" as const, duplicate: false };
 
-  res.status(202).json({
+  res.status(result.duplicate ? 200 : 202).json({
     ok: true,
-    jobId,
+    ...result,
     kind: "adrotate-publish",
-    status: "ready_for_runner",
     apply,
     requiredFollowUp: apply
       ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
