@@ -205,9 +205,14 @@
         "scrollMode": "slot",
         "auditOverrides": {
           "preferArticleFallbackForRetro": true,
+          "criticalContentSelectors": [
+            "[data-adops-retro-primary-article=\"1\"] img"
+          ],
+          "requireCriticalContentPainted": true,
           "requireAbsoluteEditorialDates": true,
           "requireEditorialDateMatchTarget": true,
           "requireVisiblePageDate": true,
+          "finalPngCreativeMinSimilarity": 0.7,
           "retroContentDateSelectors": [
             "[data-adops-retro-primary-article='1']"
           ]
