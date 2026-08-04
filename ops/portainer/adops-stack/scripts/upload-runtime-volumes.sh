@@ -111,7 +111,10 @@ upload_to_volume() {
   }
 
   if [[ -n "$prepare_command" ]]; then
-    run_in_upload_container "$prepare_command"
+    if ! run_in_upload_container "$prepare_command"; then
+      printf 'Runtime dependency install failed for volume=%s.\n' "$volume" >&2
+      return 1
+    fi
   fi
   if [[ -n "$verify_command" ]]; then
     run_in_upload_container "$verify_command"
