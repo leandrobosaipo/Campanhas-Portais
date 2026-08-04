@@ -133,12 +133,12 @@ done
 
 RUNNER_ID=""
 MONITOR_ID=""
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 120); do
   CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
   RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-runner" and .State == "running") | .Id' 2>/dev/null | head -n 1)"
   MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-drive-pi-monitor-stack" and .State == "running") | .Id' 2>/dev/null | head -n 1)"
   [[ -n "$RUNNER_ID" && -n "$MONITOR_ID" ]] && break
-  [[ "$attempt" == "30" ]] && { printf 'Runner and Drive monitor did not become ready.\n' >&2; exit 1; }
+  [[ "$attempt" == "120" ]] && { printf 'Runner and Drive monitor did not become ready.\n' >&2; exit 1; }
   sleep 5
 done
 
