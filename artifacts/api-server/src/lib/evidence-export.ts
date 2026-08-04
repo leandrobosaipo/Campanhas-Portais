@@ -8,18 +8,20 @@ const execFileAsync = promisify(execFile);
 const PNG_SIGNATURE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 ]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
 
 function evidenceExportPython() {
   return process.env.ADOPS_EVIDENCE_EXPORT_PYTHON?.trim() || "python3";
 }
 
-const OPTIMIZE_PNG_SCRIPT = String.raw`
+const PREPARE_WEB_IMAGE_SCRIPT = String.raw`
 import json
 import sys
 from PIL import Image, ImageOps
 
-source_path, output_path, max_width_raw = sys.argv[1:4]
+source_path, output_path, max_width_raw, quality_raw = sys.argv[1:5]
 max_width = int(max_width_raw)
+quality = int(quality_raw)
 
 with Image.open(source_path) as source:
     source.load()
@@ -33,9 +35,21 @@ with Image.open(source_path) as source:
         target_height = max(1, round(source_height * max_width / source_width))
         resampling = getattr(Image, "Resampling", Image).LANCZOS
         image = image.resize((max_width, target_height), resampling)
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGBA" if "transparency" in image.info else "RGB")
-    image.save(output_path, "PNG", optimize=True, compress_level=9)
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, "white")
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        image = background
+    else:
+        image = image.convert("RGB")
+    image.save(
+        output_path,
+        "JPEG",
+        quality=quality,
+        optimize=True,
+        progressive=True,
+        subsampling=2,
+    )
     width, height = image.size
 
 print(json.dumps({
@@ -46,7 +60,7 @@ print(json.dumps({
 }))
 `;
 
-export type EvidenceExportMode = "full" | "prints-only";
+export type EvidenceExportMode = "delivery" | "full" | "prints-only" | "pdf" | "full-pdf";
 export type EvidenceImageVariant = "original" | "web";
 
 export class EvidenceExportInputError extends Error {
@@ -70,7 +84,7 @@ export type EvidenceDeliveryInsertion = {
   periodoFim?: string | null;
 };
 
-export type PreparedEvidencePng = {
+export type PreparedEvidenceImage = {
   originalBytes: number;
   outputBytes: number;
   sourceWidth: number | null;
@@ -83,17 +97,21 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
   const mode = String(query.mode ?? "full")
     .trim()
     .toLowerCase();
-  const variant = String(query.variant ?? "original")
+  const defaultVariant = mode === "delivery" || mode === "pdf" || mode === "full-pdf" ? "web" : "original";
+  const variant = String(query.variant ?? defaultVariant)
     .trim()
     .toLowerCase();
-  if (mode !== "full" && mode !== "prints-only") {
-    throw new EvidenceExportInputError("mode deve ser full ou prints-only.");
+  if (!["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(mode)) {
+    throw new EvidenceExportInputError("mode deve ser delivery, full, prints-only, pdf ou full-pdf.");
   }
   if (variant !== "original" && variant !== "web") {
     throw new EvidenceExportInputError("variant deve ser original ou web.");
   }
   if (mode === "full" && variant !== "original") {
-    throw new EvidenceExportInputError("variant=web exige mode=prints-only.");
+    throw new EvidenceExportInputError("mode=full exige variant=original; use prints-only, pdf ou full-pdf para variant=web.");
+  }
+  if ((mode === "delivery" || mode === "pdf" || mode === "full-pdf") && variant !== "web") {
+    throw new EvidenceExportInputError("mode=delivery, mode=pdf e mode=full-pdf exigem variant=web.");
   }
   return {
     mode: mode as EvidenceExportMode,
@@ -161,6 +179,7 @@ export function buildDeliveryPrintFileName(
   insertion: EvidenceDeliveryInsertion,
   dateKey: string,
   collisionSuffix?: string,
+  extension = ".png",
 ) {
   const site = deliverySegment(insertion.siteSigla, "SITE");
   const pi = resolveDeliveryPiCode(insertion.piCodigo);
@@ -168,7 +187,43 @@ export function buildDeliveryPrintFileName(
   const suffix = collisionSuffix
     ? `-${deliverySegment(collisionSuffix, "DUPLICADO")}`
     : "";
-  return `${site}-PI-${pi}-${position}-${dateKey}${suffix}.png`;
+  const safeExtension = extension.toLowerCase() === ".jpg" ? ".jpg" : ".png";
+  return `${site}-PI-${pi}-${position}-${dateKey}${suffix}${safeExtension}`;
+}
+
+type CanonicalEvidenceCandidate = {
+  id: number;
+  criadoEm?: Date | string | null;
+};
+
+export function selectCanonicalEvidencePerDate<T extends CanonicalEvidenceCandidate>(
+  rows: T[],
+  resolveDate: (row: T) => string | null,
+) {
+  const dated = new Map<string, T>();
+  const undated: T[] = [];
+  for (const row of rows) {
+    const date = resolveDate(row);
+    if (!date) {
+      undated.push(row);
+      continue;
+    }
+    const current = dated.get(date);
+    if (!current) {
+      dated.set(date, row);
+      continue;
+    }
+    const currentTime = new Date(current.criadoEm ?? 0).getTime();
+    const candidateTime = new Date(row.criadoEm ?? 0).getTime();
+    const candidateIsNewer = Number.isFinite(candidateTime) && Number.isFinite(currentTime)
+      ? candidateTime > currentTime || (candidateTime === currentTime && row.id > current.id)
+      : row.id > current.id;
+    if (candidateIsNewer) dated.set(date, row);
+  }
+  return [...dated.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, row]) => row)
+    .concat(undated.sort((left, right) => left.id - right.id));
 }
 
 export function isPngBuffer(value: Buffer) {
@@ -178,16 +233,28 @@ export function isPngBuffer(value: Buffer) {
   );
 }
 
-export async function prepareEvidencePng(options: {
+export function isJpegBuffer(value: Buffer) {
+  return (
+    value.length >= JPEG_SIGNATURE.length &&
+    value.subarray(0, JPEG_SIGNATURE.length).equals(JPEG_SIGNATURE)
+  );
+}
+
+export async function prepareEvidenceImage(options: {
   source: Buffer;
   outputPath: string;
   variant: EvidenceImageVariant;
   maxWidth?: number;
-}): Promise<PreparedEvidencePng> {
+  quality?: number;
+}): Promise<PreparedEvidenceImage> {
   const { source, outputPath, variant } = options;
   const maxWidth = options.maxWidth ?? 1920;
+  const quality = options.quality ?? 72;
   if (!Number.isInteger(maxWidth) || maxWidth <= 0) {
     throw new EvidenceExportInputError("maxWidth inválido.");
+  }
+  if (!Number.isInteger(quality) || quality < 45 || quality > 90) {
+    throw new EvidenceExportInputError("quality deve ficar entre 45 e 90.");
   }
   if (!isPngBuffer(source)) {
     throw new EvidenceExportInputError(
@@ -217,7 +284,7 @@ export async function prepareEvidencePng(options: {
   try {
     const result = await execFileAsync(
       evidenceExportPython(),
-      ["-c", OPTIMIZE_PNG_SCRIPT, sourcePath, outputPath, String(maxWidth)],
+      ["-c", PREPARE_WEB_IMAGE_SCRIPT, sourcePath, outputPath, String(maxWidth), String(quality)],
       { timeout: 120_000, maxBuffer: 1024 * 1024 },
     );
     const metadata = JSON.parse(result.stdout.trim()) as {
@@ -227,9 +294,9 @@ export async function prepareEvidencePng(options: {
       height: number;
     };
     const output = await readFile(outputPath);
-    if (!isPngBuffer(output)) {
+    if (!isJpegBuffer(output)) {
       throw new EvidenceExportInputError(
-        "A otimização não produziu um PNG válido.",
+        "A preparação web não produziu um JPEG válido.",
         422,
       );
     }
@@ -246,7 +313,7 @@ export async function prepareEvidencePng(options: {
     await rm(outputPath, { force: true });
     if (error instanceof EvidenceExportInputError) throw error;
     throw new EvidenceExportInputError(
-      `Falha ao otimizar PNG para web: ${error instanceof Error ? error.message : String(error)}`,
+      `Falha ao preparar JPEG web: ${error instanceof Error ? error.message : String(error)}`,
       422,
     );
   } finally {

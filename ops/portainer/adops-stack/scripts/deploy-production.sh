@@ -131,10 +131,23 @@ for attempt in $(seq 1 60); do
   sleep 5
 done
 
-CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
-RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-runner") | .Id' | head -n 1)"
-MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Id' | head -n 1)"
-[[ -n "$RUNNER_ID" && -n "$MONITOR_ID" ]] || { printf 'Dedicated Drive monitor containers not found.\n' >&2; exit 1; }
+RUNNER_ID=""
+MONITOR_ID=""
+for attempt in $(seq 1 120); do
+  CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
+  for container_name in adops-runner adops-runner-print-single adops-drive-pi-monitor-stack; do
+    CONTAINER_ID="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .Id' 2>/dev/null | head -n 1)"
+    CONTAINER_STATE="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .State' 2>/dev/null | head -n 1)"
+    if [[ -n "$CONTAINER_ID" && "$CONTAINER_STATE" != "running" ]]; then
+      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${CONTAINER_ID}/start" >/dev/null 2>&1 || true
+    fi
+  done
+  RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-runner" and .State == "running") | .Id' 2>/dev/null | head -n 1)"
+  MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-drive-pi-monitor-stack" and .State == "running") | .Id' 2>/dev/null | head -n 1)"
+  [[ -n "$RUNNER_ID" && -n "$MONITOR_ID" ]] && break
+  [[ "$attempt" == "120" ]] && { printf 'Runner and Drive monitor did not become ready.\n' >&2; exit 1; }
+  sleep 5
+done
 
 RUNNER_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
 MONITOR_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"

@@ -60,6 +60,8 @@ const DO_SPACES_ENDPOINT = (process.env.DO_SPACES_ENDPOINT || "https://nyc3.digi
 const DO_SPACES_REGION = (process.env.DO_SPACES_REGION || "nyc3").trim();
 const ADOPS_VIDEO_MEDIA_BUCKET = (process.env.ADOPS_VIDEO_MEDIA_BUCKET || process.env.ADOPS_SPACES_BUCKET || "cod5").trim();
 const ADOPS_VIDEO_MEDIA_BASE_PATH = (process.env.ADOPS_VIDEO_MEDIA_BASE_PATH || "adops-media").replace(/^\/+|\/+$/g, "");
+const ADOPS_EXPORT_BUCKET = (process.env.ADOPS_EXPORT_BUCKET || process.env.ADOPS_SPACES_BUCKET || "cod5").trim();
+const ADOPS_EXPORT_BASE_PATH = (process.env.ADOPS_EXPORT_BASE_PATH || "adops-exports").replace(/^\/+|\/+$/g, "");
 const ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE || "";
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL = (process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE || "";
@@ -207,6 +209,28 @@ async function privateApiGet(pathname) {
     throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
   }
   return payload;
+}
+
+async function privateApiDownload(pathname) {
+  const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
+    method: "GET",
+    headers: {
+      ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
+    },
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(details || `Falha na API privada ${pathname}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) throw new Error("A API privada concluiu o export sem conteúdo.");
+  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) {
+    throw new Error(`Artefato excede ADOPS_MEDIA_MAX_BYTES (${buffer.length} bytes).`);
+  }
+  return {
+    buffer,
+    contentType: String(response.headers.get("content-type") || "application/octet-stream").split(";", 1)[0],
+  };
 }
 
 function normalizeText(value) {
@@ -4723,6 +4747,40 @@ async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
   };
 }
 
+async function sendTelegramDeliveryDirect({ chatId, piCodigo, siteSigla, zipArtifact, pdfArtifact }) {
+  if (!TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN ausente para enviar a entrega.");
+  if (!chatId) throw new Error("TELEGRAM_DEFAULT_GROUP_ID ausente para enviar a entrega.");
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("media", JSON.stringify([
+    {
+      type: "document",
+      media: "attach://images_zip",
+      caption: `PI ${piCodigo} · ${siteSigla}`,
+    },
+    {
+      type: "document",
+      media: "attach://campaign_pdf",
+    },
+  ]));
+  form.set("images_zip", new Blob([zipArtifact.buffer], { type: "application/zip" }), zipArtifact.fileName);
+  form.set("campaign_pdf", new Blob([pdfArtifact.buffer], { type: "application/pdf" }), pdfArtifact.fileName);
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup`, {
+    method: "POST",
+    body: form,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.description || `Telegram sendMediaGroup falhou: ${response.status}`);
+  }
+  const messages = Array.isArray(payload?.result) ? payload.result : [];
+  return {
+    ok: true,
+    mode: "direct-media-group",
+    messageIds: messages.map((item) => item?.message_id).filter((item) => Number.isInteger(item)),
+  };
+}
+
 function resolveAnalyticsConfig(payload) {
   const propertyKey = String(payload?.propertyKey || "").trim().toLowerCase();
   const reportConfigName = String(payload?.reportConfigName || ANALYTICS_SITE_CONFIGS[propertyKey] || "").trim();
@@ -5006,6 +5064,20 @@ async function ensureAnalyticsMode(insertion, periodMode) {
   };
 }
 
+async function ensureAnalyticsModeBestEffort(insertion, periodMode) {
+  try {
+    return await ensureAnalyticsMode(insertion, periodMode);
+  } catch (error) {
+    return {
+      mode: periodMode,
+      status: "skipped",
+      optional: true,
+      reason: "analytics_unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function ensureOperationalDocuments(insertion) {
   const docs = await privateApiGet(`/api/insertions/${insertion.id}/operational-documents`);
   const visibleDocs = Array.isArray(docs?.documents) ? docs.documents : [];
@@ -5018,6 +5090,48 @@ async function ensureOperationalDocuments(insertion) {
     regenerated: true,
     total: Array.isArray(regenerated?.documents) ? regenerated.documents.length : visibleDocs.length,
   };
+}
+
+async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const alternateCaptureAt = attempt === 2
+        ? `${targetDate}T18:00`
+        : attempt === 3
+          ? `${targetDate}T20:00`
+          : null;
+      return await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
+        date: targetDate,
+        ...(alternateCaptureAt ? { captureAt: alternateCaptureAt } : {}),
+        replace: true,
+        force: true,
+        candidate: true,
+        promote: true,
+      });
+    } catch (error) {
+      lastError = error;
+      const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`)
+        .catch(() => null);
+      const proof = status?.audit?.retroContentProof;
+      if (
+        status?.status === "audited"
+        && proof?.status === "approved"
+        && proof?.futureCount === 0
+        && typeof proof?.manifestHash === "string"
+        && proof.manifestHash.length === 64
+      ) {
+        return { ok: true, recoveredAfterError: true, capture: { status: "ok" } };
+      }
+      if (attempt >= maxAttempts) break;
+      const delayMs = attempt * 2_000;
+      console.warn(`[runner] captura ${insertionId}/${targetDate} falhou; retry ${attempt + 1}/${maxAttempts} em ${delayMs}ms`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
 async function ensureInsertionCaptureCoverage(insertion) {
@@ -5060,23 +5174,32 @@ async function ensureInsertionCaptureCoverage(insertion) {
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    if (status?.status === "audited") continue;
+    const proof = status?.audit?.retroContentProof;
+    const strictAuditApproved = status?.status === "audited"
+      && proof?.status === "approved"
+      && proof?.futureCount === 0
+      && typeof proof?.manifestHash === "string"
+      && proof.manifestHash.length === 64;
+    if (strictAuditApproved) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
-    const result = await privateApi(`/api/insertions/${insertion.id}/capture-proof`, {
-      date: targetDate,
-      replace: true,
-      force: true,
-    });
+    const result = await captureProofWithRetry(insertion.id, targetDate);
     if (result?.capture?.status === "ok" || result?.ok === true) {
       regeneratedDates.push(targetDate);
     }
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => item?.status !== "audited");
+  const failed = finalStatuses.filter((item) => {
+    const proof = item?.audit?.retroContentProof;
+    return item?.status !== "audited"
+      || proof?.status !== "approved"
+      || proof?.futureCount !== 0
+      || typeof proof?.manifestHash !== "string"
+      || proof.manifestHash.length !== 64;
+  });
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem auditoria válida.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
   }
 
   return {
@@ -5090,16 +5213,33 @@ async function executePiSiteExport(job) {
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
+  const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
+    ? String(payload.mode).toLowerCase()
+    : "delivery";
+  const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
+    ? "web"
+    : String(payload.variant || "").toLowerCase() === "web"
+      ? "web"
+      : "original";
+  const pdfMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.pdfMaxWidth || "1920"), 10) || 1920));
+  const pdfQuality = Math.max(45, Math.min(85, Number.parseInt(String(payload.pdfQuality || "68"), 10) || 68));
+  const pdfResolution = Math.max(72, Math.min(180, Number.parseInt(String(payload.pdfResolution || "120"), 10) || 120));
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const sendTelegram = mode === "delivery" ? payload.sendTelegram !== false : payload.sendTelegram === true;
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
 
   const descriptor = await privateApiGet(`/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}`);
-  if (!descriptor?.insertionIds?.length) {
+  const operationalInsertionIds = Array.isArray(descriptor?.operationalInsertionIds)
+    ? descriptor.operationalInsertionIds
+    : descriptor?.insertionIds;
+  if (!operationalInsertionIds?.length) {
     throw new Error(`Nenhuma inserção encontrada para PI ${piCodigo} no site ${siteSigla}.`);
   }
 
-  const insertions = await Promise.all(descriptor.insertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
+  const insertions = await Promise.all(operationalInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
   const analyticsPiStatus = [];
@@ -5107,7 +5247,15 @@ async function executePiSiteExport(job) {
   const stagePayload = {
     piCodigo,
     siteSigla,
-    insertionIds: descriptor.insertionIds,
+    insertionIds: operationalInsertionIds,
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
+    sendTelegram,
   };
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
@@ -5117,33 +5265,208 @@ async function executePiSiteExport(job) {
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
 
-  await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    await ensureOperationalDocuments(insertion);
+  if (mode !== "delivery") {
+    await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      await ensureOperationalDocuments(insertion);
+    }
+
+    await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
+    }
+
+    await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
+    for (const insertion of insertions) {
+      analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
+    }
   }
 
-  await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsMode(insertion, "pi")) });
+  if (mode === "delivery") {
+    await progressJob(job.id, {
+      stage: "montando zip de imagens e pdf separado",
+      ...stagePayload,
+      regeneratedDates,
+      invalidatedEvidenceIds,
+    });
+    const commonParams = {
+      piCodigo,
+      siteSigla,
+      download: "1",
+      variant: "web",
+      presentation: "journalist",
+      pdfMaxWidth: String(pdfMaxWidth),
+      pdfQuality: String(pdfQuality),
+      pdfResolution: String(pdfResolution),
+      imageMaxWidth: String(imageMaxWidth),
+      imageQuality: String(imageQuality),
+    };
+    const zipParams = new URLSearchParams({ ...commonParams, mode: "prints-only" });
+    const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf" });
+    const [zipDownload, pdfDownload] = await Promise.all([
+      privateApiDownload(`/api/pi-site-exports?${zipParams.toString()}`),
+      privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`),
+    ]);
+    const neutralBaseName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(siteSigla)}`;
+    const zipArtifact = { ...zipDownload, fileName: `${neutralBaseName}.zip` };
+    const pdfArtifact = { ...pdfDownload, fileName: `${neutralBaseName}.pdf` };
+    const objectPrefix = [
+      ADOPS_EXPORT_BASE_PATH,
+      slugifyPathPart(siteSigla),
+      slugifyPathPart(piCodigo),
+      slugifyPathPart(job.id),
+    ].filter(Boolean).join("/");
+    const zipObjectKey = `${objectPrefix}/${zipArtifact.fileName}`;
+    const pdfObjectKey = `${objectPrefix}/${pdfArtifact.fileName}`;
+    await Promise.all([
+      uploadBufferToSpaces({
+        buffer: zipArtifact.buffer,
+        bucket: ADOPS_EXPORT_BUCKET,
+        objectKey: zipObjectKey,
+        contentType: "application/zip",
+      }),
+      uploadBufferToSpaces({
+        buffer: pdfArtifact.buffer,
+        bucket: ADOPS_EXPORT_BUCKET,
+        objectKey: pdfObjectKey,
+        contentType: "application/pdf",
+      }),
+    ]);
+    const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
+    const publicUrl = (objectKey) => `${publicBase}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+    const downloadUrl = publicUrl(zipObjectKey);
+    const pdfUrl = publicUrl(pdfObjectKey);
+    let telegram = { ok: true, skipped: true, reason: "sendTelegram=false" };
+    if (sendTelegram) {
+      await progressJob(job.id, {
+        stage: "enviando zip e pdf no telegram",
+        ...stagePayload,
+        downloadUrl,
+        pdfUrl,
+      });
+      try {
+        telegram = await sendTelegramDeliveryDirect({
+          chatId: String(payload.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim(),
+          piCodigo,
+          siteSigla,
+          zipArtifact,
+          pdfArtifact,
+        });
+      } catch (error) {
+        telegram = {
+          ok: false,
+          skipped: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    const zipSha256 = crypto.createHash("sha256").update(zipArtifact.buffer).digest("hex");
+    const pdfSha256 = crypto.createHash("sha256").update(pdfArtifact.buffer).digest("hex");
+    return {
+      stage: "completed",
+      piCodigo,
+      siteSigla,
+      mode,
+      variant,
+      insertionIds: descriptor.insertionIds,
+      invalidatedEvidenceIds,
+      regeneratedDates,
+      downloadUrl,
+      pdfUrl,
+      artifactBytes: zipArtifact.buffer.length,
+      artifactContentType: "application/zip",
+      artifactFileName: zipArtifact.fileName,
+      artifactSha256: zipSha256,
+      artifacts: {
+        zip: {
+          url: downloadUrl,
+          fileName: zipArtifact.fileName,
+          bytes: zipArtifact.buffer.length,
+          contentType: "application/zip",
+          sha256: zipSha256,
+        },
+        pdf: {
+          url: pdfUrl,
+          fileName: pdfArtifact.fileName,
+          bytes: pdfArtifact.buffer.length,
+          contentType: "application/pdf",
+          sha256: pdfSha256,
+        },
+      },
+      telegram,
+    };
   }
 
-  await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
-  for (const insertion of insertions) {
-    analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsMode(insertion, "full_month")) });
-  }
-
-  await progressJob(job.id, { stage: "montando zip final", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus, analyticsFullMonthStatus });
-  const downloadUrl = `${OPS_API_BASE_URL}/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}&download=1`;
+  await progressJob(job.id, {
+    stage: mode === "pdf" ? "montando pdf comprimido" : mode === "full-pdf" ? "montando zip com pdf comprimido" : "montando zip final",
+    ...stagePayload,
+    regeneratedDates,
+    invalidatedEvidenceIds,
+    analyticsPiStatus,
+    analyticsFullMonthStatus,
+  });
+  const downloadParams = new URLSearchParams({
+    piCodigo,
+    siteSigla,
+    download: "1",
+    mode,
+    variant,
+    pdfMaxWidth: String(pdfMaxWidth),
+    pdfQuality: String(pdfQuality),
+    pdfResolution: String(pdfResolution),
+    imageMaxWidth: String(imageMaxWidth),
+    imageQuality: String(imageQuality),
+  });
+  await progressJob(job.id, {
+    stage: "materializando artefato comprimido",
+    ...stagePayload,
+    regeneratedDates,
+    invalidatedEvidenceIds,
+    analyticsPiStatus,
+    analyticsFullMonthStatus,
+  });
+  const artifact = await privateApiDownload(`/api/pi-site-exports?${downloadParams.toString()}`);
+  const artifactExtension = artifact.contentType === "application/pdf" ? ".pdf" : ".zip";
+  const artifactFileName = [
+    `PI-${slugifyPathPart(piCodigo)}`,
+    slugifyPathPart(siteSigla),
+    slugifyPathPart(mode),
+  ].join("-") + artifactExtension;
+  const artifactObjectKey = [
+    ADOPS_EXPORT_BASE_PATH,
+    slugifyPathPart(siteSigla),
+    slugifyPathPart(piCodigo),
+    slugifyPathPart(job.id),
+    artifactFileName,
+  ].filter(Boolean).join("/");
+  await uploadBufferToSpaces({
+    buffer: artifact.buffer,
+    bucket: ADOPS_EXPORT_BUCKET,
+    objectKey: artifactObjectKey,
+    contentType: artifact.contentType,
+  });
+  const downloadUrl = `${spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET)}/${artifactObjectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
   return {
     stage: "completed",
     piCodigo,
     siteSigla,
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
     insertionIds: descriptor.insertionIds,
     invalidatedEvidenceIds,
     regeneratedDates,
     analyticsPiStatus,
     analyticsFullMonthStatus,
     downloadUrl,
+    artifactBytes: artifact.buffer.length,
+    artifactContentType: artifact.contentType,
+    artifactFileName,
+    artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
   };
 }
 

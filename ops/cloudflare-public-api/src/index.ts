@@ -1135,6 +1135,28 @@ async function createOpsJob(env: Env, kind: JobKind, payload: Record<string, unk
   return id;
 }
 
+async function createIdempotentOpsJob(
+  env: Env,
+  kind: JobKind,
+  payload: Record<string, unknown>,
+  requestedBy: string | null,
+  idempotencyKey: string,
+) {
+  const existing = await env.adops_ops
+    .prepare(
+      `SELECT id, status FROM ops_jobs
+       WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ?
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(kind, idempotencyKey)
+    .first<{ id: string; status: JobStatus }>();
+  if (existing) {
+    return { jobId: existing.id, status: existing.status, duplicate: true };
+  }
+  const jobId = await createOpsJob(env, kind, { ...payload, idempotencyKey }, requestedBy);
+  return { jobId, status: "queued" as JobStatus, duplicate: false };
+}
+
 async function createDrivePiEventJob(env: Env, event: DrivePiEventPayload, requestedBy: string | null) {
   const existing = await env.adops_ops
     .prepare(`SELECT event_id, job_id, status FROM cod5_drive_events WHERE event_id = ? LIMIT 1`)
@@ -1374,6 +1396,19 @@ function piSiteExportJobFromOpsJob(job: ReturnType<typeof describeJob>) {
     stage: typeof execution.stage === "string" ? execution.stage : typeof result.stage === "string" ? result.stage : null,
     piCodigo: typeof payload.piCodigo === "string" ? payload.piCodigo : null,
     siteSigla: typeof payload.siteSigla === "string" ? payload.siteSigla : null,
+    mode: typeof execution.mode === "string"
+      ? execution.mode
+      : typeof payload.mode === "string"
+        ? payload.mode
+        : "full",
+    variant: typeof execution.variant === "string"
+      ? execution.variant
+      : typeof payload.variant === "string"
+        ? payload.variant
+        : "original",
+    pdfMaxWidth: typeof execution.pdfMaxWidth === "number" ? execution.pdfMaxWidth : payload.pdfMaxWidth ?? null,
+    pdfQuality: typeof execution.pdfQuality === "number" ? execution.pdfQuality : payload.pdfQuality ?? null,
+    pdfResolution: typeof execution.pdfResolution === "number" ? execution.pdfResolution : payload.pdfResolution ?? null,
     insertionIds: Array.isArray(execution.insertionIds)
       ? execution.insertionIds
       : Array.isArray(payload.insertionIds)
@@ -1384,6 +1419,9 @@ function piSiteExportJobFromOpsJob(job: ReturnType<typeof describeJob>) {
     analyticsPiStatus: execution.analyticsPiStatus ?? null,
     analyticsFullMonthStatus: execution.analyticsFullMonthStatus ?? null,
     downloadUrl: typeof execution.downloadUrl === "string" ? execution.downloadUrl : null,
+    pdfUrl: typeof execution.pdfUrl === "string" ? execution.pdfUrl : null,
+    artifacts: execution.artifacts && typeof execution.artifacts === "object" ? execution.artifacts : null,
+    telegram: execution.telegram && typeof execution.telegram === "object" ? execution.telegram : null,
     error: job.error ?? null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -2301,20 +2339,78 @@ export default {
         if (!piCodigo || !siteSigla) {
           return badRequest("Informe piCodigo e siteSigla para gerar o pacote PI/site.");
         }
-        const jobId = await createOpsJob(env, "pi-site-export", {
+        const requestedMode = typeof body.mode === "string" ? body.mode.trim().toLowerCase() : "delivery";
+        if (!["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(requestedMode)) {
+          return badRequest("mode deve ser delivery, full, prints-only, pdf ou full-pdf.");
+        }
+        const mode = requestedMode;
+        const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
+          ? "web"
+          : typeof body.variant === "string" && body.variant.trim().toLowerCase() === "web"
+            ? "web"
+            : "original";
+        const boundedInteger = (value: unknown, minimum: number, maximum: number, fallback: number) => {
+          const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+          return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.round(parsed))) : fallback;
+        };
+        const pdfMaxWidth = boundedInteger(body.pdfMaxWidth, 800, 2560, 1920);
+        const pdfQuality = boundedInteger(body.pdfQuality, 45, 85, 68);
+        const pdfResolution = boundedInteger(body.pdfResolution, 72, 180, 120);
+        const imageMaxWidth = boundedInteger(body.imageMaxWidth, 800, 2560, 1600);
+        const imageQuality = boundedInteger(body.imageQuality, 45, 90, 72);
+        const requestedKey = request.headers.get("idempotency-key")?.trim() || "";
+        const generatedKey = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(JSON.stringify({
+            piCodigo,
+            siteSigla,
+            mode,
+            variant,
+            pdfMaxWidth,
+            pdfQuality,
+            pdfResolution,
+            imageMaxWidth,
+            imageQuality,
+            sendTelegram: body.sendTelegram !== false,
+            chatId: typeof body.chatId === "string" ? body.chatId.trim() : null,
+          })),
+        );
+        const idempotencyKey = requestedKey || Array.from(new Uint8Array(generatedKey), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
+          return badRequest("Idempotency-Key inválida.");
+        }
+        const created = await createIdempotentOpsJob(env, "pi-site-export", {
           piCodigo,
           siteSigla,
+          mode,
+          variant,
+          pdfMaxWidth,
+          pdfQuality,
+          pdfResolution,
+          imageMaxWidth,
+          imageQuality,
+          sendTelegram: body.sendTelegram !== false,
+          chatId: typeof body.chatId === "string" ? body.chatId.trim() : null,
           requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
           source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
-        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api");
+        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey);
         return jsonNoStore({
           ok: true,
-          jobId,
+          jobId: created.jobId,
           kind: "pi-site-export",
-          status: "queued",
+          status: created.status,
+          duplicate: created.duplicate,
           piCodigo,
           siteSigla,
-        }, { status: 202 });
+          mode,
+          variant,
+          pdfMaxWidth,
+          pdfQuality,
+          pdfResolution,
+          imageMaxWidth,
+          imageQuality,
+          sendTelegram: body.sendTelegram !== false,
+        }, { status: created.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/insertions/capture-proof/backfill-overdue/jobs") {
@@ -2510,7 +2606,7 @@ export default {
       !path.startsWith("/api/ops/") &&
       path !== "/api/healthz" &&
       !analyticsRoute &&
-      !/^\/api\/pi-site-exports\/jobs\/[^/]+(?:\/download)?$/.test(path) &&
+      !/^\/api\/pi-site-exports\/jobs\/[^/]+(?:\/(?:download|pdf))?$/.test(path) &&
       !/^\/api\/insertions\/capture-proof\/backfill-overdue\/jobs\/[^/]+$/.test(path) &&
       privateApiEnabled(env)
     ) {
@@ -2613,6 +2709,21 @@ export default {
         }, { status: 409 });
       }
       return Response.redirect(payload.downloadUrl, 302);
+    }
+
+    const piSiteExportPdfMatch = path.match(/^\/api\/pi-site-exports\/jobs\/([^/]+)\/pdf$/);
+    if (piSiteExportPdfMatch) {
+      const job = await getPiSiteExportJob(env, piSiteExportPdfMatch[1]);
+      if (!job) return notFound("PI/site export job not found");
+      const payload = piSiteExportJobFromOpsJob(job);
+      if (payload.status !== "completed" || !payload.pdfUrl) {
+        return jsonNoStore({
+          error: "pdf_not_ready",
+          details: "O PDF da entrega PI/site ainda não terminou de ser montado.",
+          job: payload,
+        }, { status: 409 });
+      }
+      return Response.redirect(payload.pdfUrl, 302);
     }
 
     if (path === "/api/ops/jobs") {

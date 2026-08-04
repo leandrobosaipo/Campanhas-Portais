@@ -68,4 +68,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Scan release tree for secrets
-        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 dir /repo --redact --no-banner
+        run: docker run --rm -w /repo -v "$PWD:/repo" zricethezav/gitleaks:v8.28.0 dir . --gitleaks-ignore-path . --redact --no-banner

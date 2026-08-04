@@ -124,6 +124,29 @@ Validar compositor de print:
 node --check scripts/src/capture-insertion-proof.cjs
 ```
 
+## Entrega final comprimida
+
+Guia específico: `docs/adops/entrega-jornalista-api.md`.
+
+O caminho canônico é assíncrono e idempotente:
+
+```text
+POST /api/pi-site-exports/jobs  (mode=delivery, variant=web, sendTelegram=true)
+  -> GET /api/pi-site-exports/jobs/{jobId}
+  -> status=completed
+  -> GET /api/pi-site-exports/jobs/{jobId}/download  (ZIP só com imagens)
+  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF separado)
+```
+
+Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
+jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e
+`PI-<codigo>-<portal>.pdf` separado; ambos são enviados ao Telegram.
+Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
+
+- Swagger: `https://adops-api.codigo5.com.br/api/docs`
+- ReDoc: `https://adops-api.codigo5.com.br/api/redoc`
+- OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`
+
 ## Docs essenciais
 
 - `docs/README.md`
@@ -131,6 +154,7 @@ node --check scripts/src/capture-insertion-proof.cjs
 - `docs/runbook-nova-pi-evidencias.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
 - `docs/adops/runtime-topology-and-permissions.md`
+- `docs/adops/entrega-jornalista-api.md`
 - `docs/base-de-conhecimento-do-projeto.md`
 - `docs/status-do-projeto.md`
 - `docs/prints-retroativos.md`
