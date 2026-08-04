@@ -60,6 +60,7 @@ function parseArgs(argv) {
     spacesBasePath: String(options.spacesBasePath),
     upload: options.upload !== "false" && options.upload !== false,
     saveEvidence: options.saveEvidence !== "false" && options.saveEvidence !== false,
+    candidateOnly: options.candidateOnly === true || options.candidateOnly === "true",
     replaceExisting: options.replaceExisting === true || options.replaceExisting === "true",
     captureAt: options.captureAt ? String(options.captureAt) : null,
     previewSignature: options.previewSignature ? String(options.previewSignature) : null,
@@ -123,6 +124,7 @@ function parseEnvFile(filePath) {
 }
 
 async function fetchRuntimeMappingFromApi(apiBase, insertion) {
+  if (process.env.ADOPS_CAPTURE_DISABLE_RUNTIME_RULES === "1") return null;
   if (!apiBase || !insertion?.siteSigla) return null;
   const format = insertion.localFormatoNormalizado || insertion.localFormato || "";
   const groupHint = getFormatMapping(insertion.siteSigla, format)?.groupId ?? null;
@@ -796,6 +798,22 @@ async function auditArticleCandidatePage(page, mapping) {
 }
 
 async function resolvePageUrls(page, mapping, previewOptions) {
+  if (mapping.domain === "perrenguematogrosso.com" && mapping.page === "article" && previewOptions.captureAt) {
+    const retroPosts = await fetchPerrengueAdminRetroPosts(previewOptions.captureAt);
+    const historicalUrls = retroPosts
+      .map((post) => {
+        try {
+          return new URL(post.url || `/${post.slug || ""}/`, mapping.homeUrl).toString();
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+    if (historicalUrls.length > 0) {
+      return historicalUrls.map((url) => appendPreviewParams(url, previewOptions.captureAt, previewOptions.previewSignature));
+    }
+  }
   if (mapping.auditConfig?.preferArticleFallbackForRetro === true && mapping.articleFallbackUrl) {
     return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
   }
@@ -2006,7 +2024,6 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
 
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "perrenguematogrosso.com") return false;
-  if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
   const adminRetroPosts = Array.isArray(options.adminRetroPosts)
     ? options.adminRetroPosts
     : await fetchPerrengueAdminRetroPosts(captureAt);
@@ -2014,7 +2031,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
     throw new Error(`perrengue_static_retro_preview_failed: admin_retro_posts_unavailable; captureAt=${captureAt}`);
   }
   const requireEditorialTargets = options.requireEditorialTargets !== false;
-  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts, requireEditorialTargets }) => {
+  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts, requireEditorialTargets, pageType }) => {
     const parseLocalDate = (value) => {
       const raw = String(value || "").trim();
       if (!raw) return null;
@@ -2153,6 +2170,64 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
       article.setAttribute("data-datetime", post.publishedAt || post.date || "");
       return true;
     };
+
+    if (pageType === "article") {
+      const post = posts[0] || null;
+      const article = document.querySelector("main article") || document.querySelector("article") || document.querySelector("main");
+      if (!post || !article) return { applied: false, reason: "article_reconstruction_unavailable", posts: posts.length };
+
+      const title = article.querySelector("h1,.entry-title") || document.querySelector("main h1,h1.entry-title");
+      if (title) {
+        const link = document.createElement("a");
+        link.setAttribute("href", absoluteUrl(post.url || `/${post.slug || ""}/`));
+        link.setAttribute("data-adops-retro-article-link", "1");
+        link.textContent = text(post.title);
+        title.replaceChildren(link);
+      }
+      const parts = formatParts(post);
+      const timeNodes = Array.from(article.querySelectorAll("time"));
+      if (timeNodes.length === 0) {
+        const time = document.createElement("time");
+        time.setAttribute("data-adops-retro-generated", "1");
+        article.insertBefore(time, article.firstChild);
+        timeNodes.push(time);
+      }
+      for (const time of timeNodes) {
+        time.setAttribute("datetime", post.publishedAt || post.date || "");
+        time.setAttribute("data-date", post.date || post.localDate || post.publishedAt || "");
+        time.setAttribute("data-datetime", post.publishedAt || post.date || "");
+        time.textContent = `${parts.dateText} • ${parts.timeText}`;
+      }
+      article.setAttribute("data-adops-retro-post-date", post.date || post.localDate || post.publishedAt || "");
+      article.setAttribute("data-date", post.date || post.localDate || post.publishedAt || "");
+      article.setAttribute("data-datetime", post.publishedAt || post.date || "");
+      article.setAttribute("data-adops-retro-primary-article", "1");
+      document.documentElement.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
+      document.documentElement.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
+      document.body?.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
+      const expectedPath = absoluteUrl(post.url || `/${post.slug || ""}/`).replace(/\/+$/, "") || "/";
+      const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+      const visibleTitle = title instanceof HTMLElement && title.getBoundingClientRect().width > 8 && title.getBoundingClientRect().height > 8;
+      const visibleTime = timeNodes.some((time) => time instanceof HTMLElement && time.getBoundingClientRect().width > 8 && time.getBoundingClientRect().height > 8);
+      return {
+        applied: true,
+        articleVerified: currentPath === expectedPath && visibleTitle && visibleTime,
+        articlePath: currentPath,
+        expectedArticlePath: expectedPath,
+        cutoff: rawCaptureAt,
+        posts: posts.length,
+        sparse: posts.length < minRequiredPosts,
+        postsAvailable: posts.length,
+        postsRequired: 1,
+        adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
+        expectedPosts: [post].map((item) => ({
+          id: Number(item.id || 0),
+          date: String(item.date || item.localDate || item.publishedAt || ""),
+          url: String(item.url || `/${item.slug || ""}/`),
+          title: String(item.title || "").slice(0, 240),
+        })),
+      };
+    }
 
     const homeSections = Array.from(document.querySelectorAll("main section"));
     const leadSection = homeSections.find((section) => section.querySelector("article.group a[href]")) || document.querySelector("main");
@@ -2317,8 +2392,19 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
       postsRequired: minRequiredPosts,
       adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
       invalidImagePosts: invalidImagePosts.slice(0, 12),
+      expectedPosts: posts.slice(0, 25).map((item) => ({
+        id: Number(item.id || 0),
+        date: String(item.date || item.localDate || item.publishedAt || ""),
+        url: String(item.url || `/${item.slug || ""}/`),
+        title: String(item.title || "").slice(0, 240),
+      })),
     };
-  }, { captureAt, adminRetroPosts });
+  }, {
+    captureAt,
+    adminRetroPosts,
+    requireEditorialTargets,
+    pageType: mapping?.page === "article" ? "article" : "home",
+  });
 
   if (!result || result.applied !== true) {
     const reason = result && typeof result === "object" ? result.reason || JSON.stringify(result) : "unknown";
@@ -2646,6 +2732,23 @@ function parseIsoLikeDate(value) {
     if (!Number.isNaN(candidate.getTime())) return candidate;
   }
 
+  const cod5PtDateOnly = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (cod5PtDateOnly) {
+    const cod5DayNumber = Number(cod5PtDateOnly[1]);
+    const cod5MonthNumber = Number(cod5PtDateOnly[2]);
+    const cod5YearNumber = Number(cod5PtDateOnly[3]);
+    const cod5MaxDay = cod5MonthNumber >= 1 && cod5MonthNumber <= 12
+      ? new Date(Date.UTC(cod5YearNumber, cod5MonthNumber, 0)).getUTCDate()
+      : 0;
+    if (cod5DayNumber >= 1 && cod5DayNumber <= cod5MaxDay) {
+      const cod5Day = String(cod5DayNumber).padStart(2, "0");
+      const cod5Month = String(cod5MonthNumber).padStart(2, "0");
+      const cod5Candidate = new Date(`${cod5YearNumber}-${cod5Month}-${cod5Day}T00:00:00-04:00`);
+      if (!Number.isNaN(cod5Candidate.getTime())) return cod5Candidate;
+    }
+    return null;
+  }
+
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
@@ -2681,15 +2784,18 @@ function parseIsoLikeDate(value) {
 
 function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
   const captureAtDate = parseIsoLikeDate(requestedCaptureAt);
-  if (!captureAtDate || !Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
-    return { ok: true, maxObserved: null, futureSamples: [] };
+  if (!captureAtDate) {
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, reason: "invalid_capture_at" };
+  }
+  if (!Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, reason: "empty_samples" };
   }
   const maxAllowed = captureAtDate.getTime() + 90 * 1000;
   const parsedSamples = contentDateSamples
     .map((value) => ({ raw: value, parsed: parseIsoLikeDate(value) }))
     .filter((item) => item.parsed);
   if (parsedSamples.length === 0) {
-    return { ok: true, maxObserved: null, futureSamples: [] };
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: contentDateSamples.length, reason: "unparseable_samples" };
   }
   const futureSamples = parsedSamples.filter((item) => item.parsed.getTime() > maxAllowed);
   const maxObserved = parsedSamples.reduce((acc, item) => (
@@ -2699,6 +2805,67 @@ function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
     ok: futureSamples.length === 0,
     maxObserved: maxObserved ? maxObserved.toISOString() : null,
     futureSamples: futureSamples.slice(0, 5).map((item) => item.raw),
+    parsedCount: parsedSamples.length,
+    sampleCount: contentDateSamples.length,
+    reason: futureSamples.length ? "future_samples" : null,
+  };
+}
+
+function normalizeEditorialUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""), "https://adops.invalid");
+    return parsed.pathname.replace(/\/+$/, "") || "/";
+  } catch {
+    return "";
+  }
+}
+
+function evaluateRetroContentProof(payload) {
+  const requestedCaptureAt = payload.requestedCaptureAt || null;
+  const editorialSamples = Array.isArray(payload.editorialSamples) ? payload.editorialSamples.slice(0, 25) : [];
+  const expectedPosts = Array.isArray(payload.expectedPosts) ? payload.expectedPosts.slice(0, 25) : [];
+  const minimumConfigured = Math.max(1, Math.min(25, Number(payload.minimumRequired || (payload.pageType === "article" ? 1 : 3))));
+  const minimumRequired = expectedPosts.length > 0 ? Math.min(minimumConfigured, expectedPosts.length) : minimumConfigured;
+  const contentTimeline = evaluateContentTimeline(editorialSamples.map((item) => item.date).filter(Boolean), requestedCaptureAt);
+  const expectedPaths = new Set(expectedPosts.map((item) => normalizeEditorialUrl(item.url || item.link)).filter(Boolean));
+  const visiblePaths = new Set(editorialSamples.map((item) => normalizeEditorialUrl(item.url)).filter(Boolean));
+  const visibleMatchCount = Array.from(expectedPaths).filter((item) => visiblePaths.has(item)).length;
+  const reconstructed = payload.reconstructed === true;
+  const previewActive = payload.previewActive === true;
+  const manifestHash = typeof payload.manifestHash === "string" && payload.manifestHash ? payload.manifestHash : null;
+  const issues = [];
+
+  if (payload.requireSignedPreview !== false && !previewActive && !reconstructed) {
+    issues.push({ code: "retro_preview_not_active", detail: "signed retro preview marker was not confirmed" });
+  }
+  if (!contentTimeline.ok) {
+    issues.push({
+      code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
+      detail: `reason=${contentTimeline.reason || "unknown"} parsed=${contentTimeline.parsedCount || 0}`,
+    });
+  }
+  if (expectedPosts.length === 0 || visibleMatchCount < minimumRequired) {
+    issues.push({
+      code: "retro_content_expected_mismatch",
+      detail: `expected=${expectedPosts.length} visibleMatches=${visibleMatchCount} minimum=${minimumRequired}`,
+    });
+  }
+  if (reconstructed && !manifestHash) {
+    issues.push({ code: "retro_reconstruction_failed", detail: "reconstruction has no manifest hash" });
+  }
+
+  return {
+    status: issues.length === 0 ? "approved" : "rejected",
+    sourceMode: reconstructed ? "audited_reconstruction" : "signed_preview",
+    previewActive,
+    expectedCount: expectedPosts.length,
+    visibleMatchCount,
+    minimumRequired,
+    maxObserved: contentTimeline.maxObserved,
+    futureCount: contentTimeline.futureSamples.length,
+    reconstructed,
+    manifestHash,
+    issues,
   };
 }
 
@@ -2728,6 +2895,7 @@ function evaluateRetroCaptureGate(payload) {
         payload.contentRelativeTimeSamples,
         payload.requireAbsoluteEditorialDates,
       ),
+      retroContentProof: payload.retroContentProof || null,
     };
   }
   const issues = [];
@@ -2747,7 +2915,7 @@ function evaluateRetroCaptureGate(payload) {
     });
   }
   const contentTimeline = evaluateContentTimeline(payload.contentDateSamples, requestedCaptureAt);
-  if (!contentTimeline.ok) {
+  if (!contentTimeline.ok && (payload.requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
       code: "content_time_mismatch",
       detail: `maxObserved=${contentTimeline.maxObserved || "n/a"} futureSamples=${contentTimeline.futureSamples.join(" | ") || "n/a"}`,
@@ -2768,6 +2936,17 @@ function evaluateRetroCaptureGate(payload) {
       code: "relative_content_time_unresolved",
       detail: `historical proof requires absolute editorial dates; relativeSamples=${relativeContentTimeline.relativeSamples.join(" | ")}`,
     });
+  }
+  if (payload.requireRetroContentProof && payload.retroContentProof?.status !== "approved") {
+    const proofIssues = Array.isArray(payload.retroContentProof?.issues)
+      ? payload.retroContentProof.issues
+      : [{ code: "retro_content_unverified", detail: "retro content proof is unavailable" }];
+    for (const issue of proofIssues) {
+      issues.push({
+        code: String(issue?.code || "retro_content_unverified"),
+        detail: String(issue?.detail || "retro content proof was rejected"),
+      });
+    }
   }
   if (payload.requireSlotVisibleInViewport && !payload.slotVisibility?.mostlyVisible) {
     issues.push({
@@ -2793,6 +2972,7 @@ function evaluateRetroCaptureGate(payload) {
     codes: issues.map((item) => item.code),
     contentTimeline,
     relativeContentTimeline,
+    retroContentProof: payload.retroContentProof || null,
   };
 }
 
@@ -4665,6 +4845,9 @@ function compactMetadataForPersistence(metadata) {
     contentDateSamples: Array.isArray(metadata.contentDateSamples)
       ? metadata.contentDateSamples.slice(0, 25)
       : [],
+    editorialSamples: Array.isArray(metadata.editorialSamples)
+      ? metadata.editorialSamples.slice(0, 25)
+      : [],
     contentRelativeTimeSamples: Array.isArray(metadata.contentRelativeTimeSamples)
       ? metadata.contentRelativeTimeSamples.slice(0, 10)
       : [],
@@ -4692,6 +4875,185 @@ function compactMetadataForPersistence(metadata) {
         }
       : readinessAudit,
   };
+}
+
+async function collectRetroContentEvidence(page, mapping, captureAt, retroPreview) {
+  const configuredCardSelectors = Array.isArray(mapping.auditConfig?.retroContentCardSelectors)
+    ? mapping.auditConfig.retroContentCardSelectors
+    : [];
+  const configuredDateSelectors = Array.isArray(mapping.auditConfig?.retroContentDateSelectors)
+    ? mapping.auditConfig.retroContentDateSelectors
+    : [];
+  const collected = await page.evaluate(async ({ captureAt: cutoff, configuredCardSelectors, configuredDateSelectors, pageType }) => {
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 8 && rect.height > 8 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
+    };
+    const excluded = (element) => Boolean(element.closest("header,footer,nav,aside [class*='weather'],aside [class*='clima'],[class*='adrotate'],[class*='publicidade'],[data-adops-capture-slot],[role='banner']"));
+    const ownEditorialLink = (card) => {
+      const links = Array.from(card.querySelectorAll("a[href]"));
+      return links.find((link) => {
+        try {
+          const url = new URL(link.href, window.location.href);
+          return url.origin === window.location.origin && !/\/(tag|category|autor|author|wp-admin|wp-json)\//i.test(url.pathname) && url.pathname.replace(/\/+$/, "").split("/").filter(Boolean).length >= 1;
+        } catch {
+          return false;
+        }
+      }) || null;
+    };
+    const dateSelectors = Array.from(new Set([
+      ...configuredDateSelectors,
+      "[data-adops-retro-post-date]",
+      "time[datetime]",
+      "[data-datetime]",
+      "[data-date]",
+      ".entry-date",
+      ".posted-on time",
+      ".meta-date",
+      "time",
+    ]));
+    const readDate = (card) => {
+      for (const selector of dateSelectors) {
+        let nodes = [];
+        try { nodes = Array.from(card.matches(selector) ? [card] : card.querySelectorAll(selector)); } catch { continue; }
+        for (const node of nodes) {
+          const values = [
+            node.getAttribute?.("data-adops-retro-post-date"),
+            node.getAttribute?.("datetime"),
+            node.getAttribute?.("data-datetime"),
+            node.getAttribute?.("data-date"),
+            node.textContent,
+          ];
+          const value = values.map((item) => String(item || "").trim()).find((item) => /(\d{4}-\d{2}-\d{2})|(\d{2}\/\d{2}\/\d{4})|(\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(\s+de)?\s+\d{4})/i.test(item));
+          if (value) return value;
+        }
+      }
+      if (pageType !== "article") {
+        const cardText = String(card.textContent || "").replace(/\s+/g, " ").trim();
+        const textualDate = cardText.match(/(?:\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?|\d{2}\/\d{2}\/\d{4}(?:\s+(?:às\s+)?\d{2}:\d{2})?|\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(?:\s+de)?\s+\d{4}(?:\s+(?:às\s+)?\d{2}:\d{2})?)/i);
+        if (textualDate) return textualDate[0];
+      }
+      return null;
+    };
+    const cardSelectors = pageType === "article"
+      ? Array.from(new Set([...configuredCardSelectors, "[data-adops-retro-primary-article='1']"]))
+      : Array.from(new Set([
+          ...configuredCardSelectors,
+          "article",
+          "[data-adops-retro-post-date]",
+          "[class*='post-card']",
+          "[class*='news-card']",
+          "[class*='noticia']",
+          "[class*='latest'] li",
+          "[class*='ultima'] li",
+        ]));
+    const samples = [];
+    const seen = new Set();
+    for (const selector of cardSelectors) {
+      let cards = [];
+      try { cards = Array.from(document.querySelectorAll(selector)); } catch { continue; }
+      for (const card of cards) {
+        if (!(card instanceof HTMLElement) || !isVisible(card) || excluded(card)) continue;
+        const link = ownEditorialLink(card);
+        if (!link) continue;
+        const url = new URL(link.href, window.location.href).toString();
+        const key = new URL(url).pathname.replace(/\/+$/, "") || "/";
+        if (seen.has(key)) continue;
+        const date = readDate(card);
+        if (!date) continue;
+        const titleNode = card.querySelector("h1,h2,h3,h4,.entry-title,[class*='title']");
+        const title = String(titleNode?.textContent || link.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240);
+        seen.add(key);
+        samples.push({ title, url, date, source: selector });
+        if (samples.length >= 25) break;
+      }
+      if (samples.length >= 25) break;
+    }
+
+    let expectedPosts = [];
+    let expectedSource = null;
+    try {
+      const before = new Date(cutoff).toISOString();
+      const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
+      endpoint.searchParams.set("per_page", "25");
+      endpoint.searchParams.set("before", before);
+      endpoint.searchParams.set("orderby", "date");
+      endpoint.searchParams.set("order", "desc");
+      endpoint.searchParams.set("_fields", "id,date,link,title");
+      const response = await fetch(endpoint.toString(), { cache: "no-store", credentials: "same-origin" });
+      if (response.ok) {
+        const rows = await response.json();
+        if (Array.isArray(rows)) {
+          expectedPosts = rows.map((row) => ({
+            id: Number(row.id),
+            date: String(row.date || ""),
+            url: String(row.link || ""),
+            title: String(row.title?.rendered || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240),
+          })).filter((row) => row.id > 0 && row.url && row.date);
+          expectedSource = "wordpress_rest";
+        }
+      }
+    } catch {
+      expectedPosts = [];
+    }
+
+    const marker = document.querySelector('meta[name="cod5-adops-retro-preview"][content="active"]');
+    return {
+      editorialSamples: samples,
+      expectedPosts,
+      expectedSource,
+      previewActive: Boolean(marker),
+      previewCutoff: marker?.getAttribute("data-cutoff") || null,
+    };
+  }, {
+    captureAt,
+    configuredCardSelectors,
+    configuredDateSelectors,
+    pageType: mapping.page === "article" ? "article" : "home",
+  });
+
+  const reconstructed = Boolean(retroPreview && typeof retroPreview === "object" && retroPreview.applied === true);
+  if (collected.expectedPosts.length === 0 && reconstructed && Array.isArray(retroPreview.expectedPosts)) {
+    collected.expectedPosts = retroPreview.expectedPosts.slice(0, 25);
+    collected.expectedSource = "wordpress_admin_api_reconstruction";
+  }
+  if (
+    reconstructed &&
+    mapping.page === "article" &&
+    retroPreview.articleVerified === true &&
+    Array.isArray(retroPreview.expectedPosts) &&
+    retroPreview.expectedPosts[0]
+  ) {
+    const primary = retroPreview.expectedPosts[0];
+    collected.editorialSamples = [{
+      title: String(primary.title || "").slice(0, 240),
+      url: new URL(primary.url || retroPreview.expectedArticlePath, mapping.homeUrl).toString(),
+      date: String(primary.date || ""),
+      source: "audited_article_reconstruction",
+    }];
+  }
+  const manifest = {
+    cutoff: captureAt,
+    source: collected.expectedSource,
+    reconstructed,
+    expectedPosts: collected.expectedPosts,
+    visiblePosts: collected.editorialSamples,
+  };
+  const manifestHash = crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  const retroContentProof = evaluateRetroContentProof({
+    requestedCaptureAt: captureAt,
+    pageType: mapping.page,
+    minimumRequired: mapping.page === "article" ? 1 : mapping.auditConfig?.minRetroContentMatches,
+    requireSignedPreview: mapping.auditConfig?.requireSignedRetroPreview !== false,
+    previewActive: collected.previewActive,
+    reconstructed,
+    manifestHash,
+    editorialSamples: collected.editorialSamples,
+    expectedPosts: collected.expectedPosts,
+  });
+  return { ...collected, manifest, manifestHash, retroContentProof };
 }
 
 async function measureSlotVisibility(page, selector) {
@@ -6073,11 +6435,16 @@ async function main() {
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
 
-  const outDir = path.join(
-    process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints"),
-    isoDate,
-    String(insertion.id),
-  );
+  const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
+  const outDir = args.candidateOnly
+    ? path.join(
+        generatedPrintsRoot,
+        "candidates",
+        slugify(args.runnerJobId || args.jobId || String(Date.now())),
+        isoDate,
+        String(insertion.id),
+      )
+    : path.join(generatedPrintsRoot, isoDate, String(insertion.id));
   mkdirSync(outDir, { recursive: true });
 
   const slotPng = path.join(outDir, `${isoDate}-slot.png`);
@@ -6122,6 +6489,9 @@ async function main() {
   let metadata = null;
   let contentDateSamples = [];
   let contentRelativeTimeSamples = [];
+  let editorialSamples = [];
+  let retroContentManifest = null;
+  let retroContentProof = null;
   let retroGate = null;
   let retroPreview = null;
   let pendingLogFlush = { flushed: 0, kept: 0 };
@@ -6174,19 +6544,18 @@ async function main() {
       }
     }
 
-    const disableSignedPreview =
-      mapping.auditConfig?.disableSignedPreview === true ||
-      mapping.auditConfig?.signedPreview === false;
-    const previewSignature = disableSignedPreview
-      ? (args.previewSignature || null)
-      : (args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret));
+    const signedRetroPreviewRequired = Boolean(effectiveCaptureAt && mapping.auditConfig?.requireSignedRetroPreview !== false);
+    const previewSignature = args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret);
+    if (signedRetroPreviewRequired && !previewSignature) {
+      throw new Error("retro_preview_not_active: não foi possível assinar a captura retroativa");
+    }
     const pageResolvedStage = trace.start("page_resolved");
     const candidateUrls = await resolvePageUrls(page, mapping, { captureAt: effectiveCaptureAt, previewSignature });
     trace.finish(pageResolvedStage, "ok", {
       candidateCount: candidateUrls.length,
       captureAt: effectiveCaptureAt,
       previewSupported,
-      signedPreviewDisabled: disableSignedPreview,
+      signedPreviewRequired: signedRetroPreviewRequired,
     });
     await page.setExtraHTTPHeaders({
       "Cache-Control": "no-cache",
@@ -6739,6 +7108,14 @@ async function main() {
     contentDateSamples = contentTimeSamples.absolute;
     contentRelativeTimeSamples = contentTimeSamples.relative;
 
+    if (effectiveCaptureAt) {
+      const retroContentEvidence = await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview);
+      editorialSamples = retroContentEvidence.editorialSamples;
+      retroContentManifest = retroContentEvidence.manifest;
+      retroContentProof = retroContentEvidence.retroContentProof;
+      contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean);
+    }
+
     systemDateTime = new Intl.DateTimeFormat("pt-BR", {
       timeZone: "America/Cuiaba",
       weekday: "long",
@@ -6758,6 +7135,8 @@ async function main() {
       pageDateText,
       contentDateSamples,
       contentRelativeTimeSamples,
+      retroContentProof,
+      requireRetroContentProof: mapping.auditConfig?.requireRetroContentProof === true,
       requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
@@ -6967,6 +7346,9 @@ async function main() {
       pageDateObserved,
       contentDateSamples,
       contentRelativeTimeSamples,
+      editorialSamples,
+      retroContentManifest,
+      retroContentProof,
       retroGate,
       visiblePageDateAudit,
       creativePlacementAudit,
@@ -7058,7 +7440,10 @@ async function main() {
       if (!args.spacesEnv) throw new Error("Use --spacesEnv para subir o print ao Spaces.");
       spacesEnv = parseEnvFile(args.spacesEnv);
       const competenciaSlug = slugify(insertion.competencia || "sem-competencia").toUpperCase();
-      const key = `${args.spacesBasePath}/${competenciaSlug}/${insertion.campanhaId}/${insertion.id}/${evidenceFilename}`;
+      const candidateSegment = args.candidateOnly
+        ? `candidates/${slugify(args.runnerJobId || args.jobId || String(Date.now()))}/`
+        : "";
+      const key = `${args.spacesBasePath}/${competenciaSlug}/${insertion.campanhaId}/${insertion.id}/${candidateSegment}${evidenceFilename}`;
       const uploadedUrl = uploadToSpaces(spacesEnv, args.spacesBucket, key, finalPng);
       publicUrl = appendCacheVersion(uploadedUrl, Date.now());
       remoteFinal = await describeRemoteArtifact(publicUrl);
@@ -7143,7 +7528,7 @@ async function main() {
       throw new Error(`capture_audit_failed: status=${auditStatus}; pageDateObserved=${pageDateObserved || "n/a"}; requestedCaptureAt=${effectiveCaptureAt || "n/a"}`);
     }
 
-    if (args.apiBase && internalCaptureToken) {
+    if (args.saveEvidence && args.apiBase && internalCaptureToken) {
       const logPayload = {
         date: isoDate,
         log: {
@@ -7250,6 +7635,8 @@ async function main() {
       logPersistence,
       pendingLogFlush,
       retroGate,
+      retroContentProof,
+      manifestHash: retroContentManifest ? crypto.createHash("sha256").update(JSON.stringify(retroContentManifest)).digest("hex") : null,
       probableCause: analysis.probableCause,
     }, null, 2));
   } catch (error) {
@@ -7467,7 +7854,9 @@ if (require.main === module) {
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
     normalizeMediaIdentityUrl,
+    parseIsoLikeDate,
     evaluateContentTimeline,
+    evaluateRetroContentProof,
     evaluateRelativeContentTimeline,
     evaluateRetroCaptureGate,
     compactMetadataForPersistence,

@@ -110,6 +110,7 @@ GET /api/pi-site-exports/jobs/{jobId}/pdf
 - Auditoria, logs, checksums e fontes PNG continuam internos ao AdOps e não entram no pacote da jornalista.
 - Antes de liberar: `status=completed`, páginas do PDF = JPEGs, ZIP sem PNG/PDF/JSON/TXT/CSV e amostragem visual com topbar/domínio/data/hora/banner visíveis.
 - Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
+- Guia operacional canônico: `docs/adops/entrega-jornalista-api.md`.
 
 ## Gate obrigatório de captura/auditoria
 

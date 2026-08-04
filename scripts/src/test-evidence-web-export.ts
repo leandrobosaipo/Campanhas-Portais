@@ -10,7 +10,7 @@ import {
   buildDeliveryPrintFileName,
   EvidenceExportInputError,
   parseEvidenceExportOptions,
-  prepareEvidencePng,
+  prepareEvidenceImage,
 } from "../../artifacts/api-server/src/lib/evidence-export";
 
 const execFileAsync = promisify(execFile);
@@ -79,7 +79,7 @@ test("parâmetros e nomes de entrega preservam compatibilidade e posição", () 
   assert.doesNotMatch(packageName, /retroativ|evidenc/i);
 });
 
-test("PNG web reduz largura sem ampliar imagens menores e o ZIP contém somente prints", async () => {
+test("JPEG web reduz largura sem ampliar imagens menores e o ZIP contém somente prints", async () => {
   const root = await mkdtemp(join(tmpdir(), "adops-evidence-web-export-test-"));
   try {
     const packageName = buildDeliveryPackageName(insertion, [
@@ -94,19 +94,19 @@ test("PNG web reduz largura sem ampliar imagens menores e o ZIP contém somente 
     await createPng(largeSourcePath, 3320, 2654);
     await createPng(smallSourcePath, 800, 600);
 
-    const large = await prepareEvidencePng({
+    const large = await prepareEvidenceImage({
       source: await readFile(largeSourcePath),
       outputPath: join(
         packageDir,
-        buildDeliveryPrintFileName(insertion, "2026-07-07"),
+        buildDeliveryPrintFileName(insertion, "2026-07-07", undefined, ".jpg"),
       ),
       variant: "web",
     });
-    const small = await prepareEvidencePng({
+    const small = await prepareEvidenceImage({
       source: await readFile(smallSourcePath),
       outputPath: join(
         packageDir,
-        buildDeliveryPrintFileName(insertion, "2026-07-08"),
+        buildDeliveryPrintFileName(insertion, "2026-07-08", undefined, ".jpg"),
       ),
       variant: "web",
     });
@@ -126,7 +126,7 @@ test("PNG web reduz largura sem ampliar imagens menores e o ZIP contém somente 
       .split("\n")
       .filter((entry) => !entry.endsWith("/"));
     assert.equal(files.length, 2);
-    assert.ok(files.every((entry) => entry.endsWith(".png")));
+    assert.ok(files.every((entry) => entry.endsWith(".jpg")));
     assert.ok(files.every((entry) => entry.includes("-VIDEO-")));
     assert.ok(
       files.every((entry) => !/\.json$|\.txt$|\.csv$|\.pdf$/i.test(entry)),
@@ -139,10 +139,10 @@ test("PNG web reduz largura sem ampliar imagens menores e o ZIP contém somente 
 
 test("origem inválida falha explicitamente sem criar arquivo", async () => {
   const root = await mkdtemp(join(tmpdir(), "adops-evidence-invalid-test-"));
-  const outputPath = join(root, "invalid.png");
+  const outputPath = join(root, "invalid.jpg");
   try {
     await assert.rejects(
-      prepareEvidencePng({
+      prepareEvidenceImage({
         source: Buffer.from("not-a-png"),
         outputPath,
         variant: "web",

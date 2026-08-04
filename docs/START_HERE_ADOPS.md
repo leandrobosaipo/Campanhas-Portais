@@ -126,6 +126,8 @@ node --check scripts/src/capture-insertion-proof.cjs
 
 ## Entrega final comprimida
 
+Guia específico: `docs/adops/entrega-jornalista-api.md`.
+
 O caminho canônico é assíncrono e idempotente:
 
 ```text
@@ -152,6 +154,7 @@ Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
 - `docs/runbook-nova-pi-evidencias.md`
 - `docs/CREDENTIALS_AND_ENV_ADOPS.md`
 - `docs/adops/runtime-topology-and-permissions.md`
+- `docs/adops/entrega-jornalista-api.md`
 - `docs/base-de-conhecimento-do-projeto.md`
 - `docs/status-do-projeto.md`
 - `docs/prints-retroativos.md`

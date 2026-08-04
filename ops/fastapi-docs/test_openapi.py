@@ -5,7 +5,7 @@ from main import REDOC_ASSET_PATH, REDOC_ASSET_URL, build_openapi_document, redo
 
 document = build_openapi_document()
 assert document["openapi"] == "3.1.0"
-assert document["info"]["version"] == "adops-ops-api-catalog-v2"
+assert document["info"]["version"] == "adops-ops-api-catalog-v3"
 assert document["x-cod5-endpoint-count"] >= 100
 assert "/api/healthz" in document["paths"]
 assert "/api/pi-site-exports" in document["paths"]
