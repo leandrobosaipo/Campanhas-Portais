@@ -60,6 +60,8 @@ const DO_SPACES_ENDPOINT = (process.env.DO_SPACES_ENDPOINT || "https://nyc3.digi
 const DO_SPACES_REGION = (process.env.DO_SPACES_REGION || "nyc3").trim();
 const ADOPS_VIDEO_MEDIA_BUCKET = (process.env.ADOPS_VIDEO_MEDIA_BUCKET || process.env.ADOPS_SPACES_BUCKET || "cod5").trim();
 const ADOPS_VIDEO_MEDIA_BASE_PATH = (process.env.ADOPS_VIDEO_MEDIA_BASE_PATH || "adops-media").replace(/^\/+|\/+$/g, "");
+const ADOPS_EXPORT_BUCKET = (process.env.ADOPS_EXPORT_BUCKET || process.env.ADOPS_SPACES_BUCKET || "cod5").trim();
+const ADOPS_EXPORT_BASE_PATH = (process.env.ADOPS_EXPORT_BASE_PATH || "adops-exports").replace(/^\/+|\/+$/g, "");
 const ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE || "";
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL = (process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE || "";
@@ -207,6 +209,28 @@ async function privateApiGet(pathname) {
     throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
   }
   return payload;
+}
+
+async function privateApiDownload(pathname) {
+  const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
+    method: "GET",
+    headers: {
+      ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
+    },
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(details || `Falha na API privada ${pathname}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) throw new Error("A API privada concluiu o export sem conteúdo.");
+  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) {
+    throw new Error(`Artefato excede ADOPS_MEDIA_MAX_BYTES (${buffer.length} bytes).`);
+  }
+  return {
+    buffer,
+    contentType: String(response.headers.get("content-type") || "application/octet-stream").split(";", 1)[0],
+  };
 }
 
 function normalizeText(value) {
@@ -3447,6 +3471,8 @@ async function executeAdrotatePublishJob(payload) {
     throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
   }
   const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const restrictedKvm8Gateway = String(site.sshUser || "") === "cod5adops"
+    && String(site.sshHost || "") === "93.127.210.71";
   const publishPayload = buildAdrotatePublishPayload({
     insertion,
     campaign,
@@ -3467,7 +3493,7 @@ async function executeAdrotatePublishJob(payload) {
     '--payload-json="$tmp_payload"',
     ...(apply ? ["--apply"] : []),
   ].join(" ");
-  const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla)
+  const pluginSourceBase64 = shouldUsePerrenguePortainerAdrotate(siteSigla) || restrictedKvm8Gateway
     ? null
     : Buffer.from(await readFile(path.join(PROJECT_ROOT, "ops/wordpress/adrotate-adops.php"))).toString("base64");
   const wpCliBase = [
@@ -3492,15 +3518,22 @@ async function executeAdrotatePublishJob(payload) {
     'rm -f "$tmp_plugin"',
     `${wpCliBase} help adops-adrotate-publish >/dev/null 2>&1`,
   ].join(" && ");
-  const remoteCommand = [
-    `rm -f ${staleMuPluginTargets.map(shellEscape).join(" ")}`,
-    remotePluginSyncCommand,
-    'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
-    `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
-    `${wpCliCommand}; rc=$?`,
-    'rm -f "$tmp_payload"',
-    "exit $rc",
-  ].join(" && ");
+  const remoteCommand = restrictedKvm8Gateway
+    ? [
+        wpCliBase,
+        "adops-adrotate-publish",
+        `--payload-json=${shellEscape(payloadJson)}`,
+        ...(apply ? ["--apply"] : []),
+      ].join(" ")
+    : [
+        `rm -f ${staleMuPluginTargets.map(shellEscape).join(" ")}`,
+        remotePluginSyncCommand,
+        'tmp_payload="$(mktemp /tmp/adops-adrotate-publish.XXXXXX.json)"',
+        `printf %s ${shellEscape(payloadJson)} > "$tmp_payload"`,
+        `${wpCliCommand}; rc=$?`,
+        'rm -f "$tmp_payload"',
+        "exit $rc",
+      ].join(" && ");
 
   const headlessReadiness = String(siteSigla || "").toUpperCase() === "PERRENGUE"
     ? await validatePerrengueHeadlessRebuildReadiness()
@@ -4820,6 +4853,20 @@ async function ensureAnalyticsMode(insertion, periodMode) {
   };
 }
 
+async function ensureAnalyticsModeBestEffort(insertion, periodMode) {
+  try {
+    return await ensureAnalyticsMode(insertion, periodMode);
+  } catch (error) {
+    return {
+      mode: periodMode,
+      status: "skipped",
+      optional: true,
+      reason: "analytics_unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function ensureOperationalDocuments(insertion) {
   const docs = await privateApiGet(`/api/insertions/${insertion.id}/operational-documents`);
   const visibleDocs = Array.isArray(docs?.documents) ? docs.documents : [];
@@ -4832,6 +4879,39 @@ async function ensureOperationalDocuments(insertion) {
     regenerated: true,
     total: Array.isArray(regenerated?.documents) ? regenerated.documents.length : visibleDocs.length,
   };
+}
+
+async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const alternateCaptureAt = attempt === 2
+        ? `${targetDate}T18:00`
+        : attempt === 3
+          ? `${targetDate}T20:00`
+          : null;
+      return await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
+        date: targetDate,
+        ...(alternateCaptureAt ? { captureAt: alternateCaptureAt } : {}),
+        replace: true,
+        force: true,
+      });
+    } catch (error) {
+      lastError = error;
+      const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`)
+        .catch(() => null);
+      if (status?.status === "audited") {
+        return { ok: true, recoveredAfterError: true, capture: { status: "ok" } };
+      }
+      if (attempt >= maxAttempts) break;
+      const delayMs = attempt * 2_000;
+      console.warn(`[runner] captura ${insertionId}/${targetDate} falhou; retry ${attempt + 1}/${maxAttempts} em ${delayMs}ms`);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
 async function ensureInsertionCaptureCoverage(insertion) {
@@ -4877,11 +4957,7 @@ async function ensureInsertionCaptureCoverage(insertion) {
     if (status?.status === "audited") continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
-    const result = await privateApi(`/api/insertions/${insertion.id}/capture-proof`, {
-      date: targetDate,
-      replace: true,
-      force: true,
-    });
+    const result = await captureProofWithRetry(insertion.id, targetDate);
     if (result?.capture?.status === "ok" || result?.ok === true) {
       regeneratedDates.push(targetDate);
     }
@@ -4904,16 +4980,32 @@ async function executePiSiteExport(job) {
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
+  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
+    ? String(payload.mode).toLowerCase()
+    : "full";
+  const variant = mode === "pdf" || mode === "full-pdf"
+    ? "web"
+    : String(payload.variant || "").toLowerCase() === "web"
+      ? "web"
+      : "original";
+  const pdfMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.pdfMaxWidth || "1920"), 10) || 1920));
+  const pdfQuality = Math.max(45, Math.min(85, Number.parseInt(String(payload.pdfQuality || "68"), 10) || 68));
+  const pdfResolution = Math.max(72, Math.min(180, Number.parseInt(String(payload.pdfResolution || "120"), 10) || 120));
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
 
   const descriptor = await privateApiGet(`/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}`);
-  if (!descriptor?.insertionIds?.length) {
+  const operationalInsertionIds = Array.isArray(descriptor?.operationalInsertionIds)
+    ? descriptor.operationalInsertionIds
+    : descriptor?.insertionIds;
+  if (!operationalInsertionIds?.length) {
     throw new Error(`Nenhuma inserção encontrada para PI ${piCodigo} no site ${siteSigla}.`);
   }
 
-  const insertions = await Promise.all(descriptor.insertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
+  const insertions = await Promise.all(operationalInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
   const analyticsPiStatus = [];
@@ -4921,7 +5013,14 @@ async function executePiSiteExport(job) {
   const stagePayload = {
     piCodigo,
     siteSigla,
-    insertionIds: descriptor.insertionIds,
+    insertionIds: operationalInsertionIds,
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
   };
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
@@ -4938,26 +5037,84 @@ async function executePiSiteExport(job) {
 
   await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
   for (const insertion of insertions) {
-    analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsMode(insertion, "pi")) });
+    analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
   }
 
   await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
   for (const insertion of insertions) {
-    analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsMode(insertion, "full_month")) });
+    analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
   }
 
-  await progressJob(job.id, { stage: "montando zip final", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus, analyticsFullMonthStatus });
-  const downloadUrl = `${OPS_API_BASE_URL}/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}&download=1`;
+  await progressJob(job.id, {
+    stage: mode === "pdf" ? "montando pdf comprimido" : mode === "full-pdf" ? "montando zip com pdf comprimido" : "montando zip final",
+    ...stagePayload,
+    regeneratedDates,
+    invalidatedEvidenceIds,
+    analyticsPiStatus,
+    analyticsFullMonthStatus,
+  });
+  const downloadParams = new URLSearchParams({
+    piCodigo,
+    siteSigla,
+    download: "1",
+    mode,
+    variant,
+    pdfMaxWidth: String(pdfMaxWidth),
+    pdfQuality: String(pdfQuality),
+    pdfResolution: String(pdfResolution),
+    imageMaxWidth: String(imageMaxWidth),
+    imageQuality: String(imageQuality),
+  });
+  await progressJob(job.id, {
+    stage: "materializando artefato comprimido",
+    ...stagePayload,
+    regeneratedDates,
+    invalidatedEvidenceIds,
+    analyticsPiStatus,
+    analyticsFullMonthStatus,
+  });
+  const artifact = await privateApiDownload(`/api/pi-site-exports?${downloadParams.toString()}`);
+  const artifactExtension = artifact.contentType === "application/pdf" ? ".pdf" : ".zip";
+  const artifactFileName = [
+    `PI-${slugifyPathPart(piCodigo)}`,
+    slugifyPathPart(siteSigla),
+    slugifyPathPart(mode),
+  ].join("-") + artifactExtension;
+  const artifactObjectKey = [
+    ADOPS_EXPORT_BASE_PATH,
+    slugifyPathPart(siteSigla),
+    slugifyPathPart(piCodigo),
+    slugifyPathPart(job.id),
+    artifactFileName,
+  ].filter(Boolean).join("/");
+  await uploadBufferToSpaces({
+    buffer: artifact.buffer,
+    bucket: ADOPS_EXPORT_BUCKET,
+    objectKey: artifactObjectKey,
+    contentType: artifact.contentType,
+  });
+  const downloadUrl = `${spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET)}/${artifactObjectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
   return {
     stage: "completed",
     piCodigo,
     siteSigla,
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
     insertionIds: descriptor.insertionIds,
     invalidatedEvidenceIds,
     regeneratedDates,
     analyticsPiStatus,
     analyticsFullMonthStatus,
     downloadUrl,
+    artifactBytes: artifact.buffer.length,
+    artifactContentType: artifact.contentType,
+    artifactFileName,
+    artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
   };
 }
 

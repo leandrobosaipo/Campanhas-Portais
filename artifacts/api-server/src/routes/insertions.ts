@@ -2,11 +2,11 @@ import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { promisify } from "node:util";
 import { Router, type IRouter } from "express";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
-import { db, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable } from "@workspace/db";
+import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable } from "@workspace/db";
 import {
   CreateInsertionBody,
   GetInsertionParams,
@@ -49,11 +49,232 @@ import { loadLocalCaptureMetadata, saveLocalCaptureMetadata } from "../lib/local
 import { generateOperationalDocument, listOperationalDocuments, type OperationalDocumentKind } from "../lib/operational-documents";
 import { getPrintRunner } from "../lib/print-runner";
 import type { PrintRunnerJobPayload, PrintRunnerJobResultItem } from "../lib/print-runner-contract";
+import {
+  buildDeliveryPackageName,
+  buildDeliveryPrintFileName,
+  calculateSavingsPercent,
+  deliverySegment,
+  EvidenceExportInputError,
+  parseEvidenceExportOptions,
+  prepareEvidenceImage,
+  resolveDeliveryDateRange,
+  resolveDeliveryPiCode,
+  type EvidenceImageVariant,
+} from "../lib/evidence-export";
+import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
+import { mediaNamesCompatible } from "../lib/media-consistency";
 
 const router: IRouter = Router();
 
 const execFileAsync = promisify(execFile);
 const printRunner = getPrintRunner();
+
+type CompressedEvidencePdfResult = {
+  ok: true;
+  pageCount: number;
+  sourceBytes: number;
+  outputBytes: number;
+  compressionRatio: number | null;
+  maxWidth: number;
+  quality: number;
+  resolution: number;
+  outputPath: string;
+  imageCount: number;
+  imageBytes: number;
+  imagesOutputDir: string | null;
+};
+
+const CONTACT_SHEET_SCRIPT = String.raw`
+import sys
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+output_path = Path(sys.argv[1])
+sources = [Path(value) for value in sys.argv[2:5]]
+if len(sources) != 3 or any(not source.is_file() for source in sources):
+    raise ValueError("contact_sheet_sources_invalid")
+
+cell_width, cell_height, label_height, margin = 600, 520, 54, 24
+canvas = Image.new("RGB", (cell_width * 3 + margin * 4, cell_height + label_height + margin * 2), "#f5f1e8")
+draw = ImageDraw.Draw(canvas)
+font = ImageFont.load_default()
+labels = ("PRIMEIRA", "INTERMEDIARIA", "ULTIMA")
+
+for index, (source_path, label) in enumerate(zip(sources, labels)):
+    with Image.open(source_path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image.thumbnail((cell_width, cell_height), Image.Resampling.LANCZOS)
+        x = margin + index * (cell_width + margin) + (cell_width - image.width) // 2
+        y = margin + (cell_height - image.height) // 2
+        canvas.paste(image, (x, y))
+    text = f"{label} - {source_path.stem}"[:85]
+    draw.text((margin + index * (cell_width + margin), margin + cell_height + 14), text, fill="#222222", font=font)
+
+output_path.parent.mkdir(parents=True, exist_ok=True)
+canvas.save(output_path, "JPEG", quality=82, optimize=True, progressive=True)
+`;
+
+async function listFilesRecursively(rootDir: string): Promise<string[]> {
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const fullPath = join(rootDir, entry.name);
+    return entry.isDirectory() ? listFilesRecursively(fullPath) : [fullPath];
+  }));
+  return nested.flat().sort();
+}
+
+function sanitizeEditorialPosts(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 25).map((item) => {
+    const row = item && typeof item === "object" && !Array.isArray(item)
+      ? item as Record<string, unknown>
+      : {};
+    return {
+      id: Number.isFinite(Number(row.id)) && Number(row.id) > 0 ? Number(row.id) : null,
+      url: typeof row.url === "string" ? row.url.slice(0, 2_048) : null,
+      title: typeof row.title === "string" ? row.title.slice(0, 240) : null,
+      date: typeof row.date === "string" ? row.date.slice(0, 64) : null,
+      source: typeof row.source === "string" ? row.source.slice(0, 160) : null,
+    };
+  }).filter((item) => item.url && item.date);
+}
+
+async function writeRetroAuditArtifacts(options: {
+  rootDir: string;
+  descriptor: Awaited<ReturnType<typeof describePiSiteExport>> & {};
+  insertions: EnrichedInsertion[];
+}) {
+  const auditDir = join(options.rootDir, "04-AUDITORIA");
+  const manifestsDir = join(auditDir, "MANIFESTOS-EDITORIAIS");
+  await mkdir(manifestsDir, { recursive: true });
+  const entries: Array<Record<string, unknown>> = [];
+
+  for (const insertion of options.insertions) {
+    const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
+    const dates = Array.from(new Set(
+      evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)).filter((value): value is string => Boolean(value)),
+    )).sort();
+    for (const date of dates) {
+      const [status, metadata] = await Promise.all([
+        resolveEvidenceAuditStatus(insertion, date, evidences),
+        loadCaptureMetadataForAudit(insertion.id, date),
+      ]);
+      const rawMetadata = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? metadata as Record<string, unknown>
+        : {};
+      const rawManifest = rawMetadata.retroContentManifest && typeof rawMetadata.retroContentManifest === "object" && !Array.isArray(rawMetadata.retroContentManifest)
+        ? rawMetadata.retroContentManifest as Record<string, unknown>
+        : {};
+      const proof = status.audit?.retroContentProof ?? null;
+      const manifest = {
+        version: 1,
+        piCodigo: options.descriptor.piCodigo,
+        siteSigla: options.descriptor.siteSigla,
+        insertionId: insertion.id,
+        date,
+        cutoff: typeof rawManifest.cutoff === "string" ? rawManifest.cutoff : status.audit?.requestedCaptureAt ?? null,
+        source: typeof rawManifest.source === "string" ? rawManifest.source : proof?.sourceMode ?? null,
+        reconstructed: rawManifest.reconstructed === true,
+        expectedPosts: sanitizeEditorialPosts(rawManifest.expectedPosts),
+        visiblePosts: sanitizeEditorialPosts(rawManifest.visiblePosts),
+        proof,
+      };
+      const approved = status.status === "ok" && proof?.status === "approved" && proof?.futureCount === 0 && Boolean(proof?.manifestHash);
+      if (!approved) {
+        throw new EvidenceExportInputError(`Prova editorial não aprovada na inserção ${insertion.id}, data ${date}.`, 422);
+      }
+      const manifestName = `${deliverySegment(insertion.siteSigla, "SITE")}-INSERCAO-${insertion.id}-${date}.json`;
+      await writeFile(join(manifestsDir, manifestName), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+      entries.push({
+        insertionId: insertion.id,
+        date,
+        status: "audited",
+        retroContentProof: proof,
+        manifestFile: `04-AUDITORIA/MANIFESTOS-EDITORIAIS/${manifestName}`,
+      });
+    }
+  }
+
+  const report = {
+    ok: entries.length > 0 && entries.every((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved"),
+    generatedAt: new Date().toISOString(),
+    piCodigo: options.descriptor.piCodigo,
+    siteSigla: options.descriptor.siteSigla,
+    total: entries.length,
+    approved: entries.filter((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved").length,
+    futureCount: entries.reduce((sum, entry) => sum + Number((entry.retroContentProof as Record<string, unknown>)?.futureCount || 0), 0),
+    entries,
+  };
+  await writeFile(join(auditDir, "AUDITORIA-RETRO-CONTENT.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  return report;
+}
+
+async function writeContactSheet(rootDir: string, imagesDir: string) {
+  const images = (await listFilesRecursively(imagesDir)).filter((filePath) => /\.jpe?g$/i.test(filePath));
+  if (!images.length) throw new EvidenceExportInputError("Não há JPEGs para a contact sheet.", 422);
+  const selected = [images[0], images[Math.floor((images.length - 1) / 2)], images.at(-1)!];
+  const outputPath = join(rootDir, "04-AUDITORIA", "CONTACT-SHEET-PRIMEIRA-INTERMEDIARIA-ULTIMA.jpg");
+  await execFileAsync("python3", ["-c", CONTACT_SHEET_SCRIPT, outputPath, ...selected], { timeout: 120_000, maxBuffer: 1024 * 1024 });
+  return outputPath;
+}
+
+async function writeSha256Sums(rootDir: string) {
+  const checksumPath = join(rootDir, "SHA256SUMS.txt");
+  const files = (await listFilesRecursively(rootDir)).filter((filePath) => filePath !== checksumPath);
+  const lines = await Promise.all(files.map(async (filePath) => {
+    const digest = crypto.createHash("sha256").update(await readFile(filePath)).digest("hex");
+    return `${digest}  ${relative(rootDir, filePath)}`;
+  }));
+  await writeFile(checksumPath, `${lines.join("\n")}\n`, "utf8");
+}
+
+function parseBoundedInteger(
+  value: unknown,
+  options: { minimum: number; maximum: number; fallback: number },
+) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return options.fallback;
+  return Math.max(options.minimum, Math.min(options.maximum, parsed));
+}
+
+async function buildCompressedEvidencePdf(options: {
+  tempDir: string;
+  outputPath: string;
+  pages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number; outputRelativePath?: string }>;
+  maxWidth: number;
+  quality: number;
+  resolution: number;
+  imagesOutputDir?: string;
+}) {
+  const manifestPath = join(options.tempDir, "compressed-evidence-pdf-manifest.json");
+  await writeFile(manifestPath, JSON.stringify({
+    version: 1,
+    maxWidth: options.maxWidth,
+    quality: options.quality,
+    resolution: options.resolution,
+    imagesOutputDir: options.imagesOutputDir,
+    pages: options.pages,
+  }), "utf8");
+
+  const projectRoot = process.env.ADOPS_PROJECT_ROOT || process.cwd();
+  const scriptPath = join(projectRoot, "scripts", "src", "build-compressed-evidence-pdf.py");
+  try {
+    const { stdout } = await execFileAsync("python3", [
+      scriptPath,
+      "--manifest",
+      manifestPath,
+      "--output",
+      options.outputPath,
+    ], { maxBuffer: 4 * 1024 * 1024 });
+    const result = JSON.parse(stdout.trim()) as CompressedEvidencePdfResult;
+    if (!result.ok || result.pageCount !== options.pages.length || result.outputBytes <= 0) {
+      throw new Error("O gerador de PDF não confirmou todas as páginas solicitadas.");
+    }
+    return result;
+  } finally {
+    await rm(manifestPath, { force: true });
+  }
+}
 
 function shellEscape(value: string | null | undefined) {
   return `'${String(value ?? "").replace(/'/g, `'\"'\"'`)}'`;
@@ -337,9 +558,94 @@ function buildPiSiteExportArchiveBaseName(
   );
 }
 
-async function fetchPiSiteExportJobResponse(pathname: string, init?: RequestInit) {
-  const response = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}${pathname}`, init);
-  return response;
+type PiSiteExportOpsJobRow = {
+  id: string;
+  kind: string;
+  status: string;
+  payload_json: unknown;
+  result_json: unknown;
+  error_text: string | null;
+  requested_by: string | null;
+  runner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function parseJobJson(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createLocalPiSiteExportJob(options: {
+  payload: Record<string, unknown>;
+  requestedBy: string;
+  idempotencyKey: string;
+}) {
+  const existing = await pool.query<{ id: string; status: string }>(
+    `SELECT id, status
+       FROM ops_jobs
+      WHERE kind = 'pi-site-export'
+        AND payload_json::jsonb ->> 'idempotencyKey' = $1
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [options.idempotencyKey],
+  );
+  if (existing.rows[0]) {
+    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+  }
+
+  const jobId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await pool.query(
+    `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+     VALUES ($1, 'pi-site-export', 'ready_for_runner', $2, NULL, NULL, $3, NULL, $4, $5)`,
+    [jobId, JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }), options.requestedBy, now, now],
+  );
+  return { jobId, status: "ready_for_runner", duplicate: false };
+}
+
+async function getLocalPiSiteExportJob(jobId: string) {
+  const result = await pool.query<PiSiteExportOpsJobRow>(
+    "SELECT * FROM ops_jobs WHERE id = $1 AND kind = 'pi-site-export' LIMIT 1",
+    [jobId],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  const payload = parseJobJson(row.payload_json);
+  const jobResult = parseJobJson(row.result_json);
+  const execution = jobResult?.execution && typeof jobResult.execution === "object" && !Array.isArray(jobResult.execution)
+    ? jobResult.execution as Record<string, unknown>
+    : null;
+  const artifactResult = execution ?? jobResult;
+  return {
+    id: row.id,
+    jobId: row.id,
+    kind: row.kind,
+    status: row.status,
+    stage: typeof artifactResult?.stage === "string" ? artifactResult.stage : row.status,
+    piCodigo: payload?.piCodigo ?? null,
+    siteSigla: payload?.siteSigla ?? null,
+    mode: payload?.mode ?? null,
+    variant: payload?.variant ?? null,
+    downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
+    artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
+    artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
+    artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
+    error: row.error_text,
+    runnerId: row.runner_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    result: jobResult,
+  };
 }
 
 async function attachAnalyticsPdfsToExport(tempDir: string, insertionId: number, lines: string[]) {
@@ -398,6 +704,156 @@ function resolveOperationalPrintFolder(insertion: Awaited<ReturnType<typeof enri
     .toUpperCase();
 
   return safeFileName(normalized || "PRINTS", "PRINTS");
+}
+
+type PrintDeliveryMetrics = {
+  total: number;
+  generated: number;
+  failed: number;
+  originalBytes: number;
+  outputBytes: number;
+};
+
+function emptyPrintDeliveryMetrics(): PrintDeliveryMetrics {
+  return { total: 0, generated: 0, failed: 0, originalBytes: 0, outputBytes: 0 };
+}
+
+function mergePrintDeliveryMetrics(target: PrintDeliveryMetrics, source: PrintDeliveryMetrics) {
+  target.total += source.total;
+  target.generated += source.generated;
+  target.failed += source.failed;
+  target.originalBytes += source.originalBytes;
+  target.outputBytes += source.outputBytes;
+}
+
+function setPrintDeliveryHeaders(
+  res: any,
+  metrics: PrintDeliveryMetrics,
+  variant: EvidenceImageVariant,
+  requestId: string,
+) {
+  const outputFormat = variant === "web" ? "jpeg" : "png";
+  res.setHeader("cache-control", "no-store");
+  res.setHeader("x-adops-export-request-id", requestId);
+  res.setHeader("x-adops-export-mode", "prints-only");
+  res.setHeader("x-adops-export-variant", variant);
+  res.setHeader("x-adops-export-image-format", outputFormat);
+  res.setHeader("x-adops-export-images-total", String(metrics.total));
+  res.setHeader("x-adops-export-images-generated", String(metrics.generated));
+  res.setHeader("x-adops-export-images-failed", String(metrics.failed));
+  res.setHeader("x-adops-export-original-bytes", String(metrics.originalBytes));
+  res.setHeader("x-adops-export-output-bytes", String(metrics.outputBytes));
+  res.setHeader("x-adops-export-savings-percent", String(calculateSavingsPercent(metrics.originalBytes, metrics.outputBytes)));
+  res.setHeader("access-control-expose-headers", [
+    "content-disposition",
+    "x-adops-export-request-id",
+    "x-adops-export-mode",
+    "x-adops-export-variant",
+    "x-adops-export-image-format",
+    "x-adops-export-images-total",
+    "x-adops-export-images-generated",
+    "x-adops-export-images-failed",
+    "x-adops-export-original-bytes",
+    "x-adops-export-output-bytes",
+    "x-adops-export-savings-percent",
+  ].join(", "));
+}
+
+async function writePrintDeliveryFolder(options: {
+  rootDir: string;
+  insertion: Awaited<ReturnType<typeof enrichInsertion>>;
+  evidences: Array<typeof evidencesTable.$inferSelect>;
+  variant: EvidenceImageVariant;
+  packageNameOverride?: string;
+  maxWidth?: number;
+  quality?: number;
+}) {
+  const { rootDir, insertion, evidences, variant } = options;
+  const dates = evidences.map((evidence) => getEvidenceDateKey(evidence.titulo));
+  const packageName = options.packageNameOverride ?? buildDeliveryPackageName(insertion, dates);
+  const packageDir = join(rootDir, packageName);
+  await mkdir(packageDir, { recursive: true });
+
+  const metrics = emptyPrintDeliveryMetrics();
+  metrics.total = evidences.length;
+  const failures: Array<{ evidenceId: number; date: string | null; error: string }> = [];
+  const outputFiles: Array<{ inputPath: string; dateKey: string; evidenceId: number }> = [];
+  const dateOccurrences = new Map<string, number>();
+
+  for (const evidence of evidences) {
+    const dateKey = getEvidenceDateKey(evidence.titulo);
+    if (!dateKey || !isValidHttpUrl(evidence.arquivoUrl)) {
+      metrics.failed += 1;
+      failures.push({
+        evidenceId: evidence.id,
+        date: dateKey,
+        error: !dateKey ? "evidence_date_missing" : "evidence_url_invalid",
+      });
+      continue;
+    }
+
+    const occurrence = (dateOccurrences.get(dateKey) ?? 0) + 1;
+    dateOccurrences.set(dateKey, occurrence);
+    const fileName = buildDeliveryPrintFileName(
+      insertion,
+      dateKey,
+      occurrence > 1 ? `EV-${evidence.id}` : undefined,
+      variant === "web" ? ".jpg" : ".png",
+    );
+
+    try {
+      const response = await fetch(evidence.arquivoUrl!);
+      if (!response.ok) throw new EvidenceExportInputError(`download_http_${response.status}`, 422);
+      const prepared = await prepareEvidenceImage({
+        source: Buffer.from(await response.arrayBuffer()),
+        outputPath: join(packageDir, fileName),
+        variant,
+        maxWidth: options.maxWidth,
+        quality: options.quality,
+      });
+      metrics.generated += 1;
+      metrics.originalBytes += prepared.originalBytes;
+      metrics.outputBytes += prepared.outputBytes;
+      outputFiles.push({
+        inputPath: join(packageDir, fileName),
+        dateKey,
+        evidenceId: evidence.id,
+      });
+    } catch (error) {
+      metrics.failed += 1;
+      failures.push({
+        evidenceId: evidence.id,
+        date: dateKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { packageName, metrics, failures, outputFiles };
+}
+
+function buildPiSitePrintDeliveryArchiveName(
+  descriptor: { piCodigo: string; siteSigla: string },
+  insertions: Array<Awaited<ReturnType<typeof enrichInsertion>>>,
+  evidenceDates: string[],
+) {
+  if (insertions.length === 1) return buildDeliveryPackageName(insertions[0], evidenceDates);
+  const range = resolveDeliveryDateRange(
+    {
+      periodoInicio: insertions.map((item) => item.periodoInicio).filter(Boolean).sort()[0] ?? null,
+      periodoFim: insertions.map((item) => item.periodoFim).filter(Boolean).sort().at(-1) ?? null,
+    },
+    evidenceDates,
+  );
+  return [
+    deliverySegment(descriptor.siteSigla, "SITE"),
+    "PI",
+    resolveDeliveryPiCode(descriptor.piCodigo),
+    "PRINTS",
+    range.start,
+    "A",
+    range.end,
+  ].join("-");
 }
 
 async function attachOperationalDocumentsToExport(tempDir: string, insertion: Awaited<ReturnType<typeof enrichInsertion>>, lines: string[]) {
@@ -504,6 +960,9 @@ async function resolveEvidenceAuditStatus(
     isReachable,
     urlStatus,
     arquivoUrl,
+    readinessAudit: metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).readinessAudit ?? null
+      : null,
     audit,
     checklistValidation,
     status,
@@ -777,16 +1236,22 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
       evidenceCount: evidences.length,
       analyticsCount: analyticsReports.length,
       visibleDocsCount: visibleDocs.length,
-      exportable: evidences.length > 0 || analyticsReports.length > 0 || visibleDocs.length > 0,
+      operational: item.bannerPublicadoNoSite === true && Boolean(item.mediaUrl),
+      exportable: item.bannerPublicadoNoSite === true
+        && Boolean(item.mediaUrl)
+        && (evidences.length > 0 || analyticsReports.length > 0 || visibleDocs.length > 0),
     };
   }));
 
+  const operational = descriptors.filter((item) => item.operational);
   const exportable = descriptors.filter((item) => item.exportable);
   const skippedInsertions = descriptors
-    .filter((item) => !item.exportable)
+    .filter((item) => !item.operational || !item.exportable)
     .map((item) => ({
       insertionId: item.insertion.id,
-      reason: "Sem evidências, Analytics concluído ou documentos operacionais visíveis para anexar.",
+      reason: !item.operational
+        ? "Inserção não publicada ou sem mídia; excluída da captura e da entrega para evitar evidência de veiculação inexistente."
+        : "Sem evidências, Analytics concluído ou documentos operacionais visíveis para anexar.",
     }));
 
   const sample = insertions[0]!;
@@ -800,6 +1265,7 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
     competencia,
     totalInsertions: insertions.length,
     insertionIds: insertions.map((item) => item.id),
+    operationalInsertionIds: operational.map((item) => item.insertion.id),
     label: `PI ${resolvedPi} · ${resolvedSiteSigla} · ${pluralizeInsertion(insertions.length)}`,
     downloadUrl: exportable.length
       ? `/api/pi-site-exports?piCodigo=${encodeURIComponent(resolvedPi)}&siteSigla=${encodeURIComponent(resolvedSiteSigla)}&download=1`
@@ -1003,14 +1469,28 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
   const supportedGroups = getSupportedGroupIds(siteSigla);
   const articleGroups = siteConfig.formatMappings.filter((item) => item.page === "article").map((item) => item.groupId);
   const detectedArticleUrl = extractFirstArticleUrl(homeHtml, siteConfig.domain);
-  let articleUrl = detectedArticleUrl ?? siteConfig.articleFallbackUrl;
+  const isSameSiteUrl = (value: string | null | undefined) => {
+    if (!value) return false;
+    try {
+      const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+      const expected = siteConfig.domain.toLowerCase().replace(/^www\./, "");
+      return hostname === expected || hostname.endsWith(`.${expected}`);
+    } catch {
+      return false;
+    }
+  };
+  const safeFallbackUrl = isSameSiteUrl(siteConfig.articleFallbackUrl) ? siteConfig.articleFallbackUrl : null;
+  if (siteConfig.articleFallbackUrl && !safeFallbackUrl) {
+    warnings.push("URL interna de fallback ignorada porque pertence a outro portal.");
+  }
+  let articleUrl = detectedArticleUrl ?? safeFallbackUrl;
   let articleItems: Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }> = [];
 
   if (articleUrl) {
     let articleHtml = await fetch(articleUrl).then((response) => response.text());
     articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
-    if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && siteConfig.articleFallbackUrl && articleUrl !== siteConfig.articleFallbackUrl) {
-      articleUrl = siteConfig.articleFallbackUrl;
+    if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && safeFallbackUrl && articleUrl !== safeFallbackUrl) {
+      articleUrl = safeFallbackUrl;
       articleHtml = await fetch(articleUrl).then((response) => response.text());
       articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
       warnings.push("Usando URL interna de fallback para verificar posições de página interna.");
@@ -1176,6 +1656,10 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     positionLabel,
     pageLabel,
     adrotateGroupId: groupId,
+    mappingStatus: groupId == null ? "unresolved" : "resolved",
+    blockingIssues: groupId == null
+      ? [{ code: "format_mapping_unresolved", message: `Nenhum grupo AdRotate foi resolvido para ${siteSigla ?? "portal ausente"} / ${positionLabel ?? "formato ausente"}.` }]
+      : [],
     mediaUrl: insertion.mediaUrl,
     mediaBasename,
     plannedSelf,
@@ -1183,6 +1667,92 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     historicalAdminMatches,
     fallbackCandidates,
   });
+});
+
+router.get("/insertions/:id/media-consistency", async (req, res): Promise<void> => {
+  const params = GetInsertionRelationParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, params.data.id));
+  if (!rawInsertion) {
+    res.status(404).json({ error: "Insertion not found" });
+    return;
+  }
+
+  try {
+    const insertion = await enrichInsertion(rawInsertion);
+    const siteSigla = insertion.siteSigla ?? null;
+    const localFormato = insertion.localFormatoNormalizado ?? insertion.localFormato;
+    const groupId = getAdRotateGroupId(siteSigla, localFormato);
+    const drive = siteSigla
+      ? await findDriveCampaignMedia({
+          siteSigla,
+          piCodigo: insertion.piCodigo ?? "",
+          campaignName: insertion.campanhaName ?? "",
+          refreshDrive: false,
+        })
+      : null;
+    const live = siteSigla
+      ? await fetchLivePreview(siteSigla)
+      : { items: [], warnings: ["Inserção sem portal vinculado."] };
+    const driveMedia = drive?.mediaFiles ?? [];
+    const matchingDriveMedia = driveMedia.filter((file) => mediaNamesCompatible(insertion.mediaUrl, file.name));
+    const liveInGroup = live.items.filter((item) => groupId != null && item.groupId === groupId).map((item) => ({
+      ...item,
+      matchesAdopsMedia: mediaNamesCompatible(insertion.mediaUrl, item.mediaUrl),
+    }));
+    const issues: string[] = [];
+    const warnings: string[] = [];
+
+    if (!siteSigla) issues.push("site_missing");
+    if (!groupId) issues.push("format_mapping_unresolved");
+    if (!insertion.mediaUrl) issues.push("adops_media_missing");
+    if (!drive || drive.status === "not_found" || drive.status === "unavailable") issues.push("drive_campaign_folder_missing");
+    if (driveMedia.length > 1) issues.push("drive_media_ambiguous");
+    if (insertion.mediaUrl && driveMedia.length && matchingDriveMedia.length === 0) issues.push("adops_drive_media_mismatch");
+    if (insertion.bannerPublicadoNoSite && groupId && insertion.mediaUrl && !liveInGroup.some((item) => item.matchesAdopsMedia)) {
+      warnings.push("public_media_not_observed_in_single_rotation_sample");
+    }
+
+    res.json({
+      version: "media-consistency-v1",
+      generatedAt: new Date().toISOString(),
+      insertion: {
+        id: insertion.id,
+        campaignId: insertion.campanhaId,
+        campaignName: insertion.campanhaName,
+        piCodigo: insertion.piCodigo,
+        siteSigla,
+        localFormato,
+        groupId,
+        mediaUrl: insertion.mediaUrl,
+        mediaBasename: basename(String(insertion.mediaUrl ?? "")) || null,
+        published: insertion.bannerPublicadoNoSite === true,
+      },
+      drive,
+      comparison: {
+        matchingDriveMedia: matchingDriveMedia.map((file) => ({ id: file.id, name: file.name, path: file.path })),
+        liveInExpectedGroup: liveInGroup,
+      },
+      status: issues.length ? "needs_confirmation" : "consistent",
+      approved: issues.length === 0,
+      issues,
+      warnings,
+      nextAction: issues.includes("adops_drive_media_mismatch") || issues.includes("drive_media_ambiguous") || issues.includes("source_pi_conflict")
+        ? "confirm_sources_before_mutation"
+        : issues.length
+          ? "repair_publication_or_mapping"
+          : "none",
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "media_consistency_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 router.post("/integrations/adrotate/media/sync-related", async (req, res): Promise<void> => {
@@ -1338,8 +1908,14 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
 
 router.get("/insertions/capture-proof/audit/failures", async (req, res): Promise<void> => {
   const { competencia, siteId, clienteId, agenciaId } = extractAuditQueryParams(req.query as Record<string, unknown>);
+  const insertionId = typeof req.query.insertionId === "string"
+    ? Number.parseInt(req.query.insertionId, 10)
+    : undefined;
 
   let rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
+  if (Number.isFinite(insertionId)) {
+    rawInsertions = rawInsertions.filter((item) => item.id === insertionId);
+  }
   if (siteId) rawInsertions = rawInsertions.filter((item) => item.siteId === siteId);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
 
@@ -1395,6 +1971,7 @@ router.get("/insertions/capture-proof/audit/failures", async (req, res): Promise
   }
 
   res.json({
+    insertionId: Number.isFinite(insertionId) ? insertionId : null,
     competencia: competencia ?? null,
     siteId: siteId ?? null,
     clienteId: clienteId ?? null,
@@ -1583,6 +2160,9 @@ router.get("/insertions/:id/capture-proof/status", async (req, res): Promise<voi
     isReachable,
     urlStatus,
     arquivoUrl,
+    readinessAudit: metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).readinessAudit ?? null
+      : null,
     audit,
     checklistValidation,
     status,
@@ -1900,6 +2480,16 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
     return;
   }
 
+  let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
+  try {
+    exportOptions = parseEvidenceExportOptions(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
   const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
   if (!rawInsertion) {
     res.status(404).json({ error: "Inserção não encontrada." });
@@ -1908,9 +2498,67 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
 
   const insertion = await enrichInsertion(rawInsertion);
   const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId)).orderBy(evidencesTable.criadoEm);
-  const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
   const exportRequestId = crypto.randomUUID();
   const downloadSource = typeof req.query.source === "string" ? req.query.source : "unknown";
+
+  if (exportOptions.mode === "prints-only") {
+    if (evidences.length === 0) {
+      res.status(409).json({ error: "A inserção não possui prints para exportação." });
+      return;
+    }
+    const tempDir = await mkdtemp(join(tmpdir(), `adops-print-delivery-${insertionId}-`));
+    let zipPath: string | null = null;
+    try {
+      const delivery = await writePrintDeliveryFolder({
+        rootDir: tempDir,
+        insertion,
+        evidences,
+        variant: exportOptions.variant,
+      });
+      if (delivery.failures.length > 0) {
+        setPrintDeliveryHeaders(res, delivery.metrics, exportOptions.variant, exportRequestId);
+        await rm(tempDir, { recursive: true, force: true });
+        res.status(422).json({
+          error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.",
+          requestId: exportRequestId,
+          failed: delivery.failures,
+        });
+        return;
+      }
+
+      zipPath = join(tmpdir(), `${delivery.packageName}-${exportRequestId}.zip`);
+      await execFileAsync("zip", ["-rq", zipPath, delivery.packageName], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+      setPrintDeliveryHeaders(res, delivery.metrics, exportOptions.variant, exportRequestId);
+      (req as any).log?.info?.({
+        exportRequestId,
+        insertionId,
+        source: downloadSource,
+        mode: exportOptions.mode,
+        variant: exportOptions.variant,
+        ...delivery.metrics,
+      }, "print delivery export completed");
+      res.download(zipPath, `${delivery.packageName}.zip`, async () => {
+        await Promise.allSettled([
+          rm(tempDir, { recursive: true, force: true }),
+          rm(zipPath!, { force: true }),
+        ]);
+      });
+      return;
+    } catch (error) {
+      await Promise.allSettled([
+        rm(tempDir, { recursive: true, force: true }),
+        zipPath ? rm(zipPath, { force: true }) : Promise.resolve(),
+      ]);
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao gerar o pacote de prints.",
+        requestId: exportRequestId,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
   (req as any).log?.info?.({
     exportRequestId,
     insertionId,
@@ -2072,25 +2720,51 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
   }
 
   try {
-    const response = await fetchPiSiteExportJobResponse("/api/pi-site-exports/jobs", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        piCodigo,
-        siteSigla,
-        requestedBy: typeof req.body?.requestedBy === "string" ? req.body.requestedBy : "api-server",
-        source: typeof req.body?.source === "string" ? req.body.source : "api-server",
-      }),
+    const exportOptions = parseEvidenceExportOptions({
+      ...(req.body as Record<string, unknown>),
+      mode: req.body?.mode ?? "full-pdf",
     });
-    const text = await response.text();
-    res.status(response.status);
-    res.setHeader("Content-Type", response.headers.get("content-type") || "application/json; charset=utf-8");
+    const payload = {
+      piCodigo,
+      siteSigla: siteSigla.toUpperCase(),
+      mode: exportOptions.mode,
+      variant: exportOptions.variant,
+      pdfMaxWidth: parseBoundedInteger(req.body?.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1920 }),
+      pdfQuality: parseBoundedInteger(req.body?.pdfQuality, { minimum: 45, maximum: 85, fallback: 68 }),
+      pdfResolution: parseBoundedInteger(req.body?.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 }),
+      imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
+      imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
+      source: typeof req.body?.source === "string" ? req.body.source : "api-server",
+    };
+    const requestedKey = typeof req.headers["idempotency-key"] === "string"
+      ? req.headers["idempotency-key"].trim()
+      : "";
+    const idempotencyKey = requestedKey || crypto.createHash("sha256")
+      .update(JSON.stringify(payload))
+      .digest("hex");
+    if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
+      res.status(400).json({ error: "Idempotency-Key inválida." });
+      return;
+    }
+    const created = await createLocalPiSiteExportJob({
+      payload,
+      requestedBy: typeof req.body?.requestedBy === "string" ? req.body.requestedBy : "api-server",
+      idempotencyKey,
+    });
     res.setHeader("Cache-Control", "no-store");
-    res.send(text);
+    res.status(created.duplicate ? 200 : 202).json({
+      ok: true,
+      jobId: created.jobId,
+      kind: "pi-site-export",
+      status: created.status,
+      duplicate: created.duplicate,
+      piCodigo,
+      siteSigla: siteSigla.toUpperCase(),
+      mode: exportOptions.mode,
+      variant: exportOptions.variant,
+    });
   } catch (error) {
-    res.status(502).json({
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
       error: "Falha ao criar o job assíncrono do pacote PI/site.",
       details: error instanceof Error ? error.message : String(error),
     });
@@ -2099,14 +2773,15 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
 
 router.get("/pi-site-exports/jobs/:jobId", async (req, res): Promise<void> => {
   try {
-    const response = await fetchPiSiteExportJobResponse(`/api/pi-site-exports/jobs/${encodeURIComponent(req.params.jobId)}`);
-    const text = await response.text();
-    res.status(response.status);
-    res.setHeader("Content-Type", response.headers.get("content-type") || "application/json; charset=utf-8");
+    const job = await getLocalPiSiteExportJob(req.params.jobId);
+    if (!job) {
+      res.status(404).json({ error: "Job PI/site não encontrado." });
+      return;
+    }
     res.setHeader("Cache-Control", "no-store");
-    res.send(text);
+    res.json(job);
   } catch (error) {
-    res.status(502).json({
+    res.status(500).json({
       error: "Falha ao consultar o job assíncrono do pacote PI/site.",
       details: error instanceof Error ? error.message : String(error),
     });
@@ -2115,9 +2790,23 @@ router.get("/pi-site-exports/jobs/:jobId", async (req, res): Promise<void> => {
 
 router.get("/pi-site-exports/jobs/:jobId/download", async (req, res): Promise<void> => {
   try {
-    res.redirect(`${ANALYTICS_PUBLIC_API_BASE_URL}/api/pi-site-exports/jobs/${encodeURIComponent(req.params.jobId)}/download`);
+    const job = await getLocalPiSiteExportJob(req.params.jobId);
+    if (!job) {
+      res.status(404).json({ error: "Job PI/site não encontrado." });
+      return;
+    }
+    if (job.status !== "completed" || !job.downloadUrl) {
+      res.status(409).json({
+        error: "Artefato ainda não está pronto para download.",
+        jobId: job.jobId,
+        status: job.status,
+        stage: job.stage,
+      });
+      return;
+    }
+    res.redirect(job.downloadUrl);
   } catch (error) {
-    res.status(502).json({
+    res.status(500).json({
       error: "Falha ao redirecionar o download do pacote PI/site.",
       details: error instanceof Error ? error.message : String(error),
     });
@@ -2128,6 +2817,21 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const piCodigo = typeof req.query.piCodigo === "string" ? req.query.piCodigo : "";
   const siteSigla = typeof req.query.siteSigla === "string" ? req.query.siteSigla : "";
   const download = String(req.query.download ?? "") === "1";
+  const pdfMaxWidth = parseBoundedInteger(req.query.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1920 });
+  const pdfQuality = parseBoundedInteger(req.query.pdfQuality, { minimum: 45, maximum: 85, fallback: 68 });
+  const pdfResolution = parseBoundedInteger(req.query.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 });
+  const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth ?? req.query.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
+  const imageQuality = parseBoundedInteger(req.query.imageQuality ?? req.query.pdfQuality, { minimum: 45, maximum: 90, fallback: 72 });
+  let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
+
+  try {
+    exportOptions = parseEvidenceExportOptions(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
 
   if (!piCodigo.trim()) {
     res.status(400).json({ error: "piCodigo é obrigatório." });
@@ -2149,7 +2853,21 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   }
 
   if (!download) {
-    res.json(descriptor);
+    res.json({
+      ...descriptor,
+      supportedExportModes: ["full", "prints-only", "pdf", "full-pdf"],
+      supportedImageVariants: ["original", "web"],
+      pdfDefaults: {
+        maxWidth: 1920,
+        quality: 68,
+        resolution: 120,
+      },
+      imageDefaults: {
+        format: "jpeg",
+        maxWidth: 1600,
+        quality: 72,
+      },
+    });
     return;
   }
 
@@ -2165,6 +2883,271 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const exportableInsertionIds = new Set(descriptor.exportableInsertionIds);
   const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
+
+  if (exportOptions.mode === "pdf" || exportOptions.mode === "full-pdf") {
+    const exportRequestId = crypto.randomUUID();
+    const pdfSourceDir = join(tempDir, ".pdf-source");
+    const pdfOutputDir = exportOptions.mode === "full-pdf" ? join(tempDir, "01-PRINTS-PDF") : tempDir;
+    const aggregateMetrics = emptyPrintDeliveryMetrics();
+    const pdfPages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number }> = [];
+    const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
+    const skippedInsertionIds: number[] = [];
+    const packageNameOccurrences = new Map<string, number>();
+    let pdfPath: string | null = null;
+    let zipPath: string | null = null;
+    try {
+      for (const insertion of exportableInsertions) {
+        const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        if (!evidences.length) {
+          skippedInsertionIds.push(insertion.id);
+          continue;
+        }
+        const evidenceDates = Array.from(new Set(
+          evidences
+            .map((evidence) => getEvidenceDateKey(evidence.titulo))
+            .filter((value): value is string => Boolean(value)),
+        ));
+        const auditSummary = await buildInsertionAuditSummary(insertion, evidences);
+        if (auditSummary.failedCount > 0 || auditSummary.auditedCount !== evidenceDates.length) {
+          failures.push({
+            insertionId: insertion.id,
+            evidenceId: 0,
+            date: null,
+            error: `audit_gate_failed:${auditSummary.auditedCount}/${evidenceDates.length}`,
+          });
+          continue;
+        }
+        const basePackageName = buildDeliveryPackageName(insertion, evidenceDates);
+        const occurrence = (packageNameOccurrences.get(basePackageName) ?? 0) + 1;
+        packageNameOccurrences.set(basePackageName, occurrence);
+        const delivery = await writePrintDeliveryFolder({
+          rootDir: pdfSourceDir,
+          insertion,
+          evidences,
+          variant: "original",
+          packageNameOverride: occurrence > 1 ? `${basePackageName}-INSERCAO-${insertion.id}` : basePackageName,
+        });
+        mergePrintDeliveryMetrics(aggregateMetrics, delivery.metrics);
+        failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
+        pdfPages.push(...delivery.outputFiles.map((item) => ({
+          ...item,
+          insertionId: insertion.id,
+        })));
+      }
+
+      if (failures.length > 0 || !pdfPages.length) {
+        await rm(tempDir, { recursive: true, force: true });
+        res.status(422).json({
+          error: failures.length
+            ? "O PDF foi bloqueado porque há evidências ausentes, inválidas ou sem auditoria."
+            : "Nenhuma evidência auditada disponível para montar o PDF.",
+          requestId: exportRequestId,
+          failed: failures,
+          skippedInsertionIds,
+        });
+        return;
+      }
+
+      pdfPages.sort((left, right) => {
+        const leftKey = `${left.dateKey ?? "9999-99-99"}-${String(left.insertionId).padStart(12, "0")}-${String(left.evidenceId).padStart(12, "0")}`;
+        const rightKey = `${right.dateKey ?? "9999-99-99"}-${String(right.insertionId).padStart(12, "0")}-${String(right.evidenceId).padStart(12, "0")}`;
+        return leftKey.localeCompare(rightKey);
+      });
+      await mkdir(pdfOutputDir, { recursive: true });
+      const pdfBaseName = safeFileName(
+        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
+        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
+      );
+      pdfPath = join(pdfOutputDir, `${pdfBaseName}.pdf`);
+      const pdfResult = await buildCompressedEvidencePdf({
+        tempDir,
+        outputPath: pdfPath,
+        pages: pdfPages.map((page) => ({
+          ...page,
+          outputRelativePath: relative(pdfSourceDir, page.inputPath),
+        })),
+        maxWidth: pdfMaxWidth,
+        quality: pdfQuality,
+        resolution: pdfResolution,
+        imagesOutputDir: exportOptions.mode === "full-pdf"
+          ? join(pdfOutputDir, "IMAGENS-INDEPENDENTES")
+          : undefined,
+      });
+      await rm(pdfSourceDir, { recursive: true, force: true });
+
+      res.setHeader("cache-control", "no-store");
+      res.setHeader("x-adops-export-request-id", exportRequestId);
+      res.setHeader("x-adops-export-mode", exportOptions.mode);
+      res.setHeader("x-adops-export-variant", "web");
+      res.setHeader("x-adops-export-image-format", "jpeg");
+      res.setHeader("x-adops-export-images-total", String(aggregateMetrics.total));
+      res.setHeader("x-adops-export-images-generated", String(aggregateMetrics.generated));
+      res.setHeader("x-adops-export-original-bytes", String(aggregateMetrics.originalBytes));
+      res.setHeader("x-adops-export-image-bytes", String(pdfResult.imageBytes));
+      res.setHeader("x-adops-export-web-png-bytes", String(pdfResult.imageBytes));
+      res.setHeader("x-adops-export-prepared-image-bytes", String(pdfResult.imageBytes));
+      res.setHeader("x-adops-export-pdf-bytes", String(pdfResult.outputBytes));
+      res.setHeader("x-adops-export-pages", String(pdfResult.pageCount));
+      res.setHeader("x-adops-export-independent-images", String(pdfResult.imageCount));
+      res.setHeader("x-adops-export-independent-image-bytes", String(pdfResult.imageBytes));
+      res.setHeader("x-adops-export-savings-percent", String(calculateSavingsPercent(aggregateMetrics.originalBytes, pdfResult.outputBytes)));
+      res.setHeader("access-control-expose-headers", [
+        "content-disposition",
+        "x-adops-export-request-id",
+        "x-adops-export-mode",
+        "x-adops-export-variant",
+        "x-adops-export-image-format",
+        "x-adops-export-images-total",
+        "x-adops-export-images-generated",
+        "x-adops-export-original-bytes",
+        "x-adops-export-image-bytes",
+        "x-adops-export-web-png-bytes",
+        "x-adops-export-prepared-image-bytes",
+        "x-adops-export-pdf-bytes",
+        "x-adops-export-pages",
+        "x-adops-export-independent-images",
+        "x-adops-export-independent-image-bytes",
+        "x-adops-export-savings-percent",
+      ].join(", "));
+
+      if (exportOptions.mode === "pdf") {
+        res.download(pdfPath, `${pdfBaseName}.pdf`, async () => {
+          await rm(tempDir, { recursive: true, force: true });
+        });
+        return;
+      }
+
+      const readmeLines = [
+        "PACOTE OPERACIONAL POR PI E SITE - PDF COMPRIMIDO",
+        "================================================",
+        "",
+        `PI: ${descriptor.piCodigo}`,
+        `Site: ${descriptor.siteSigla}`,
+        `Páginas do PDF: ${pdfResult.pageCount}`,
+        `Bytes dos PNGs originais: ${aggregateMetrics.originalBytes}`,
+        `Bytes das imagens originais preparadas para o PDF: ${aggregateMetrics.outputBytes}`,
+        `Bytes do PDF: ${pdfResult.outputBytes}`,
+        `Imagens JPEG independentes: ${pdfResult.imageCount}`,
+        `Bytes das imagens JPEG independentes: ${pdfResult.imageBytes}`,
+        `Economia contra os PNGs originais: ${calculateSavingsPercent(aggregateMetrics.originalBytes, pdfResult.outputBytes)}%`,
+        `Configuração: largura máxima ${pdfMaxWidth}px, qualidade ${pdfQuality}, ${pdfResolution} DPI`,
+        "Os PNGs auditados originais não foram alterados.",
+        "O pacote inclui manifesto editorial por data, relatório de auditoria, contact sheet e SHA256SUMS.",
+        "",
+        `Inserções sem prints ignoradas: ${skippedInsertionIds.length ? skippedInsertionIds.join(", ") : "nenhuma"}`,
+        "",
+      ];
+      for (const insertion of exportableInsertions) {
+        await attachAnalyticsPdfsToExportAtPath(tempDir, insertion.id, readmeLines, join("02-ANALYTICS", `INSERCAO-${insertion.id}`));
+        await attachOperationalDocumentsToExportAtPath(tempDir, insertion, readmeLines, join("03-DOCUMENTOS-OPERACIONAIS", `INSERCAO-${insertion.id}`));
+      }
+      const retroAudit = await writeRetroAuditArtifacts({
+        rootDir: tempDir,
+        descriptor,
+        insertions: exportableInsertions,
+      });
+      await writeContactSheet(tempDir, join(pdfOutputDir, "IMAGENS-INDEPENDENTES"));
+      readmeLines.push(`Provas editoriais aprovadas: ${retroAudit.approved}/${retroAudit.total}`);
+      readmeLines.push(`Notícias futuras detectadas: ${retroAudit.futureCount}`);
+      readmeLines.push("");
+      await writeFile(join(tempDir, "00-LEIA-ME.txt"), readmeLines.join("\n"), "utf8");
+      await writeSha256Sums(tempDir);
+      const archiveBase = `${pdfBaseName}-PACOTE`;
+      zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
+      await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+      res.download(zipPath, `${archiveBase}.zip`, async () => {
+        await Promise.allSettled([
+          rm(tempDir, { recursive: true, force: true }),
+          rm(zipPath!, { force: true }),
+        ]);
+      });
+      return;
+    } catch (error) {
+      await Promise.allSettled([
+        rm(tempDir, { recursive: true, force: true }),
+        zipPath ? rm(zipPath, { force: true }) : Promise.resolve(),
+      ]);
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao gerar a entrega em PDF comprimido.",
+        requestId: exportRequestId,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
+
+  if (exportOptions.mode === "prints-only") {
+    const exportRequestId = crypto.randomUUID();
+    const aggregateMetrics = emptyPrintDeliveryMetrics();
+    const allEvidenceDates: string[] = [];
+    const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
+    const packageNameOccurrences = new Map<string, number>();
+    let zipPath: string | null = null;
+    try {
+      for (const insertion of exportableInsertions) {
+        const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+        for (const evidence of evidences) {
+          const dateKey = getEvidenceDateKey(evidence.titulo);
+          if (dateKey) allEvidenceDates.push(dateKey);
+        }
+        if (evidences.length === 0) {
+          failures.push({ insertionId: insertion.id, evidenceId: 0, date: null, error: "no_evidence_images" });
+          continue;
+        }
+        const basePackageName = buildDeliveryPackageName(
+          insertion,
+          evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
+        );
+        const packageOccurrence = (packageNameOccurrences.get(basePackageName) ?? 0) + 1;
+        packageNameOccurrences.set(basePackageName, packageOccurrence);
+        const delivery = await writePrintDeliveryFolder({
+          rootDir: tempDir,
+          insertion,
+          evidences,
+          variant: exportOptions.variant,
+          maxWidth: exportOptions.variant === "web" ? imageMaxWidth : undefined,
+          quality: exportOptions.variant === "web" ? imageQuality : undefined,
+          packageNameOverride: packageOccurrence > 1 ? `${basePackageName}-INSERCAO-${insertion.id}` : basePackageName,
+        });
+        mergePrintDeliveryMetrics(aggregateMetrics, delivery.metrics);
+        failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
+      }
+
+      if (failures.length > 0) {
+        setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);
+        await rm(tempDir, { recursive: true, force: true });
+        res.status(422).json({
+          error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.",
+          requestId: exportRequestId,
+          failed: failures,
+        });
+        return;
+      }
+
+      const archiveBase = buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
+      zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
+      await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+      setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);
+      res.download(zipPath, `${archiveBase}.zip`, async () => {
+        await Promise.allSettled([
+          rm(tempDir, { recursive: true, force: true }),
+          rm(zipPath!, { force: true }),
+        ]);
+      });
+      return;
+    } catch (error) {
+      await Promise.allSettled([
+        rm(tempDir, { recursive: true, force: true }),
+        zipPath ? rm(zipPath, { force: true }) : Promise.resolve(),
+      ]);
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao gerar o pacote consolidado de prints.",
+        requestId: exportRequestId,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+  }
 
   const lines: string[] = [
     "PACOTE OPERACIONAL POR PI E SITE",
@@ -2718,6 +3701,91 @@ router.get("/insertions/:id", async (req, res): Promise<void> => {
   });
 });
 
+router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void> => {
+  const params = GetInsertionParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const [insertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, params.data.id));
+  if (!insertion) {
+    res.status(404).json({ error: "Insertion not found" });
+    return;
+  }
+
+  const targetDate = typeof req.body?.date === "string"
+    ? req.body.date
+    : typeof req.body?.captureAt === "string" && /^\d{4}-\d{2}-\d{2}/.test(req.body.captureAt)
+      ? req.body.captureAt.slice(0, 10)
+      : formatIsoDate(new Date());
+  const captureAt = typeof req.body?.captureAt === "string"
+    ? req.body.captureAt
+    : resolveRegenerationCaptureAt(targetDate, params.data.id);
+  if (rejectCaptureAtOutsideWindow(captureAt, res)) return;
+
+  const checklist = await resolveAuditChecklist({ insertionId: params.data.id, date: targetDate });
+  if (!checklist.ok) {
+    res.status(422).json({ error: "Checklist de auditoria não resolvido.", date: targetDate, checklist });
+    return;
+  }
+
+  const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
+  const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
+  const requestedIdempotencyKey = typeof req.headers["idempotency-key"] === "string"
+    ? req.headers["idempotency-key"].trim()
+    : "";
+  const idempotencyKey = requestedIdempotencyKey || crypto.createHash("sha256")
+    .update(JSON.stringify({ insertionId: params.data.id, targetDate, captureAt, candidateOnly, promoteCandidate }))
+    .digest("hex");
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
+    res.status(400).json({ error: "Idempotency-Key inválida." });
+    return;
+  }
+
+  const [existingJob] = await db.select({ id: printJobsTable.id, status: printJobsTable.status })
+    .from(printJobsTable)
+    .where(sql`${printJobsTable.payload} ->> 'idempotencyKey' = ${idempotencyKey}`)
+    .orderBy(desc(printJobsTable.createdAt))
+    .limit(1);
+  if (existingJob) {
+    res.json({ ok: true, duplicate: true, jobId: existingJob.id, status: existingJob.status, date: targetDate });
+    return;
+  }
+
+  const payload = {
+    ...buildPrintRunnerPayload(
+      "capture-proof-single",
+      [{
+        insertionId: params.data.id,
+        targetDate,
+        captureAt,
+        replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate,
+        candidateOnly,
+        promoteCandidate,
+      }],
+      { competencia: null, siteId: insertion.siteId ?? null, source: "api" },
+    ),
+    idempotencyKey,
+  };
+  const { jobId } = await printRunner.enqueue(payload);
+  res.status(202).json({ ok: true, duplicate: false, jobId, status: "queued", date: targetDate });
+});
+
+router.get("/insertions/:id/capture-proof/jobs/:jobId", async (req, res): Promise<void> => {
+  const params = GetInsertionParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const job = await printRunner.get(req.params.jobId);
+  if (!job || job.items.some((item) => item.insertionId !== params.data.id)) {
+    res.status(404).json({ error: "Job de captura não encontrado." });
+    return;
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json(job);
+});
+
 router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => {
   const params = GetInsertionParams.safeParse(req.params);
   if (!params.success) {
@@ -2748,9 +3816,11 @@ router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => 
     return;
   }
   const replaceExisting = req.body?.replace === true || req.body?.replace === "true";
+  const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
+  const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
   const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, params.data.id));
   const existingEvidence = evidences.find((row) => getEvidenceDateKey(row.titulo) === targetDate && isValidHttpUrl(row.arquivoUrl)) ?? null;
-  if (existingEvidence && !replaceExisting) {
+  if (existingEvidence && !replaceExisting && !candidateOnly) {
     const [fresh] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, params.data.id));
     const enriched = fresh ? await enrichInsertion(fresh) : null;
     res.json({
@@ -2772,12 +3842,33 @@ router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => 
         targetDate,
         captureAt: captureAt ?? null,
         replaceExisting,
+        candidateOnly,
+        promoteCandidate,
       }],
       { competencia: null, siteId: ins.siteId ?? null, source: "adops-ui" },
     ));
     const result = runnerResult.items[0];
     if (!result || result.status !== "ok") {
       throw new Error(result?.error ?? "Falha ao gerar print semi-automatico.");
+    }
+    if (candidateOnly) {
+      if (result.retroContentProof?.status !== "approved") {
+        res.status(422).json({
+          error: "Candidato retroativo reprovado na prova editorial.",
+          date: targetDate,
+          candidate: result,
+        });
+        return;
+      }
+      res.json({
+        ok: true,
+        candidateOnly: true,
+        promoted: promoteCandidate,
+        date: targetDate,
+        candidate: result,
+        currentEvidencePreserved: !promoteCandidate && Boolean(existingEvidence),
+      });
+      return;
     }
     const freshMetadata = await loadCaptureMetadataForAudit(params.data.id, targetDate);
     const checklistValidation = await validateAuditChecklist({
