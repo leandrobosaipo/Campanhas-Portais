@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
   buildDeliveryPackageName,
   buildDeliveryPrintFileName,
   EvidenceExportInputError,
+  groupByDeliveryPosition,
   parseEvidenceExportOptions,
   prepareEvidenceImage,
+  resolveDeliveryPosition,
 } from "../../artifacts/api-server/src/lib/evidence-export";
 
 const execFileAsync = promisify(execFile);
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const pythonExecutable =
   process.env.ADOPS_EVIDENCE_EXPORT_PYTHON?.trim() || "python3";
 
@@ -77,6 +81,21 @@ test("parâmetros e nomes de entrega preservam compatibilidade e posição", () 
     "PERRENGUE-PI-003121-VIDEO-2026-07-07.png",
   );
   assert.doesNotMatch(packageName, /retroativ|evidenc/i);
+  assert.equal(resolveDeliveryPosition({ localFormatoNormalizado: "Home 2" }), "HOME-2");
+  assert.deepEqual(
+    groupByDeliveryPosition(
+      [
+        { id: 1, position: "Topo" },
+        { id: 2, position: "Home 2" },
+        { id: 3, position: "TOPO" },
+      ],
+      (item) => item.position,
+    ).map((group) => ({ position: group.position, ids: group.items.map((item) => item.id) })),
+    [
+      { position: "TOPO", ids: [1, 3] },
+      { position: "HOME-2", ids: [2] },
+    ],
+  );
 });
 
 test("JPEG web reduz largura sem ampliar imagens menores e o ZIP contém somente prints", async () => {
@@ -154,4 +173,19 @@ test("origem inválida falha explicitamente sem criar arquivo", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("contrato da API e Telegram mantém um PDF por posição", async () => {
+  const [routeSource, runnerSource, agentSource] = await Promise.all([
+    readFile(join(repositoryRoot, "artifacts/api-server/src/routes/insertions.ts"), "utf8"),
+    readFile(join(repositoryRoot, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8"),
+    readFile(join(repositoryRoot, "AGENTS.md"), "utf8"),
+  ]);
+  assert(routeSource.includes("groupByDeliveryPosition(pdfPages"));
+  assert(routeSource.includes('x-adops-export-pdfs'));
+  assert(runnerSource.includes('mode: "pdf", position'));
+  assert(runnerSource.includes("pdfArtifacts.length > 9"));
+  assert(runnerSource.includes("artifacts: {"));
+  assert(runnerSource.includes("pdfs: pdfArtifactResults"));
+  assert(agentSource.includes("Nunca juntar TOPO, HOME 1, HOME 2, LATERAL ou VIDEO no mesmo PDF"));
 });

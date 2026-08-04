@@ -480,14 +480,14 @@ curl -fsSL -X POST \
 O retorno `202` contém `jobId`. Consulte
 `GET /api/pi-site-exports/jobs/{jobId}` até `status=completed`; então use
 `GET /api/pi-site-exports/jobs/{jobId}/download` para o ZIP e
-`GET /api/pi-site-exports/jobs/{jobId}/pdf` para o PDF. Uma repetição com a mesma
+`GET /api/pi-site-exports/jobs/{jobId}/pdf` para um PDF ou a lista de PDFs por posição. Uma repetição com a mesma
 `Idempotency-Key` retorna o mesmo job e `duplicate=true`. O endpoint legado
 `POST /api/ops/jobs/pi-site-export` permanece como alias de compatibilidade,
 mas não deve ser usado em novas automações.
 
 O ZIP externo não contém PDF, JSON, CSV, README, auditoria ou contact sheet.
 Esses dados continuam preservados internamente. Os nomes externos são
-`PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>.pdf`, sem palavras de status.
+`PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>-<posicao>.pdf`, sem palavras de status.
 Se o Telegram estiver indisponível, os artefatos continuam publicados e o job
 retorna `telegram.ok=false`; a falha de notificação não destrói a entrega.
 

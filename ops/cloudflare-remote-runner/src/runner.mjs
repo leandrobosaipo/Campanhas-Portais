@@ -347,6 +347,18 @@ function slugifyPathPart(value, fallback = "media") {
   return sanitized || fallback;
 }
 
+function deliveryPositionSegment(value, fallback = "POSICAO") {
+  const sanitized = String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 96);
+  return sanitized || fallback;
+}
+
 function parseEnvMap(value) {
   const entries = new Map();
   for (const item of String(value || "").split(",")) {
@@ -4907,24 +4919,30 @@ async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
   };
 }
 
-async function sendTelegramDeliveryDirect({ chatId, piCodigo, siteSigla, zipArtifact, pdfArtifact }) {
+async function sendTelegramDeliveryDirect({ chatId, piCodigo, siteSigla, zipArtifact, pdfArtifacts }) {
   if (!TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN ausente para enviar a entrega.");
   if (!chatId) throw new Error("TELEGRAM_DEFAULT_GROUP_ID ausente para enviar a entrega.");
+  if (!Array.isArray(pdfArtifacts) || pdfArtifacts.length === 0) throw new Error("Nenhum PDF por posição foi gerado para o Telegram.");
+  if (pdfArtifacts.length > 9) throw new Error("A entrega excede o limite de 9 PDFs por grupo do Telegram.");
   const form = new FormData();
-  form.set("chat_id", chatId);
-  form.set("media", JSON.stringify([
+  const media = [
     {
       type: "document",
       media: "attach://images_zip",
       caption: `PI ${piCodigo} · ${siteSigla}`,
     },
-    {
+    ...pdfArtifacts.map((artifact, index) => ({
       type: "document",
-      media: "attach://campaign_pdf",
-    },
-  ]));
+      media: `attach://campaign_pdf_${index}`,
+      caption: artifact.position,
+    })),
+  ];
+  form.set("chat_id", chatId);
+  form.set("media", JSON.stringify(media));
   form.set("images_zip", new Blob([zipArtifact.buffer], { type: "application/zip" }), zipArtifact.fileName);
-  form.set("campaign_pdf", new Blob([pdfArtifact.buffer], { type: "application/pdf" }), pdfArtifact.fileName);
+  pdfArtifacts.forEach((artifact, index) => {
+    form.set(`campaign_pdf_${index}`, new Blob([artifact.buffer], { type: "application/pdf" }), artifact.fileName);
+  });
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup`, {
     method: "POST",
     body: form,
@@ -5462,14 +5480,36 @@ async function executePiSiteExport(job) {
       imageQuality: String(imageQuality),
     };
     const zipParams = new URLSearchParams({ ...commonParams, mode: "prints-only" });
-    const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf" });
-    const [zipDownload, pdfDownload] = await Promise.all([
+    const exportableInsertionIds = new Set(Array.isArray(descriptor?.exportableInsertionIds)
+      ? descriptor.exportableInsertionIds.map(Number)
+      : operationalInsertionIds.map(Number));
+    const positions = Array.from(new Set(insertions
+      .filter((insertion) => exportableInsertionIds.has(Number(insertion.id)))
+      .map((insertion) => deliveryPositionSegment(firstNonEmptyString(
+      insertion.localFormatoNormalizado,
+      insertion.localFormato,
+      "POSICAO",
+    )))));
+    if (positions.length === 0) {
+      throw new Error(`Nenhuma posição exportável encontrada para PI ${piCodigo} no site ${siteSigla}.`);
+    }
+    const [zipDownload, pdfDownloads] = await Promise.all([
       privateApiDownload(`/api/pi-site-exports?${zipParams.toString()}`),
-      privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`),
+      Promise.all(positions.map(async (position) => {
+        const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf", position });
+        const artifact = await privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`);
+        if (artifact.contentType !== "application/pdf") {
+          throw new Error(`A API não retornou PDF para a posição ${position}.`);
+        }
+        return { ...artifact, position };
+      })),
     ]);
     const neutralBaseName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(siteSigla)}`;
     const zipArtifact = { ...zipDownload, fileName: `${neutralBaseName}.zip` };
-    const pdfArtifact = { ...pdfDownload, fileName: `${neutralBaseName}.pdf` };
+    const pdfArtifacts = pdfDownloads.map((artifact) => ({
+      ...artifact,
+      fileName: `${neutralBaseName}-${artifact.position}.pdf`,
+    }));
     const objectPrefix = [
       ADOPS_EXPORT_BASE_PATH,
       slugifyPathPart(siteSigla),
@@ -5477,7 +5517,7 @@ async function executePiSiteExport(job) {
       slugifyPathPart(job.id),
     ].filter(Boolean).join("/");
     const zipObjectKey = `${objectPrefix}/${zipArtifact.fileName}`;
-    const pdfObjectKey = `${objectPrefix}/${pdfArtifact.fileName}`;
+    const pdfObjectKeys = pdfArtifacts.map((artifact) => `${objectPrefix}/${artifact.fileName}`);
     await Promise.all([
       uploadBufferToSpaces({
         buffer: zipArtifact.buffer,
@@ -5485,24 +5525,25 @@ async function executePiSiteExport(job) {
         objectKey: zipObjectKey,
         contentType: "application/zip",
       }),
-      uploadBufferToSpaces({
-        buffer: pdfArtifact.buffer,
+      ...pdfArtifacts.map((artifact, index) => uploadBufferToSpaces({
+        buffer: artifact.buffer,
         bucket: ADOPS_EXPORT_BUCKET,
-        objectKey: pdfObjectKey,
+        objectKey: pdfObjectKeys[index],
         contentType: "application/pdf",
-      }),
+      })),
     ]);
     const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
     const publicUrl = (objectKey) => `${publicBase}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
     const downloadUrl = publicUrl(zipObjectKey);
-    const pdfUrl = publicUrl(pdfObjectKey);
+    const pdfUrls = pdfObjectKeys.map(publicUrl);
+    const pdfUrl = pdfUrls.length === 1 ? pdfUrls[0] : null;
     let telegram = { ok: true, skipped: true, reason: "sendTelegram=false" };
     if (sendTelegram) {
       await progressJob(job.id, {
         stage: "enviando zip e pdf no telegram",
         ...stagePayload,
         downloadUrl,
-        pdfUrl,
+        pdfUrls,
       });
       try {
         telegram = await sendTelegramDeliveryDirect({
@@ -5510,7 +5551,7 @@ async function executePiSiteExport(job) {
           piCodigo,
           siteSigla,
           zipArtifact,
-          pdfArtifact,
+          pdfArtifacts,
         });
       } catch (error) {
         telegram = {
@@ -5521,7 +5562,14 @@ async function executePiSiteExport(job) {
       }
     }
     const zipSha256 = crypto.createHash("sha256").update(zipArtifact.buffer).digest("hex");
-    const pdfSha256 = crypto.createHash("sha256").update(pdfArtifact.buffer).digest("hex");
+    const pdfArtifactResults = pdfArtifacts.map((artifact, index) => ({
+      position: artifact.position,
+      url: pdfUrls[index],
+      fileName: artifact.fileName,
+      bytes: artifact.buffer.length,
+      contentType: "application/pdf",
+      sha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+    }));
     return {
       stage: "completed",
       piCodigo,
@@ -5533,6 +5581,7 @@ async function executePiSiteExport(job) {
       regeneratedDates,
       downloadUrl,
       pdfUrl,
+      pdfUrls,
       artifactBytes: zipArtifact.buffer.length,
       artifactContentType: "application/zip",
       artifactFileName: zipArtifact.fileName,
@@ -5545,13 +5594,8 @@ async function executePiSiteExport(job) {
           contentType: "application/zip",
           sha256: zipSha256,
         },
-        pdf: {
-          url: pdfUrl,
-          fileName: pdfArtifact.fileName,
-          bytes: pdfArtifact.buffer.length,
-          contentType: "application/pdf",
-          sha256: pdfSha256,
-        },
+        ...(pdfArtifactResults.length === 1 ? { pdf: pdfArtifactResults[0] } : {}),
+        pdfs: pdfArtifactResults,
       },
       telegram,
     };

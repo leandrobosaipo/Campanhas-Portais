@@ -176,13 +176,13 @@ GET /api/pi-site-exports/jobs/{jobId}/download
 GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
-- `mode=delivery`: modo assíncrono padrão; gera ZIP somente com JPEGs, PDF separado e envia ambos ao Telegram;
+- `mode=delivery`: modo assíncrono padrão; gera ZIP somente com JPEGs, um PDF separado por posição e envia todos ao Telegram;
 - `mode=full`: mantém os PNGs originais no ZIP para compatibilidade;
 - `mode=prints-only&variant=web`: entrega ZIP somente com JPEGs progressivos comprimidos;
-- `mode=pdf`: retorna um PDF comprimido com uma evidência auditada por página;
+- `mode=pdf`: retorna um PDF comprimido por posição; sem filtro, retorna ZIP de PDFs quando a PI possui várias posições;
 - `mode=full-pdf`: mantém documentos e Analytics no ZIP e inclui:
-  - `01-PRINTS-PDF/*.pdf`, com uma evidência por página;
-  - `01-PRINTS-PDF/IMAGENS-INDEPENDENTES/**/*.jpg`, com cada evidência também como imagem comprimida independente.
+  - `01-PRINTS-PDF/<POSICAO>/*.pdf`, com uma evidência por página;
+  - `01-PRINTS-PDF/<POSICAO>/IMAGENS-INDEPENDENTES/**/*.jpg`, com cada evidência também como imagem comprimida independente.
 
 A compressao nunca sobrescreve o PNG auditado nem altera a URL da evidencia.
 Ela atua somente na copia de entrega:

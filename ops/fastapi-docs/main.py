@@ -272,11 +272,25 @@ def build_openapi_document() -> dict[str, Any]:
     if "get" in export_pdf_path:
         export_pdf_path["get"].update({
             "tags": ["Entrega de evidências"],
-            "summary": "Baixar o PDF separado da entrega",
+            "summary": "Baixar os PDFs separados por posição",
             "responses": {
                 "302": {
-                    "description": "Redireciona para o PDF publicado.",
+                    "description": "Quando existe uma única posição, redireciona para o PDF publicado.",
                     "headers": {"Location": {"schema": {"type": "string", "format": "uri"}}},
+                },
+                "300": {
+                    "description": "Quando existem várias posições, lista um PDF independente por posição.",
+                    "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["message", "jobId", "pdfUrls", "pdfs"],
+                        "properties": {
+                            "message": {"type": "string"},
+                            "jobId": {"type": "string", "format": "uuid"},
+                            "pdfUrls": {"type": "array", "minItems": 2, "items": {"type": "string", "format": "uri"}},
+                            "pdfs": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": True}},
+                        },
+                        "additionalProperties": False,
+                    }}},
                 },
                 "404": {"description": "Job não encontrado."},
                 "409": {"description": "PDF ainda não está pronto."},
@@ -296,6 +310,7 @@ def build_openapi_document() -> dict[str, Any]:
                 {"name": "download", "in": "query", "required": False, "schema": {"type": "string", "enum": ["0", "1"], "default": "0"}},
                 {"name": "mode", "in": "query", "required": False, "schema": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"], "default": "full"}},
                 {"name": "variant", "in": "query", "required": False, "schema": {"type": "string", "enum": ["original", "web"]}},
+                {"name": "position", "in": "query", "required": False, "description": "Restringe mode=pdf a uma posição/banner.", "schema": {"type": "string", "minLength": 1}},
                 {"name": "pdfMaxWidth", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1920}},
                 {"name": "pdfQuality", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 45, "maximum": 85, "default": 68}},
                 {"name": "pdfResolution", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 72, "maximum": 180, "default": 120}},
@@ -477,6 +492,7 @@ def build_openapi_document() -> dict[str, Any]:
                         "variant": {"type": ["string", "null"], "enum": ["original", "web", None]},
                         "downloadUrl": {"type": ["string", "null"], "format": "uri"},
                         "pdfUrl": {"type": ["string", "null"], "format": "uri"},
+                        "pdfUrls": {"type": "array", "items": {"type": "string", "format": "uri"}},
                         "artifacts": {"type": ["object", "null"], "additionalProperties": True},
                         "telegram": {"type": ["object", "null"], "additionalProperties": True},
                         "artifactBytes": {"type": ["integer", "null"], "minimum": 1},

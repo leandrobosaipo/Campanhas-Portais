@@ -136,12 +136,12 @@ POST /api/pi-site-exports/jobs  (mode=delivery, variant=web, sendTelegram=true)
   -> GET /api/pi-site-exports/jobs/{jobId}
   -> status=completed
   -> GET /api/pi-site-exports/jobs/{jobId}/download  (ZIP só com imagens)
-  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF separado)
+  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF único ou lista de PDFs por posição)
 ```
 
 Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
-jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e
-`PI-<codigo>-<portal>.pdf` separado; ambos são enviados ao Telegram.
+jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e um
+`PI-<codigo>-<portal>-<posicao>.pdf` para cada banner; todos são enviados ao Telegram.
 Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
 
 - Swagger: `https://adops-api.codigo5.com.br/api/docs`

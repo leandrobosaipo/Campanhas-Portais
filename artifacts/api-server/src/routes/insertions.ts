@@ -55,10 +55,12 @@ import {
   calculateSavingsPercent,
   deliverySegment,
   EvidenceExportInputError,
+  groupByDeliveryPosition,
   parseEvidenceExportOptions,
   prepareEvidenceImage,
   resolveDeliveryDateRange,
   resolveDeliveryPiCode,
+  resolveDeliveryPosition,
   selectCanonicalEvidencePerDate,
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
@@ -639,6 +641,9 @@ async function getLocalPiSiteExportJob(jobId: string) {
     variant: payload?.variant ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
     pdfUrl: typeof artifactResult?.pdfUrl === "string" ? artifactResult.pdfUrl : null,
+    pdfUrls: Array.isArray(artifactResult?.pdfUrls)
+      ? artifactResult.pdfUrls.filter((value): value is string => typeof value === "string")
+      : [],
     artifacts: artifactResult?.artifacts && typeof artifactResult.artifacts === "object" && !Array.isArray(artifactResult.artifacts)
       ? artifactResult.artifacts
       : null,
@@ -2832,7 +2837,7 @@ router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> =
       res.status(404).json({ error: "Job PI/site não encontrado." });
       return;
     }
-    if (job.status !== "completed" || !job.pdfUrl) {
+    if (job.status !== "completed" || (!job.pdfUrl && job.pdfUrls.length === 0)) {
       res.status(409).json({
         error: "PDF ainda não está pronto para download.",
         jobId: job.jobId,
@@ -2841,7 +2846,16 @@ router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> =
       });
       return;
     }
-    res.redirect(job.pdfUrl);
+    if (!job.pdfUrl && job.pdfUrls.length > 1) {
+      res.status(300).json({
+        message: "A campanha possui mais de uma posição. Use os PDFs separados abaixo.",
+        jobId: job.jobId,
+        pdfUrls: job.pdfUrls,
+        pdfs: (job.artifacts as Record<string, unknown> | null)?.pdfs ?? [],
+      });
+      return;
+    }
+    res.redirect(job.pdfUrl ?? job.pdfUrls[0]);
   } catch (error) {
     res.status(500).json({
       error: "Falha ao redirecionar o PDF da entrega PI/site.",
@@ -2860,6 +2874,9 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth ?? req.query.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
   const imageQuality = parseBoundedInteger(req.query.imageQuality ?? req.query.pdfQuality, { minimum: 45, maximum: 90, fallback: 72 });
   const journalistPresentation = String(req.query.presentation ?? "").trim().toLowerCase() === "journalist";
+  const positionFilter = typeof req.query.position === "string"
+    ? deliverySegment(req.query.position, "")
+    : "";
   let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
 
   try {
@@ -2928,7 +2945,17 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
 
   const insertions = await listPiSiteInsertions(descriptor.piCodigo, descriptor.siteSigla);
   const exportableInsertionIds = new Set(descriptor.exportableInsertionIds);
-  const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
+  const exportableInsertions = insertions.filter((item) =>
+    exportableInsertionIds.has(item.id)
+    && (!positionFilter || resolveDeliveryPosition(item) === positionFilter));
+  if (positionFilter && !exportableInsertions.length) {
+    res.status(404).json({
+      error: "Nenhuma inserção exportável corresponde à posição informada.",
+      position: positionFilter,
+      availablePositions: Array.from(new Set(insertions.map(resolveDeliveryPosition))).sort(),
+    });
+    return;
+  }
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
 
   if (exportOptions.mode === "pdf" || exportOptions.mode === "full-pdf") {
@@ -2936,11 +2963,10 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     const pdfSourceDir = join(tempDir, ".pdf-source");
     const pdfOutputDir = exportOptions.mode === "full-pdf" ? join(tempDir, "01-PRINTS-PDF") : tempDir;
     const aggregateMetrics = emptyPrintDeliveryMetrics();
-    const pdfPages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number }> = [];
+    const pdfPages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number; positionKey: string }> = [];
     const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
     const skippedInsertionIds: number[] = [];
     const packageNameOccurrences = new Map<string, number>();
-    let pdfPath: string | null = null;
     let zipPath: string | null = null;
     try {
       for (const insertion of exportableInsertions) {
@@ -2980,6 +3006,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         pdfPages.push(...delivery.outputFiles.map((item) => ({
           ...item,
           insertionId: insertion.id,
+          positionKey: resolveDeliveryPosition(insertion),
         })));
       }
 
@@ -2997,30 +3024,42 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
       }
 
       pdfPages.sort((left, right) => {
-        const leftKey = `${left.dateKey ?? "9999-99-99"}-${String(left.insertionId).padStart(12, "0")}-${String(left.evidenceId).padStart(12, "0")}`;
-        const rightKey = `${right.dateKey ?? "9999-99-99"}-${String(right.insertionId).padStart(12, "0")}-${String(right.evidenceId).padStart(12, "0")}`;
+        const leftKey = `${left.positionKey}-${left.dateKey ?? "9999-99-99"}-${String(left.insertionId).padStart(12, "0")}-${String(left.evidenceId).padStart(12, "0")}`;
+        const rightKey = `${right.positionKey}-${right.dateKey ?? "9999-99-99"}-${String(right.insertionId).padStart(12, "0")}-${String(right.evidenceId).padStart(12, "0")}`;
         return leftKey.localeCompare(rightKey);
       });
       await mkdir(pdfOutputDir, { recursive: true });
-      const pdfBaseName = safeFileName(
-        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
-        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
-      );
-      pdfPath = join(pdfOutputDir, `${pdfBaseName}.pdf`);
-      const pdfResult = await buildCompressedEvidencePdf({
-        tempDir,
-        outputPath: pdfPath,
-        pages: pdfPages.map((page) => ({
-          ...page,
-          outputRelativePath: relative(pdfSourceDir, page.inputPath),
-        })),
-        maxWidth: pdfMaxWidth,
-        quality: pdfQuality,
-        resolution: pdfResolution,
-        imagesOutputDir: exportOptions.mode === "full-pdf"
-          ? join(pdfOutputDir, "IMAGENS-INDEPENDENTES")
-          : undefined,
-      });
+      const pdfResults: Array<{ position: string; baseName: string; path: string; result: CompressedEvidencePdfResult }> = [];
+      for (const { position, items: pages } of groupByDeliveryPosition(pdfPages, (page) => page.positionKey)) {
+        const positionOutputDir = join(pdfOutputDir, position);
+        await mkdir(positionOutputDir, { recursive: true });
+        const baseName = safeFileName(
+          `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-${position}`,
+          `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-${position}`,
+        );
+        const outputPath = join(positionOutputDir, `${baseName}.pdf`);
+        const result = await buildCompressedEvidencePdf({
+          tempDir,
+          outputPath,
+          pages: pages.map((page) => ({
+            ...page,
+            outputRelativePath: relative(pdfSourceDir, page.inputPath),
+          })),
+          maxWidth: pdfMaxWidth,
+          quality: pdfQuality,
+          resolution: pdfResolution,
+          imagesOutputDir: exportOptions.mode === "full-pdf"
+            ? join(positionOutputDir, "IMAGENS-INDEPENDENTES")
+            : undefined,
+        });
+        pdfResults.push({ position, baseName, path: outputPath, result });
+      }
+      const pdfResult = {
+        pageCount: pdfResults.reduce((sum, item) => sum + item.result.pageCount, 0),
+        outputBytes: pdfResults.reduce((sum, item) => sum + item.result.outputBytes, 0),
+        imageCount: pdfResults.reduce((sum, item) => sum + item.result.imageCount, 0),
+        imageBytes: pdfResults.reduce((sum, item) => sum + item.result.imageBytes, 0),
+      };
       await rm(pdfSourceDir, { recursive: true, force: true });
 
       res.setHeader("cache-control", "no-store");
@@ -3036,6 +3075,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
       res.setHeader("x-adops-export-prepared-image-bytes", String(pdfResult.imageBytes));
       res.setHeader("x-adops-export-pdf-bytes", String(pdfResult.outputBytes));
       res.setHeader("x-adops-export-pages", String(pdfResult.pageCount));
+      res.setHeader("x-adops-export-pdfs", String(pdfResults.length));
       res.setHeader("x-adops-export-independent-images", String(pdfResult.imageCount));
       res.setHeader("x-adops-export-independent-image-bytes", String(pdfResult.imageBytes));
       res.setHeader("x-adops-export-savings-percent", String(calculateSavingsPercent(aggregateMetrics.originalBytes, pdfResult.outputBytes)));
@@ -3053,14 +3093,27 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         "x-adops-export-prepared-image-bytes",
         "x-adops-export-pdf-bytes",
         "x-adops-export-pages",
+        "x-adops-export-pdfs",
         "x-adops-export-independent-images",
         "x-adops-export-independent-image-bytes",
         "x-adops-export-savings-percent",
       ].join(", "));
 
       if (exportOptions.mode === "pdf") {
-        res.download(pdfPath, `${pdfBaseName}.pdf`, async () => {
-          await rm(tempDir, { recursive: true, force: true });
+        if (pdfResults.length === 1) {
+          res.download(pdfResults[0].path, `${pdfResults[0].baseName}.pdf`, async () => {
+            await rm(tempDir, { recursive: true, force: true });
+          });
+          return;
+        }
+        const pdfArchiveBase = `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}-PDFS`;
+        zipPath = join(tmpdir(), `${pdfArchiveBase}-${exportRequestId}.zip`);
+        await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: pdfOutputDir, maxBuffer: 20 * 1024 * 1024 });
+        res.download(zipPath, `${pdfArchiveBase}.zip`, async () => {
+          await Promise.allSettled([
+            rm(tempDir, { recursive: true, force: true }),
+            rm(zipPath!, { force: true }),
+          ]);
         });
         return;
       }
@@ -3071,7 +3124,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         "",
         `PI: ${descriptor.piCodigo}`,
         `Site: ${descriptor.siteSigla}`,
-        `Páginas do PDF: ${pdfResult.pageCount}`,
+        `PDFs por posição: ${pdfResults.length}`,
+        `Páginas somadas dos PDFs: ${pdfResult.pageCount}`,
         `Bytes dos PNGs originais: ${aggregateMetrics.originalBytes}`,
         `Bytes das imagens originais preparadas para o PDF: ${aggregateMetrics.outputBytes}`,
         `Bytes do PDF: ${pdfResult.outputBytes}`,
@@ -3085,6 +3139,10 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         `Inserções sem prints ignoradas: ${skippedInsertionIds.length ? skippedInsertionIds.join(", ") : "nenhuma"}`,
         "",
       ];
+      for (const pdf of pdfResults) {
+        readmeLines.push(`PDF ${pdf.position}: ${pdf.result.pageCount} página(s)`);
+      }
+      readmeLines.push("");
       for (const insertion of exportableInsertions) {
         await attachAnalyticsPdfsToExportAtPath(tempDir, insertion.id, readmeLines, join("02-ANALYTICS", `INSERCAO-${insertion.id}`));
         await attachOperationalDocumentsToExportAtPath(tempDir, insertion, readmeLines, join("03-DOCUMENTOS-OPERACIONAIS", `INSERCAO-${insertion.id}`));
@@ -3094,13 +3152,13 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         descriptor,
         insertions: exportableInsertions,
       });
-      await writeContactSheet(tempDir, join(pdfOutputDir, "IMAGENS-INDEPENDENTES"));
+      await writeContactSheet(tempDir, pdfOutputDir);
       readmeLines.push(`Provas editoriais aprovadas: ${retroAudit.approved}/${retroAudit.total}`);
       readmeLines.push(`Notícias futuras detectadas: ${retroAudit.futureCount}`);
       readmeLines.push("");
       await writeFile(join(tempDir, "00-LEIA-ME.txt"), readmeLines.join("\n"), "utf8");
       await writeSha256Sums(tempDir);
-      const archiveBase = `${pdfBaseName}-PACOTE`;
+      const archiveBase = `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}-PACOTE`;
       zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
       await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
       res.download(zipPath, `${archiveBase}.zip`, async () => {

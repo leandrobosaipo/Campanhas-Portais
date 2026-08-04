@@ -5,10 +5,13 @@ PI por portal. Ele é destinado a integrações, agentes e operadores.
 
 ## Resultado esperado
 
-Uma solicitação produz dois artefatos independentes:
+Uma solicitação produz artefatos independentes:
 
 - `PI-<codigo>-<portal>.zip`: somente imagens JPEG progressivas, organizadas por posição;
-- `PI-<codigo>-<portal>.pdf`: uma evidência por página.
+- `PI-<codigo>-<portal>-<posicao>.pdf`: um PDF para cada posição/banner, com uma evidência por página.
+
+Exemplo: uma campanha com `TOPO` e `HOME 2` produz dois PDFs. As páginas dessas
+posições nunca são misturadas no mesmo arquivo.
 
 O ZIP não contém PDF, PNG, JSON, CSV, README, manifesto, auditoria ou contact
 sheet. Esses dados permanecem internos ao AdOps.
@@ -52,17 +55,20 @@ GET /api/pi-site-exports/jobs/{jobId}/download
 GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
-`/download` redireciona para o ZIP. `/pdf` redireciona para o PDF separado.
-Quando `sendTelegram=true`, os dois arquivos são enviados no mesmo grupo de
-mídia.
+`/download` redireciona para o ZIP. Quando existe uma única posição, `/pdf`
+redireciona para o PDF. Quando existem várias posições, `/pdf` responde `300`
+com `pdfUrls` e `artifacts.pdfs`. Quando `sendTelegram=true`, o ZIP e todos os
+PDFs por posição são enviados no mesmo grupo de mídia.
 
 ## Resposta concluída
 
 O job concluído expõe:
 
 - `downloadUrl`: URL do ZIP;
-- `pdfUrl`: URL do PDF;
-- `artifacts.zip` e `artifacts.pdf`: nome, tipo, tamanho e SHA-256;
+- `pdfUrl`: URL do PDF quando existe uma única posição;
+- `pdfUrls`: URLs de todos os PDFs por posição;
+- `artifacts.zip` e `artifacts.pdfs`: nome, posição, tipo, tamanho e SHA-256;
+- `artifacts.pdf`: alias de compatibilidade somente quando existe um único PDF;
 - `telegram.ok`: resultado do envio;
 - `telegram.messageIds`: mensagens criadas quando o envio é bem-sucedido.
 
@@ -75,10 +81,11 @@ Confirme:
 
 1. `status=completed`;
 2. ZIP somente com JPEGs;
-3. quantidade de JPEGs igual à quantidade de páginas do PDF;
-4. nomes sem palavras de estado;
-5. topbar, domínio, data, hora e banner visíveis nas amostras;
-6. `telegram.ok=true` quando o envio foi solicitado.
+3. quantidade de JPEGs igual à soma das páginas dos PDFs;
+4. exatamente um PDF para cada posição/banner;
+5. nomes sem palavras de estado;
+6. topbar, domínio, data, hora e banner visíveis nas amostras;
+7. `telegram.ok=true` quando o envio foi solicitado.
 
 Não monte ou altere o pacote manualmente quando a API estiver disponível.
 
