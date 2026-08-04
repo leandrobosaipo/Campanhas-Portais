@@ -37,6 +37,10 @@ services:
         python3 - <<'PY' >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends python3-pip python3-pil zip && python3 -m pip install --break-system-packages --no-cache-dir awscli)
         from PIL import Image
         PY
+        python3 -c 'import fastapi, uvicorn' >/dev/null 2>&1 || python3 -m pip install --break-system-packages --no-cache-dir -r /app/ops/fastapi-docs/requirements.txt
+        python3 -m uvicorn main:app --app-dir /app/ops/fastapi-docs --host 127.0.0.1 --port 4013 &
+        cod5_fastapi_pid=$$!
+        trap 'kill "$$cod5_fastapi_pid" 2>/dev/null || true' EXIT INT TERM
         node artifacts/api-server/dist/index.mjs
     environment:
       PORT: "4011"
@@ -44,10 +48,13 @@ services:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
+      ADOPS_FASTAPI_DOCS_URL: http://127.0.0.1:4013
+      ADOPS_PUBLIC_BASE_URL: https://adops-api.codigo5.com.br
       DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-legacy}
       ADOPS_DRIVE_INVENTORY_STALE_MS: ${ADOPS_DRIVE_INVENTORY_STALE_MS:-600000}
       ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
       ADOPS_GENERATED_PRINTS_ROOT: /app/tmp/generated-prints
+      ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
       ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:?DO_SPACES_ACCESS_KEY_ID is required}
@@ -56,11 +63,16 @@ services:
       DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
       ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
       ADOPS_SPACES_BASE_PATH: ${ADOPS_SPACES_BASE_PATH:-adops-prints}
+      ADOPS_EXPORT_BUCKET: ${ADOPS_EXPORT_BUCKET:-cod5}
+      ADOPS_EXPORT_BASE_PATH: ${ADOPS_EXPORT_BASE_PATH:-adops-exports}
       ADOPS_PERRENGUE_SSH_HOST: ${ADOPS_PERRENGUE_SSH_HOST:-}
       ADOPS_PERRENGUE_SSH_PORT: ${ADOPS_PERRENGUE_SSH_PORT:-}
       ADOPS_PERRENGUE_SSH_USER: ${ADOPS_PERRENGUE_SSH_USER:-}
       ADOPS_PERRENGUE_WP_PATH: ${ADOPS_PERRENGUE_WP_PATH:-}
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
+      ADOPS_MULTISITE_SSH_HOST: ${ADOPS_MULTISITE_SSH_HOST:-93.127.210.71}
+      ADOPS_MULTISITE_SSH_PORT: ${ADOPS_MULTISITE_SSH_PORT:-22}
+      ADOPS_MULTISITE_SSH_USER: ${ADOPS_MULTISITE_SSH_USER:-cod5adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION: "1"
     volumes:
@@ -71,7 +83,7 @@ services:
     ports:
       - "127.0.0.1:${ADOPS_API_HOST_PORT:-4011}:4011"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4011/api/healthz >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4011/api/healthz >/dev/null && curl -fsS http://127.0.0.1:4013/healthz >/dev/null"]
       interval: 20s
       timeout: 5s
       retries: 20
@@ -96,6 +108,7 @@ services:
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
+      ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
       PORTAINER_URL: ${PORTAINER_URL:-}
       PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-3}
@@ -109,6 +122,9 @@ services:
       ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-600000}
       ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS: ${ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS:-5000}
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
+      ADOPS_MULTISITE_SSH_HOST: ${ADOPS_MULTISITE_SSH_HOST:-93.127.210.71}
+      ADOPS_MULTISITE_SSH_PORT: ${ADOPS_MULTISITE_SSH_PORT:-22}
+      ADOPS_MULTISITE_SSH_USER: ${ADOPS_MULTISITE_SSH_USER:-cod5adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
@@ -123,6 +139,8 @@ services:
       DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
       DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
       ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
+      ADOPS_EXPORT_BUCKET: ${ADOPS_EXPORT_BUCKET:-cod5}
+      ADOPS_EXPORT_BASE_PATH: ${ADOPS_EXPORT_BASE_PATH:-adops-exports}
       ADOPS_VIDEO_MEDIA_BUCKET: ${ADOPS_VIDEO_MEDIA_BUCKET:-cod5}
       ADOPS_VIDEO_MEDIA_BASE_PATH: ${ADOPS_VIDEO_MEDIA_BASE_PATH:-adops-media}
       ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE: ${ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE:-}
@@ -195,6 +213,9 @@ services:
       ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-600000}
       ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS: ${ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS:-5000}
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
+      ADOPS_MULTISITE_SSH_HOST: ${ADOPS_MULTISITE_SSH_HOST:-93.127.210.71}
+      ADOPS_MULTISITE_SSH_PORT: ${ADOPS_MULTISITE_SSH_PORT:-22}
+      ADOPS_MULTISITE_SSH_USER: ${ADOPS_MULTISITE_SSH_USER:-cod5adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
