@@ -99,6 +99,8 @@ for (const source of [publicApi, privateApi]) {
 }
 assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
 assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");
+assert(adrotatePlugin.includes('catch (\\Throwable $error)'), "falha do Redis/cache não pode abortar uma publicação já persistida");
+assert(adrotatePlugin.includes("Manutenção de cache %s indisponível"), "falha de cache deve ficar rastreável no WP-CLI");
 assert(perrenguePluginDeploy.includes("echo WP_CONTENT_DIR;"), "deploy PMT deve resolver o diretório de conteúdo ativo do Bedrock");
 assert(perrenguePluginDeploy.includes("legacy_target"), "deploy PMT deve remover a cópia-sombra no wp/wp-content");
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
