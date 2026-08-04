@@ -81,6 +81,15 @@ O gate `requireEditorialDateMatchTarget` compara a data editorial absoluta encon
 
 Referência validada: `PI 90729 / PERRENGUE / grupo 11 / INTERNO DE NOTÍCIAS`, corrigida em `2026-08-04`.
 
+Para esse grupo, o conteúdo crítico deve ser a imagem do artigo histórico
+reconstruído (`[data-adops-retro-primary-article="1"] img`). Não use um seletor
+exclusivo de player: a posição também aparece em notícias sem vídeo.
+
+O GIF pode sofrer reamostragem entre o frame selecionado e a imagem final. O
+grupo 11 usa `finalPngCreativeMinSimilarity=0.70`. Essa tolerância não substitui
+os gates de URL da mídia, frame legível, slot visível, data absoluta, data
+editorial igual ao dia-alvo e topbar visível.
+
 ## Aprendizado de GIF com muitos frames
 
 Caso de referencia: `PI 490711 / Energisa / PERRENGUE G06`, corrigido em `2026-05-23`.
