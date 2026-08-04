@@ -473,6 +473,8 @@ Falhas novas:
 
 `contentDateSamples=[]` é falha. O exportador só libera PDF/ZIP quando todas as datas retornarem `audited` e `retroContentProof.status=approved`.
 
+Para páginas internas de notícia configuradas com `requireEditorialDateMatchTarget=true`, ao menos uma data editorial visível deve coincidir exatamente com o dia de `requestedCaptureAt` em `America/Cuiaba`. Reutilizar a mesma matéria em vários dias falha com `editorial_date_target_mismatch`, mesmo que topbar, moldura e banner estejam corretos.
+
 ### Captura assíncrona e promoção auditada
 
 Capturas que podem ultrapassar o timeout da borda devem usar:

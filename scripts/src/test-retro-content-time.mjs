@@ -53,6 +53,29 @@ const missingAbsolute = evaluateRetroCaptureGate({
 assert.equal(missingAbsolute.ok, false);
 assert.ok(missingAbsolute.codes.includes("absolute_content_time_missing"));
 
+const wrongArticleDate = evaluateRetroCaptureGate({
+  requestedCaptureAt: "2026-07-31T20:00:00-04:00",
+  systemDateTime: "sexta-feira, 31/07/2026, 20:00",
+  pageDateObserved: "2026-07-31T20:00:00-04:00",
+  contentDateSamples: ["20/07/2026 19:50"],
+  contentRelativeTimeSamples: [],
+  requireEditorialDateMatchTarget: true,
+});
+assert.equal(wrongArticleDate.ok, false);
+assert.equal(wrongArticleDate.contentTimeline.targetDateMatches, false);
+assert.ok(wrongArticleDate.codes.includes("editorial_date_target_mismatch"));
+
+const matchingArticleDate = evaluateRetroCaptureGate({
+  requestedCaptureAt: "2026-07-31T20:00:00-04:00",
+  systemDateTime: "sexta-feira, 31/07/2026, 20:00",
+  pageDateObserved: "2026-07-31T20:00:00-04:00",
+  contentDateSamples: ["31/07/2026 19:51"],
+  contentRelativeTimeSamples: [],
+  requireEditorialDateMatchTarget: true,
+});
+assert.equal(matchingArticleDate.ok, true);
+assert.equal(matchingArticleDate.contentTimeline.targetDateMatches, true);
+
 const approved = evaluateRetroCaptureGate({
   requestedCaptureAt: "2026-07-15T19:06",
   systemDateTime: "quarta-feira, 15/07/2026, 19:06",

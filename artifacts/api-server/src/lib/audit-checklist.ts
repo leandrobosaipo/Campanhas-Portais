@@ -55,6 +55,7 @@ type RequiredGates = {
   requireVideoControls: boolean;
   requireReadinessAudit: boolean;
   requireAbsoluteEditorialDates: boolean;
+  requireEditorialDateMatchTarget: boolean;
   requireVisiblePageDate: boolean;
   requireGifAllowedFrameRanges: boolean;
   gifAllowedFrameRanges: Array<[number, number]>;
@@ -215,6 +216,7 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
     requireVideoControls: booleanFromConfig(auditConfig, "requireVideoControls", isVideo),
     requireReadinessAudit: String(auditConfig.readinessMode ?? "legacy").trim().toLowerCase() === "strict-visible",
     requireAbsoluteEditorialDates: booleanFromConfig(auditConfig, "requireAbsoluteEditorialDates", false),
+    requireEditorialDateMatchTarget: booleanFromConfig(auditConfig, "requireEditorialDateMatchTarget", false),
     requireVisiblePageDate: booleanFromConfig(auditConfig, "requireVisiblePageDate", false),
     requireGifAllowedFrameRanges: ranges.length > 0,
     gifAllowedFrameRanges: ranges,
@@ -687,6 +689,19 @@ export async function validateAuditChecklist(input: {
           "requireAbsoluteEditorialDates",
           "Data editorial absoluta ausente",
           "A prova histórica precisa registrar ao menos uma data editorial absoluta visível.",
+        ));
+      }
+    }
+    if (requiredGates.requireEditorialDateMatchTarget) {
+      if (
+        metadataRequiredGates?.requireEditorialDateMatchTarget !== true ||
+        audit.contentTimeline?.targetDateMatches !== true
+      ) {
+        blockingIssues.push(issue(
+          "editorial_date_target_mismatch",
+          "requireEditorialDateMatchTarget",
+          "Data interna da notícia divergente",
+          `A notícia visível precisa corresponder a ${contract.period.targetDate}. Datas encontradas: ${audit.contentTimeline?.observedDates?.join(", ") || "nenhuma"}.`,
         ));
       }
     }

@@ -22,6 +22,9 @@ export type SiteAuditConfig = {
   requireRetroContentProof?: boolean;
   minRetroContentMatches?: number;
   allowAuditedReconstruction?: boolean;
+  requireAbsoluteEditorialDates?: boolean;
+  requireEditorialDateMatchTarget?: boolean;
+  requireVisiblePageDate?: boolean;
   retroContentCardSelectors?: string[];
   retroContentDateSelectors?: string[];
 };
