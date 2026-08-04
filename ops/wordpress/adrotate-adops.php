@@ -133,17 +133,23 @@ if (!function_exists('adrotate_adops_read_json_file')) {
 
 if (!function_exists('adrotate_adops_run_maintenance')) {
 	function adrotate_adops_run_maintenance() {
-		if (function_exists('wp_cache_flush')) {
-			wp_cache_flush();
-		}
-		if (function_exists('rocket_clean_domain')) {
-			rocket_clean_domain();
-		}
-		if (function_exists('rocket_clean_minify')) {
-			rocket_clean_minify();
-		}
-		if (function_exists('w3tc_flush_all')) {
-			w3tc_flush_all();
+		$cache_steps = array(
+			'wp_cache_flush' => array(),
+			'rocket_clean_domain' => array(),
+			'rocket_clean_minify' => array(),
+			'w3tc_flush_all' => array(),
+		);
+		foreach ($cache_steps as $cache_function => $cache_args) {
+			if (!function_exists($cache_function)) {
+				continue;
+			}
+			try {
+				call_user_func_array($cache_function, $cache_args);
+			} catch (\Throwable $error) {
+				if (class_exists('WP_CLI')) {
+					\WP_CLI::warning(sprintf('Manutenção de cache %s indisponível: %s', $cache_function, $error->getMessage()));
+				}
+			}
 		}
 		if (function_exists('adrotate_finish_upgrade')) {
 			adrotate_finish_upgrade();
