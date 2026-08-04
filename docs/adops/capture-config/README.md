@@ -56,9 +56,30 @@ Campos de `auditConfig` usados pelo checklist:
 - `requireNoOverlay`
 - `requireNo404`
 - `requireVideoControls`
+- `requireAbsoluteEditorialDates`
+- `requireEditorialDateMatchTarget`
+- `requireVisiblePageDate`
 - `gifAllowedFrameRanges`
 
 Regra critica: se o portal tiver mais de um node parecido, o seletor precisa ser especifico. Exemplo: ROO topo deve usar `div.hidden.lg\:block .g.g-1`, nunca `.g.g-1` puro.
+
+## Data interna da notícia
+
+Para posições `article`, `requireRetroContentProof=true` sozinho apenas impede conteúdo futuro. Ele não garante que a matéria visível pertence exatamente ao dia do print.
+
+Quando a entrega exigir uma notícia diferente por dia, publique também:
+
+```json
+{
+  "requireAbsoluteEditorialDates": true,
+  "requireEditorialDateMatchTarget": true,
+  "requireVisiblePageDate": true
+}
+```
+
+O gate `requireEditorialDateMatchTarget` compara a data editorial absoluta encontrada com a data-alvo em `America/Cuiaba`. Divergência gera `editorial_date_target_mismatch` e impede promoção, exportação e entrega.
+
+Referência validada: `PI 90729 / PERRENGUE / grupo 11 / INTERNO DE NOTÍCIAS`, corrigida em `2026-08-04`.
 
 ## Aprendizado de GIF com muitos frames
 

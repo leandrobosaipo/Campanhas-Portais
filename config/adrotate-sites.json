@@ -204,7 +204,13 @@
         "contextSelector": ".g.g-11",
         "scrollMode": "slot",
         "auditOverrides": {
-          "preferArticleFallbackForRetro": true
+          "preferArticleFallbackForRetro": true,
+          "requireAbsoluteEditorialDates": true,
+          "requireEditorialDateMatchTarget": true,
+          "requireVisiblePageDate": true,
+          "retroContentDateSelectors": [
+            "[data-adops-retro-primary-article='1']"
+          ]
         }
       }
     ]

@@ -2784,20 +2784,26 @@ function parseIsoLikeDate(value) {
 
 function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
   const captureAtDate = parseIsoLikeDate(requestedCaptureAt);
+  const dateKey = (value) => value.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
   if (!captureAtDate) {
-    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, reason: "invalid_capture_at" };
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, targetDate: null, targetDateMatches: false, matchingTargetDateSamples: [], observedDates: [], reason: "invalid_capture_at" };
   }
   if (!Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
-    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, reason: "empty_samples" };
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: 0, targetDate: dateKey(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [], observedDates: [], reason: "empty_samples" };
   }
   const maxAllowed = captureAtDate.getTime() + 90 * 1000;
   const parsedSamples = contentDateSamples
     .map((value) => ({ raw: value, parsed: parseIsoLikeDate(value) }))
     .filter((item) => item.parsed);
   if (parsedSamples.length === 0) {
-    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: contentDateSamples.length, reason: "unparseable_samples" };
+    return { ok: false, maxObserved: null, futureSamples: [], parsedCount: 0, sampleCount: contentDateSamples.length, targetDate: dateKey(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [], observedDates: [], reason: "unparseable_samples" };
   }
   const futureSamples = parsedSamples.filter((item) => item.parsed.getTime() > maxAllowed);
+  const targetDate = dateKey(captureAtDate);
+  const observedDates = Array.from(new Set(parsedSamples.map((item) => dateKey(item.parsed))));
+  const matchingTargetDateSamples = parsedSamples
+    .filter((item) => dateKey(item.parsed) === targetDate)
+    .map((item) => item.raw);
   const maxObserved = parsedSamples.reduce((acc, item) => (
     !acc || item.parsed.getTime() > acc.getTime() ? item.parsed : acc
   ), null);
@@ -2807,6 +2813,10 @@ function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
     futureSamples: futureSamples.slice(0, 5).map((item) => item.raw),
     parsedCount: parsedSamples.length,
     sampleCount: contentDateSamples.length,
+    targetDate,
+    targetDateMatches: matchingTargetDateSamples.length > 0,
+    matchingTargetDateSamples: matchingTargetDateSamples.slice(0, 5),
+    observedDates,
     reason: futureSamples.length ? "future_samples" : null,
   };
 }
@@ -2925,6 +2935,12 @@ function evaluateRetroCaptureGate(payload) {
     issues.push({
       code: "absolute_content_time_missing",
       detail: "historical proof requires at least one visible absolute editorial date",
+    });
+  }
+  if (payload.requireEditorialDateMatchTarget && contentTimeline.targetDateMatches !== true) {
+    issues.push({
+      code: "editorial_date_target_mismatch",
+      detail: `visible editorial date must match ${contentTimeline.targetDate || "target date"}; observed=${contentTimeline.observedDates.join(" | ") || "none"}`,
     });
   }
   const relativeContentTimeline = evaluateRelativeContentTimeline(
@@ -7138,6 +7154,7 @@ async function main() {
       retroContentProof,
       requireRetroContentProof: mapping.auditConfig?.requireRetroContentProof === true,
       requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+      requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
       requireDomFrameSimilarity: frameSelection?.frameSelectionMode === "gif_source",
@@ -7319,6 +7336,7 @@ async function main() {
         requireVideoControls: /VIDEO/i.test(insertion.localFormatoNormalizado || insertion.localFormato || ""),
         requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
         requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+        requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
         requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },

@@ -155,6 +155,9 @@ function sanitizeAuditConfig(value: unknown) {
   if (payload.requireCriticalContentPainted != null && typeof payload.requireCriticalContentPainted !== "boolean") {
     throw new Error("auditConfig.requireCriticalContentPainted deve ser booleano.");
   }
+  if (payload.requireEditorialDateMatchTarget != null && typeof payload.requireEditorialDateMatchTarget !== "boolean") {
+    throw new Error("auditConfig.requireEditorialDateMatchTarget deve ser booleano.");
+  }
   const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   if (bytes > MAX_AUDIT_JSON_BYTES) {
     throw new Error(`auditConfig excede ${MAX_AUDIT_JSON_BYTES} bytes.`);

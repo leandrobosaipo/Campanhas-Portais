@@ -132,6 +132,7 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Alias operacional igual em grupos diferentes do mesmo site.
 - Divergência entre `config/adrotate-sites.json` e regras publicadas no painel/API.
 - Campos inválidos: `scrollMode`, `proofStyle`, `slotSelector`.
+- Em página de notícia com `requireEditorialDateMatchTarget=true`, a data editorial visível deve coincidir com a data-alvo; não aprovar uma matéria repetida em dias diferentes.
 
 ## Serviços relacionados
 
