@@ -5,7 +5,8 @@ HOST="${HOST:-66.253.112.200}"
 PORT="${PORT:-215}"
 SSH_USER="${SSH_USER:-facilnam}"
 REMOTE_TMP="${REMOTE_TMP:-/home/facilnam/tmp/adops-retro-preview}"
-PROJECT_ROOT="/Users/leandrobosaipo/Projetos/AdOps"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 if [ "$#" -lt 1 ]; then
   echo "Uso: $0 <dominio> [dominio...]"
