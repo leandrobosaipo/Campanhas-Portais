@@ -155,8 +155,10 @@ GET /api/pi-site-exports?piCodigo={PI}&siteSigla={SITE}&mode={full|prints-only|p
 POST /api/pi-site-exports/jobs
 GET /api/pi-site-exports/jobs/{jobId}
 GET /api/pi-site-exports/jobs/{jobId}/download
+GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
+- `mode=delivery`: modo assíncrono padrão; gera ZIP somente com JPEGs, PDF separado e envia ambos ao Telegram;
 - `mode=full`: mantém os PNGs originais no ZIP para compatibilidade;
 - `mode=prints-only&variant=web`: entrega ZIP somente com JPEGs progressivos comprimidos;
 - `mode=pdf`: retorna um PDF comprimido com uma evidência auditada por página;
@@ -193,9 +195,10 @@ artefato final no Spaces e devolve uma URL pronta, evitando timeout do
 Cloudflare em pacotes grandes. Analytics é anexo opcional e não bloqueia a
 entrega das evidências.
 
-Para entrega final, `mode=full-pdf` e `variant=web` são os padrões do contrato.
+Para entrega à jornalista, `mode=delivery`, `variant=web` e
+`sendTelegram=true` são os padrões do contrato.
 Envie uma `Idempotency-Key` estável, faça polling até `status=completed` e só
-então use o endpoint `/download`. O GET síncrono fica restrito a diagnóstico ou
+então use `/download` para o ZIP e `/pdf` para o PDF. O GET síncrono fica restrito a diagnóstico ou
 artefatos pequenos.
 
 O runner captura somente inserções efetivamente publicadas
@@ -481,7 +484,17 @@ nem invalidam a data editorial do artigo principal verificado.
 
 O MU-plugin compatível é `Código5 AdOps Retro Preview 1.0.2`. Sem parâmetros de preview, o portal continua com comportamento normal.
 
-### Conteúdo obrigatório do pacote `full-pdf`
+### Conteúdo da entrega `delivery`
+
+O ZIP da jornalista contém somente JPEGs progressivos organizados por posição.
+O PDF fica separado. Nenhum JSON, CSV, README, manifesto, contact sheet ou
+arquivo de auditoria entra no ZIP. Os nomes são `PI-<codigo>-<portal>.zip` e
+`PI-<codigo>-<portal>.pdf`, sem `final`, `revisada`, `auditada` ou equivalentes.
+
+Auditoria, checksums e fontes PNG permanecem internos. `mode=full-pdf` continua
+disponível apenas para compatibilidade operacional.
+
+### Conteúdo do pacote legado `full-pdf`
 
 Além do PDF e dos JPEGs progressivos, a API inclui:
 
@@ -495,4 +508,4 @@ O relatório e os manifestos são gerados pela API. Não devem ser montados manu
 
 ### Prompt operacional recomendado
 
-> Use somente os endpoints da API AdOps. Consulte a PI e o site, gere todas as capturas retroativas com `candidate=true` e `promote=true`, e aguarde cada job assíncrono. Libere somente datas com `status=audited` e `retroContentProof.status=approved`. Depois crie um job de exportação `mode=full-pdf` e `variant=web`. Confirme no ZIP: mesma quantidade de JPEGs progressivos, páginas de PDF e manifestos; zero PNG; `futureCount=0`; contact sheet presente; e `SHA256SUMS.txt` válido. Não entregue pacote parcial.
+> Use somente os endpoints da API AdOps. Consulte a PI e o site, gere todas as capturas retroativas com `candidate=true` e `promote=true`, e aguarde cada job assíncrono. Libere somente datas com `status=audited` e `retroContentProof.status=approved`. Depois crie um job `mode=delivery`, `variant=web` e `sendTelegram=true`. Confirme: ZIP somente com JPEGs; PDF separado com a mesma quantidade de páginas; nomes neutros; zero PNG/PDF/JSON/TXT/CSV dentro do ZIP; e retorno do Telegram com dois documentos. Não entregue pacote parcial.

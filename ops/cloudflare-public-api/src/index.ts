@@ -1408,6 +1408,9 @@ function piSiteExportJobFromOpsJob(job: ReturnType<typeof describeJob>) {
     analyticsPiStatus: execution.analyticsPiStatus ?? null,
     analyticsFullMonthStatus: execution.analyticsFullMonthStatus ?? null,
     downloadUrl: typeof execution.downloadUrl === "string" ? execution.downloadUrl : null,
+    pdfUrl: typeof execution.pdfUrl === "string" ? execution.pdfUrl : null,
+    artifacts: execution.artifacts && typeof execution.artifacts === "object" ? execution.artifacts : null,
+    telegram: execution.telegram && typeof execution.telegram === "object" ? execution.telegram : null,
     error: job.error ?? null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -2312,12 +2315,12 @@ export default {
         if (!piCodigo || !siteSigla) {
           return badRequest("Informe piCodigo e siteSigla para gerar o pacote PI/site.");
         }
-        const requestedMode = typeof body.mode === "string" ? body.mode.trim().toLowerCase() : "full-pdf";
-        if (!["full", "prints-only", "pdf", "full-pdf"].includes(requestedMode)) {
-          return badRequest("mode deve ser full, prints-only, pdf ou full-pdf.");
+        const requestedMode = typeof body.mode === "string" ? body.mode.trim().toLowerCase() : "delivery";
+        if (!["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(requestedMode)) {
+          return badRequest("mode deve ser delivery, full, prints-only, pdf ou full-pdf.");
         }
         const mode = requestedMode;
-        const variant = mode === "pdf" || mode === "full-pdf"
+        const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
           ? "web"
           : typeof body.variant === "string" && body.variant.trim().toLowerCase() === "web"
             ? "web"
@@ -2334,7 +2337,19 @@ export default {
         const requestedKey = request.headers.get("idempotency-key")?.trim() || "";
         const generatedKey = await crypto.subtle.digest(
           "SHA-256",
-          new TextEncoder().encode(JSON.stringify({ piCodigo, siteSigla, mode, variant, pdfMaxWidth, pdfQuality, pdfResolution, imageMaxWidth, imageQuality })),
+          new TextEncoder().encode(JSON.stringify({
+            piCodigo,
+            siteSigla,
+            mode,
+            variant,
+            pdfMaxWidth,
+            pdfQuality,
+            pdfResolution,
+            imageMaxWidth,
+            imageQuality,
+            sendTelegram: body.sendTelegram !== false,
+            chatId: typeof body.chatId === "string" ? body.chatId.trim() : null,
+          })),
         );
         const idempotencyKey = requestedKey || Array.from(new Uint8Array(generatedKey), (byte) => byte.toString(16).padStart(2, "0")).join("");
         if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
@@ -2350,6 +2365,8 @@ export default {
           pdfResolution,
           imageMaxWidth,
           imageQuality,
+          sendTelegram: body.sendTelegram !== false,
+          chatId: typeof body.chatId === "string" ? body.chatId.trim() : null,
           requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
           source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
         }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey);
@@ -2368,6 +2385,7 @@ export default {
           pdfResolution,
           imageMaxWidth,
           imageQuality,
+          sendTelegram: body.sendTelegram !== false,
         }, { status: created.duplicate ? 200 : 202 });
       }
 
@@ -2561,7 +2579,7 @@ export default {
       !path.startsWith("/api/ops/") &&
       path !== "/api/healthz" &&
       !analyticsRoute &&
-      !/^\/api\/pi-site-exports\/jobs\/[^/]+(?:\/download)?$/.test(path) &&
+      !/^\/api\/pi-site-exports\/jobs\/[^/]+(?:\/(?:download|pdf))?$/.test(path) &&
       !/^\/api\/insertions\/capture-proof\/backfill-overdue\/jobs\/[^/]+$/.test(path) &&
       privateApiEnabled(env)
     ) {
@@ -2656,6 +2674,21 @@ export default {
         }, { status: 409 });
       }
       return Response.redirect(payload.downloadUrl, 302);
+    }
+
+    const piSiteExportPdfMatch = path.match(/^\/api\/pi-site-exports\/jobs\/([^/]+)\/pdf$/);
+    if (piSiteExportPdfMatch) {
+      const job = await getPiSiteExportJob(env, piSiteExportPdfMatch[1]);
+      if (!job) return notFound("PI/site export job not found");
+      const payload = piSiteExportJobFromOpsJob(job);
+      if (payload.status !== "completed" || !payload.pdfUrl) {
+        return jsonNoStore({
+          error: "pdf_not_ready",
+          details: "O PDF da entrega PI/site ainda não terminou de ser montado.",
+          job: payload,
+        }, { status: 409 });
+      }
+      return Response.redirect(payload.pdfUrl, 302);
     }
 
     if (path === "/api/ops/jobs") {

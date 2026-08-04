@@ -638,6 +638,13 @@ async function getLocalPiSiteExportJob(jobId: string) {
     mode: payload?.mode ?? null,
     variant: payload?.variant ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
+    pdfUrl: typeof artifactResult?.pdfUrl === "string" ? artifactResult.pdfUrl : null,
+    artifacts: artifactResult?.artifacts && typeof artifactResult.artifacts === "object" && !Array.isArray(artifactResult.artifacts)
+      ? artifactResult.artifacts
+      : null,
+    telegram: artifactResult?.telegram && typeof artifactResult.telegram === "object" && !Array.isArray(artifactResult.telegram)
+      ? artifactResult.telegram
+      : null,
     artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
     artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
     artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
@@ -2723,7 +2730,7 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
   try {
     const exportOptions = parseEvidenceExportOptions({
       ...(req.body as Record<string, unknown>),
-      mode: req.body?.mode ?? "full-pdf",
+      mode: req.body?.mode ?? "delivery",
     });
     const payload = {
       piCodigo,
@@ -2735,6 +2742,8 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       pdfResolution: parseBoundedInteger(req.body?.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 }),
       imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
       imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
+      sendTelegram: req.body?.sendTelegram !== false,
+      chatId: typeof req.body?.chatId === "string" ? req.body.chatId.trim() : null,
       source: typeof req.body?.source === "string" ? req.body.source : "api-server",
     };
     const requestedKey = typeof req.headers["idempotency-key"] === "string"
@@ -2763,6 +2772,7 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       siteSigla: siteSigla.toUpperCase(),
       mode: exportOptions.mode,
       variant: exportOptions.variant,
+      sendTelegram: payload.sendTelegram,
     });
   } catch (error) {
     res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
@@ -2814,6 +2824,31 @@ router.get("/pi-site-exports/jobs/:jobId/download", async (req, res): Promise<vo
   }
 });
 
+router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> => {
+  try {
+    const job = await getLocalPiSiteExportJob(req.params.jobId);
+    if (!job) {
+      res.status(404).json({ error: "Job PI/site não encontrado." });
+      return;
+    }
+    if (job.status !== "completed" || !job.pdfUrl) {
+      res.status(409).json({
+        error: "PDF ainda não está pronto para download.",
+        jobId: job.jobId,
+        status: job.status,
+        stage: job.stage,
+      });
+      return;
+    }
+    res.redirect(job.pdfUrl);
+  } catch (error) {
+    res.status(500).json({
+      error: "Falha ao redirecionar o PDF da entrega PI/site.",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const piCodigo = typeof req.query.piCodigo === "string" ? req.query.piCodigo : "";
   const siteSigla = typeof req.query.siteSigla === "string" ? req.query.siteSigla : "";
@@ -2823,6 +2858,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const pdfResolution = parseBoundedInteger(req.query.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 });
   const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth ?? req.query.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
   const imageQuality = parseBoundedInteger(req.query.imageQuality ?? req.query.pdfQuality, { minimum: 45, maximum: 90, fallback: 72 });
+  const journalistPresentation = String(req.query.presentation ?? "").trim().toLowerCase() === "journalist";
   let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
 
   try {
@@ -2856,7 +2892,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   if (!download) {
     res.json({
       ...descriptor,
-      supportedExportModes: ["full", "prints-only", "pdf", "full-pdf"],
+      supportedExportModes: ["delivery", "full", "prints-only", "pdf", "full-pdf"],
       supportedImageVariants: ["original", "web"],
       pdfDefaults: {
         maxWidth: 1920,
@@ -2876,6 +2912,15 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     res.status(409).json({
       error: "Nenhum artefato disponível para exportação neste recorte de PI/site.",
       ...descriptor,
+    });
+    return;
+  }
+
+  if (exportOptions.mode === "delivery") {
+    res.status(409).json({
+      error: "mode=delivery é assíncrono; use POST /api/pi-site-exports/jobs.",
+      piCodigo: descriptor.piCodigo,
+      siteSigla: descriptor.siteSigla,
     });
     return;
   }
@@ -3097,10 +3142,12 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
           failures.push({ insertionId: insertion.id, evidenceId: 0, date: null, error: "no_evidence_images" });
           continue;
         }
-        const basePackageName = buildDeliveryPackageName(
-          insertion,
-          evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
-        );
+        const basePackageName = journalistPresentation
+          ? deliverySegment(insertion.localFormatoNormalizado ?? insertion.localFormato, "IMAGENS")
+          : buildDeliveryPackageName(
+              insertion,
+              evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
+            );
         const packageOccurrence = (packageNameOccurrences.get(basePackageName) ?? 0) + 1;
         packageNameOccurrences.set(basePackageName, packageOccurrence);
         const delivery = await writePrintDeliveryFolder({
@@ -3110,7 +3157,9 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
           variant: exportOptions.variant,
           maxWidth: exportOptions.variant === "web" ? imageMaxWidth : undefined,
           quality: exportOptions.variant === "web" ? imageQuality : undefined,
-          packageNameOverride: packageOccurrence > 1 ? `${basePackageName}-INSERCAO-${insertion.id}` : basePackageName,
+          packageNameOverride: packageOccurrence > 1
+            ? `${basePackageName}-${packageOccurrence}`
+            : basePackageName,
         });
         mergePrintDeliveryMetrics(aggregateMetrics, delivery.metrics);
         failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
@@ -3127,7 +3176,9 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         return;
       }
 
-      const archiveBase = buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
+      const archiveBase = journalistPresentation
+        ? `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}`
+        : buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
       zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
       await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
       setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);

@@ -60,7 +60,7 @@ print(json.dumps({
 }))
 `;
 
-export type EvidenceExportMode = "full" | "prints-only" | "pdf" | "full-pdf";
+export type EvidenceExportMode = "delivery" | "full" | "prints-only" | "pdf" | "full-pdf";
 export type EvidenceImageVariant = "original" | "web";
 
 export class EvidenceExportInputError extends Error {
@@ -97,12 +97,12 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
   const mode = String(query.mode ?? "full")
     .trim()
     .toLowerCase();
-  const defaultVariant = mode === "pdf" || mode === "full-pdf" ? "web" : "original";
+  const defaultVariant = mode === "delivery" || mode === "pdf" || mode === "full-pdf" ? "web" : "original";
   const variant = String(query.variant ?? defaultVariant)
     .trim()
     .toLowerCase();
-  if (!["full", "prints-only", "pdf", "full-pdf"].includes(mode)) {
-    throw new EvidenceExportInputError("mode deve ser full, prints-only, pdf ou full-pdf.");
+  if (!["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(mode)) {
+    throw new EvidenceExportInputError("mode deve ser delivery, full, prints-only, pdf ou full-pdf.");
   }
   if (variant !== "original" && variant !== "web") {
     throw new EvidenceExportInputError("variant deve ser original ou web.");
@@ -110,8 +110,8 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
   if (mode === "full" && variant !== "original") {
     throw new EvidenceExportInputError("mode=full exige variant=original; use prints-only, pdf ou full-pdf para variant=web.");
   }
-  if ((mode === "pdf" || mode === "full-pdf") && variant !== "web") {
-    throw new EvidenceExportInputError("mode=pdf e mode=full-pdf exigem variant=web.");
+  if ((mode === "delivery" || mode === "pdf" || mode === "full-pdf") && variant !== "web") {
+    throw new EvidenceExportInputError("mode=delivery, mode=pdf e mode=full-pdf exigem variant=web.");
   }
   return {
     mode: mode as EvidenceExportMode,

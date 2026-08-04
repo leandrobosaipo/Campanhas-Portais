@@ -4570,6 +4570,40 @@ async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
   };
 }
 
+async function sendTelegramDeliveryDirect({ chatId, piCodigo, siteSigla, zipArtifact, pdfArtifact }) {
+  if (!TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN ausente para enviar a entrega.");
+  if (!chatId) throw new Error("TELEGRAM_DEFAULT_GROUP_ID ausente para enviar a entrega.");
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("media", JSON.stringify([
+    {
+      type: "document",
+      media: "attach://images_zip",
+      caption: `PI ${piCodigo} · ${siteSigla}`,
+    },
+    {
+      type: "document",
+      media: "attach://campaign_pdf",
+    },
+  ]));
+  form.set("images_zip", new Blob([zipArtifact.buffer], { type: "application/zip" }), zipArtifact.fileName);
+  form.set("campaign_pdf", new Blob([pdfArtifact.buffer], { type: "application/pdf" }), pdfArtifact.fileName);
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup`, {
+    method: "POST",
+    body: form,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.description || `Telegram sendMediaGroup falhou: ${response.status}`);
+  }
+  const messages = Array.isArray(payload?.result) ? payload.result : [];
+  return {
+    ok: true,
+    mode: "direct-media-group",
+    messageIds: messages.map((item) => item?.message_id).filter((item) => Number.isInteger(item)),
+  };
+}
+
 function resolveAnalyticsConfig(payload) {
   const propertyKey = String(payload?.propertyKey || "").trim().toLowerCase();
   const reportConfigName = String(payload?.reportConfigName || ANALYTICS_SITE_CONFIGS[propertyKey] || "").trim();
@@ -5002,10 +5036,10 @@ async function executePiSiteExport(job) {
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
-  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
+  const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
     ? String(payload.mode).toLowerCase()
-    : "full";
-  const variant = mode === "pdf" || mode === "full-pdf"
+    : "delivery";
+  const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
     ? "web"
     : String(payload.variant || "").toLowerCase() === "web"
       ? "web"
@@ -5015,6 +5049,7 @@ async function executePiSiteExport(job) {
   const pdfResolution = Math.max(72, Math.min(180, Number.parseInt(String(payload.pdfResolution || "120"), 10) || 120));
   const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const sendTelegram = mode === "delivery" ? payload.sendTelegram !== false : payload.sendTelegram === true;
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
@@ -5043,6 +5078,7 @@ async function executePiSiteExport(job) {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
+    sendTelegram,
   };
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
@@ -5052,19 +5088,136 @@ async function executePiSiteExport(job) {
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
 
-  await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    await ensureOperationalDocuments(insertion);
+  if (mode !== "delivery") {
+    await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      await ensureOperationalDocuments(insertion);
+    }
+
+    await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
+    }
+
+    await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
+    for (const insertion of insertions) {
+      analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
+    }
   }
 
-  await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
-  }
-
-  await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
-  for (const insertion of insertions) {
-    analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
+  if (mode === "delivery") {
+    await progressJob(job.id, {
+      stage: "montando zip de imagens e pdf separado",
+      ...stagePayload,
+      regeneratedDates,
+      invalidatedEvidenceIds,
+    });
+    const commonParams = {
+      piCodigo,
+      siteSigla,
+      download: "1",
+      variant: "web",
+      presentation: "journalist",
+      pdfMaxWidth: String(pdfMaxWidth),
+      pdfQuality: String(pdfQuality),
+      pdfResolution: String(pdfResolution),
+      imageMaxWidth: String(imageMaxWidth),
+      imageQuality: String(imageQuality),
+    };
+    const zipParams = new URLSearchParams({ ...commonParams, mode: "prints-only" });
+    const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf" });
+    const [zipDownload, pdfDownload] = await Promise.all([
+      privateApiDownload(`/api/pi-site-exports?${zipParams.toString()}`),
+      privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`),
+    ]);
+    const neutralBaseName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(siteSigla)}`;
+    const zipArtifact = { ...zipDownload, fileName: `${neutralBaseName}.zip` };
+    const pdfArtifact = { ...pdfDownload, fileName: `${neutralBaseName}.pdf` };
+    const objectPrefix = [
+      ADOPS_EXPORT_BASE_PATH,
+      slugifyPathPart(siteSigla),
+      slugifyPathPart(piCodigo),
+      slugifyPathPart(job.id),
+    ].filter(Boolean).join("/");
+    const zipObjectKey = `${objectPrefix}/${zipArtifact.fileName}`;
+    const pdfObjectKey = `${objectPrefix}/${pdfArtifact.fileName}`;
+    await Promise.all([
+      uploadBufferToSpaces({
+        buffer: zipArtifact.buffer,
+        bucket: ADOPS_EXPORT_BUCKET,
+        objectKey: zipObjectKey,
+        contentType: "application/zip",
+      }),
+      uploadBufferToSpaces({
+        buffer: pdfArtifact.buffer,
+        bucket: ADOPS_EXPORT_BUCKET,
+        objectKey: pdfObjectKey,
+        contentType: "application/pdf",
+      }),
+    ]);
+    const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
+    const publicUrl = (objectKey) => `${publicBase}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+    const downloadUrl = publicUrl(zipObjectKey);
+    const pdfUrl = publicUrl(pdfObjectKey);
+    let telegram = { ok: true, skipped: true, reason: "sendTelegram=false" };
+    if (sendTelegram) {
+      await progressJob(job.id, {
+        stage: "enviando zip e pdf no telegram",
+        ...stagePayload,
+        downloadUrl,
+        pdfUrl,
+      });
+      try {
+        telegram = await sendTelegramDeliveryDirect({
+          chatId: String(payload.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim(),
+          piCodigo,
+          siteSigla,
+          zipArtifact,
+          pdfArtifact,
+        });
+      } catch (error) {
+        telegram = {
+          ok: false,
+          skipped: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+    const zipSha256 = crypto.createHash("sha256").update(zipArtifact.buffer).digest("hex");
+    const pdfSha256 = crypto.createHash("sha256").update(pdfArtifact.buffer).digest("hex");
+    return {
+      stage: "completed",
+      piCodigo,
+      siteSigla,
+      mode,
+      variant,
+      insertionIds: descriptor.insertionIds,
+      invalidatedEvidenceIds,
+      regeneratedDates,
+      downloadUrl,
+      pdfUrl,
+      artifactBytes: zipArtifact.buffer.length,
+      artifactContentType: "application/zip",
+      artifactFileName: zipArtifact.fileName,
+      artifactSha256: zipSha256,
+      artifacts: {
+        zip: {
+          url: downloadUrl,
+          fileName: zipArtifact.fileName,
+          bytes: zipArtifact.buffer.length,
+          contentType: "application/zip",
+          sha256: zipSha256,
+        },
+        pdf: {
+          url: pdfUrl,
+          fileName: pdfArtifact.fileName,
+          bytes: pdfArtifact.buffer.length,
+          contentType: "application/pdf",
+          sha256: pdfSha256,
+        },
+      },
+      telegram,
+    };
   }
 
   await progressJob(job.id, {

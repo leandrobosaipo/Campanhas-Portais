@@ -389,12 +389,12 @@ curl -fsSL -X POST \
 
 ## Garantir pacote por PI + site
 
-Este fluxo é o melhor para entrega completa.
-
-Ele garante cobertura de evidências, documentos operacionais e entrega por PI/site.
+Este é o fluxo canônico de entrega para jornalista. Ele garante cobertura de
+evidências e produz dois artefatos simples por PI/site.
 
 Modos de entrega:
 
+- `mode=delivery`: padrão; gera ZIP somente com JPEGs e PDF separado, com nomes neutros, e envia os dois ao Telegram;
 - `mode=full`: compatibilidade; inclui cada PNG original e não reduz significativamente o tamanho;
 - `mode=prints-only&variant=web`: ZIP somente com JPEGs progressivos comprimidos;
 - `mode=pdf`: entrega somente um PDF comprimido, com uma evidência auditada por página;
@@ -409,14 +409,15 @@ intactos no storage do AdOps.
 ```bash
 curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "Idempotency-Key: pi-16628-perrengue-full-pdf-v1" \
+  -H "Idempotency-Key: pi-16628-perrengue-delivery-v1" \
   -H "Content-Type: application/json" \
   "$ADOPS_API_BASE_URL/api/pi-site-exports/jobs" \
   -d '{
     "piCodigo":"16628",
     "siteSigla":"PERRENGUE",
-    "mode":"full-pdf",
+    "mode":"delivery",
     "variant":"web",
+    "sendTelegram":true,
     "pdfMaxWidth":1920,
     "pdfQuality":68,
     "pdfResolution":120,
@@ -427,17 +428,24 @@ curl -fsSL -X POST \
 
 O retorno `202` contém `jobId`. Consulte
 `GET /api/pi-site-exports/jobs/{jobId}` até `status=completed`; então use
-`GET /api/pi-site-exports/jobs/{jobId}/download`. Uma repetição com a mesma
+`GET /api/pi-site-exports/jobs/{jobId}/download` para o ZIP e
+`GET /api/pi-site-exports/jobs/{jobId}/pdf` para o PDF. Uma repetição com a mesma
 `Idempotency-Key` retorna o mesmo job e `duplicate=true`. O endpoint legado
 `POST /api/ops/jobs/pi-site-export` permanece como alias de compatibilidade,
 mas não deve ser usado em novas automações.
+
+O ZIP externo não contém PDF, JSON, CSV, README, auditoria ou contact sheet.
+Esses dados continuam preservados internamente. Os nomes externos são
+`PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>.pdf`, sem palavras de status.
+Se o Telegram estiver indisponível, os artefatos continuam publicados e o job
+retorna `telegram.ok=false`; a falha de notificação não destrói a entrega.
 
 Download direto, sem criar job (somente diagnóstico ou pacote pequeno):
 
 ```bash
 curl -fL \
   "$ADOPS_API_BASE_URL/api/pi-site-exports?piCodigo=16628&siteSigla=PERRENGUE&mode=pdf&variant=web&download=1" \
-  -o PI-16628-PERRENGUE-prints-auditados-comprimidos.pdf
+  -o PI-16628-PERRENGUE.pdf
 ```
 
 O endpoint valida os limites recebidos:

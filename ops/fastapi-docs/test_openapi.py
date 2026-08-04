@@ -15,7 +15,9 @@ assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["requestBody"]["co
 assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["responses"]["202"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PiSiteExportJobAccepted"
 assert document["paths"]["/api/pi-site-exports/jobs/{jobId}"]["get"]["parameters"][0]["schema"]["format"] == "uuid"
 assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/download"]["get"]["responses"]
-assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "full-pdf"
+assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/pdf"]["get"]["responses"]
+assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "delivery"
+assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["sendTelegram"]["default"] is True
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["imageQuality"]["maximum"] == 90
 assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofJobRequest"
 assert document["paths"]["/api/insertions/{id}/capture-proof/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofStatusResponse"

@@ -100,6 +100,7 @@ type PiSiteExportJob = {
   analyticsPiStatus: unknown;
   analyticsFullMonthStatus: unknown;
   downloadUrl: string | null;
+  pdfUrl: string | null;
   error: string | null;
 };
 
@@ -614,12 +615,15 @@ async function fetchPiSiteExport(env: Env, piCodigo: string, siteSigla: string):
   return text ? JSON.parse(text) as PiSiteExport : null;
 }
 
-async function createPiSiteExportJob(env: Env, piCodigo: string, siteSigla: string): Promise<{ jobId: string }> {
+async function createPiSiteExportJob(env: Env, piCodigo: string, siteSigla: string, chatId?: string | number): Promise<{ jobId: string }> {
   return adopsFetch(env, "/api/pi-site-exports/jobs", {
     method: "POST",
     body: JSON.stringify({
       piCodigo,
       siteSigla,
+      mode: "delivery",
+      sendTelegram: true,
+      chatId: chatId ? String(chatId) : undefined,
       requestedBy: "telegram-bot",
       source: "telegram-bot",
     }),
@@ -633,6 +637,11 @@ async function fetchPiSiteExportJob(env: Env, jobId: string): Promise<PiSiteExpo
 function envPiSiteExportJobDownloadUrl(env: Env, jobId: string) {
   const base = env.ADOPS_PUBLIC_API_BASE_URL.replace(/\/$/, "");
   return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(jobId)}/download`;
+}
+
+function envPiSiteExportJobPdfUrl(env: Env, jobId: string) {
+  const base = env.ADOPS_PUBLIC_API_BASE_URL.replace(/\/$/, "");
+  return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(jobId)}/pdf`;
 }
 
 async function waitForPiSiteExportJob(env: Env, jobId: string, timeoutMs = 45_000): Promise<PiSiteExportJob> {
@@ -1216,11 +1225,14 @@ async function handleCommand(env: Env, chatId: string | number, userId: string |
       if (!insertion?.piCodigo || !insertion.siteSigla) {
         return sendMessage(env, chatId, `Não consegui resolver PI/site a partir da inserção #${explicitInsertionId}.`);
       }
-      const jobRequest = await createPiSiteExportJob(env, normalizePiDigits(insertion.piCodigo) ?? insertion.piCodigo, insertion.siteSigla);
+      const jobRequest = await createPiSiteExportJob(env, normalizePiDigits(insertion.piCodigo) ?? insertion.piCodigo, insertion.siteSigla, chatId);
       const job = await waitForPiSiteExportJob(env, jobRequest.jobId);
       if (job.status === "completed" && job.downloadUrl) {
         return sendMessage(env, chatId, `${buildPiSiteExportJobText(job)}\n\n${envPiSiteExportJobDownloadUrl(env, job.id)}`, {
-          reply_markup: { inline_keyboard: [[{ text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) }]] },
+          reply_markup: { inline_keyboard: [[
+            { text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) },
+            { text: "Baixar PDF", url: envPiSiteExportJobPdfUrl(env, job.id) },
+          ]] },
           disable_web_page_preview: true,
         });
       }
@@ -1261,11 +1273,14 @@ async function handleCommand(env: Env, chatId: string | number, userId: string |
     const unavailable: PiSiteExport[] = [];
     if (available.length === 1 && siteExports.length === 1) {
       const item = available[0]!;
-      const jobRequest = await createPiSiteExportJob(env, item.piCodigo, item.siteSigla);
+      const jobRequest = await createPiSiteExportJob(env, item.piCodigo, item.siteSigla, chatId);
       const job = await waitForPiSiteExportJob(env, jobRequest.jobId);
       if (job.status === "completed" && job.downloadUrl) {
         return sendMessage(env, chatId, `${buildPiSiteExportJobText(job)}\n\n${envPiSiteExportJobDownloadUrl(env, job.id)}`, {
-          reply_markup: { inline_keyboard: [[{ text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) }]] },
+          reply_markup: { inline_keyboard: [[
+            { text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) },
+            { text: "Baixar PDF", url: envPiSiteExportJobPdfUrl(env, job.id) },
+          ]] },
           disable_web_page_preview: true,
         });
       }
@@ -1396,12 +1411,15 @@ async function handleCallback(env: Env, callback: TelegramCallbackQuery) {
         await answerCallback(env, callback.id, "PI/site inválidos.");
         return;
       }
-      const created = await createPiSiteExportJob(env, piCodigo, siteSigla);
+      const created = await createPiSiteExportJob(env, piCodigo, siteSigla, chatId);
       await answerCallback(env, callback.id, "Preparando pacote...");
       const job = await waitForPiSiteExportJob(env, created.jobId);
       if (job.status === "completed" && job.downloadUrl) {
         await sendMessage(env, chatId, `${buildPiSiteExportJobText(job)}\n\n${envPiSiteExportJobDownloadUrl(env, job.id)}`, {
-          reply_markup: { inline_keyboard: [[{ text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) }]] },
+          reply_markup: { inline_keyboard: [[
+            { text: "Baixar ZIP", url: envPiSiteExportJobDownloadUrl(env, job.id) },
+            { text: "Baixar PDF", url: envPiSiteExportJobPdfUrl(env, job.id) },
+          ]] },
           disable_web_page_preview: true,
         });
       } else {
