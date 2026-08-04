@@ -34,14 +34,18 @@ services:
       - sh
       - -lc
       - |
-        python3 - <<'PY' >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends python3-pip python3-pil zip && python3 -m pip install --break-system-packages --no-cache-dir awscli)
+        node artifacts/api-server/dist/index.mjs &
+        cod5_api_pid=$$!
+        (
+          python3 - <<'PY' >/dev/null 2>&1 && command -v aws >/dev/null 2>&1 && command -v zip >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends python3-pip python3-pil zip && python3 -m pip install --break-system-packages --no-cache-dir awscli)
         from PIL import Image
         PY
-        python3 -c 'import fastapi, uvicorn' >/dev/null 2>&1 || python3 -m pip install --break-system-packages --no-cache-dir -r /app/ops/fastapi-docs/requirements.txt
-        python3 -m uvicorn main:app --app-dir /app/ops/fastapi-docs --host 127.0.0.1 --port 4013 &
-        cod5_fastapi_pid=$$!
-        trap 'kill "$$cod5_fastapi_pid" 2>/dev/null || true' EXIT INT TERM
-        node artifacts/api-server/dist/index.mjs
+          python3 -c 'import fastapi, uvicorn' >/dev/null 2>&1 || python3 -m pip install --break-system-packages --no-cache-dir -r /app/ops/fastapi-docs/requirements.txt
+          exec python3 -m uvicorn main:app --app-dir /app/ops/fastapi-docs --host 127.0.0.1 --port 4013
+        ) &
+        cod5_docs_pid=$$!
+        trap 'kill "$$cod5_api_pid" "$$cod5_docs_pid" 2>/dev/null || true' EXIT INT TERM
+        wait "$$cod5_api_pid"
     environment:
       PORT: "4011"
       NODE_ENV: production
