@@ -5400,7 +5400,7 @@ function fulfillmentPlacementKey(value) {
 }
 
 function fulfillmentPiKey(value) {
-  return normalizePiDigits(value).replace(/^0+(?=\d)/, "");
+  return String(normalizePiDigits(value) || "").replace(/^0+(?=\d)/, "");
 }
 
 class FulfillmentBlockedError extends Error {
