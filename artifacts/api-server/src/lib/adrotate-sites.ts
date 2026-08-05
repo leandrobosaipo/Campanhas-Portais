@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { resolveCampaignPlacementCode, type CampaignPlacementCode } from "./campaign-placement";
 
 export type SiteFormatMapping = {
   groupId: number;
@@ -55,6 +56,7 @@ export type SiteIntegration = {
 
 export type SiteFormatResolutionCandidate = {
   groupId: number;
+  placementCode: CampaignPlacementCode;
   canonicalFormat: string;
   aliases: string[];
   page: "home" | "article";
@@ -70,6 +72,7 @@ export type SiteFormatResolution = {
   lexicalKey: string;
   canonicalFormat: string | null;
   groupId: number | null;
+  placementCode: CampaignPlacementCode | null;
   page: "home" | "article" | null;
   candidates: SiteFormatResolutionCandidate[];
   safeToApply: boolean;
@@ -120,6 +123,7 @@ function extractDimensions(value: string | null | undefined) {
 function candidateFromMapping(mapping: SiteFormatMapping): SiteFormatResolutionCandidate {
   return {
     groupId: mapping.groupId,
+    placementCode: resolveCampaignPlacementCode(mapping.aliases[0], mapping.groupId) ?? `group_${mapping.groupId}`,
     canonicalFormat: mapping.aliases[0] ?? `GRUPO ${mapping.groupId}`,
     aliases: [...new Set([...mapping.aliases, ...(mapping.inputAliases ?? [])])],
     page: mapping.page,
@@ -222,6 +226,7 @@ export function resolveSiteFormat(
       lexicalKey,
       canonicalFormat: null,
       groupId: null,
+      placementCode: null,
       page: null,
       candidates: [],
       safeToApply: false,
@@ -287,6 +292,9 @@ export function resolveSiteFormat(
     lexicalKey,
     canonicalFormat: resolved?.aliases[0] ?? null,
     groupId: resolved?.groupId ?? null,
+    placementCode: resolved
+      ? resolveCampaignPlacementCode(resolved.aliases[0], resolved.groupId) ?? `group_${resolved.groupId}`
+      : null,
     page: resolved?.page ?? null,
     candidates: publicCandidates,
     safeToApply: Boolean(resolved),

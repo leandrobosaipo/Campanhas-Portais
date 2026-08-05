@@ -5,6 +5,7 @@ import {
   isFormatCompatible,
   selectBestAdopsMatch,
 } from "../../artifacts/api-server/src/lib/campaign-operations-matching";
+import { resolveCampaignPlacementCode } from "../../artifacts/api-server/src/lib/campaign-placement";
 
 function row(localFormato: string) {
   return {
@@ -36,6 +37,14 @@ test("aceita abreviacoes comerciais da planilha", () => {
   assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 1"), true);
   assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 2"), false);
   assert.equal(isFormatCompatible("INTERNO", "INTERNO DE NOTICIAS"), true);
+});
+
+test("posição canônica é estável entre labels operacionais", () => {
+  assert.equal(resolveCampaignPlacementCode("MEGA BANNER HOME 1"), "home_1");
+  assert.equal(resolveCampaignPlacementCode("HOME 1"), "home_1");
+  assert.equal(resolveCampaignPlacementCode("MEGABANNER TOPO"), "top");
+  assert.equal(resolveCampaignPlacementCode("INTERNO DE NOTÍCIAS"), "article_internal");
+  assert.equal(isFormatCompatible("HOME 1", "MEGABANNER HOME 2"), false);
 });
 
 test("mantem a insercao canonica apos a sincronizacao normalizar HOME 1", () => {

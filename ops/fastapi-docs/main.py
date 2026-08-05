@@ -319,6 +319,61 @@ def build_openapi_document() -> dict[str, Any]:
             ],
         })
 
+    fulfillment_create_path = paths.get("/api/campaign-fulfillments/jobs", {})
+    if "post" in fulfillment_create_path:
+        fulfillment_create_path["post"].update({
+            "tags": ["Entrega completa de campanha"],
+            "summary": "Executar fulfillment completo por PI e portal",
+            "description": (
+                "Endpoint canônico do fluxo completo. Sincroniza a planilha, evita duplicidade, "
+                "vincula a mídia exata do Drive, publica no AdRotate, gera/backfill de evidências, "
+                "audita, entrega ZIP de imagens e PDFs separados por posição, envia ao Telegram e "
+                "materializa provas da planilha e do pedido da agência."
+            ),
+            "parameters": [{
+                "name": "Idempotency-Key",
+                "in": "header",
+                "required": False,
+                "schema": {"type": "string", "minLength": 8, "maxLength": 160, "pattern": "^[A-Za-z0-9._:-]+$"},
+            }],
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {
+                    "schema": {"$ref": "#/components/schemas/CampaignFulfillmentJobRequest"},
+                    "examples": {"pi_portal": {"value": {"piCodigo": "90729", "siteSigla": "ROO", "sendTelegram": True}}},
+                }},
+            },
+            "responses": {
+                "200": {"description": "Job idempotente já existente.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CampaignFulfillmentJobAccepted"}}}},
+                "202": {"description": "Job criado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CampaignFulfillmentJobAccepted"}}}},
+                "400": {"description": "PI, portal ou chave inválidos."},
+                "401": {"description": "Token ausente ou inválido."},
+            },
+        })
+
+    fulfillment_status_path = paths.get("/api/campaign-fulfillments/jobs/{jobId}", {})
+    if "get" in fulfillment_status_path:
+        fulfillment_status_path["get"].update({
+            "tags": ["Entrega completa de campanha"],
+            "summary": "Consultar fulfillment, checklist e artefatos",
+            "responses": {
+                "200": {"description": "Estado consolidado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CampaignFulfillmentJobStatus"}}}},
+                "404": {"description": "Job não encontrado."},
+            },
+        })
+
+    for suffix, summary, media_type in [
+        ("report", "Abrir dossiê responsivo", "text/html"),
+        ("report.pdf", "Baixar dossiê em PDF", "application/pdf"),
+    ]:
+        report_path = paths.get(f"/api/campaign-fulfillments/jobs/{{jobId}}/{suffix}", {})
+        if "get" in report_path:
+            report_path["get"].update({
+                "tags": ["Entrega completa de campanha"],
+                "summary": summary,
+                "responses": {"200": {"description": summary, "content": {media_type: {"schema": {"type": "string", "format": "binary"}}}}, "404": {"description": "Job não encontrado."}},
+            })
+
     capture_job_path = paths.get("/api/insertions/{id}/capture-proof/jobs", {})
     if "post" in capture_job_path:
         capture_job_path["post"]["requestBody"] = {
@@ -382,6 +437,7 @@ def build_openapi_document() -> dict[str, Any]:
         ]
         + [
             {"name": "Entrega de evidências", "description": "Pacotes por PI e portal, com compressão, PDF, checksum e processamento assíncrono."},
+            {"name": "Entrega completa de campanha", "description": "Fluxo idempotente de ponta a ponta com dossiê e provas das fontes."},
             {"name": "Documentação"},
         ],
         "paths": paths,
@@ -513,6 +569,51 @@ def build_openapi_document() -> dict[str, Any]:
                         "jobId": {"type": "string", "format": "uuid"},
                         "status": {"$ref": "#/components/schemas/OpsJobStatus"},
                         "stage": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": True,
+                },
+                "CampaignFulfillmentJobRequest": {
+                    "type": "object",
+                    "required": ["piCodigo", "siteSigla"],
+                    "properties": {
+                        "piCodigo": {"type": "string", "pattern": "^[0-9]+$"},
+                        "siteSigla": {"type": "string", "minLength": 2, "maxLength": 24},
+                        "placement": {"type": ["string", "null"], "description": "Opcional. Omitir para processar todas as posições da PI no portal."},
+                        "campaignDate": {"type": ["string", "null"], "format": "date", "description": "Data dentro do período. Obrigatória para corrigir campanha de aba mensal anterior."},
+                        "sendTelegram": {"type": "boolean", "default": True},
+                        "chatId": {"type": ["string", "null"]},
+                        "refreshDrive": {"type": "boolean", "default": True},
+                        "source": {"type": "string", "default": "campaign-fulfillment-api"},
+                        "requestedBy": {"type": "string", "default": "api-server"},
+                    },
+                    "additionalProperties": False,
+                },
+                "CampaignFulfillmentJobAccepted": {
+                    "type": "object",
+                    "required": ["ok", "duplicate", "jobId", "status", "piCodigo", "siteSigla"],
+                    "properties": {
+                        "ok": {"type": "boolean", "const": True},
+                        "duplicate": {"type": "boolean"},
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "piCodigo": {"type": "string"},
+                        "siteSigla": {"type": "string"},
+                    },
+                    "additionalProperties": True,
+                },
+                "CampaignFulfillmentJobStatus": {
+                    "type": "object",
+                    "required": ["jobId", "kind", "status", "stage", "links"],
+                    "properties": {
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "kind": {"type": "string", "const": "campaign-fulfillment"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "stage": {"type": "string"},
+                        "piCodigo": {"type": ["string", "null"]},
+                        "siteSigla": {"type": ["string", "null"]},
+                        "result": {"type": ["object", "null"], "additionalProperties": True},
+                        "error": {"type": ["string", "null"]},
+                        "links": {"type": "object", "additionalProperties": {"type": "string"}},
                     },
                     "additionalProperties": True,
                 },

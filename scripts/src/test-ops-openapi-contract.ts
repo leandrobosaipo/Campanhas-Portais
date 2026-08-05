@@ -5,7 +5,7 @@ import { buildOpsApiCatalog, buildOpsOpenApiDocument } from "../../artifacts/api
 test("operational OpenAPI exposes campaign-operations-v2 on a valid path", () => {
   const catalog = buildOpsApiCatalog();
   const document = buildOpsOpenApiDocument() as any;
-  assert.equal(catalog.version, "adops-ops-api-catalog-v3");
+  assert.equal(catalog.version, "adops-ops-api-catalog-v4");
   assert.equal(document.openapi, "3.1.0");
   assert.equal(document.components.schemas.CampaignOperationsV2.properties.version.const, "campaign-operations-v2");
   assert(Object.keys(document.paths).every((path) => !path.includes("?")));
@@ -15,4 +15,10 @@ test("operational OpenAPI exposes campaign-operations-v2 on a valid path", () =>
   assert(queryNames.includes("date"));
   assert(queryNames.includes("siteSigla"));
   assert.equal(operation.responses["200"].content["application/json"].schema.$ref, "#/components/schemas/CampaignOperationsV2");
+  const fulfillment = document.paths["/api/campaign-fulfillments/jobs"]?.post;
+  assert(fulfillment);
+  assert.equal(fulfillment.security[0].bearerAuth.length, 0);
+  assert.equal(fulfillment.requestBody.content["application/json"].example.piCodigo, "90729");
+  assert(document.paths["/api/campaign-fulfillments/jobs/{jobId}/report"]?.get);
+  assert(document.paths["/api/campaign-fulfillments/jobs/{jobId}/report.pdf"]?.get);
 });
