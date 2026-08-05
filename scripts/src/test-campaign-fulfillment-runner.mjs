@@ -6,6 +6,7 @@ const {
   fulfillmentPlacementKey,
   drivePdfThumbnailUrl,
   selectFulfillmentOperations,
+  fulfillmentEvidenceAsOfDate,
   fulfillmentSourceProofs,
 } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
 
@@ -42,4 +43,9 @@ test("dossiê preserva fonte da planilha e PDF da agência", () => {
   assert.equal(proofs.sheetRows[0].rowNumber, 27);
   assert.equal(drivePdfThumbnailUrl("1fV3CxxedTCrzR4oe4OF-dP-uz9IQfcm6"), "https://drive.google.com/thumbnail?id=1fV3CxxedTCrzR4oe4OF-dP-uz9IQfcm6&sz=w1400");
   assert.throws(() => drivePdfThumbnailUrl("../inválido"));
+});
+
+test("resumo histórico cobre o período inteiro sem avançar para datas futuras", () => {
+  assert.equal(fulfillmentEvidenceAsOfDate([{ period: { end: "2026-07-31" } }], "2026-07-20", "2026-08-05"), "2026-07-31");
+  assert.equal(fulfillmentEvidenceAsOfDate([{ period: { end: "2026-08-31" } }], "2026-08-10", "2026-08-05"), "2026-08-05");
 });
