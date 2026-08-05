@@ -5496,6 +5496,33 @@ function escapeXml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function drivePdfThumbnailUrl(driveFileId) {
+  const id = String(driveFileId || "").trim();
+  if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) throw new Error("ID de PDF do Drive inválido para gerar prévia.");
+  return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w1400`;
+}
+
+async function downloadDrivePdfPreview(pdf) {
+  try {
+    const response = await fetch(drivePdfThumbnailUrl(pdf.driveFileId), { signal: AbortSignal.timeout(30000) });
+    const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0];
+    if (!response.ok || !contentType.startsWith("image/")) throw new Error(`thumbnail HTTP ${response.status} (${contentType || "sem tipo"})`);
+    const preview = Buffer.from(await response.arrayBuffer());
+    if (preview.length < 1000 || preview.length > 10 * 1024 * 1024) throw new Error(`thumbnail com tamanho inválido: ${preview.length}`);
+    return { buffer: preview, contentType, source: "drive_thumbnail" };
+  } catch (thumbnailError) {
+    const archived = await downloadDriveFileToArchive({
+      driveFileId: pdf.driveFileId,
+      name: pdf.fileName,
+      mimeType: "application/pdf",
+    });
+    if (!archived?.filePath) throw new Error(`Não foi possível materializar o PDF da agência ${pdf.fileName}.`);
+    const previewPrefix = `${archived.filePath}-preview`;
+    await execFileAsync("pdftoppm", ["-f", "1", "-singlefile", "-png", "-scale-to", "1400", archived.filePath, previewPrefix], { timeout: 120000, maxBuffer: 1024 * 1024 });
+    return { buffer: await readFile(`${previewPrefix}.png`), contentType: "image/png", source: "authenticated_pdf", thumbnailError: thumbnailError instanceof Error ? thumbnailError.message : String(thumbnailError) };
+  }
+}
+
 async function materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId }) {
   const source = fulfillmentSourceProofs(operations);
   const objectPrefix = [ADOPS_EXPORT_BASE_PATH, slugifyPathPart(siteSigla), slugifyPathPart(piCodigo), slugifyPathPart(jobId), "fontes"].join("/");
@@ -5511,19 +5538,12 @@ async function materializeFulfillmentSourceProofs({ operations, piCodigo, siteSi
   }
   const agencyOrderPreviews = [];
   for (const pdf of source.agencyOrderPdfs) {
-    const archived = await downloadDriveFileToArchive({
-      driveFileId: pdf.driveFileId,
-      name: pdf.fileName,
-      mimeType: "application/pdf",
-    });
-    if (!archived?.filePath) throw new Error(`Não foi possível materializar o PDF da agência ${pdf.fileName}.`);
-    const previewPrefix = `${archived.filePath}-preview`;
-    await execFileAsync("pdftoppm", ["-f", "1", "-singlefile", "-png", "-scale-to", "1400", archived.filePath, previewPrefix], { timeout: 120000, maxBuffer: 1024 * 1024 });
-    const preview = await readFile(`${previewPrefix}.png`);
-    const fileName = `${slugifyPathPart(path.basename(pdf.fileName, path.extname(pdf.fileName)))}-pagina-1.png`;
+    const preview = await downloadDrivePdfPreview(pdf);
+    const previewExtension = preview.contentType === "image/jpeg" ? "jpg" : preview.contentType === "image/webp" ? "webp" : "png";
+    const fileName = `${slugifyPathPart(path.basename(pdf.fileName, path.extname(pdf.fileName)))}-pagina-1.${previewExtension}`;
     const objectKey = `${objectPrefix}/${fileName}`;
-    await uploadBufferToSpaces({ buffer: preview, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: "image/png" });
-    agencyOrderPreviews.push({ fileName, url: publicUrl(objectKey), driveFileId: pdf.driveFileId, sourceUrl: pdf.url, kind: "agency_order_preview" });
+    await uploadBufferToSpaces({ buffer: preview.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: preview.contentType });
+    agencyOrderPreviews.push({ fileName, url: publicUrl(objectKey), driveFileId: pdf.driveFileId, sourceUrl: pdf.url, previewSource: preview.source, kind: "agency_order_preview" });
   }
   return { ...source, sheetSnapshots, agencyOrderPreviews };
 }
@@ -6150,6 +6170,7 @@ export {
   selectObservedMediaLink,
   selectSingleMediaCandidate,
   fulfillmentPlacementKey,
+  drivePdfThumbnailUrl,
   selectFulfillmentOperations,
   fulfillmentSourceProofs,
   validateDrivePiPackageReadiness,
