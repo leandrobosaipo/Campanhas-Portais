@@ -4,6 +4,7 @@ import test from "node:test";
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const {
   fulfillmentPlacementKey,
+  drivePdfThumbnailUrl,
   selectFulfillmentOperations,
   fulfillmentSourceProofs,
 } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
@@ -39,4 +40,6 @@ test("dossiê preserva fonte da planilha e PDF da agência", () => {
   }]);
   assert.equal(proofs.agencyOrderPdfs.length, 1);
   assert.equal(proofs.sheetRows[0].rowNumber, 27);
+  assert.equal(drivePdfThumbnailUrl("1fV3CxxedTCrzR4oe4OF-dP-uz9IQfcm6"), "https://drive.google.com/thumbnail?id=1fV3CxxedTCrzR4oe4OF-dP-uz9IQfcm6&sz=w1400");
+  assert.throws(() => drivePdfThumbnailUrl("../inválido"));
 });
