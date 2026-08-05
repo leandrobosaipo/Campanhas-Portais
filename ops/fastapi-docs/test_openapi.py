@@ -5,11 +5,12 @@ from main import REDOC_ASSET_PATH, REDOC_ASSET_URL, build_openapi_document, redo
 
 document = build_openapi_document()
 assert document["openapi"] == "3.1.0"
-assert document["info"]["version"] == "adops-ops-api-catalog-v3"
+assert document["info"]["version"] == "adops-ops-api-catalog-v4"
 assert document["x-cod5-endpoint-count"] >= 100
 assert "/api/healthz" in document["paths"]
 assert "/api/pi-site-exports" in document["paths"]
 assert "/api/ops/jobs/pi-site-export" in document["paths"]
+assert "/api/campaign-fulfillments/jobs" in document["paths"]
 assert "/api/docs" in document["paths"]
 assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PiSiteExportJobRequest"
 assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["responses"]["202"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PiSiteExportJobAccepted"
@@ -19,6 +20,8 @@ assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/pdf"]["get"
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "delivery"
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["sendTelegram"]["default"] is True
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["imageQuality"]["maximum"] == 90
+assert document["paths"]["/api/campaign-fulfillments/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CampaignFulfillmentJobRequest"
+assert document["paths"]["/api/campaign-fulfillments/jobs/{jobId}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CampaignFulfillmentJobStatus"
 assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofJobRequest"
 assert document["paths"]["/api/insertions/{id}/capture-proof/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofStatusResponse"
 assert "RetroContentProof" in document["components"]["schemas"]

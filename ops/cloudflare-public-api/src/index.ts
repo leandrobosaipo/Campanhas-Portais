@@ -6,9 +6,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "media-monitor" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "campaign-fulfillment" | "drive-pi-ingest" | "drive-inventory-refresh" | "media-monitor" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "media-monitor", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "campaign-fulfillment", "drive-pi-ingest", "drive-inventory-refresh", "media-monitor", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -606,6 +606,22 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha no pacote PI/site",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "campaign-fulfillment": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Processando campanha",
+    source_verified: "Conferindo fontes",
+    refreshing_drive: "Atualizando Drive",
+    syncing_sheet: "Sincronizando planilha",
+    deduplicating: "Evitando duplicidade",
+    linking_media: "Vinculando mídia",
+    publishing: "Publicando no portal",
+    capturing_and_auditing: "Gerando e auditando evidências",
+    materializing_source_proofs: "Gerando provas das fontes",
+    blocked: "Bloqueado por validação",
+    completed: "Entrega concluída",
+    failed: "Fulfillment falhou",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -633,6 +649,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Atualizando inventário do Drive",
     completed: "Inventário do Drive atualizado",
     failed: "Falha ao atualizar inventário do Drive",
+  },
+  "drive-pi-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Reconciliando PI do Drive",
+    completed: "Reconciliação concluída",
+    failed: "Falha na reconciliação",
   },
   "reconcile-adrotate": {
     queued: "Na fila",

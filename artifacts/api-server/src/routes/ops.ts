@@ -11,6 +11,7 @@ type JobKind =
   | "sync-planilha"
   | "analytics-report"
   | "pi-site-export"
+  | "campaign-fulfillment"
   | "drive-pi-ingest"
   | "drive-inventory-refresh"
   | "media-monitor"
@@ -71,6 +72,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "sync-planilha",
   "analytics-report",
   "pi-site-export",
+  "campaign-fulfillment",
   "drive-pi-ingest",
   "drive-inventory-refresh",
   "media-monitor",
@@ -394,6 +396,22 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Concluido",
     failed: "Falhou",
   },
+  "campaign-fulfillment": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Processando campanha",
+    source_verified: "Conferindo fontes",
+    refreshing_drive: "Atualizando Drive",
+    syncing_sheet: "Sincronizando planilha",
+    deduplicating: "Evitando duplicidade",
+    linking_media: "Vinculando mídia",
+    publishing: "Publicando no portal",
+    capturing_and_auditing: "Gerando e auditando evidências",
+    materializing_source_proofs: "Gerando provas da planilha e do pedido",
+    blocked: "Bloqueado por validação",
+    completed: "Entrega concluída",
+    failed: "Fulfillment falhou",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -677,7 +695,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-fulfillment" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -1341,6 +1359,45 @@ export function buildOpsApiCatalog() {
       ],
     },
     {
+      id: "campaign-fulfillment",
+      title: "Entrega Completa de Campanha",
+      description: "Um job idempotente para sincronizar, deduplicar, vincular mídia, publicar, auditar e entregar ZIP/PDF com dossiê.",
+      endpoints: [
+      {
+        id: "campaign-fulfillment-create",
+        method: "POST",
+        path: "/api/campaign-fulfillments/jobs",
+        purpose: "Executar o fluxo completo PI + portal sem encadear endpoints manualmente.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: fulfillment:PI:PORTAL:v1' ${base}/api/campaign-fulfillments/jobs -d '{"piCodigo":"90729","siteSigla":"ROO","sendTelegram":true}'`,
+      },
+      {
+        id: "campaign-fulfillment-status",
+        method: "GET",
+        path: "/api/campaign-fulfillments/jobs/{jobId}",
+        purpose: "Consultar etapa, checklist, arquivos, fontes e divergências do fulfillment.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/campaign-fulfillments/jobs/JOB_ID`,
+      },
+      {
+        id: "campaign-fulfillment-report",
+        method: "GET",
+        path: "/api/campaign-fulfillments/jobs/{jobId}/report",
+        purpose: "Abrir o dossiê HTML responsivo da campanha, adequado para celular.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/campaign-fulfillments/jobs/JOB_ID/report`,
+      },
+      {
+        id: "campaign-fulfillment-report-pdf",
+        method: "GET",
+        path: "/api/campaign-fulfillments/jobs/{jobId}/report.pdf",
+        purpose: "Baixar a versão PDF do dossiê operacional.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/campaign-fulfillments/jobs/JOB_ID/report.pdf -o dossie.pdf`,
+      },
+      ],
+    },
+    {
       id: "evidence-generation",
       title: "Geração de Prints e Retroativos",
       description: "Cria jobs para o runner oficial. Não escreve direto no banco e não pula checklist.",
@@ -1504,7 +1561,7 @@ export function buildOpsApiCatalog() {
   })));
   return {
     ok: true,
-    version: "adops-ops-api-catalog-v3",
+    version: "adops-ops-api-catalog-v4",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     auth: {
@@ -1604,7 +1661,7 @@ function buildOpsQuickstart() {
   ];
   return {
     ok: true,
-    version: "adops-ops-quickstart-v3",
+    version: "adops-ops-quickstart-v4",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     tokenEnv: "OPS_API_TOKEN",

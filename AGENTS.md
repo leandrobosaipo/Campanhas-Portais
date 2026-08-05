@@ -98,21 +98,21 @@ GET https://adops-api-public.leandro471.workers.dev/api/insertions/{id}/capture-
 
 ## Entrega final obrigatória por PI + portal
 
-Para qualquer entrega final de evidências, usar somente o fluxo assíncrono da API AdOps:
+Para cadastrar/publicar uma campanha e gerar a entrega final, usar o job único da API AdOps:
 
 ```text
-POST /api/pi-site-exports/jobs
-  mode=delivery
-  variant=web
-  sendTelegram=true
-  Idempotency-Key=<chave estável>
-GET /api/pi-site-exports/jobs/{jobId}
-GET /api/pi-site-exports/jobs/{jobId}/download
-GET /api/pi-site-exports/jobs/{jobId}/pdf
+POST /api/campaign-fulfillments/jobs
+  Idempotency-Key=fulfillment:<pi>:<portal>:v1
+  { piCodigo, siteSigla, sendTelegram: true }
+GET /api/campaign-fulfillments/jobs/{jobId}
+GET /api/campaign-fulfillments/jobs/{jobId}/report
+GET /api/campaign-fulfillments/jobs/{jobId}/report.pdf
 ```
 
-- Não montar o pacote final manualmente quando a API estiver disponível.
-- Não usar o endpoint síncrono para pacotes grandes.
+- Não encadear sincronização, cadastro, mídia, publicação, prints e exportação manualmente quando o fulfillment estiver disponível.
+- O job é idempotente, não duplica inserções e bloqueia correspondência ambígua de PI, portal, período, posição ou mídia.
+- Ele atualiza Drive, sincroniza planilha, publica, gera/backfill de evidências, audita, entrega e envia ao Telegram.
+- O resultado inclui checklist, divergências, recorte da linha da planilha e prévia do PDF do pedido da agência.
 - Preservar os PNGs auditados no storage; a compressão ocorre apenas na cópia de entrega.
 - O ZIP destinado à jornalista contém somente JPEGs progressivos, organizados por posição. Não incluir PDF, JSON, CSV, README, manifestos, auditoria ou contact sheet.
 - Os PDFs são artefatos separados por posição/banner. Nunca juntar TOPO, HOME 1, HOME 2, LATERAL ou VIDEO no mesmo PDF.
@@ -121,7 +121,8 @@ GET /api/pi-site-exports/jobs/{jobId}/pdf
 - Auditoria, logs, checksums e fontes PNG continuam internos ao AdOps e não entram no pacote da jornalista.
 - Antes de liberar: `status=completed`, soma das páginas de `artifacts.pdfs` = JPEGs, um PDF por posição, ZIP sem PNG/PDF/JSON/TXT/CSV e amostragem visual com topbar/domínio/data/hora/banner visíveis.
 - Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
-- Guia operacional canônico: `docs/adops/entrega-jornalista-api.md`.
+- `POST /api/pi-site-exports/jobs` permanece para regenerar apenas os artefatos quando cadastro e publicação já estão resolvidos.
+- Guia operacional canônico: `docs/adops/campaign-fulfillment-api.md`.
 
 ## Gate obrigatório de captura/auditoria
 

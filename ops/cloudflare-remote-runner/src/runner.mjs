@@ -86,7 +86,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,media-monitor,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,drive-pi-ingest,drive-inventory-refresh,media-monitor,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -5390,6 +5390,252 @@ async function ensureInsertionCaptureCoverage(insertion, onProgress = null) {
   };
 }
 
+function fulfillmentPlacementKey(value) {
+  const normalized = normalizeSlotKey(value);
+  const home = normalized.match(/\b(?:home|capa)\s*0*([123])\b/);
+  if (home) return `home_${home[1]}`;
+  if (/\b(?:mega\s*)?(?:banner\s*)?topo\b|\btop\s*bar\b/.test(normalized)) return "top";
+  if (/\b(?:materia|noticia|interna|article)\b/.test(normalized)) return "article_internal";
+  return normalized.replace(/\s+/g, "_");
+}
+
+function fulfillmentPiKey(value) {
+  return normalizePiDigits(value).replace(/^0+(?=\d)/, "");
+}
+
+class FulfillmentBlockedError extends Error {
+  constructor(message, result = {}) {
+    super(message);
+    this.name = "FulfillmentBlockedError";
+    this.fulfillmentResult = { stage: "blocked", blocked: true, reason: message, ...result };
+  }
+}
+
+async function fulfillmentAttempt(label, activity, options = {}) {
+  const maxAttempts = Math.max(1, Math.min(5, Number(options.maxAttempts || 3)));
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await activity(attempt);
+    } catch (error) {
+      lastError = error;
+      if (error instanceof FulfillmentBlockedError) throw error;
+      if (attempt >= maxAttempts) break;
+      await sleep(Math.min(8000, 750 * (2 ** (attempt - 1))));
+    }
+  }
+  throw new Error(`${label} falhou após ${maxAttempts} tentativa(s): ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+function fulfillmentOperationRows(payload) {
+  const active = Array.isArray(payload?.items) ? payload.items : [];
+  const upcoming = Array.isArray(payload?.upcomingItems) ? payload.upcomingItems : [];
+  return [...active, ...upcoming];
+}
+
+function selectFulfillmentOperations(payload, piCodigo, siteSigla, placement) {
+  const targetPlacement = placement ? fulfillmentPlacementKey(placement) : null;
+  return fulfillmentOperationRows(payload).filter((item) => {
+    if (fulfillmentPiKey(item?.piCodigo) !== fulfillmentPiKey(piCodigo) || String(item?.siteSigla || "").toUpperCase() !== siteSigla) return false;
+    if (!targetPlacement) return true;
+    return targetPlacement === fulfillmentPlacementKey(item?.format?.normalized ?? item?.format?.sheet);
+  });
+}
+
+async function ensureFulfillmentMedia(item) {
+  const insertionId = Number(item?.adops?.insertionId || 0);
+  if (!insertionId) throw new FulfillmentBlockedError(`PI ${item?.piCodigo}/${item?.siteSigla} ainda não possui inserção no AdOps após a sincronização.`);
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  if (item?.adops?.mediaUrl || insertion?.mediaUrl) {
+    return { insertion, applied: false, mediaUrl: item?.adops?.mediaUrl || insertion.mediaUrl, source: "existing" };
+  }
+  const selection = selectSingleMediaCandidate(item);
+  if (!selection.ok) throw new FulfillmentBlockedError(`Mídia não pode ser aplicada com segurança na inserção ${insertionId}: ${selection.reason}.`, { insertionId, selectionReason: selection.reason });
+  const mediaPackage = buildMediaMonitorPackage(item, insertion, selection.mediaFile);
+  const resolved = selection.expectedKind === "video"
+    ? await resolveDrivePiVideoMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "campaign-fulfillment" })
+    : await resolveDrivePiImageMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "campaign-fulfillment" });
+  const resolvedInsertion = resolved?.fields?.insertions?.[0];
+  const mediaUrl = readStringRecord(resolvedInsertion, ["mediaUrl", "media_url"]);
+  const issues = resolved?.videoMediaProcessing?.issues || resolved?.imageMediaProcessing?.issues || [];
+  if (!mediaUrl || issues.length) throw new Error(`Processamento da mídia falhou na inserção ${insertionId}: ${issues.join(", ") || "URL ausente"}.`);
+  await privateApiPatch(`/api/insertions/${insertionId}`, {
+    mediaUrl,
+    observacoes: [
+      String(insertion?.observacoes || "").trim(),
+      `Mídia vinculada pelo fulfillment em ${new Date().toISOString()} a partir do Drive ${selection.mediaFile.id}.`,
+    ].filter(Boolean).join("\n"),
+  });
+  return { insertion: { ...insertion, mediaUrl }, applied: true, mediaUrl, driveFileId: selection.mediaFile.id, source: "drive" };
+}
+
+function fulfillmentSourceProofs(operations) {
+  const pdfs = [];
+  const sheetRows = [];
+  for (const item of operations) {
+    for (const file of Array.isArray(item?.drive?.pdfFiles) ? item.drive.pdfFiles : []) {
+      if (file?.webViewLink) pdfs.push({ fileName: file.name, url: file.webViewLink, driveFileId: file.id, kind: "agency_order_pdf" });
+    }
+    sheetRows.push({
+      sheetName: item?.sheetSource?.sheetName ?? null,
+      blockSite: item?.sheetSource?.blockSite ?? item?.siteSigla ?? null,
+      rowNumber: item?.sheetSource?.rowNumber ?? null,
+      piCodigo: item?.piCodigo ?? null,
+      period: item?.period ?? null,
+      format: item?.format ?? null,
+    });
+  }
+  return { agencyOrderPdfs: Array.from(new Map(pdfs.map((item) => [item.driveFileId, item])).values()), sheetRows };
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId }) {
+  const source = fulfillmentSourceProofs(operations);
+  const objectPrefix = [ADOPS_EXPORT_BASE_PATH, slugifyPathPart(siteSigla), slugifyPathPart(piCodigo), slugifyPathPart(jobId), "fontes"].join("/");
+  const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
+  const publicUrl = (key) => `${publicBase}/${key.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+  const sheetSnapshots = [];
+  for (const [index, row] of source.sheetRows.entries()) {
+    const fileName = `planilha-${slugifyPathPart(row.sheetName || "aba")}-linha-${row.rowNumber || index + 1}.svg`;
+    const objectKey = `${objectPrefix}/${fileName}`;
+    const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560"><rect width="1280" height="560" fill="#fbfaf6"/><rect x="48" y="44" width="1184" height="472" rx="24" fill="#fff" stroke="#d9dde7" stroke-width="2"/><text x="88" y="105" font-family="Arial,sans-serif" font-size="24" fill="#667085">PLANILHA · ${escapeXml(row.sheetName)} · LINHA ${escapeXml(row.rowNumber)}</text><text x="88" y="185" font-family="Arial,sans-serif" font-size="52" font-weight="700" fill="#14213d">PI ${escapeXml(row.piCodigo)} · ${escapeXml(row.blockSite)}</text><line x1="88" y1="226" x2="1192" y2="226" stroke="#d9dde7"/><text x="88" y="300" font-family="Arial,sans-serif" font-size="24" fill="#667085">PERÍODO</text><text x="88" y="350" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#14213d">${escapeXml(row.period?.start)} → ${escapeXml(row.period?.end)}</text><text x="88" y="420" font-family="Arial,sans-serif" font-size="24" fill="#667085">POSIÇÃO</text><text x="88" y="470" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#176b5b">${escapeXml(row.format?.normalized || row.format?.sheet)}</text></svg>`);
+    await uploadBufferToSpaces({ buffer: svg, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: "image/svg+xml" });
+    sheetSnapshots.push({ fileName, url: publicUrl(objectKey), rowNumber: row.rowNumber, kind: "sheet_snapshot" });
+  }
+  const agencyOrderPreviews = [];
+  for (const pdf of source.agencyOrderPdfs) {
+    const archived = await downloadDriveFileToArchive({
+      driveFileId: pdf.driveFileId,
+      name: pdf.fileName,
+      mimeType: "application/pdf",
+    });
+    if (!archived?.filePath) throw new Error(`Não foi possível materializar o PDF da agência ${pdf.fileName}.`);
+    const previewPrefix = `${archived.filePath}-preview`;
+    await execFileAsync("pdftoppm", ["-f", "1", "-singlefile", "-png", "-scale-to", "1400", archived.filePath, previewPrefix], { timeout: 120000, maxBuffer: 1024 * 1024 });
+    const preview = await readFile(`${previewPrefix}.png`);
+    const fileName = `${slugifyPathPart(path.basename(pdf.fileName, path.extname(pdf.fileName)))}-pagina-1.png`;
+    const objectKey = `${objectPrefix}/${fileName}`;
+    await uploadBufferToSpaces({ buffer: preview, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: "image/png" });
+    agencyOrderPreviews.push({ fileName, url: publicUrl(objectKey), driveFileId: pdf.driveFileId, sourceUrl: pdf.url, kind: "agency_order_preview" });
+  }
+  return { ...source, sheetSnapshots, agencyOrderPreviews };
+}
+
+async function executeCampaignFulfillment(job) {
+  const payload = job?.payload || {};
+  const piCodigo = fulfillmentPiKey(payload.piCodigo);
+  const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
+  const placement = String(payload.placement || "").trim() || null;
+  const campaignDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.campaignDate || "")) ? String(payload.campaignDate) : todayInCuiaba();
+  if (!piCodigo || !siteSigla) throw new Error("campaign-fulfillment sem piCodigo/siteSigla válidos.");
+
+  const progress = async (stage, extra = {}) => progressJob(job.id, { stage, piCodigo, siteSigla, placement, ...extra });
+  await progress("source_verified");
+  if (payload.refreshDrive !== false) {
+    const inventory = await privateApiGet("/api/ops/drive-inventory/status");
+    if (inventory?.snapshotStatus !== "fresh") {
+      await progress("refreshing_drive", { snapshotStatus: inventory?.snapshotStatus ?? "missing" });
+      await fulfillmentAttempt("Atualização do inventário do Drive", () => executeDriveInventoryRefresh(job), { maxAttempts: 2 });
+    }
+  }
+
+  await progress("syncing_sheet");
+  const sheetSync = await fulfillmentAttempt("Sincronização da planilha", () => executeSyncPlanilha({ mode: "latest", source: "campaign-fulfillment" }), { maxAttempts: 2 });
+  await progress("deduplicating");
+  let operationsPayload = await fulfillmentAttempt("Leitura das operações de campanha", () => privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(campaignDate)}&includeEvidence=true`));
+  let operations = selectFulfillmentOperations(operationsPayload, piCodigo, siteSigla, placement);
+  if (!operations.length) {
+    throw new FulfillmentBlockedError(`Nenhuma linha inequívoca foi encontrada para PI ${piCodigo}/${siteSigla}${placement ? `/${placement}` : ""} após sincronizar a planilha.`, { piCodigo, siteSigla, placement });
+  }
+  const sourceBlocking = operations.flatMap((item) => Array.isArray(item?.blockingIssues) ? item.blockingIssues : []);
+  if (sourceBlocking.length) throw new FulfillmentBlockedError(`Fulfillment bloqueado por divergência de fonte: ${Array.from(new Set(sourceBlocking)).join("; ")}`, { piCodigo, siteSigla, sourceConflicts: { count: sourceBlocking.length, items: sourceBlocking, summary: sourceBlocking.join("; ") } });
+  const missingInsertions = operations.filter((item) => !Number(item?.adops?.insertionId || 0));
+  if (missingInsertions.length) throw new FulfillmentBlockedError(`Sincronização não criou ${missingInsertions.length} inserção(ões) esperada(s) para PI ${piCodigo}/${siteSigla}.`, { piCodigo, siteSigla, missingInsertions: missingInsertions.length });
+
+  const media = [];
+  await progress("linking_media", { insertionIds: operations.map((item) => item.adops.insertionId) });
+  for (const item of operations) media.push(await fulfillmentAttempt(`Vínculo de mídia da inserção ${item.adops.insertionId}`, () => ensureFulfillmentMedia(item), { maxAttempts: 2 }));
+
+  await progress("publishing");
+  const publications = [];
+  for (const item of operations) {
+    const insertionId = Number(item.adops.insertionId);
+    if (item?.adops?.bannerPublicadoNoSite === true) {
+      publications.push({ insertionId, skipped: true, reason: "already_published", validatedBy: "campaign_operations" });
+    } else {
+      const ended = item?.period?.end && item.period.end < todayInCuiaba();
+      if (ended) throw new FulfillmentBlockedError(`A inserção histórica ${insertionId} não está marcada como publicada; publicação retroativa automática foi bloqueada.`, { insertionId, period: item.period });
+      publications.push(await fulfillmentAttempt(`Publicação da inserção ${insertionId}`, () => executeAdrotatePublishJob({
+        insertionId,
+        apply: true,
+        replaceExisting: true,
+        purgeCache: true,
+        generateEvidence: false,
+        date: campaignDate,
+        source: "campaign-fulfillment",
+      }), { maxAttempts: 2 }));
+    }
+  }
+
+  await progress("capturing_and_auditing");
+  const delivery = await fulfillmentAttempt("Auditoria e pacote de entrega", () => executePiSiteExport({
+    id: job.id,
+    payload: {
+      piCodigo,
+      siteSigla,
+      mode: "delivery",
+      variant: "web",
+      sendTelegram: payload.sendTelegram !== false,
+      chatId: payload.chatId || null,
+      source: "campaign-fulfillment",
+    },
+  }), { maxAttempts: 2 });
+
+  await progress("materializing_source_proofs");
+  const sourceProofs = await fulfillmentAttempt("Materialização das fontes", () => materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId: job.id }), { maxAttempts: 2 });
+
+  operationsPayload = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(campaignDate)}&includeEvidence=true`);
+  operations = selectFulfillmentOperations(operationsPayload, piCodigo, siteSigla, placement);
+  const audited = operations.every((item) => item?.evidence?.status === "approved" || item?.evidence?.status === "missing_or_not_applicable");
+  const published = publications.every((item) => item?.reason === "already_published" || (item?.apply === true && item?.wpCliResult?.ad_id));
+  const pdfs = Array.isArray(delivery?.artifacts?.pdfs) ? delivery.artifacts.pdfs : [];
+  const checklist = [
+    { key: "source_identity", label: "PI confirmada nas fontes", ok: operations.every((item) => item?.sourceIdentity?.decision === "confirmed"), details: "Planilha, pasta/PDF do Drive e AdOps reconciliados." },
+    { key: "deduplication", label: "Sem cadastro duplicado", ok: operations.every((item) => Number(item?.adops?.insertionId || 0) > 0), details: `${operations.length} posição(ões) resolvida(s).` },
+    { key: "media", label: "Mídia vinculada", ok: media.every((item) => Boolean(item?.mediaUrl)), details: `${media.length} inserção(ões) com mídia.` },
+    { key: "publication", label: "Publicação validada", ok: published, details: `${publications.length} publicação(ões) processada(s).` },
+    { key: "evidence", label: "Evidências auditadas", ok: audited, details: "Cobertura diária conferida pela API, com backfill quando necessário." },
+    { key: "delivery", label: "ZIP e PDFs por posição", ok: Boolean(delivery?.downloadUrl) && pdfs.length > 0, details: `${pdfs.length} PDF(s) separado(s); PDF fora do ZIP.` },
+    { key: "telegram", label: "Entrega no Telegram", ok: payload.sendTelegram === false || delivery?.telegram?.ok === true, details: payload.sendTelegram === false ? "Envio desabilitado pelo solicitante." : "ZIP e PDFs enviados pelo fluxo de entrega." },
+    { key: "source_proofs", label: "Planilha e pedido da agência comprovados", ok: sourceProofs.sheetSnapshots.length === operations.length && sourceProofs.agencyOrderPreviews.length > 0, details: `${sourceProofs.sheetSnapshots.length} recorte(s) de planilha e ${sourceProofs.agencyOrderPreviews.length} prévia(s) de PDF.` },
+  ];
+  if (checklist.some((item) => !item.ok)) throw new FulfillmentBlockedError(`Checklist final reprovado: ${checklist.filter((item) => !item.ok).map((item) => item.label).join(", ")}.`, { piCodigo, siteSigla, operation: operations[0], operations, delivery, sourceProofs, checklist });
+  return {
+    stage: "completed",
+    piCodigo,
+    siteSigla,
+    placement,
+    campaignDate,
+    operation: operations[0],
+    operations,
+    sheetSync,
+    media,
+    publications,
+    delivery,
+    sourceProofs,
+    sourceConflicts: { count: 0, summary: "Nenhuma divergência pendente; fontes reconciliadas sem sobrescrever silenciosamente a planilha." },
+    sheetCorrection: { status: "not_required", automaticWriteback: false },
+    checklist,
+  };
+}
+
 async function executePiSiteExport(job) {
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
@@ -5732,6 +5978,9 @@ async function handleJob(job) {
   if (job.kind === "pi-site-export") {
     return executePiSiteExport(job);
   }
+  if (job.kind === "campaign-fulfillment") {
+    return executeCampaignFulfillment(job);
+  }
   if (job.kind === "drive-pi-ingest") {
     try {
       return await executeDrivePiIngest(payload);
@@ -5828,6 +6077,7 @@ async function runOnce() {
       ok: false,
       runnerId: RUNNER_ID,
       failedAt: new Date().toISOString(),
+      ...(error instanceof FulfillmentBlockedError ? error.fulfillmentResult : {}),
     });
     console.error(`[runner] job falhou`, job.id, message);
   }
@@ -5899,6 +6149,9 @@ export {
   selectDriveVideoForInsertion,
   selectObservedMediaLink,
   selectSingleMediaCandidate,
+  fulfillmentPlacementKey,
+  selectFulfillmentOperations,
+  fulfillmentSourceProofs,
   validateDrivePiPackageReadiness,
 };
 

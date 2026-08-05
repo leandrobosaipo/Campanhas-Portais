@@ -3,6 +3,11 @@
 Este guia descreve o contrato público da API AdOps para gerar a entrega de uma
 PI por portal. Ele é destinado a integrações, agentes e operadores.
 
+Para cadastrar, publicar e entregar no mesmo fluxo, use primeiro
+`POST /api/campaign-fulfillments/jobs`, documentado em
+`docs/adops/campaign-fulfillment-api.md`. O endpoint abaixo permanece indicado
+para regenerar apenas os artefatos de uma campanha já resolvida.
+
 ## Resultado esperado
 
 Uma solicitação produz artefatos independentes:
