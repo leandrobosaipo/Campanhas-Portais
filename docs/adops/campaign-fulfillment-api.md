@@ -11,12 +11,12 @@ o runner existente; não adiciona banco, fila ou orquestrador externo.
 ```http
 POST /api/campaign-fulfillments/jobs
 Authorization: Bearer <OPS_API_TOKEN>
-Idempotency-Key: fulfillment:90729:ROO:v1
+Idempotency-Key: fulfillment:90729:PERRENGUE:v1
 Content-Type: application/json
 
 {
   "piCodigo": "90729",
-  "siteSigla": "ROO",
+  "siteSigla": "PERRENGUE",
   "sendTelegram": true
 }
 ```

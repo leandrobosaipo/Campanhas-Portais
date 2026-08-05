@@ -1369,7 +1369,7 @@ export function buildOpsApiCatalog() {
         path: "/api/campaign-fulfillments/jobs",
         purpose: "Executar o fluxo completo PI + portal sem encadear endpoints manualmente.",
         authRequired: true,
-        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: fulfillment:PI:PORTAL:v1' ${base}/api/campaign-fulfillments/jobs -d '{"piCodigo":"90729","siteSigla":"ROO","sendTelegram":true}'`,
+        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: fulfillment:90729:PERRENGUE:v1' ${base}/api/campaign-fulfillments/jobs -d '{"piCodigo":"90729","siteSigla":"PERRENGUE","sendTelegram":true}'`,
       },
       {
         id: "campaign-fulfillment-status",
