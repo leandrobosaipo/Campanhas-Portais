@@ -17,6 +17,7 @@ test("normaliza posição comercial antes de selecionar a operação", () => {
 test("seleciona somente PI, portal e posição pedidos sem duplicar", () => {
   const payload = {
     items: [
+      { piCodigo: null, siteSigla: "ROO", format: { normalized: "MEGABANNER HOME 1" } },
       { piCodigo: "090729", siteSigla: "ROO", format: { normalized: "MEGABANNER HOME 1" } },
       { piCodigo: "90729", siteSigla: "ROO", format: { normalized: "MEGABANNER TOPO" } },
       { piCodigo: "90729", siteSigla: "AFL", format: { normalized: "MEGABANNER HOME 1" } },
