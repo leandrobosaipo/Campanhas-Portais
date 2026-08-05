@@ -5442,6 +5442,15 @@ function selectFulfillmentOperations(payload, piCodigo, siteSigla, placement) {
   });
 }
 
+function fulfillmentEvidenceAsOfDate(operations, fallbackDate, today = todayInCuiaba()) {
+  const dates = operations
+    .map((item) => String(item?.period?.end || ""))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .map((value) => value < today ? value : today)
+    .sort();
+  return dates.at(-1) || fallbackDate;
+}
+
 async function ensureFulfillmentMedia(item) {
   const insertionId = Number(item?.adops?.insertionId || 0);
   if (!insertionId) throw new FulfillmentBlockedError(`PI ${item?.piCodigo}/${item?.siteSigla} ainda não possui inserção no AdOps após a sincronização.`);
@@ -5621,7 +5630,8 @@ async function executeCampaignFulfillment(job) {
   await progress("materializing_source_proofs");
   const sourceProofs = await fulfillmentAttempt("Materialização das fontes", () => materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId: job.id }), { maxAttempts: 2 });
 
-  operationsPayload = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(campaignDate)}&includeEvidence=true`);
+  const evidenceAsOfDate = fulfillmentEvidenceAsOfDate(operations, campaignDate);
+  operationsPayload = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(evidenceAsOfDate)}&includeEvidence=true`);
   operations = selectFulfillmentOperations(operationsPayload, piCodigo, siteSigla, placement);
   const audited = operations.every((item) => item?.evidence?.status === "approved" || item?.evidence?.status === "missing_or_not_applicable");
   const published = publications.every((item) => item?.reason === "already_published" || (item?.apply === true && item?.wpCliResult?.ad_id));
@@ -5643,6 +5653,7 @@ async function executeCampaignFulfillment(job) {
     siteSigla,
     placement,
     campaignDate,
+    evidenceAsOfDate,
     operation: operations[0],
     operations,
     sheetSync,
@@ -6172,6 +6183,7 @@ export {
   fulfillmentPlacementKey,
   drivePdfThumbnailUrl,
   selectFulfillmentOperations,
+  fulfillmentEvidenceAsOfDate,
   fulfillmentSourceProofs,
   validateDrivePiPackageReadiness,
 };
