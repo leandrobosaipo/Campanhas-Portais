@@ -132,17 +132,22 @@ Guia específico: `docs/adops/entrega-jornalista-api.md`.
 O caminho canônico é assíncrono e idempotente:
 
 ```text
-POST /api/pi-site-exports/jobs  (mode=delivery, variant=web, sendTelegram=true)
-  -> GET /api/pi-site-exports/jobs/{jobId}
-  -> status=completed
-  -> GET /api/pi-site-exports/jobs/{jobId}/download  (ZIP só com imagens)
-  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF único ou lista de PDFs por posição)
+POST /api/campaign-fulfillments/jobs  (PI + portal, Idempotency-Key estável)
+  -> atualiza Drive e sincroniza planilha
+  -> deduplica, vincula mídia e publica no AdRotate
+  -> reaudita e recompõe datas inválidas/ausentes
+  -> gera ZIP só com imagens + PDF separado por posição
+  -> materializa recorte da planilha + prévia do pedido da agência
+  -> Telegram recebe ZIP + todos os PDFs por posição
+  -> GET /api/campaign-fulfillments/jobs/{jobId}/report
+  -> GET /api/campaign-fulfillments/jobs/{jobId}/report.pdf
 ```
 
 Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
 jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e um
 `PI-<codigo>-<portal>-<posicao>.pdf` para cada banner; todos são enviados ao Telegram.
-Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
+Use `POST /api/pi-site-exports/jobs` apenas para regenerar a entrega de uma
+campanha cujo cadastro, mídia e publicação já estejam resolvidos.
 
 - Swagger: `https://adops-api.codigo5.com.br/api/docs`
 - ReDoc: `https://adops-api.codigo5.com.br/api/redoc`
