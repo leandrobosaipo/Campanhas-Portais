@@ -107,6 +107,16 @@ try {
   assert.match(rendered.date ?? "", /^29\/07\/2026\s+15:29$/);
   assert.equal(rendered.sourceDate, "2026-07-29T15:29:00");
   assert.equal(/há\s+\d+\s+dias?/i.test(rendered.date ?? ""), false);
+
+  await page.evaluate(() => {
+    const hero = document.querySelector("article.hero-post");
+    const lateDate = document.createElement("span");
+    lateDate.className = "late-relative-date";
+    lateDate.textContent = "há 6 dias";
+    hero?.appendChild(lateDate);
+  });
+  await page.waitForFunction(() => document.querySelector(".late-relative-date")?.textContent !== "há 6 dias");
+  assert.match(await page.locator(".late-relative-date").textContent() ?? "", /^29\/07\/2026\s+15:29$/);
 } finally {
   await browser.close();
 }
