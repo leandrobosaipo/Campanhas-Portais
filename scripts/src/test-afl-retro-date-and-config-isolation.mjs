@@ -143,6 +143,10 @@ try {
   }, "2026-07-29T20:00:00-04:00");
   assert.equal(visibleDateAudit.ok, true);
   assert.match(await page.locator("time.js-topbar-datetime").textContent() ?? "", /29 de julho de 2026/);
+  assert.match(
+    await page.locator("time.js-topbar-datetime").getAttribute("data-adops-frozen-visible-label") ?? "",
+    /29 de julho de 2026/,
+  );
   assert.equal(
     await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
     "29/07/2026 15:29",

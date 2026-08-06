@@ -1964,6 +1964,7 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
   const mergedSelectors = mergePageDateSelectors(selectors);
   return await page.evaluate(({ selectors, labels: frozen, siteDomain: rawSiteDomain }) => {
     const siteDomain = String(rawSiteDomain || "");
+    const isAfl = siteDomain.includes("afolhalivre.com");
     const shortLabel = siteDomain.includes("perrenguematogrosso.com")
       ? frozen.perrengueShort
       : siteDomain.includes("omatogrossense.com")
@@ -1978,6 +1979,16 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
             el.setAttribute("data-preview-active", "1");
           }
           el.setAttribute("data-omt-preview-at", frozen.iso);
+          if (isAfl && el.matches("time.js-topbar-datetime")) {
+            el.setAttribute("data-adops-frozen-visible-label", frozen.full);
+            if (!document.getElementById("cod5-afl-frozen-datestamp-style")) {
+              const style = document.createElement("style");
+              style.id = "cod5-afl-frozen-datestamp-style";
+              style.textContent = `time.js-topbar-datetime[data-adops-frozen-visible-label] { color: transparent !important; position: relative; }
+time.js-topbar-datetime[data-adops-frozen-visible-label]::after { content: attr(data-adops-frozen-visible-label); color: #52525b; font-size: inherit; line-height: inherit; white-space: nowrap; position: absolute; inset: 0 auto auto 0; }`;
+              document.head.appendChild(style);
+            }
+          }
           const attrText = `${el.className || ""} ${Array.from(el.attributes || []).map((attr) => `${attr.name}=${attr.value || ""}`).join(" ")}`;
           if (/short/i.test(attrText)) {
             el.textContent = shortLabel;
