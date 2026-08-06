@@ -482,6 +482,10 @@ Falhas novas:
 
 Para páginas internas de notícia configuradas com `requireEditorialDateMatchTarget=true`, ao menos uma data editorial visível deve coincidir exatamente com o dia de `requestedCaptureAt` em `America/Cuiaba`. Reutilizar a mesma matéria em vários dias falha com `editorial_date_target_mismatch`, mesmo que topbar, moldura e banner estejam corretos.
 
+Na reconstrução histórica da home da AFL, o destaque principal deve atualizar como uma unidade: URL, imagem, título, resumo e data editorial absoluta. É inválido manter rótulos relativos como `há 2 dias` depois de trocar o conteúdo do card. A publicação de regras também deve persistir somente `auditOverrides` da posição; os defaults do portal permanecem em `config/adrotate-sites.json` e são mesclados apenas na resolução do runtime.
+
+Para limpar regras já publicadas sem alterar seletor, aliases ou estilo de prova, use `POST /api/capture-rules/import-legacy` com `overwritePublished=true` e `preserveRuleShape=true`, sempre primeiro em `dryRun` e portal a portal.
+
 ### Captura assíncrona e promoção auditada
 
 Capturas que podem ultrapassar o timeout da borda devem usar:

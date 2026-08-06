@@ -435,7 +435,14 @@
     "auditConfig": {
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 2000,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "requireAbsoluteEditorialDates": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {

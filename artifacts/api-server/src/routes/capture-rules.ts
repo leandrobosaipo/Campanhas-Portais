@@ -9,7 +9,14 @@ import {
   captureRuleVersionsTable,
   db,
 } from "@workspace/db";
-import { getSiteFormatMapping, getSiteIntegration, getSiteIntegrations, normalizeLocalFormato } from "../lib/adrotate-sites";
+import {
+  getPositionAuditConfig,
+  getSiteFormatMapping,
+  getSiteIntegration,
+  getSiteIntegrations,
+  mergePortalPositionAuditConfig,
+  normalizeLocalFormato,
+} from "../lib/adrotate-sites";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -269,16 +276,8 @@ function buildLegacyImportRows(siteFilter: string | null = null): LegacyImportRo
   for (const [rawSiteSigla, integration] of Object.entries(integrations)) {
     const siteSigla = rawSiteSigla.toUpperCase();
     if (siteFilter && siteSigla !== siteFilter) continue;
-    const baseAudit =
-      integration.auditConfig && typeof integration.auditConfig === "object"
-        ? integration.auditConfig as Record<string, unknown>
-        : {};
-
     for (const mapping of integration.formatMappings ?? []) {
-      const rowAudit =
-        mapping.auditOverrides && typeof mapping.auditOverrides === "object"
-          ? mapping.auditOverrides as Record<string, unknown>
-          : {};
+      const rowAudit = getPositionAuditConfig(mapping);
       rows.push({
         siteSigla,
         groupId: mapping.groupId,
@@ -289,8 +288,12 @@ function buildLegacyImportRows(siteFilter: string | null = null): LegacyImportRo
           contextSelector: mapping.contextSelector ?? mapping.slotSelector,
           scrollMode: mapping.scrollMode === "top" ? "top" : "slot",
           proofStyle: mapping.proofStyle === "viewport_with_slot_inset" ? "viewport_with_slot_inset" : "viewport_only",
-          auditConfig: { ...baseAudit, ...rowAudit },
-          articleFallbackUrl: mapping.page === "article" ? integration.articleFallbackUrl ?? null : null,
+          // Persist only position-level overrides. Portal defaults are resolved
+          // live by normalizeRuntimeFromDbRow.
+          auditConfig: rowAudit,
+          // Portal fallbacks are resolved live from adrotate-sites.json. Store
+          // only a position-specific value so old rows cannot freeze them.
+          articleFallbackUrl: mapping.page === "article" ? mapping.articleFallbackUrl ?? null : null,
           enabled: true,
         }),
       });
@@ -321,7 +324,7 @@ function normalizeRuntimeFromDbRow(
   ];
   const baseAudit = site.auditConfig && typeof site.auditConfig === "object" ? site.auditConfig as Record<string, unknown> : {};
   const rowAudit = row.auditConfig && typeof row.auditConfig === "object" ? row.auditConfig as Record<string, unknown> : {};
-  const auditConfig = { ...baseAudit, ...rowAudit };
+  const auditConfig = mergePortalPositionAuditConfig(baseAudit, rowAudit);
   const pageUrl = row.page === "article" ? "__LATEST_ARTICLE__" : site.homeUrl;
 
   return {
@@ -364,8 +367,8 @@ function normalizeRuntimeFromJson(siteSigla: string, localFormato: string | null
     "[data-omt-localtime-short]",
   ];
   const baseAudit = site.auditConfig && typeof site.auditConfig === "object" ? site.auditConfig as Record<string, unknown> : {};
-  const rowAudit = mapping.auditOverrides && typeof mapping.auditOverrides === "object" ? mapping.auditOverrides as Record<string, unknown> : {};
-  const auditConfig = { ...baseAudit, ...rowAudit };
+  const rowAudit = getPositionAuditConfig(mapping);
+  const auditConfig = mergePortalPositionAuditConfig(baseAudit, rowAudit);
 
   return {
     siteSigla: siteSigla.toUpperCase(),
@@ -692,6 +695,7 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
     const siteSigla = req.body?.siteSigla == null ? null : String(req.body.siteSigla).trim().toUpperCase();
     const dryRun = req.body?.dryRun !== false;
     const overwritePublished = req.body?.overwritePublished === true;
+    const preserveRuleShape = req.body?.preserveRuleShape === true;
     const actor = String(req.body?.requestedBy ?? req.headers["x-adops-actor"] ?? "api-user");
     const legacyRows = buildLegacyImportRows(siteSigla);
 
@@ -728,6 +732,7 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
       res.json({
         ok: true,
         dryRun: true,
+        preserveRuleShape,
         total: plan.length,
         toCreate: plan.filter((item) => item.action === "create_published").length,
         toOverwrite: plan.filter((item) => item.action === "overwrite_published").length,
@@ -759,18 +764,32 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
 
       if (item.action === "overwrite_published" && item.published) {
         const published = item.published;
+        const nextPayload = preserveRuleShape
+          ? normalizeLegacyPayload({
+              aliases: published.aliases,
+              page: published.page === "article" ? "article" : "home",
+              slotSelector: published.slotSelector,
+              contextSelector: published.contextSelector,
+              scrollMode: published.scrollMode === "top" ? "top" : "slot",
+              proofStyle: published.proofStyle === "viewport_with_slot_inset" ? "viewport_with_slot_inset" : "viewport_only",
+              auditConfig: item.payload.auditConfig,
+              articleFallbackUrl: item.payload.articleFallbackUrl,
+              enabled: published.enabled,
+            })
+          : item.payload;
+        const nextHash = hashPayload(nextPayload, item.siteSigla, item.groupId);
         const [updated] = await withDb(async () => db.update(captureRulesTable).set({
-          aliases: item.payload.aliases,
-          page: item.payload.page,
-          slotSelector: item.payload.slotSelector,
-          contextSelector: item.payload.contextSelector,
-          scrollMode: item.payload.scrollMode,
-          proofStyle: item.payload.proofStyle,
-          auditConfig: item.payload.auditConfig,
-          articleFallbackUrl: item.payload.articleFallbackUrl,
-          enabled: item.payload.enabled,
+          aliases: nextPayload.aliases,
+          page: nextPayload.page,
+          slotSelector: nextPayload.slotSelector,
+          contextSelector: nextPayload.contextSelector,
+          scrollMode: nextPayload.scrollMode,
+          proofStyle: nextPayload.proofStyle,
+          auditConfig: nextPayload.auditConfig,
+          articleFallbackUrl: nextPayload.articleFallbackUrl,
+          enabled: nextPayload.enabled,
           statusPublished: true,
-          ruleVersionHash: hash,
+          ruleVersionHash: nextHash,
           updatedBy: actor,
         }).where(eq(captureRulesTable.id, published.id)).returning());
 
@@ -779,10 +798,10 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
           siteSigla: item.siteSigla,
           groupId: item.groupId,
           status: "published",
-          ruleVersionHash: hash,
-          payload: item.payload as unknown as Record<string, unknown>,
+          ruleVersionHash: nextHash,
+          payload: nextPayload as unknown as Record<string, unknown>,
           createdBy: actor,
-          notes: "legacy import overwrite",
+          notes: preserveRuleShape ? "legacy import position config cleanup" : "legacy import overwrite",
         }).returning());
 
         if (version?.id) {
@@ -795,7 +814,7 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
           eventType: "legacy_import_overwrite",
           previousVersionId: published.publishedVersionId ?? null,
           nextVersionId: version?.id ?? null,
-          metadata: { source: "adrotate-sites.json" },
+          metadata: { source: "adrotate-sites.json", preserveRuleShape },
           createdBy: actor,
         }));
         results.push({
@@ -879,6 +898,7 @@ router.post("/capture-rules/import-legacy", async (req, res): Promise<void> => {
     res.json({
       ok: true,
       dryRun: false,
+      preserveRuleShape,
       total: plan.length,
       created: results.filter((item) => item.action === "created").length,
       overwritten: results.filter((item) => item.action === "overwritten").length,
