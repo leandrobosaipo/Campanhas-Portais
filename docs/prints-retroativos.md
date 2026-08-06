@@ -509,6 +509,8 @@ somente depois da prova editorial local ser aprovada. Em seguida, confirmar
 `GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD` com
 `status=audited` e `retroContentProof.status=approved`.
 
+A autoauditoria do capturador repete falhas transitórias da chamada de status e o job só pode concluir quando a resposta final for explicitamente `audited`; resposta ausente ou diferente disso é falha bloqueante.
+
 Em página interna reconstruída, URL pública, título, data e corpo precisam
 pertencer ao mesmo post histórico. Cards relacionados atuais não substituem
 nem invalidam a data editorial do artigo principal verificado.
