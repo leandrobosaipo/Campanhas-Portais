@@ -9,7 +9,7 @@ import {
 } from "../../artifacts/api-server/src/lib/adrotate-sites.ts";
 import captureModule from "./capture-insertion-proof.cjs";
 
-const { applyAflRetroPreview } = captureModule;
+const { applyAflRetroPreview, stabilizeVisibleRetroDatesBeforeCapture } = captureModule;
 
 const portalDefaults = {
   requireSignedRetroPreview: true,
@@ -123,6 +123,26 @@ try {
     if (date) date.textContent = "29/18:24";
   });
   await page.waitForFunction(() => document.querySelector("article.hero-post [data-adops-retro-date-node='1']")?.textContent === "29/07/2026 15:29");
+  assert.equal(
+    await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
+    "29/07/2026 15:29",
+  );
+
+  await page.evaluate(() => {
+    const topbar = document.createElement("time");
+    topbar.className = "js-topbar-datetime";
+    topbar.textContent = "quarta-feira, 29 de junho de 2026, às 20:00:00";
+    document.body.prepend(topbar);
+    const date = document.querySelector("article.hero-post [data-adops-retro-date-node='1']");
+    if (date) date.textContent = "29/18:44";
+  });
+  const visibleDateAudit = await stabilizeVisibleRetroDatesBeforeCapture(page, {
+    domain: "afolhalivre.com",
+    pageDateSelectors: ["time.js-topbar-datetime"],
+    auditConfig: { requireVisiblePageDate: true },
+  }, "2026-07-29T20:00:00-04:00");
+  assert.equal(visibleDateAudit.ok, true);
+  assert.match(await page.locator("time.js-topbar-datetime").textContent() ?? "", /29 de julho de 2026/);
   assert.equal(
     await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
     "29/07/2026 15:29",
