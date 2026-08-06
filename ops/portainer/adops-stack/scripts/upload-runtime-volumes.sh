@@ -92,7 +92,7 @@ upload_to_volume() {
 
   run_in_upload_container() {
     local command="$1"
-    local exec_id exit_code
+    local exec_id exit_code exec_state exec_running exec_attempt
     exec_id="$(curl -fsS --max-time 30 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
@@ -104,9 +104,16 @@ upload_to_volume() {
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
       -d '{"Detach":false,"Tty":false}' \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
-    exit_code="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json" | jq -r '.ExitCode')"
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null || true
+    exit_code=""
+    for exec_attempt in $(seq 1 120); do
+      exec_state="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
+      exec_running="$(printf '%s' "$exec_state" | jq -r '.Running')"
+      exit_code="$(printf '%s' "$exec_state" | jq -r '.ExitCode // empty')"
+      [[ "$exec_running" == "false" ]] && break
+      [[ "$exec_attempt" == "120" ]] && { printf 'Upload container command timed out for volume=%s.\n' "$volume" >&2; return 1; }
+      sleep 5
+    done
     [[ "$exit_code" == "0" ]] || { printf 'Upload container command failed for volume=%s.\n' "$volume" >&2; return 1; }
   }
 
