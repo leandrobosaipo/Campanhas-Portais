@@ -2467,6 +2467,16 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const heroExcerpt = hero.querySelector("p");
     if (heroExcerpt) heroExcerpt.textContent = heroPost.excerpt || "";
     setCategory(hero, heroPost);
+    const heroDateNodes = hero.querySelectorAll(
+      "time, [datetime], .text-xs span, .post-date, .entry-date, .posted-on, [data-date], [data-datetime]",
+    );
+    const heroDateText = formatDate(heroPost.date);
+    heroDateNodes.forEach((dateNode) => {
+      dateNode.textContent = heroDateText;
+      if (dateNode.hasAttribute("datetime")) dateNode.setAttribute("datetime", heroPost.date);
+      if (dateNode.hasAttribute("data-date")) dateNode.setAttribute("data-date", heroPost.date);
+      if (dateNode.hasAttribute("data-datetime")) dateNode.setAttribute("data-datetime", heroPost.date);
+    });
     hero.setAttribute("data-adops-retro-post-slug", heroPost.slug);
     hero.setAttribute("data-adops-retro-post-date", heroPost.date);
 
@@ -2532,6 +2542,8 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       expectedLatestSlugs,
       renderedLatestSlugs,
       rewrittenArticles: 1 + latest.length + remainingArticles.length,
+      heroDateText,
+      heroDateNodesUpdated: heroDateNodes.length,
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts });

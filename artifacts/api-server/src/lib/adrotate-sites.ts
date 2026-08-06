@@ -12,6 +12,7 @@ export type SiteFormatMapping = {
   scrollMode?: "top" | "slot";
   proofStyle?: "viewport_only" | "viewport_with_slot_inset";
   auditOverrides?: Partial<SiteAuditConfig>;
+  articleFallbackUrl?: string | null;
 };
 
 export type SiteAuditConfig = {
@@ -171,6 +172,28 @@ export function getSiteFormatMapping(siteSigla: string | null | undefined, local
   const resolution = resolveSiteFormat(siteSigla, localFormato);
   if (resolution.status !== "resolved" || resolution.groupId == null) return null;
   return site.formatMappings.find((item) => item.groupId === resolution.groupId) ?? null;
+}
+
+/**
+ * Rules stored in Postgres belong to one portal position. Portal defaults stay
+ * in adrotate-sites.json and are merged only when the runtime rule is resolved.
+ * Keeping the scopes separate prevents a rule published for one position from
+ * freezing (and later overriding) an old copy of the portal-wide defaults.
+ */
+export function getPositionAuditConfig(mapping: SiteFormatMapping | null | undefined): Record<string, unknown> {
+  return mapping?.auditOverrides && typeof mapping.auditOverrides === "object"
+    ? { ...mapping.auditOverrides }
+    : {};
+}
+
+export function mergePortalPositionAuditConfig(
+  portalConfig: Record<string, unknown> | null | undefined,
+  positionConfig: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  return {
+    ...(portalConfig ?? {}),
+    ...(positionConfig ?? {}),
+  };
 }
 
 type FormatMappingContext = {
