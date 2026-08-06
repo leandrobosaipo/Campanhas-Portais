@@ -2063,6 +2063,40 @@ async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt)
   return assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt);
 }
 
+async function stampFrozenPageDateIntoViewport(page, mapping, viewportPng) {
+  if (!String(mapping?.domain || "").includes("afolhalivre.com")) return { applied: false, reason: "not_afl" };
+  const label = page.locator(".cod5-adops-frozen-datestamp").first();
+  if (await label.count() < 1 || !await label.isVisible()) {
+    throw new Error("capture_audit_failed: afl_frozen_datestamp_not_visible");
+  }
+  const pill = label.locator("..");
+  const box = await pill.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport?.width) throw new Error("capture_audit_failed: afl_frozen_datestamp_box_missing");
+  const patchPng = `${viewportPng}.afl-datestamp.png`;
+  await pill.screenshot({ path: patchPng });
+  const python = `
+import sys
+from PIL import Image
+base_path, patch_path, x_raw, y_raw, viewport_width_raw = sys.argv[1:]
+base = Image.open(base_path).convert("RGBA")
+patch = Image.open(patch_path).convert("RGBA")
+scale = base.width / float(viewport_width_raw)
+x = round(float(x_raw) * scale)
+y = round(float(y_raw) * scale)
+base.alpha_composite(patch, (x, y))
+base.convert("RGB").save(base_path, format="PNG", optimize=True)
+`;
+  try {
+    execFileSync(CAPTURE_PYTHON_BIN, ["-c", python, viewportPng, patchPng, String(box.x), String(box.y), String(viewport.width)], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } finally {
+    rmSync(patchPng, { force: true });
+  }
+  return { applied: true, box };
+}
+
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "perrenguematogrosso.com") return false;
   const adminRetroPosts = Array.isArray(options.adminRetroPosts)
@@ -7119,6 +7153,7 @@ async function main() {
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
     await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
     await page.screenshot({ path: viewportPng });
+    const frozenPageDatePixelPatch = await stampFrozenPageDateIntoViewport(page, mapping, viewportPng);
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
@@ -7487,6 +7522,7 @@ async function main() {
       retroContentProof,
       retroGate,
       visiblePageDateAudit,
+      frozenPageDatePixelPatch,
       creativePlacementAudit,
       headerAdPolicyAudit,
       stickyHeaderViewportAudit,
@@ -7975,6 +8011,7 @@ if (require.main === module) {
   module.exports = {
     applyAflRetroPreview,
     stabilizeVisibleRetroDatesBeforeCapture,
+    stampFrozenPageDateIntoViewport,
     applyPerrengueStaticRetroPreview,
     buildWordPressArticleApiUrl,
     fetchWordPressArticleCandidates,
