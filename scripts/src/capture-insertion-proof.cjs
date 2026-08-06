@@ -1741,12 +1741,27 @@ async function flushPendingCaptureLogs() {
   return { flushed, kept: kept.length };
 }
 
-async function fetchCaptureAuditStatus(apiBase, insertionId, targetDate) {
-  const response = await fetch(`${apiBase}/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`, {
-    headers: buildApiHeaders(),
-  });
-  if (!response.ok) return null;
-  return response.json().catch(() => null);
+async function fetchCaptureAuditStatus(apiBase, insertionId, targetDate, options = {}) {
+  const maxAttempts = Math.max(1, Number(options.maxAttempts ?? 4));
+  const baseBackoffMs = Math.max(100, Number(options.baseBackoffMs ?? 750));
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(`${apiBase}/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`, {
+        headers: buildApiHeaders(),
+      });
+      if (response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (payload) return payload;
+      } else {
+        lastError = new Error(`capture_audit_status_http_${response.status}`);
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < maxAttempts) await sleep(baseBackoffMs * attempt);
+  }
+  throw lastError || new Error("capture_audit_status_unavailable");
 }
 
 async function validateCaptureChecklist(apiBase, insertionId, targetDate, metadata) {
@@ -7554,7 +7569,7 @@ async function main() {
       auditStatus,
       probableCause: analysis.probableCause,
     });
-    if (auditStatus === "invalid_audit" || auditStatus === "invalid_url") {
+    if (shouldFetchRemoteAuditStatus && auditStatus !== "audited") {
       throw new Error(`capture_audit_failed: status=${auditStatus}; pageDateObserved=${pageDateObserved || "n/a"}; requestedCaptureAt=${effectiveCaptureAt || "n/a"}`);
     }
 
