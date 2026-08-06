@@ -2063,38 +2063,41 @@ async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt)
   return assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt);
 }
 
-async function stampFrozenPageDateIntoViewport(page, mapping, viewportPng) {
+async function stampFrozenPageDateIntoViewport(page, mapping, captureAt, viewportPng) {
   if (!String(mapping?.domain || "").includes("afolhalivre.com")) return { applied: false, reason: "not_afl" };
+  const labels = buildFrozenPageDateLabels(captureAt);
+  if (!labels?.full) throw new Error("capture_audit_failed: afl_frozen_datestamp_label_missing");
   const label = page.locator(".cod5-adops-frozen-datestamp").first();
   if (await label.count() < 1 || !await label.isVisible()) {
     throw new Error("capture_audit_failed: afl_frozen_datestamp_not_visible");
   }
-  const pill = label.locator("..");
-  const box = await pill.boundingBox();
+  const box = await label.boundingBox();
   const viewport = page.viewportSize();
   if (!box || !viewport?.width) throw new Error("capture_audit_failed: afl_frozen_datestamp_box_missing");
-  const patchPng = `${viewportPng}.afl-datestamp.png`;
-  await pill.screenshot({ path: patchPng });
   const python = `
 import sys
-from PIL import Image
-base_path, patch_path, x_raw, y_raw, viewport_width_raw = sys.argv[1:]
+from PIL import Image, ImageDraw, ImageFont
+base_path, font_path, label, x_raw, y_raw, width_raw, height_raw, viewport_width_raw = sys.argv[1:]
 base = Image.open(base_path).convert("RGBA")
-patch = Image.open(patch_path).convert("RGBA")
 scale = base.width / float(viewport_width_raw)
 x = round(float(x_raw) * scale)
 y = round(float(y_raw) * scale)
-base.alpha_composite(patch, (x, y))
+width = round(float(width_raw) * scale)
+height = round(float(height_raw) * scale)
+draw = ImageDraw.Draw(base)
+draw.rectangle((x - 2, y - 1, x + width + 4, y + height + 1), fill=(255, 255, 255, 255))
+font = ImageFont.truetype(font_path, max(12, round(12 * scale)))
+bbox = draw.textbbox((0, 0), label, font=font)
+text_height = bbox[3] - bbox[1]
+text_y = y + max(0, round((height - text_height) / 2) - bbox[1])
+draw.text((x, text_y), label, font=font, fill=(82, 82, 91, 255))
 base.convert("RGB").save(base_path, format="PNG", optimize=True)
 `;
-  try {
-    execFileSync(CAPTURE_PYTHON_BIN, ["-c", python, viewportPng, patchPng, String(box.x), String(box.y), String(viewport.width)], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } finally {
-    rmSync(patchPng, { force: true });
-  }
-  return { applied: true, box };
+  execFileSync(CAPTURE_PYTHON_BIN, [
+    "-c", python, viewportPng, WINDOWS_FRAME_FONT, labels.full,
+    String(box.x), String(box.y), String(box.width), String(box.height), String(viewport.width),
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  return { applied: true, box, label: labels.full };
 }
 
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
@@ -7153,7 +7156,7 @@ async function main() {
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
     await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
     await page.screenshot({ path: viewportPng });
-    const frozenPageDatePixelPatch = await stampFrozenPageDateIntoViewport(page, mapping, viewportPng);
+    const frozenPageDatePixelPatch = await stampFrozenPageDateIntoViewport(page, mapping, effectiveCaptureAt, viewportPng);
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
