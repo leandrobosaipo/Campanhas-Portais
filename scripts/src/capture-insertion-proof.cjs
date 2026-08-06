@@ -2005,7 +2005,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
   const [year, month, day] = targetDate.split("-");
   const expectedDate = `${day}/${month}/${year}`;
   const labels = buildFrozenPageDateLabels(captureAt);
-  const expectedTexts = [expectedDate, labels?.full, labels?.omtShort].filter(Boolean);
+  const expectedTexts = [expectedDate, labels?.full, labels?.short, labels?.omtShort].filter(Boolean);
   const selectors = mergePageDateSelectors(mapping.pageDateSelectors);
   const audit = await page.evaluate(({ selectors: rawSelectors, expectedDate: rawExpectedDate, expectedTexts: rawExpectedTexts }) => {
     const isVisible = (el) => {
@@ -2035,6 +2035,15 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
     throw new Error(`capture_audit_failed: visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
   }
   return audit;
+}
+
+async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt) {
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  await page.waitForTimeout(180);
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  return assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt);
 }
 
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
@@ -2563,12 +2572,14 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
         subtree: true,
         characterData: true,
       });
-      if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
-      window.__cod5AflRetroDateInterval = window.setInterval(() => {
+      const normalizeAllRetroDates = () => {
         for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
           normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
         }
-      }, 120);
+      };
+      window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
+      if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
+      window.__cod5AflRetroDateInterval = window.setInterval(normalizeAllRetroDates, 120);
     }
 
     const reservedArticles = new Set([hero, ...latest]);
@@ -7089,6 +7100,8 @@ async function main() {
       throw new Error(`${code}: ${failedSource}`);
     }
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
+    await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
+    await page.screenshot({ path: viewportPng });
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
@@ -7944,6 +7957,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     applyAflRetroPreview,
+    stabilizeVisibleRetroDatesBeforeCapture,
     applyPerrengueStaticRetroPreview,
     buildWordPressArticleApiUrl,
     fetchWordPressArticleCandidates,
