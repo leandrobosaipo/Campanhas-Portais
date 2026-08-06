@@ -2025,7 +2025,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       }
     }
     return {
-      ok: values.some((item) => item.ok),
+      ok: values.length > 0 && values.every((item) => item.ok),
       expectedDate: rawExpectedDate,
       expectedTexts: rawExpectedTexts,
       values: values.slice(0, 20),
@@ -2471,6 +2471,37 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
         timeZone: "America/Cuiaba",
       }).format(date).replace(",", "");
     };
+    const isEditorialDateText = (value) => {
+      const normalized = text(value).replace(/\s+/g, " ");
+      return /^(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}(?:\/\d{4})?(?:\s+\d{1,2}:\d{2})?$/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}:\d{2}$/i.test(normalized);
+    };
+    const normalizeArticleDate = (article, postDate) => {
+      const absoluteDate = formatDate(postDate);
+      if (!article || !absoluteDate) return 0;
+      const candidates = new Set(Array.from(article.querySelectorAll(
+        "[data-adops-retro-date-node='1'], time, [datetime], .post-date, .entry-date, .posted-on, [data-date], [data-datetime], .text-xs span",
+      )));
+      for (const node of Array.from(article.querySelectorAll("*"))) {
+        if (node instanceof HTMLElement && node.children.length === 0 && isEditorialDateText(node.textContent)) {
+          candidates.add(node);
+        }
+      }
+      let rewritten = 0;
+      for (const node of candidates) {
+        if (!(node instanceof HTMLElement)) continue;
+        const tagged = node.getAttribute("data-adops-retro-date-node") === "1";
+        if (!tagged && !isEditorialDateText(node.textContent) && !node.matches("time,[datetime],.post-date,.entry-date,.posted-on,[data-date],[data-datetime]")) continue;
+        node.textContent = absoluteDate;
+        node.setAttribute("data-adops-retro-date-node", "1");
+        if (node.hasAttribute("datetime")) node.setAttribute("datetime", postDate);
+        if (node.hasAttribute("data-date")) node.setAttribute("data-date", postDate);
+        if (node.hasAttribute("data-datetime")) node.setAttribute("data-datetime", postDate);
+        rewritten += 1;
+      }
+      return rewritten;
+    };
 
     const hero = document.querySelector("main .hero-section article.hero-post");
     const heroPost = retroPosts.find((post) => post.image) || retroPosts[0];
@@ -2482,18 +2513,10 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const heroExcerpt = hero.querySelector("p");
     if (heroExcerpt) heroExcerpt.textContent = heroPost.excerpt || "";
     setCategory(hero, heroPost);
-    const heroDateNodes = hero.querySelectorAll(
-      "time, [datetime], .text-xs span, .post-date, .entry-date, .posted-on, [data-date], [data-datetime]",
-    );
     const heroDateText = formatDate(heroPost.date);
-    heroDateNodes.forEach((dateNode) => {
-      dateNode.textContent = heroDateText;
-      if (dateNode.hasAttribute("datetime")) dateNode.setAttribute("datetime", heroPost.date);
-      if (dateNode.hasAttribute("data-date")) dateNode.setAttribute("data-date", heroPost.date);
-      if (dateNode.hasAttribute("data-datetime")) dateNode.setAttribute("data-datetime", heroPost.date);
-    });
     hero.setAttribute("data-adops-retro-post-slug", heroPost.slug);
     hero.setAttribute("data-adops-retro-post-date", heroPost.date);
+    const heroDateNodesUpdated = normalizeArticleDate(hero, heroPost.date);
 
     const latest = Array.from(document.querySelectorAll("main .hero-section aside article.post-card-compact"));
     const sidebarPosts = retroPosts.filter((post) => post.slug !== heroPost.slug).slice(0, latest.length);
@@ -2505,10 +2528,9 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       const title = article.querySelector("h1,h2,h3,h4");
       if (title) title.textContent = post.title;
       setCategory(article, post);
-      const dateNode = article.querySelector(".text-xs span, time");
-      if (dateNode) dateNode.textContent = formatDate(post.date);
       article.setAttribute("data-adops-retro-post-slug", post.slug);
       article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
     });
 
     const rewriteRelativeDates = (root) => {
@@ -2519,10 +2541,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
         if (!/\b(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(value)) continue;
         const retroArticle = node.closest("[data-adops-retro-post-date]");
         const postDate = retroArticle?.getAttribute("data-adops-retro-post-date") || "";
-        const absoluteDate = formatDate(postDate);
-        if (!absoluteDate) continue;
-        node.textContent = absoluteDate;
-        rewritten += 1;
+        rewritten += normalizeArticleDate(retroArticle, postDate);
       }
       return rewritten;
     };
@@ -2544,6 +2563,12 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
         subtree: true,
         characterData: true,
       });
+      if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
+      window.__cod5AflRetroDateInterval = window.setInterval(() => {
+        for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
+          normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
+        }
+      }, 120);
     }
 
     const reservedArticles = new Set([hero, ...latest]);
@@ -2561,10 +2586,9 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       const excerpt = article.querySelector("p");
       if (excerpt && post.excerpt) excerpt.textContent = post.excerpt;
       setCategory(article, post);
-      const dateNodes = article.querySelectorAll("time, .text-xs span, .post-date, .entry-date");
-      dateNodes.forEach((dateNode) => { dateNode.textContent = formatDate(post.date); });
       article.setAttribute("data-adops-retro-post-slug", post.slug);
       article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
     });
 
     const renderedHeroSlug = hero.getAttribute("data-adops-retro-post-slug") || "";
@@ -2593,7 +2617,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       renderedLatestSlugs,
       rewrittenArticles: 1 + latest.length + remainingArticles.length,
       heroDateText,
-      heroDateNodesUpdated: heroDateNodes.length,
+      heroDateNodesUpdated,
       relativeDatesRewritten,
       relativeDateObserverActive: Boolean(main),
       editorialContentMatches,
