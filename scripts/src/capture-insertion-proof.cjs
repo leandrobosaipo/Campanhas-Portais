@@ -2511,6 +2511,41 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       article.setAttribute("data-adops-retro-post-date", post.date);
     });
 
+    const rewriteRelativeDates = (root) => {
+      let rewritten = 0;
+      for (const node of Array.from(root?.querySelectorAll?.("*") || [])) {
+        if (!(node instanceof HTMLElement) || node.children.length > 0) continue;
+        const value = node.textContent?.replace(/\s+/g, " ").trim() || "";
+        if (!/\b(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(value)) continue;
+        const retroArticle = node.closest("[data-adops-retro-post-date]");
+        const postDate = retroArticle?.getAttribute("data-adops-retro-post-date") || "";
+        const absoluteDate = formatDate(postDate);
+        if (!absoluteDate) continue;
+        node.textContent = absoluteDate;
+        rewritten += 1;
+      }
+      return rewritten;
+    };
+    const main = document.querySelector("main");
+    const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
+    if (main) {
+      window.__cod5AflRetroDateObserver?.disconnect?.();
+      let rewriteQueued = false;
+      window.__cod5AflRetroDateObserver = new MutationObserver(() => {
+        if (rewriteQueued) return;
+        rewriteQueued = true;
+        queueMicrotask(() => {
+          rewriteQueued = false;
+          rewriteRelativeDates(main);
+        });
+      });
+      window.__cod5AflRetroDateObserver.observe(main, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+
     const reservedArticles = new Set([hero, ...latest]);
     const remainingArticles = Array.from(document.querySelectorAll("main article"))
       .filter((article) => !reservedArticles.has(article));
@@ -2559,6 +2594,8 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       rewrittenArticles: 1 + latest.length + remainingArticles.length,
       heroDateText,
       heroDateNodesUpdated: heroDateNodes.length,
+      relativeDatesRewritten,
+      relativeDateObserverActive: Boolean(main),
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts });
