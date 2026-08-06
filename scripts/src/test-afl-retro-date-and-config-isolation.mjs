@@ -147,6 +147,8 @@ try {
     await page.locator("time.js-topbar-datetime").getAttribute("data-adops-frozen-visible-label") ?? "",
     /29 de julho de 2026/,
   );
+  assert.equal(await page.locator("time.js-topbar-datetime").evaluate((el) => getComputedStyle(el).display), "none");
+  assert.match(await page.locator(".cod5-adops-frozen-datestamp").textContent() ?? "", /29 de julho de 2026/);
   assert.equal(
     await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
     "29/07/2026 15:29",
