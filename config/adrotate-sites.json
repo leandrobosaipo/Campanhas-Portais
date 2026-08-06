@@ -441,6 +441,7 @@
       "minRetroContentMatches": 3,
       "allowAuditedReconstruction": true,
       "requireAbsoluteEditorialDates": true,
+      "requireVisiblePageDate": true,
       "retroContentCardSelectors": [],
       "retroContentDateSelectors": []
     },
