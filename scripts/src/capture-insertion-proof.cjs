@@ -1943,6 +1943,7 @@ const DEFAULT_PAGE_DATE_SELECTORS = [
   ".header-datestamp-short",
   "time[data-omt-live-datestamp='1']",
   "time.js-topbar-datetime",
+  ".cod5-adops-frozen-datestamp",
   "[data-omt-localtime]",
   "[data-omt-localtime-el]",
   "[data-omt-localtime-full]",
@@ -1981,12 +1982,17 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
           el.setAttribute("data-omt-preview-at", frozen.iso);
           if (isAfl && el.matches("time.js-topbar-datetime")) {
             el.setAttribute("data-adops-frozen-visible-label", frozen.full);
-            if (!document.getElementById("cod5-afl-frozen-datestamp-style")) {
-              const style = document.createElement("style");
-              style.id = "cod5-afl-frozen-datestamp-style";
-              style.textContent = `time.js-topbar-datetime[data-adops-frozen-visible-label] { color: transparent !important; position: relative; }
-time.js-topbar-datetime[data-adops-frozen-visible-label]::after { content: attr(data-adops-frozen-visible-label); color: #52525b; font-size: inherit; line-height: inherit; white-space: nowrap; position: absolute; inset: 0 auto auto 0; }`;
-              document.head.appendChild(style);
+            el.style.setProperty("display", "none", "important");
+            let frozenLabel = el.parentElement?.querySelector(":scope > .cod5-adops-frozen-datestamp");
+            if (!frozenLabel && el.parentElement) {
+              frozenLabel = document.createElement("span");
+              frozenLabel.className = "cod5-adops-frozen-datestamp";
+              el.insertAdjacentElement("afterend", frozenLabel);
+            }
+            if (frozenLabel) {
+              frozenLabel.textContent = frozen.full;
+              frozenLabel.setAttribute("data-omt-preview-at", frozen.iso);
+              frozenLabel.setAttribute("data-adops-frozen-visible-label", frozen.full);
             }
           }
           const attrText = `${el.className || ""} ${Array.from(el.attributes || []).map((attr) => `${attr.name}=${attr.value || ""}`).join(" ")}`;
