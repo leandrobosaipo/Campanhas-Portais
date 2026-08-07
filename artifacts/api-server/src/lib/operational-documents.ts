@@ -19,7 +19,8 @@ import {
   WidthType,
   type ISectionOptions,
 } from "docx";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
+import { withPlaywrightPermit } from "./playwright-budget";
 
 export type OperationalDocumentKind = "declaracao-execucao" | "anexo-v";
 export type OperationalDocumentFormat = "docx" | "pdf";
@@ -128,7 +129,6 @@ const DOCUMENT_TITLES: Record<OperationalDocumentKind, string> = {
 };
 
 const logoBufferPromises = new Map<string, Promise<Buffer | null>>();
-let browserPromise: Promise<Browser> | null = null;
 
 function getLogoBuffer(siteSigla: string) {
   const key = siteSigla.toUpperCase();
@@ -138,16 +138,6 @@ function getLogoBuffer(siteSigla: string) {
   const created = readFile(targetPath).catch(() => null);
   logoBufferPromises.set(key, created);
   return created;
-}
-
-async function getPdfBrowser() {
-  if (!browserPromise) {
-    browserPromise = chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-  }
-  return browserPromise;
 }
 
 function sanitizeFileNamePart(value: string) {
@@ -682,18 +672,28 @@ async function renderDocumentHtml(kind: OperationalDocumentKind, context: Operat
 }
 
 async function renderPdf(html: string) {
-  const browser = await getPdfBrowser();
-  const page = await browser.newPage();
-  try {
-    await page.setContent(html, { waitUntil: "networkidle" });
-    return Buffer.from(await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
-    }));
-  } finally {
-    await page.close();
-  }
+  return withPlaywrightPermit("operational-document-pdf", async () => {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+      page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle" });
+      return Buffer.from(await page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
+      }));
+    } finally {
+      await Promise.allSettled([
+        page ? page.close() : Promise.resolve(),
+        browser ? browser.close() : Promise.resolve(),
+      ]);
+    }
+  });
 }
 
 async function renderDocx(kind: OperationalDocumentKind, context: OperationalDocumentContext) {

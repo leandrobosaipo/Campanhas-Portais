@@ -15,7 +15,9 @@ const PRIVATE_ADOPS_API_BASE_URL = (process.env.PRIVATE_ADOPS_API_BASE_URL || "h
 const PRIVATE_ADOPS_API_TOKEN = process.env.PRIVATE_ADOPS_API_TOKEN || "";
 const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}`;
 const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
-const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
+const POLL_MIN_MS = Number.parseInt(process.env.OPS_POLL_MIN_MS || "2000", 10);
+const POLL_MAX_MS = Math.max(POLL_MIN_MS, Number.parseInt(process.env.OPS_POLL_MAX_MS || "10000", 10));
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OPS_REQUEST_TIMEOUT_MS || "30000", 10);
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
 const RUNNER_HEARTBEAT_INTERVAL_MS = Number.parseInt(process.env.ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS || "60000", 10);
@@ -86,7 +88,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,drive-pi-ingest,drive-inventory-refresh,media-monitor,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,analytics-report,pi-site-export,campaign-fulfillment,drive-pi-ingest,drive-inventory-refresh,media-monitor,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -97,6 +99,9 @@ let lastRunnerHeartbeatAt = 0;
 let runnerLastCycleError = null;
 let runnerLastSuccessAt = null;
 let googleDriveAccessTokenCache = null;
+let draining = false;
+let activeJob = null;
+let lastJobDurationMs = null;
 
 const ANALYTICS_SITE_CONFIGS = {
   "afolhalivre-ga4": "afolhalivre",
@@ -109,6 +114,23 @@ const ANALYTICS_SITE_CONFIGS = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fullJitter(maxMs, minMs = 0) {
+  const min = Math.max(0, Math.min(minMs, maxMs));
+  return Math.round(min + Math.random() * Math.max(0, maxMs - min));
+}
+
+function idleBackoffMs(idleCycles) {
+  return fullJitter(Math.min(POLL_MAX_MS, POLL_MIN_MS * (2 ** Math.max(0, idleCycles - 1))), POLL_MIN_MS);
+}
+
+function retryAfterDelayMs(value) {
+  if (!value) return 0;
+  const seconds = Number.parseFloat(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const dateMs = Date.parse(value);
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : 0;
 }
 
 function startRunnerHealthServer() {
@@ -126,6 +148,11 @@ function startRunnerHealthServer() {
       driveMonitorEnabled: DRIVE_PI_MONITOR_ENABLED,
       kinds,
       uptimeSeconds: Math.floor(process.uptime()),
+      draining,
+      activeJob,
+      lastJobDurationMs,
+      memory: process.memoryUsage(),
+      lastError: runnerLastCycleError,
     }));
   });
   server.listen(RUNNER_HEALTH_PORT, "0.0.0.0", () => {
@@ -137,6 +164,7 @@ function startRunnerHealthServer() {
 async function request(pathname, init = {}) {
   const response = await fetch(`${OPS_API_BASE_URL}${pathname}`, {
     ...init,
+    signal: init.signal || AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${OPS_API_TOKEN}`,
@@ -3042,8 +3070,7 @@ async function googleDriveRequest(pathname, query = {}) {
         throw error;
       }
 
-      const retryAfterSeconds = Number.parseFloat(response.headers.get("retry-after") || "0");
-      retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0;
+      retryAfterMs = retryAfterDelayMs(response.headers.get("retry-after"));
       lastError = new Error(message);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -3053,7 +3080,10 @@ async function googleDriveRequest(pathname, query = {}) {
 
     if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) break;
     const exponentialMs = ADOPS_DRIVE_RETRY_BASE_MS * (2 ** (attempt - 1));
-    const delayMs = Math.min(ADOPS_DRIVE_RETRY_MAX_MS, Math.max(retryAfterMs, exponentialMs));
+    const delayMs = Math.max(
+      retryAfterMs,
+      fullJitter(Math.min(ADOPS_DRIVE_RETRY_MAX_MS, exponentialMs)),
+    );
     console.warn(`[runner] Google Drive temporariamente indisponível; retry ${attempt}/${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS} em ${delayMs}ms`);
     await sleep(delayMs);
   }
@@ -5384,7 +5414,7 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
         return { ok: true, recoveredAfterError: true, capture: { status: "ok" } };
       }
       if (attempt >= maxAttempts) break;
-      const delayMs = attempt * 2_000;
+      const delayMs = fullJitter(Math.min(15_000, 2_000 * (2 ** (attempt - 1))), 500);
       console.warn(`[runner] captura ${insertionId}/${targetDate} falhou; retry ${attempt + 1}/${maxAttempts} em ${delayMs}ms`);
       await sleep(delayMs);
     }
@@ -6214,36 +6244,69 @@ async function runWatchdogIfDue(force = false) {
 }
 
 async function runOnce() {
+  if (draining) return false;
   const job = await claimNext();
   if (!job) {
     console.log(`[runner] nenhum job pronto para ${RUNNER_ID}`);
     return false;
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
+  const queuedAt = job.createdAt || job.created_at || null;
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  activeJob = { id: job.id, kind: job.kind, queuedAt, startedAt };
   try {
     const result = await handleJob(job);
+    const finishedAt = new Date().toISOString();
+    lastJobDurationMs = Date.now() - startedMs;
     await completeJob(job.id, {
       ok: true,
       runnerId: RUNNER_ID,
-      completedAt: new Date().toISOString(),
+      queuedAt,
+      startedAt,
+      finishedAt,
+      completedAt: finishedAt,
+      queueWaitMs: queuedAt ? Math.max(0, Date.parse(startedAt) - Date.parse(queuedAt)) : null,
+      durationMs: lastJobDurationMs,
+      timedOut: false,
       execution: result,
     });
     console.log(`[runner] job concluído`, job.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const finishedAt = new Date().toISOString();
+    const timedOut = /timeout/i.test(message) || String(error?.code || "").includes("TIMEOUT");
+    lastJobDurationMs = Date.now() - startedMs;
     if (error instanceof HumanReviewRequiredError) {
-      await awaitHumanReview(job.id, error.reviewResult);
+      await awaitHumanReview(job.id, {
+        ...error.reviewResult,
+        runnerId: RUNNER_ID,
+        queuedAt,
+        startedAt,
+        finishedAt,
+        queueWaitMs: queuedAt ? Math.max(0, Date.parse(startedAt) - Date.parse(queuedAt)) : null,
+        durationMs: lastJobDurationMs,
+        timedOut: false,
+      });
       console.log(`[runner] job aguardando revisão humana`, job.id);
       return true;
     }
     await failJob(job.id, message, {
       ok: false,
       runnerId: RUNNER_ID,
-      failedAt: new Date().toISOString(),
+      queuedAt,
+      startedAt,
+      finishedAt,
+      failedAt: finishedAt,
+      queueWaitMs: queuedAt ? Math.max(0, Date.parse(startedAt) - Date.parse(queuedAt)) : null,
+      durationMs: lastJobDurationMs,
+      timedOut,
       ...(Array.isArray(error?.telegramReceipts) ? { telegramReceipts: error.telegramReceipts } : {}),
       ...(error instanceof FulfillmentBlockedError ? error.fulfillmentResult : {}),
     });
     console.error(`[runner] job falhou`, job.id, message);
+  } finally {
+    activeJob = null;
   }
   return true;
 }
@@ -6276,10 +6339,11 @@ async function main() {
   console.log(`[runner] privateApi=${PRIVATE_ADOPS_API_BASE_URL}`);
   console.log(`[runner] kinds=${kinds.join(",")}`);
   console.log(`[runner] drivePiMonitor=${DRIVE_PI_MONITOR_ENABLED ? "enabled" : "disabled"}`);
-  startRunnerHealthServer();
+  const healthServer = startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  while (true) {
+  let idleCycles = 0;
+  while (!draining) {
     try {
       await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
       await runWatchdogIfDue(false);
@@ -6289,16 +6353,32 @@ async function main() {
       runnerLastCycleError = null;
       runnerLastSuccessAt = new Date().toISOString();
       if (!handled) {
-        await sleep(POLL_INTERVAL_MS);
+        idleCycles += 1;
+        await sleep(idleBackoffMs(idleCycles));
+      } else {
+        idleCycles = 0;
       }
     } catch (error) {
       runnerLastCycleError = error instanceof Error ? error.message : String(error);
       await sendRunnerHeartbeat(true).catch(() => null);
       console.error("[runner] ciclo com erro", runnerLastCycleError);
-      await sleep(POLL_INTERVAL_MS);
+      idleCycles += 1;
+      await sleep(idleBackoffMs(idleCycles));
     }
   }
+  await sendRunnerHeartbeat(true).catch(() => null);
+  if (healthServer) await new Promise((resolve) => healthServer.close(resolve));
+  console.log(`[runner] encerrado com drain concluído`, RUNNER_ID);
 }
+
+function beginDrain(signal) {
+  if (draining) return;
+  draining = true;
+  console.log(`[runner] ${signal} recebido; novos claims bloqueados`, RUNNER_ID);
+}
+
+process.once("SIGTERM", () => beginDrain("SIGTERM"));
+process.once("SIGINT", () => beginDrain("SIGINT"));
 
 export {
   extractSameOriginArticleCandidates,

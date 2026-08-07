@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:controlled-process": "tsx ./src/test-controlled-process.ts",
+    "test:controlled-browser": "tsx ./src/test-controlled-browser.ts",
+    "test:playwright-budget": "tsx ./src/test-playwright-budget.ts",
     "hello": "tsx ./src/hello.ts",
     "seed": "tsx ./src/seed.ts",
     "import:real": "tsx ./src/import-real-data.ts",

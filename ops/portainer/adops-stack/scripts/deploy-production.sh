@@ -15,6 +15,7 @@ ENDPOINT_ID="$(portainer_endpoint_id)"
 DISCOVERED_ENV=""
 DEPLOY_ENV=""
 ROLLBACK_ENV=""
+ROLLBACK_COMPOSE=""
 LEGACY_MONITOR_ID=""
 LEGACY_MONITOR_STOPPED="false"
 DEPLOY_COMPLETE="false"
@@ -22,7 +23,7 @@ STACK_SWITCHED="false"
 cleanup() {
   if [[ "$STACK_SWITCHED" == "true" && "$DEPLOY_COMPLETE" != "true" && -n "$ROLLBACK_ENV" ]]; then
     printf 'Deploy incompleto; restaurando volumes anteriores app=%s web=%s\n' "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >&2
-    COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
+    COMPOSE_FILE="${ROLLBACK_COMPOSE:-$STACK_DIR/docker-compose.volume.yml}" \
       bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >/dev/null 2>&1 || true
   fi
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
@@ -35,6 +36,7 @@ cleanup() {
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
   [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
   [[ -z "$ROLLBACK_ENV" ]] || rm -f "$ROLLBACK_ENV"
+  [[ -z "$ROLLBACK_COMPOSE" ]] || rm -f "$ROLLBACK_COMPOSE"
 }
 trap cleanup EXIT
 
@@ -50,6 +52,15 @@ if [[ -z "$STACK_ENV_FILE" || ! -f "$STACK_ENV_FILE" ]]; then
   [[ -s "$DISCOVERED_ENV" ]] || { printf 'Portainer stack environment is empty.\n' >&2; exit 1; }
   STACK_ENV_FILE="$DISCOVERED_ENV"
 fi
+
+if [[ -z "${STACK_ID:-}" ]]; then
+  STACK_ID="$(portainer_get_json "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
+fi
+[[ -n "$STACK_ID" ]] || { printf 'AdOps stack not found in Portainer.\n' >&2; exit 1; }
+ROLLBACK_COMPOSE="$(mktemp)"
+portainer_get_json "${PORTAINER_API}/stacks/${STACK_ID}/file" \
+  | jq -er '.StackFileContent' > "$ROLLBACK_COMPOSE"
+chmod 600 "$ROLLBACK_COMPOSE"
 
 env_value() {
   local key="$1"
