@@ -503,7 +503,7 @@ intactos no storage do AdOps.
 ```bash
 curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "Idempotency-Key: pi-16628-perrengue-delivery-v1" \
+  -H "Idempotency-Key: $ADOPS_IDEMPOTENCY_KEY" \
   -H "Content-Type: application/json" \
   "$ADOPS_API_BASE_URL/api/pi-site-exports/jobs" \
   -d '{
