@@ -36,7 +36,8 @@ mesma chave retorna o job existente e impede duplicidade.
 6. `publishing`: publica pelo adaptador AdRotate do portal e limpa cache.
 7. `capturing_and_auditing`: gera datas faltantes/invalidas e valida checklist.
 8. `materializing_source_proofs`: gera recorte da linha e prévia do PDF da agência.
-9. `completed`: entrega ZIP, PDFs por posição, dossiê e Telegram.
+9. `awaiting_human_review`: em retroativos/correções, aguarda aprovação do hash de cada PNG final.
+10. `completed`: entrega um ZIP + um PDF por posição, dossiê e Telegram.
 
 Erros transitórios das atividades externas têm tentativas limitadas. Conflitos
 de fonte, mídia ambígua ou checklist reprovado encerram o job como falha visível;
@@ -59,11 +60,27 @@ O container oficial já inclui Chromium. Em execução local fora do container,
 
 ## Contrato dos arquivos
 
-- ZIP: somente JPEGs progressivos, organizados por posição.
+- ZIP: um arquivo independente por posição, com JPEGs progressivos, auditoria mínima, contact sheet e `SHA256SUMS.txt`; sem PNG.
 - PDF: um arquivo independente por posição, fora do ZIP.
 - nomes externos: `PI-<codigo>-<portal>` e posição; sem qualificadores de estado.
 - fontes: recorte da planilha e primeira página do PDF da agência publicados no dossiê.
-- Telegram: ZIP e PDFs enviados quando `sendTelegram=true`.
+- Telegram: cada posição é enviada como um grupo ZIP + PDF, com recibos idempotentes.
+
+## Revisão humana
+
+Retroativos, correções e retrabalhos rejeitados não podem usar `standard` para
+contornar o gate. A API eleva automaticamente a classificação quando o período
+é histórico. O operador aprova o arquivo exato:
+
+```http
+POST /api/insertions/{id}/capture-proof/reviews
+{
+  "date": "2026-07-29",
+  "decision": "approved",
+  "expectedArtifactSha256": "<sha256-do-pixelDateProof>",
+  "reviewedBy": "operador"
+}
+```
 
 ## Compatibilidade
 

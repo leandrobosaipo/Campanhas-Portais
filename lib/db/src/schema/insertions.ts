@@ -1,4 +1,5 @@
-import { pgTable, text, serial, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, boolean, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -21,9 +22,18 @@ export const insertionsTable = pgTable("insertions", {
   mediaUrl: text("media_url"),
   atrasado: boolean("atrasado").notNull().default(false),
   observacoes: text("observacoes"),
+  canonicalIdentityKey: text("canonical_identity_key"),
+  supersededByInsertionId: integer("superseded_by_insertion_id"),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archiveReason: text("archive_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  uniqueIndex("insertions_canonical_identity_active_uidx")
+    .on(table.canonicalIdentityKey)
+    .where(sql`${table.canonicalIdentityKey} IS NOT NULL AND ${table.supersededByInsertionId} IS NULL AND ${table.archivedAt} IS NULL`),
+  index("insertions_superseded_by_idx").on(table.supersededByInsertionId),
+]);
 
 export const insertInsertionSchema = createInsertSchema(insertionsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertInsertion = z.infer<typeof insertInsertionSchema>;

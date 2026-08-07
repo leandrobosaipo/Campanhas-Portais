@@ -104,13 +104,14 @@ async function fetchRules(status = null) {
     statusPublished: rule.statusPublished === true,
     enabled: rule.enabled !== false,
     ruleVersionHash: rule.ruleVersionHash || null,
+    archivedAt: rule.archivedAt || null,
   }));
 }
 
 function auditNonPublishedRules(allRules) {
   const issues = [];
   const bySiteGroup = new Map();
-  for (const rule of allRules) {
+  for (const rule of allRules.filter((item) => !item.archivedAt)) {
     addToMap(bySiteGroup, `${rule.siteSigla}:${rule.groupId}`, rule);
   }
   for (const [key, bucket] of bySiteGroup.entries()) {

@@ -60,10 +60,12 @@ PREVIOUS_APP_VOLUME="$(env_value ADOPS_APP_SOURCE_VOLUME)"
 PREVIOUS_WEB_VOLUME="$(env_value ADOPS_WEB_PUBLIC_VOLUME)"
 PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
 PREVIOUS_IMAGE_TAG="$(env_value ADOPS_IMAGE_TAG)"
+PREVIOUS_RELEASE_SHA="$(env_value ADOPS_RELEASE_SHA)"
 PREVIOUS_APP_VOLUME="${PREVIOUS_APP_VOLUME:-adops_app_source}"
 PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
 PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-legacy}"
 PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
+PREVIOUS_RELEASE_SHA="${PREVIOUS_RELEASE_SHA:-$PREVIOUS_IMAGE_TAG}"
 
 CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
@@ -88,6 +90,24 @@ for backup_attempt in $(seq 1 120); do
 done
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
 
+MIGRATION_FILE="$STACK_DIR/migrations/2026-08-07-adops-proof-integrity.sql"
+MIGRATION_ID="2026-08-07-adops-proof-integrity"
+[[ -s "$MIGRATION_FILE" ]] || { printf 'Required migration missing: %s\n' "$MIGRATION_FILE" >&2; exit 1; }
+MIGRATION_BASE64="$(base64 < "$MIGRATION_FILE" | tr -d '\n')"
+MIGRATION_COMMAND="psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c 'CREATE TABLE IF NOT EXISTS cod5_schema_migrations (id text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())' && if ! psql -At -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"SELECT 1 FROM cod5_schema_migrations WHERE id='${MIGRATION_ID}'\" | grep -q 1; then printf %s '${MIGRATION_BASE64}' | base64 -d | psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" && psql -v ON_ERROR_STOP=1 -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -c \"INSERT INTO cod5_schema_migrations(id) VALUES ('${MIGRATION_ID}') ON CONFLICT DO NOTHING\"; fi"
+MIGRATION_EXEC_PAYLOAD="$(jq -n --arg command "$MIGRATION_COMMAND" '{AttachStdout:true,AttachStderr:true,Tty:false,Cmd:["sh","-lc",$command]}')"
+MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
+portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null || true
+for migration_attempt in $(seq 1 120); do
+  MIGRATION_EXEC="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/json")"
+  MIGRATION_RUNNING="$(printf '%s' "$MIGRATION_EXEC" | jq -r '.Running')"
+  MIGRATION_EXIT_CODE="$(printf '%s' "$MIGRATION_EXEC" | jq -r '.ExitCode // empty')"
+  [[ "$MIGRATION_RUNNING" == "false" ]] && break
+  [[ "$migration_attempt" == "120" ]] && { printf 'Database migration timed out.\n' >&2; exit 1; }
+  sleep 2
+done
+[[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'Database migration failed; application release was not switched. Backup=%s\n' "$BACKUP_NAME" >&2; exit 1; }
+
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
 export ADOPS_APP_SOURCE_VOLUME="${ADOPS_APP_SOURCE_VOLUME:-adops_app_source_${ADOPS_IMAGE_TAG}}"
@@ -110,15 +130,15 @@ if [[ -n "$LEGACY_MONITOR_ID" ]]; then
 fi
 
 DEPLOY_ENV="$(mktemp)"
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
-printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-$PREVIOUS_DRIVE_MODE}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|ADOPS_RELEASE_SHA|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nADOPS_RELEASE_SHA=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$ADOPS_IMAGE_TAG" "$ADOPS_RELEASE_SHA" "${DRIVE_INTEGRATION_MODE:-$PREVIOUS_DRIVE_MODE}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
 chmod 600 "$DEPLOY_ENV"
 
 ROLLBACK_ENV="$(mktemp)"
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$ROLLBACK_ENV"
-printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$PREVIOUS_IMAGE_TAG" "$PREVIOUS_DRIVE_MODE" "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >> "$ROLLBACK_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|ADOPS_RELEASE_SHA|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$ROLLBACK_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nADOPS_RELEASE_SHA=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$PREVIOUS_IMAGE_TAG" "$PREVIOUS_RELEASE_SHA" "$PREVIOUS_DRIVE_MODE" "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >> "$ROLLBACK_ENV"
 chmod 600 "$ROLLBACK_ENV"
 STACK_SWITCHED="true"
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
@@ -126,7 +146,7 @@ COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
 
 stable_checks=0
 for attempt in $(seq 1 60); do
-  if curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/healthz >/dev/null && \
+  if curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/healthz | jq -e --arg sha "$ADOPS_RELEASE_SHA" '.status == "ok" and .releaseSha == $sha' >/dev/null && \
      curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/ops/drive-inventory/status >/dev/null && \
      curl -fsS --max-time 10 https://adops.codigo5.com.br/ >/dev/null && \
      curl -fsS --max-time 10 https://adops.codigo5.com.br/cod5-release.json \

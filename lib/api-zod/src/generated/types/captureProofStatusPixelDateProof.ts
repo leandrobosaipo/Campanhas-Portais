@@ -6,8 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
-  /** @nullable */
-  releaseSha?: string | null;
-}
+/**
+ * @nullable
+ */
+export type CaptureProofStatusPixelDateProof = {
+  [key: string]: unknown;
+} | null;

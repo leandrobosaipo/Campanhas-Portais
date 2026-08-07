@@ -49,6 +49,8 @@ services:
     environment:
       PORT: "4011"
       NODE_ENV: production
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-unknown}
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
@@ -132,6 +134,7 @@ services:
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
@@ -190,6 +193,7 @@ services:
       RUNNER_ID: drive-pi-monitor
       ADOPS_RUNNER_HEALTH_PORT: "4012"
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh,media-monitor
@@ -272,6 +276,8 @@ services:
     command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
     environment:
       TZ: America/Cuiaba
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-unknown}
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       OPS_API_BASE_URL: https://adops-api.codigo5.com.br
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}

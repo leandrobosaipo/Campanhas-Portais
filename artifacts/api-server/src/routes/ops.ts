@@ -23,7 +23,7 @@ type JobKind =
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
-type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
+type JobStatus = "queued" | "ready_for_runner" | "running" | "awaiting_human_review" | "completed" | "failed";
 
 type OpsJobRecord = {
   id: string;
@@ -85,7 +85,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "runtime-readiness-probe",
 ];
 
-const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
+const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "awaiting_human_review", "completed", "failed"];
 
 type RuntimeEnvCheck = {
   name: string;
@@ -1047,6 +1047,16 @@ router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => 
   res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
 });
 
+router.post("/ops/runner/jobs/:id/await-review", async (req, res): Promise<void> => {
+  const updated = await updateOpsJob(req.params.id, {
+    status: "awaiting_human_review",
+    result: req.body?.result ?? { stage: "awaiting_human_review" },
+    error: null,
+    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+  });
+  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+});
+
 router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
   const updated = await updateOpsJob(req.params.id, {
     status: "failed",
@@ -1333,6 +1343,14 @@ export function buildOpsApiCatalog() {
         authRequired: false,
         curl: `curl -fsSL "${base}/api/insertions/1663/capture-proof/status?date=2026-07-01"`,
       },
+      {
+        id: "capture-proof-review",
+        method: "POST",
+        path: "/api/insertions/{id}/capture-proof/reviews",
+        purpose: "Aprovar ou rejeitar o hash exato do PNG final após pixelDateProof.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/insertions/1663/capture-proof/reviews -d '{"date":"2026-07-01","decision":"approved","expectedArtifactSha256":"SHA256","reviewedBy":"operador"}'`,
+      },
       ],
     },
     {
@@ -1394,6 +1412,14 @@ export function buildOpsApiCatalog() {
         purpose: "Baixar a versão PDF do dossiê operacional.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/campaign-fulfillments/jobs/JOB_ID/report.pdf -o dossie.pdf`,
+      },
+      {
+        id: "pi-site-export-position-delivery",
+        method: "POST",
+        path: "/api/pi-site-exports/jobs",
+        purpose: "Gerar um ZIP e um PDF por posição; retroativos aguardam revisão humana por hash.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: delivery:14609:AFL:v2' ${base}/api/pi-site-exports/jobs -d '{"piCodigo":"14609","siteSigla":"AFL","mode":"delivery","splitZipByPosition":true,"deliveryReason":"correction","sendTelegram":true}'`,
       },
       ],
     },
@@ -2250,6 +2276,9 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     imageMaxWidth,
     imageQuality,
     sendTelegram: req.body?.sendTelegram !== false,
+    splitZipByPosition: mode === "delivery" ? req.body?.splitZipByPosition !== false : false,
+    positions: Array.isArray(req.body?.positions) ? req.body.positions.filter((item: unknown) => typeof item === "string") : [],
+    deliveryClass: readOptionalString(req.body?.deliveryReason) ?? "standard",
     chatId: readOptionalString(req.body?.chatId),
     source: "macmini-api",
   }, "ops-api");
@@ -2266,6 +2295,7 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     imageMaxWidth,
     imageQuality,
     sendTelegram: req.body?.sendTelegram !== false,
+    splitZipByPosition: mode === "delivery" ? req.body?.splitZipByPosition !== false : false,
   });
 });
 

@@ -427,12 +427,12 @@ function selectDriveVideoForInsertion(packageContext, raw, fields) {
   const ranked = videos
     .map((item) => ({ item, score: scoreVideoMediaForInsertion(item, raw, fields) }))
     .sort((a, b) => b.score - a.score);
-  const ambiguous = ranked.length > 1 && ranked[0].score === ranked[1].score;
   return {
     mediaItem: ranked[0].item,
-    ambiguous,
+    ambiguous: true,
     candidates: videos.length,
     score: ranked[0].score,
+    selectedBy: "manual_review_required",
   };
 }
 
@@ -500,9 +500,10 @@ function selectDriveImageForInsertion(packageContext, raw, fields) {
   const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
   return {
     mediaItem: ranked[0].item,
-    ambiguous: ranked[0].score === ranked[1].score,
+    ambiguous: true,
     candidates: images.length,
     score: ranked[0].score,
+    selectedBy: "manual_review_required",
   };
 }
 
@@ -573,6 +574,16 @@ async function materializeMediaSource({ driveItem, observedLink, fallbackName })
     };
   }
   return null;
+}
+
+async function probeImageDimensions(filePath) {
+  const script = "from PIL import Image; import json,sys; im=Image.open(sys.argv[1]); print(json.dumps({'width':im.width,'height':im.height}))";
+  const { stdout } = await execFileAsync("python3", ["-c", script, filePath], { timeout: 30_000, maxBuffer: 1024 * 1024 });
+  const parsed = JSON.parse(String(stdout || "{}"));
+  return {
+    width: Number.isInteger(Number(parsed.width)) && Number(parsed.width) > 0 ? Number(parsed.width) : null,
+    height: Number.isInteger(Number(parsed.height)) && Number(parsed.height) > 0 ? Number(parsed.height) : null,
+  };
 }
 
 async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey }) {
@@ -850,6 +861,10 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
         sourceUrl: observed.link?.url || null,
         sourceName: archivedVideo.sourceName,
         compressorJobId: compressed.jobId,
+        sha256: crypto.createHash("sha256").update(compressed.buffer).digest("hex"),
+        bytes: compressed.buffer.length,
+        width: Number(compressed.status?.width || compressed.status?.output_width || 0) || null,
+        height: Number(compressed.status?.height || compressed.status?.output_height || 0) || null,
         bucket,
         objectKey,
         mediaUrl: publicUrl,
@@ -912,6 +927,7 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         contentType: materialized.mimeType || contentTypeForMediaName(materialized.sourceName),
       });
       const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
+      const dimensions = await probeImageDimensions(materialized.filePath);
       let mediaUrl = stagedUrl;
       let wordpressImport = null;
       if (String(siteSigla).toUpperCase() === "PERRENGUE") {
@@ -935,6 +951,10 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         sourceDriveFileId: selected.mediaItem?.driveFileId || observed.link?.driveFileId || null,
         sourceUrl: observed.link?.url || null,
         sourceName: materialized.sourceName,
+        sha256: materialized.sha256,
+        bytes: materialized.bytes || materialized.buffer.length,
+        width: dimensions.width,
+        height: dimensions.height,
         stagedUrl,
         mediaUrl,
         wordpressImport,
@@ -3330,6 +3350,17 @@ async function executeMediaMonitor(job) {
       `Mídia vinculada automaticamente pela fila em ${new Date().toISOString()} a partir do arquivo Drive ${mediaFile.id}.`,
     ].filter(Boolean).join("\n");
     await privateApiPatch(`/api/insertions/${insertionId}`, { mediaUrl, observacoes: note });
+    const mediaAudit = (resolved?.videoMediaProcessing?.results || resolved?.imageMediaProcessing?.results || [])[0] || {};
+    await privateApi(`/api/insertions/${insertionId}/media-selection`, {
+      driveFileId: mediaFile.id,
+      canonicalUrl: mediaUrl,
+      sha256: mediaAudit.sha256 || null,
+      bytes: mediaAudit.bytes || Number(mediaFile.size || 0) || null,
+      width: mediaAudit.width || null,
+      height: mediaAudit.height || null,
+      reason: "Candidato único validado pelo monitor canônico.",
+      selectedBy: "media-monitor-runner",
+    });
     result.mediaApplied.push({ insertionId, piCodigo: item.piCodigo, siteSigla: item.siteSigla, driveFileId: mediaFile.id, mediaUrl });
     const publish = await request("/api/ops/jobs/adrotate-publish", {
       method: "POST",
@@ -3835,6 +3866,18 @@ async function executeAdrotatePublishJob(payload) {
           : "Publicação agendada/criada no WordPress; relação pública pode ficar vazia antes do início do período.",
       ].filter(Boolean).join("\n"),
     }).catch(() => null);
+    await privateApi(`/api/insertions/${insertionId}/adrotate-publication-snapshots`, {
+      siteSigla,
+      groupId: publishPayload.group_id,
+      adId: wpCliResult.ad_id,
+      mediaUrl: insertion.mediaUrl ?? null,
+      redirectUrl: publishPayload.link_url ?? null,
+      periodStart: insertion.periodoInicio ?? null,
+      periodEnd: insertion.periodoFim ?? null,
+      publicPageUrl: publicHtmlValidation?.pageUrl ?? null,
+      source: "adrotate-publish-runner",
+      payload: { relationAfter, publicHtmlValidation, wpCliResult },
+    }).catch((error) => console.warn("[runner] snapshot AdRotate falhou", error instanceof Error ? error.message : String(error)));
   }
 
   let evidenceJob = null;
@@ -4959,6 +5002,45 @@ async function sendTelegramDeliveryDirect({ chatId, piCodigo, siteSigla, zipArti
   };
 }
 
+async function sendTelegramPositionDeliveriesDirect({ chatId, piCodigo, siteSigla, positionArtifacts, jobId, existingReceipts = [] }) {
+  const deliveries = Array.isArray(existingReceipts) ? [...existingReceipts] : [];
+  for (const item of positionArtifacts) {
+    if (deliveries.some((receipt) => receipt.position === item.position && receipt.ok === true)) continue;
+    let sent = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        sent = await sendTelegramDeliveryDirect({
+          chatId,
+          piCodigo,
+          siteSigla,
+          zipArtifact: item.zipArtifact,
+          pdfArtifacts: [item.pdfArtifact],
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) await sleep(750 * (2 ** (attempt - 1)));
+      }
+    }
+    if (!sent) {
+      const error = lastError instanceof Error ? lastError : new Error(String(lastError || "Falha no Telegram"));
+      error.telegramReceipts = deliveries;
+      throw error;
+    }
+    deliveries.push({ position: item.position, ...sent });
+    if (jobId) {
+      await progressJob(jobId, { stage: "enviando zip e pdf no telegram", telegramReceipts: deliveries });
+    }
+  }
+  return {
+    ok: deliveries.every((item) => item.ok === true),
+    mode: "sequential-position-media-groups",
+    positions: deliveries,
+    messageIds: deliveries.flatMap((item) => item.messageIds || []),
+  };
+}
+
 function resolveAnalyticsConfig(payload) {
   const propertyKey = String(payload?.propertyKey || "").trim().toLowerCase();
   const reportConfigName = String(payload?.reportConfigName || ANALYTICS_SITE_CONFIGS[propertyKey] || "").trim();
@@ -5411,6 +5493,14 @@ class FulfillmentBlockedError extends Error {
   }
 }
 
+class HumanReviewRequiredError extends Error {
+  constructor(message, reviewResult) {
+    super(message);
+    this.name = "HumanReviewRequiredError";
+    this.reviewResult = reviewResult;
+  }
+}
+
 async function fulfillmentAttempt(label, activity, options = {}) {
   const maxAttempts = Math.max(1, Math.min(5, Number(options.maxAttempts || 3)));
   let lastError = null;
@@ -5419,7 +5509,7 @@ async function fulfillmentAttempt(label, activity, options = {}) {
       return await activity(attempt);
     } catch (error) {
       lastError = error;
-      if (error instanceof FulfillmentBlockedError) throw error;
+      if (error instanceof FulfillmentBlockedError || error instanceof HumanReviewRequiredError) throw error;
       if (attempt >= maxAttempts) break;
       await sleep(Math.min(8000, 750 * (2 ** (attempt - 1))));
     }
@@ -5474,6 +5564,17 @@ async function ensureFulfillmentMedia(item) {
       String(insertion?.observacoes || "").trim(),
       `Mídia vinculada pelo fulfillment em ${new Date().toISOString()} a partir do Drive ${selection.mediaFile.id}.`,
     ].filter(Boolean).join("\n"),
+  });
+  const mediaAudit = (resolved?.videoMediaProcessing?.results || resolved?.imageMediaProcessing?.results || [])[0] || {};
+  await privateApi(`/api/insertions/${insertionId}/media-selection`, {
+    driveFileId: selection.mediaFile.id,
+    canonicalUrl: mediaUrl,
+    sha256: mediaAudit.sha256 || null,
+    bytes: mediaAudit.bytes || Number(selection.mediaFile.size || 0) || null,
+    width: mediaAudit.width || null,
+    height: mediaAudit.height || null,
+    reason: "Candidato único validado pelo fulfillment canônico.",
+    selectedBy: "campaign-fulfillment-runner",
   });
   return { insertion: { ...insertion, mediaUrl }, applied: true, mediaUrl, driveFileId: selection.mediaFile.id, source: "drive" };
 }
@@ -5614,6 +5715,9 @@ async function executeCampaignFulfillment(job) {
   }
 
   await progress("capturing_and_auditing");
+  const fulfillmentDeliveryClass = operations.some((item) => item?.period?.end && item.period.end < todayInCuiaba())
+    ? "retroactive"
+    : String(payload.deliveryReason || "standard");
   const delivery = await fulfillmentAttempt("Auditoria e pacote de entrega", () => executePiSiteExport({
     id: job.id,
     payload: {
@@ -5624,6 +5728,8 @@ async function executeCampaignFulfillment(job) {
       sendTelegram: payload.sendTelegram !== false,
       chatId: payload.chatId || null,
       source: "campaign-fulfillment",
+      splitZipByPosition: true,
+      deliveryClass: fulfillmentDeliveryClass,
     },
   }), { maxAttempts: 2 });
 
@@ -5636,13 +5742,14 @@ async function executeCampaignFulfillment(job) {
   const audited = operations.every((item) => item?.evidence?.status === "approved" || item?.evidence?.status === "missing_or_not_applicable");
   const published = publications.every((item) => item?.reason === "already_published" || (item?.apply === true && item?.wpCliResult?.ad_id));
   const pdfs = Array.isArray(delivery?.artifacts?.pdfs) ? delivery.artifacts.pdfs : [];
+  const zips = Array.isArray(delivery?.artifacts?.zips) ? delivery.artifacts.zips : [];
   const checklist = [
     { key: "source_identity", label: "PI confirmada nas fontes", ok: operations.every((item) => item?.sourceIdentity?.decision === "confirmed"), details: "Planilha, pasta/PDF do Drive e AdOps reconciliados." },
     { key: "deduplication", label: "Sem cadastro duplicado", ok: operations.every((item) => Number(item?.adops?.insertionId || 0) > 0), details: `${operations.length} posição(ões) resolvida(s).` },
     { key: "media", label: "Mídia vinculada", ok: media.every((item) => Boolean(item?.mediaUrl)), details: `${media.length} inserção(ões) com mídia.` },
     { key: "publication", label: "Publicação validada", ok: published, details: `${publications.length} publicação(ões) processada(s).` },
     { key: "evidence", label: "Evidências auditadas", ok: audited, details: "Cobertura diária conferida pela API, com backfill quando necessário." },
-    { key: "delivery", label: "ZIP e PDFs por posição", ok: Boolean(delivery?.downloadUrl) && pdfs.length > 0, details: `${pdfs.length} PDF(s) separado(s); PDF fora do ZIP.` },
+    { key: "delivery", label: "ZIP e PDFs por posição", ok: zips.length > 0 && zips.length === pdfs.length, details: `${zips.length} ZIP(s) e ${pdfs.length} PDF(s) separados por posição.` },
     { key: "telegram", label: "Entrega no Telegram", ok: payload.sendTelegram === false || delivery?.telegram?.ok === true, details: payload.sendTelegram === false ? "Envio desabilitado pelo solicitante." : "ZIP e PDFs enviados pelo fluxo de entrega." },
     { key: "source_proofs", label: "Planilha e pedido da agência comprovados", ok: sourceProofs.sheetSnapshots.length === operations.length && sourceProofs.agencyOrderPreviews.length > 0, details: `${sourceProofs.sheetSnapshots.length} recorte(s) de planilha e ${sourceProofs.agencyOrderPreviews.length} prévia(s) de PDF.` },
   ];
@@ -5669,6 +5776,8 @@ async function executeCampaignFulfillment(job) {
 
 async function executePiSiteExport(job) {
   const payload = job?.payload || {};
+  const previousExecution = job?.result?.execution || job?.result || {};
+  const existingTelegramReceipts = Array.isArray(previousExecution?.telegramReceipts) ? previousExecution.telegramReceipts : [];
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
   const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
@@ -5685,6 +5794,9 @@ async function executePiSiteExport(job) {
   const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
   const sendTelegram = mode === "delivery" ? payload.sendTelegram !== false : payload.sendTelegram === true;
+  const splitZipByPosition = mode === "delivery" ? payload.splitZipByPosition !== false : false;
+  const requestedPositions = Array.isArray(payload.positions) ? payload.positions.map((item) => deliveryPositionSegment(item)).filter(Boolean) : [];
+  const deliveryClass = ["standard", "retroactive", "correction", "rejected_rework"].includes(String(payload.deliveryClass)) ? String(payload.deliveryClass) : "standard";
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
@@ -5714,6 +5826,8 @@ async function executePiSiteExport(job) {
     imageMaxWidth,
     imageQuality,
     sendTelegram,
+    splitZipByPosition,
+    deliveryClass,
   };
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
@@ -5769,37 +5883,66 @@ async function executePiSiteExport(job) {
       pdfResolution: String(pdfResolution),
       imageMaxWidth: String(imageMaxWidth),
       imageQuality: String(imageQuality),
+      deliveryClass,
     };
-    const zipParams = new URLSearchParams({ ...commonParams, mode: "prints-only" });
     const exportableInsertionIds = new Set(Array.isArray(descriptor?.exportableInsertionIds)
       ? descriptor.exportableInsertionIds.map(Number)
       : operationalInsertionIds.map(Number));
-    const positions = Array.from(new Set(insertions
+    let positions = Array.from(new Set(insertions
       .filter((insertion) => exportableInsertionIds.has(Number(insertion.id)))
       .map((insertion) => deliveryPositionSegment(firstNonEmptyString(
       insertion.localFormatoNormalizado,
       insertion.localFormato,
       "POSICAO",
     )))));
+    if (requestedPositions.length > 0) positions = positions.filter((position) => requestedPositions.includes(position));
     if (positions.length === 0) {
       throw new Error(`Nenhuma posição exportável encontrada para PI ${piCodigo} no site ${siteSigla}.`);
     }
-    const [zipDownload, pdfDownloads] = await Promise.all([
-      privateApiDownload(`/api/pi-site-exports?${zipParams.toString()}`),
-      Promise.all(positions.map(async (position) => {
+    const selectedInsertionIds = new Set(insertions
+      .filter((insertion) => exportableInsertionIds.has(Number(insertion.id)))
+      .filter((insertion) => positions.includes(deliveryPositionSegment(firstNonEmptyString(
+        insertion.localFormatoNormalizado,
+        insertion.localFormato,
+        "POSICAO",
+      ))))
+      .map((insertion) => Number(insertion.id)));
+    if (deliveryClass !== "standard") {
+      const pendingReviews = [];
+      for (const insertion of insertions.filter((item) => selectedInsertionIds.has(Number(item.id)))) {
+        const dates = clampDateRange(insertion.periodoInicio, insertion.periodoFim);
+        for (const date of dates) {
+          const proof = await privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`);
+          const artifactSha256 = proof?.pixelDateProof?.artifactSha256 || null;
+          if (!artifactSha256 || proof?.pixelDateProof?.ok !== true || proof?.review?.approved !== true || proof?.review?.artifactSha256 !== artifactSha256) {
+            pendingReviews.push({ insertionId: insertion.id, date, artifactSha256, status: proof?.status || "missing" });
+          }
+        }
+      }
+      if (pendingReviews.length > 0) {
+        throw new HumanReviewRequiredError("Entrega aguarda aprovação humana vinculada ao hash dos PNGs finais.", {
+          stage: "awaiting_human_review", piCodigo, siteSigla, deliveryClass, pendingReviews,
+          artifacts: { positions: [] }, telegram: { ok: false, skipped: true, reason: "awaiting_human_review" },
+        });
+      }
+    }
+    const positionDownloads = await Promise.all(positions.map(async (position) => {
+        const positionZipParams = new URLSearchParams({ ...commonParams, mode: "prints-only", position });
         const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf", position });
-        const artifact = await privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`);
-        if (artifact.contentType !== "application/pdf") {
+        const [zipArtifact, pdfArtifact] = await Promise.all([
+          privateApiDownload(`/api/pi-site-exports?${positionZipParams.toString()}`),
+          privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`),
+        ]);
+        if (zipArtifact.contentType !== "application/zip" || pdfArtifact.contentType !== "application/pdf") {
           throw new Error(`A API não retornou PDF para a posição ${position}.`);
         }
-        return { ...artifact, position };
-      })),
-    ]);
+        return { position, zipArtifact, pdfArtifact };
+      }));
     const neutralBaseName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(siteSigla)}`;
-    const zipArtifact = { ...zipDownload, fileName: `${neutralBaseName}.zip` };
-    const pdfArtifacts = pdfDownloads.map((artifact) => ({
-      ...artifact,
-      fileName: `${neutralBaseName}-${artifact.position}.pdf`,
+    const positionArtifacts = positionDownloads.map((item) => ({
+      position: item.position,
+      zipArtifact: { ...item.zipArtifact, fileName: `${neutralBaseName}-${item.position}.zip` },
+      pdfArtifact: { ...item.pdfArtifact, position: item.position, fileName: `${neutralBaseName}-${item.position}.pdf` },
     }));
     const objectPrefix = [
       ADOPS_EXPORT_BASE_PATH,
@@ -5807,26 +5950,24 @@ async function executePiSiteExport(job) {
       slugifyPathPart(piCodigo),
       slugifyPathPart(job.id),
     ].filter(Boolean).join("/");
-    const zipObjectKey = `${objectPrefix}/${zipArtifact.fileName}`;
-    const pdfObjectKeys = pdfArtifacts.map((artifact) => `${objectPrefix}/${artifact.fileName}`);
-    await Promise.all([
-      uploadBufferToSpaces({
-        buffer: zipArtifact.buffer,
-        bucket: ADOPS_EXPORT_BUCKET,
-        objectKey: zipObjectKey,
-        contentType: "application/zip",
-      }),
-      ...pdfArtifacts.map((artifact, index) => uploadBufferToSpaces({
-        buffer: artifact.buffer,
-        bucket: ADOPS_EXPORT_BUCKET,
-        objectKey: pdfObjectKeys[index],
-        contentType: "application/pdf",
-      })),
-    ]);
+    const objectKeys = positionArtifacts.map((item) => ({
+      position: item.position,
+      zip: `${objectPrefix}/${item.zipArtifact.fileName}`,
+      pdf: `${objectPrefix}/${item.pdfArtifact.fileName}`,
+    }));
+    await Promise.all(positionArtifacts.flatMap((item, index) => [
+      uploadBufferToSpaces({ buffer: item.zipArtifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: objectKeys[index].zip, contentType: "application/zip" }),
+      uploadBufferToSpaces({ buffer: item.pdfArtifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: objectKeys[index].pdf, contentType: "application/pdf" }),
+    ]));
     const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
     const publicUrl = (objectKey) => `${publicBase}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
-    const downloadUrl = publicUrl(zipObjectKey);
-    const pdfUrls = pdfObjectKeys.map(publicUrl);
+    const positionResults = positionArtifacts.map((item, index) => ({
+      position: item.position,
+      zip: { url: publicUrl(objectKeys[index].zip), fileName: item.zipArtifact.fileName, bytes: item.zipArtifact.buffer.length, contentType: "application/zip", sha256: crypto.createHash("sha256").update(item.zipArtifact.buffer).digest("hex") },
+      pdf: { url: publicUrl(objectKeys[index].pdf), fileName: item.pdfArtifact.fileName, bytes: item.pdfArtifact.buffer.length, contentType: "application/pdf", sha256: crypto.createHash("sha256").update(item.pdfArtifact.buffer).digest("hex") },
+    }));
+    const downloadUrl = positionResults.length === 1 ? positionResults[0].zip.url : null;
+    const pdfUrls = positionResults.map((item) => item.pdf.url);
     const pdfUrl = pdfUrls.length === 1 ? pdfUrls[0] : null;
     let telegram = { ok: true, skipped: true, reason: "sendTelegram=false" };
     if (sendTelegram) {
@@ -5836,31 +5977,15 @@ async function executePiSiteExport(job) {
         downloadUrl,
         pdfUrls,
       });
-      try {
-        telegram = await sendTelegramDeliveryDirect({
-          chatId: String(payload.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim(),
-          piCodigo,
-          siteSigla,
-          zipArtifact,
-          pdfArtifacts,
-        });
-      } catch (error) {
-        telegram = {
-          ok: false,
-          skipped: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
+      telegram = await sendTelegramPositionDeliveriesDirect({
+        chatId: String(payload.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim(),
+        piCodigo,
+        siteSigla,
+        positionArtifacts,
+        jobId: job.id,
+        existingReceipts: existingTelegramReceipts,
+      });
     }
-    const zipSha256 = crypto.createHash("sha256").update(zipArtifact.buffer).digest("hex");
-    const pdfArtifactResults = pdfArtifacts.map((artifact, index) => ({
-      position: artifact.position,
-      url: pdfUrls[index],
-      fileName: artifact.fileName,
-      bytes: artifact.buffer.length,
-      contentType: "application/pdf",
-      sha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
-    }));
     return {
       stage: "completed",
       piCodigo,
@@ -5873,20 +5998,15 @@ async function executePiSiteExport(job) {
       downloadUrl,
       pdfUrl,
       pdfUrls,
-      artifactBytes: zipArtifact.buffer.length,
+      artifactBytes: positionResults.reduce((sum, item) => sum + item.zip.bytes + item.pdf.bytes, 0),
       artifactContentType: "application/zip",
-      artifactFileName: zipArtifact.fileName,
-      artifactSha256: zipSha256,
+      artifactFileName: positionResults.length === 1 ? positionResults[0].zip.fileName : null,
+      artifactSha256: positionResults.length === 1 ? positionResults[0].zip.sha256 : null,
       artifacts: {
-        zip: {
-          url: downloadUrl,
-          fileName: zipArtifact.fileName,
-          bytes: zipArtifact.buffer.length,
-          contentType: "application/zip",
-          sha256: zipSha256,
-        },
-        ...(pdfArtifactResults.length === 1 ? { pdf: pdfArtifactResults[0] } : {}),
-        pdfs: pdfArtifactResults,
+        positions: positionResults,
+        ...(positionResults.length === 1 ? { zip: positionResults[0].zip, pdf: positionResults[0].pdf } : {}),
+        pdfs: positionResults.map((item) => ({ position: item.position, ...item.pdf })),
+        zips: positionResults.map((item) => ({ position: item.position, ...item.zip })),
       },
       telegram,
     };
@@ -6054,6 +6174,13 @@ async function completeJob(jobId, result) {
   });
 }
 
+async function awaitHumanReview(jobId, result) {
+  await request(`/api/ops/runner/jobs/${encodeURIComponent(jobId)}/await-review`, {
+    method: "POST",
+    body: JSON.stringify({ runnerId: RUNNER_ID, result }),
+  });
+}
+
 async function failJob(jobId, error, result = null) {
   await request(`/api/ops/runner/jobs/${encodeURIComponent(jobId)}/fail`, {
     method: "POST",
@@ -6104,10 +6231,16 @@ async function runOnce() {
     console.log(`[runner] job concluído`, job.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof HumanReviewRequiredError) {
+      await awaitHumanReview(job.id, error.reviewResult);
+      console.log(`[runner] job aguardando revisão humana`, job.id);
+      return true;
+    }
     await failJob(job.id, message, {
       ok: false,
       runnerId: RUNNER_ID,
       failedAt: new Date().toISOString(),
+      ...(Array.isArray(error?.telegramReceipts) ? { telegramReceipts: error.telegramReceipts } : {}),
       ...(error instanceof FulfillmentBlockedError ? error.fulfillmentResult : {}),
     });
     console.error(`[runner] job falhou`, job.id, message);

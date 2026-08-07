@@ -14,6 +14,7 @@
     "capture:proof": "node ./src/capture-insertion-proof.cjs",
     "frame:build-windows-template": "node ./src/build-windows-frame-kit.mjs",
     "audit:adrotate-duplicates": "tsx ./src/audit-adrotate-duplicate-groups.ts",
+    "audit:insertion-identities": "tsx ./src/audit-insertion-canonical-identities.ts",
     "audit:capture-rules-integrity": "node ./src/audit-capture-rules-integrity.mjs",
     "audit:wordpress-managed-versions": "tsx ./src/audit-wordpress-managed-versions.ts",
     "sync:sites": "tsx ./src/sync-site-config.ts",
@@ -37,6 +38,8 @@
     "test:wordpress-article-capture-fallback": "node ./src/test-wordpress-article-capture-fallback.mjs",
     "test:retro-content-time": "node ./src/test-retro-content-time.mjs && ADOPS_PROJECT_ROOT=.. node --import tsx --test ./src/test-retro-content-time-api.ts",
     "test:afl-retro-date-config-isolation": "node --import tsx ./src/test-afl-retro-date-and-config-isolation.mjs",
+    "test:pixel-date-proof": "node ./src/test-pixel-date-proof.mjs",
+    "test:adops-definitive-gates": "node --import tsx ./src/test-adops-definitive-gates.mjs",
     "intake:spm-whatsapp-print-2026-06-03": "node ./src/create-spm-whatsapp-print-intakes-2026-06-03.mjs",
     "import:d1-control-plane": "node ./src/import-d1-control-plane-to-postgres.mjs",
     "test:public-auth-smoke": "node ./src/test-adops-public-auth.mjs",
@@ -74,5 +77,9 @@
     "playwright": "1.59.1",
     "tsx": "catalog:",
     "xlsx": "^0.18.5"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "6.0.1"
   }
 }

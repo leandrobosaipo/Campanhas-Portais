@@ -67,6 +67,8 @@ export interface MediaConsistencyResult {
 
 export interface HealthStatus {
   status: string;
+  /** @nullable */
+  releaseSha?: string | null;
 }
 
 export interface ErrorResponse {
@@ -877,6 +879,18 @@ export interface ReadinessAudit {
  */
 export type CaptureProofStatusAudit = { [key: string]: unknown } | null;
 
+/**
+ * @nullable
+ */
+export type CaptureProofStatusPixelDateProof = {
+  [key: string]: unknown;
+} | null;
+
+/**
+ * @nullable
+ */
+export type CaptureProofStatusReview = { [key: string]: unknown } | null;
+
 export type CaptureProofStatusStatus =
   (typeof CaptureProofStatusStatus)[keyof typeof CaptureProofStatusStatus];
 
@@ -942,7 +956,109 @@ export interface CaptureProofStatus {
   /** @nullable */
   audit?: CaptureProofStatusAudit;
   checklistValidation: AuditChecklistValidation;
+  /** @nullable */
+  pixelDateProof?: CaptureProofStatusPixelDateProof;
+  /** @nullable */
+  review?: CaptureProofStatusReview;
   status: CaptureProofStatusStatus;
+}
+
+export type CaptureProofReviewBodyDecision =
+  (typeof CaptureProofReviewBodyDecision)[keyof typeof CaptureProofReviewBodyDecision];
+
+export const CaptureProofReviewBodyDecision = {
+  approved: "approved",
+  rejected: "rejected",
+} as const;
+
+export interface CaptureProofReviewBody {
+  date: string;
+  decision: CaptureProofReviewBodyDecision;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  note?: string | null;
+  /** @pattern ^[a-f0-9]{64}$ */
+  expectedArtifactSha256: string;
+  /** @minLength 3 */
+  reviewedBy: string;
+}
+
+export interface MediaSelectionBody {
+  driveFileId: string;
+  /** @nullable */
+  canonicalUrl?: string | null;
+  /**
+   * @nullable
+   * @pattern ^[a-fA-F0-9]{64}$
+   */
+  sha256?: string | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  bytes?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  width?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  height?: number | null;
+  /** @minLength 8 */
+  reason: string;
+  /** @minLength 3 */
+  selectedBy: string;
+}
+
+export type PiSiteExportJobBodyMode =
+  (typeof PiSiteExportJobBodyMode)[keyof typeof PiSiteExportJobBodyMode];
+
+export const PiSiteExportJobBodyMode = {
+  delivery: "delivery",
+  full: "full",
+  "prints-only": "prints-only",
+  pdf: "pdf",
+  "full-pdf": "full-pdf",
+} as const;
+
+export type PiSiteExportJobBodyVariant =
+  (typeof PiSiteExportJobBodyVariant)[keyof typeof PiSiteExportJobBodyVariant];
+
+export const PiSiteExportJobBodyVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type PiSiteExportJobBodyDeliveryReason =
+  (typeof PiSiteExportJobBodyDeliveryReason)[keyof typeof PiSiteExportJobBodyDeliveryReason];
+
+export const PiSiteExportJobBodyDeliveryReason = {
+  standard: "standard",
+  retroactive: "retroactive",
+  correction: "correction",
+  rejected_rework: "rejected_rework",
+} as const;
+
+export interface PiSiteExportJobBody {
+  piCodigo: string;
+  siteSigla: string;
+  mode?: PiSiteExportJobBodyMode;
+  variant?: PiSiteExportJobBodyVariant;
+  splitZipByPosition?: boolean;
+  positions?: string[];
+  deliveryReason?: PiSiteExportJobBodyDeliveryReason;
+  sendTelegram?: boolean;
+  /** @nullable */
+  chatId?: string | null;
+  /** @nullable */
+  requestedBy?: string | null;
+  /** @nullable */
+  source?: string | null;
 }
 
 export type ValidateCaptureProofBodyMetadata = { [key: string]: unknown };
@@ -1051,6 +1167,14 @@ export type ListInsertionsParams = {
 export type GetCaptureProofStatusParams = {
   date: string;
 };
+
+export type ReviewCaptureProof200 = { [key: string]: unknown };
+
+export type SelectInsertionDriveMedia200 = { [key: string]: unknown };
+
+export type CreatePiSiteExportJob202 = { [key: string]: unknown };
+
+export type GetPiSiteExportJob200 = { [key: string]: unknown };
 
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;

@@ -53,7 +53,9 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 7. Limpar cache do portal.
 8. Gerar prints obrigatórios, incluindo retroativos em aberto.
 9. Validar auditoria por data.
-10. Enviar resumo e prints no Telegram quando solicitado.
+10. Confirmar `pixelDateProof.ok=true` no PNG final.
+11. Para retroativo, correção ou retrabalho rejeitado, aprovar o hash exato pela API.
+12. Enviar somente pelo job assíncrono; nunca montar ZIP ou enviar manualmente.
 
 ## Campanha cadastrada sem mídia
 
@@ -114,12 +116,12 @@ GET /api/campaign-fulfillments/jobs/{jobId}/report.pdf
 - Ele atualiza Drive, sincroniza planilha, publica, gera/backfill de evidências, audita, entrega e envia ao Telegram.
 - O resultado inclui checklist, divergências, recorte da linha da planilha e prévia do PDF do pedido da agência.
 - Preservar os PNGs auditados no storage; a compressão ocorre apenas na cópia de entrega.
-- O ZIP destinado à jornalista contém somente JPEGs progressivos, organizados por posição. Não incluir PDF, JSON, CSV, README, manifestos, auditoria ou contact sheet.
+- Cada posição gera seu próprio ZIP e seu próprio PDF. O ZIP contém JPEGs progressivos, auditoria, contact sheet e `SHA256SUMS.txt`; nunca reúne posições diferentes.
 - Os PDFs são artefatos separados por posição/banner. Nunca juntar TOPO, HOME 1, HOME 2, LATERAL ou VIDEO no mesmo PDF.
-- A API envia o ZIP de imagens e todos os PDFs por posição ao Telegram no mesmo grupo de mídia quando `sendTelegram=true`.
-- Nomes externos devem ser neutros: `PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>-<posicao>.pdf`. Não usar `final`, `revisada`, `auditada` ou equivalentes em pastas e arquivos.
-- Auditoria, logs, checksums e fontes PNG continuam internos ao AdOps e não entram no pacote da jornalista.
-- Antes de liberar: `status=completed`, soma das páginas de `artifacts.pdfs` = JPEGs, um PDF por posição, ZIP sem PNG/PDF/JSON/TXT/CSV e amostragem visual com topbar/domínio/data/hora/banner visíveis.
+- A API envia sequencialmente um par ZIP + PDF por posição e persiste os IDs das mensagens.
+- Nomes externos devem ser neutros: `PI-<codigo>-<portal>-<posicao>.zip` e `PI-<codigo>-<portal>-<posicao>.pdf`. Não usar `final`, `revisada`, `auditada` ou equivalentes em pastas e arquivos.
+- Logs completos e fontes PNG continuam internos. O ZIP de entrega inclui somente a auditoria mínima, contact sheet e checksums necessários para conferência.
+- Antes de liberar: `status=completed`, soma das páginas de `artifacts.pdfs` = JPEGs, um PDF por posição, ZIP sem PNG/PDF, somente JSON de auditoria e TXT de checksums além dos JPEGs/contact sheet, e amostragem visual com topbar/domínio/data/hora/banner visíveis.
 - Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
 - `POST /api/pi-site-exports/jobs` permanece para regenerar apenas os artefatos quando cadastro e publicação já estão resolvidos.
 - Guia operacional canônico: `docs/adops/campaign-fulfillment-api.md`.
@@ -134,6 +136,24 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Divergência entre `config/adrotate-sites.json` e regras publicadas no painel/API.
 - Campos inválidos: `scrollMode`, `proofStyle`, `slotSelector`.
 - Em página de notícia com `requireEditorialDateMatchTarget=true`, a data editorial visível deve coincidir com a data-alvo; não aprovar uma matéria repetida em dias diferentes.
+- Retroativos, correções e retrabalhos rejeitados exigem OCR do PNG final e revisão humana vinculada ao `artifactSha256`.
+- `status=audited` sem `pixelDateProof.ok=true` não libera uma entrega histórica.
+- Mídia ambígua fica em `media_ambiguous`; seleção explícita usa `POST /api/insertions/{id}/media-selection`.
+- Inserção duplicada é arquivada e ligada por `supersededByInsertionId`; nunca apagar o histórico para corrigir identidade.
+- Publicação AdRotate precisa gerar snapshot histórico; não republicar campanha expirada para produzir prova.
+
+## Contrato de revisão e release
+
+```text
+GET  /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD
+POST /api/insertions/{id}/capture-proof/reviews
+POST /api/pi-site-exports/jobs
+```
+
+- Aprovação usa `expectedArtifactSha256`; regeneração invalida a aprovação anterior.
+- O job usa `awaiting_human_review` e só volta à fila quando todos os hashes estiverem aprovados.
+- Deploy parte de worktree limpo, aplica migração idempotente após backup e publica o SHA exato do merge.
+- API, painel, runners, documentação e conhecimento do agente devem pertencer à mesma release.
 
 ## Serviços relacionados
 
@@ -158,6 +178,7 @@ Escolha os testes conforme a mudança:
 
 ```bash
 node --check scripts/src/capture-insertion-proof.cjs
+pnpm --dir scripts run test:pixel-date-proof
 pnpm --dir scripts run audit:capture-rules-integrity
 pnpm --filter @workspace/api-server run build
 pnpm --filter @workspace/adops run build

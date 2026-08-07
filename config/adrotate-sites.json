@@ -534,6 +534,7 @@
       {
         "groupId": 14,
         "aliases": [
+          "INTERNO",
           "INTERNO DE NOTICIAS",
           "BANNER INTERNO NOTICIAS",
           "INTERNO NOTICIA"
@@ -947,7 +948,7 @@
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 2400,
           "viewportTrimBottomPx": 180

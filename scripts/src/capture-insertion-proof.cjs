@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 const { getSiteIntegration, getFormatMapping, normalizeFormat } = require("./adrotate-sites.cjs");
+const { auditFinalProofPixels } = require("./pixel-date-proof.cjs");
 
 const CAPTURE_PYTHON_BIN = process.env.ADOPS_CAPTURE_PYTHON || "python3";
 const WINDOWS_FRAME_KIT_DIR = process.env.ADOPS_WINDOWS_FRAME_TEMPLATE_DIR
@@ -4030,6 +4031,16 @@ def draw_dynamic_field(field_name, value):
     draw.rectangle([x0, y0, x1, y1], fill=clear)
     draw.text((x0 + pad_x, y0 + pad_y), text_fit(value, max(1, x1 - x0 - pad_x * 2), font), fill=fill, font=font)
 
+def dynamic_field_rect(field_name):
+    field = (layout.get("dynamicFields") or {}).get(field_name) or {}
+    rect = field.get("rect")
+    if not rect or len(rect) != 4:
+        return None
+    target = field.get("target") or "chrome-top"
+    y_offset = chrome_h + h if target == "taskbar" else 0
+    x0, y0, x1, y1 = scaled_rect(rect, y_offset)
+    return {"left": x0, "top": y0, "width": max(1, x1-x0), "height": max(1, y1-y0)}
+
 def find_site_logo(site_sigla):
     slug = str(site_sigla or "").strip().lower()
     if not slug or not site_logos_dir:
@@ -4179,7 +4190,7 @@ canvas.convert("RGB").save(final_path, "PNG")
 print(json.dumps({
     "frameTheme": frame_theme,
     "frameTemplateVersion": frame_template_version,
-    "frameTemplateSize": {"width": w, "chromeTopHeight": chrome_h, "taskbarHeight": taskbar_h},
+    "frameTemplateSize": {"width": w, "height": h + chrome_h + taskbar_h, "viewportHeight": h, "chromeTopHeight": chrome_h, "taskbarHeight": taskbar_h},
     "frameStrictAssetsOk": True,
     "dynamicFields": ["addressText", "tabSurface", "tabTitle", "tabIcon", "systemDateTimeInline"],
     "chromeTopTheme": "light",
@@ -4188,6 +4199,7 @@ print(json.dumps({
     "tabIconRendered": bool(tab_identity.get("tabIconRendered")),
     "tabIconFallback": bool(tab_identity.get("tabIconFallback")),
     "chromeFrameHeight": chrome_h,
+    "systemDateTimeRegion": dynamic_field_rect("systemDateTimeInline"),
     "taskbarHeight": taskbar_h,
     "scrollbarRendered": scrollbar_rendered,
     "scrollbarThumbTop": scrollbar_thumb_top,
@@ -7467,6 +7479,35 @@ async function main() {
       }
     }
 
+    const pixelDateProofRequired = mapping.auditConfig?.requireEditorialDateMatchTarget === true ||
+      args.replaceExisting === true || args.candidateOnly === true || isoDate !== formatIsoDate(new Date());
+    let pixelDateProof = null;
+    if (pixelDateProofRequired) {
+      const frameSize = desktopFrameMetadata.frameTemplateSize || {};
+      const chromeHeight = Number(desktopFrameMetadata.chromeFrameHeight || frameSize.chromeTopHeight || 0);
+      const proofWidth = Number(frameSize.width || pageScrollMetrics?.viewportWidth || 0);
+      const viewportHeight = Number(frameSize.viewportHeight || pageScrollMetrics?.viewportHeight || 0);
+      const topbarRegion = desktopFrameMetadata.systemDateTimeRegion || {
+        left: Math.max(0, proofWidth - 260), top: 0, width: Math.min(260, proofWidth), height: Math.max(1, chromeHeight),
+      };
+      const editorialRegion = { left: 0, top: chromeHeight, width: proofWidth, height: viewportHeight };
+      const pixelAuditStage = trace.start("pixel_date_proof");
+      pixelDateProof = await auditFinalProofPixels(finalPng, {
+        targetDate: isoDate,
+        topbarRegion,
+        editorialRegion,
+        requireEditorialDate: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
+      });
+      trace.finish(pixelAuditStage, pixelDateProof.ok ? "ok" : "error", {
+        artifactSha256: pixelDateProof.artifactSha256,
+        issues: pixelDateProof.issues,
+      });
+      if (!pixelDateProof.ok) {
+        const details = pixelDateProof.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
+        throw new Error(`capture_audit_failed: ${details}`);
+      }
+    }
+
     const evidenceFilename = [
       normalizeAscii(insertion.siteSigla || "SITE"),
       compactCampaignName(insertion.campanhaName || "CAMPANHA"),
@@ -7530,6 +7571,7 @@ async function main() {
       headerAdPolicyAudit,
       stickyHeaderViewportAudit,
       finalPngStickyHeaderAudit,
+      pixelDateProof,
       finalViewportTargetAudit,
       capturedAt: new Date().toISOString(),
       pageScrollMetrics,

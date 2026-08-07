@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { Router, type IRouter } from "express";
-import { and, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import {
   captureRulePublishEventsTable,
   captureRulesTable,
@@ -605,7 +605,14 @@ router.get("/capture-rules", async (req, res): Promise<void> => {
     if (siteSigla) whereParts.push(eq(captureRulesTable.siteSigla, siteSigla));
     if (pageFilter === "home" || pageFilter === "article") whereParts.push(eq(captureRulesTable.page, pageFilter));
     if (statusFilter === "published") whereParts.push(eq(captureRulesTable.statusPublished, true));
-    if (statusFilter === "draft") whereParts.push(eq(captureRulesTable.statusPublished, false));
+    if (statusFilter === "draft") {
+      whereParts.push(eq(captureRulesTable.statusPublished, false));
+      whereParts.push(isNull(captureRulesTable.archivedAt));
+    } else if (statusFilter === "archived") {
+      whereParts.push(isNotNull(captureRulesTable.archivedAt));
+    } else {
+      whereParts.push(isNull(captureRulesTable.archivedAt));
+    }
     if (cursor) whereParts.push(lt(captureRulesTable.id, cursor));
     const whereClause = whereParts.length ? and(...whereParts) : undefined;
 
@@ -622,6 +629,9 @@ router.get("/capture-rules", async (req, res): Promise<void> => {
       enabled: captureRulesTable.enabled,
       statusPublished: captureRulesTable.statusPublished,
       ruleVersionHash: captureRulesTable.ruleVersionHash,
+      supersededByRuleId: captureRulesTable.supersededByRuleId,
+      archivedAt: captureRulesTable.archivedAt,
+      archiveReason: captureRulesTable.archiveReason,
       updatedAt: captureRulesTable.updatedAt,
     }).from(captureRulesTable).where(whereClause).orderBy(desc(captureRulesTable.id)).limit(size + 1));
 
@@ -647,6 +657,7 @@ router.get("/capture-rules/bootstrap-status", async (req, res): Promise<void> =>
         siteSigla: captureRulesTable.siteSigla,
         groupId: captureRulesTable.groupId,
         statusPublished: captureRulesTable.statusPublished,
+        archivedAt: captureRulesTable.archivedAt,
         updatedAt: captureRulesTable.updatedAt,
       }).from(captureRulesTable),
     );
@@ -655,7 +666,7 @@ router.get("/capture-rules/bootstrap-status", async (req, res): Promise<void> =>
     for (const row of rows) {
       const pair = `${row.siteSigla}:${row.groupId}`;
       const bucket = existingByPair.get(pair) ?? [];
-      bucket.push({ id: row.id, statusPublished: row.statusPublished, updatedAt: row.updatedAt });
+      if (!row.archivedAt) bucket.push({ id: row.id, statusPublished: row.statusPublished, updatedAt: row.updatedAt });
       existingByPair.set(pair, bucket);
     }
 
@@ -1004,6 +1015,10 @@ router.patch("/capture-rules/:ruleId", async (req, res): Promise<void> => {
       res.status(409).json({ error: "conflict", details: "Não edite a versão publicada diretamente. Crie/edite draft." });
       return;
     }
+    if (current.archivedAt) {
+      res.status(409).json({ error: "conflict", details: "Regra arquivada é somente leitura. Crie um novo draft." });
+      return;
+    }
 
     const payload = parsePayload({ ...current, ...req.body });
     const hash = hashPayload(payload, current.siteSigla, current.groupId);
@@ -1190,6 +1205,10 @@ router.post("/capture-rules/:ruleId/publish", async (req, res): Promise<void> =>
       res.status(404).json({ error: "not_found", details: "Regra não encontrada." });
       return;
     }
+    if (current.archivedAt) {
+      res.status(409).json({ error: "conflict", details: "Regra arquivada não pode ser publicada. Crie um novo draft." });
+      return;
+    }
 
     const [latestValidation] = await withDb(async () => db
       .select()
@@ -1218,13 +1237,22 @@ router.post("/capture-rules/:ruleId/publish", async (req, res): Promise<void> =>
 
     await withDb(async () => db
       .update(captureRulesTable)
-      .set({ statusPublished: false, updatedBy: actor })
+      .set({
+        statusPublished: false,
+        supersededByRuleId: ruleId,
+        archivedAt: new Date(),
+        archiveReason: "superseded_by_new_published_rule",
+        updatedBy: actor,
+      })
       .where(and(eq(captureRulesTable.siteSigla, current.siteSigla), eq(captureRulesTable.groupId, current.groupId), eq(captureRulesTable.statusPublished, true))));
 
     const [published] = await withDb(async () => db
       .update(captureRulesTable)
       .set({
         statusPublished: true,
+        supersededByRuleId: null,
+        archivedAt: null,
+        archiveReason: null,
         ruleVersionHash: hash,
         updatedBy: actor,
       })

@@ -186,6 +186,8 @@ test("contrato da API e Telegram mantém um PDF por posição", async () => {
   assert(runnerSource.includes('mode: "pdf", position'));
   assert(runnerSource.includes("pdfArtifacts.length > 9"));
   assert(runnerSource.includes("artifacts: {"));
-  assert(runnerSource.includes("pdfs: pdfArtifactResults"));
+  assert(runnerSource.includes("pdfs: positionResults.map"));
+  assert(runnerSource.includes("zips: positionResults.map"));
+  assert(runnerSource.includes("sendTelegramPositionDeliveriesDirect"));
   assert(agentSource.includes("Nunca juntar TOPO, HOME 1, HOME 2, LATERAL ou VIDEO no mesmo PDF"));
 });

@@ -79,6 +79,13 @@ Quando a entrega exigir uma notícia diferente por dia, publique também:
 
 O gate `requireEditorialDateMatchTarget` compara a data editorial absoluta encontrada com a data-alvo em `America/Cuiaba`. Divergência gera `editorial_date_target_mismatch` e impede promoção, exportação e entrega.
 
+Depois da composição da moldura, o capturador executa `pixelDateProof` com OCR
+local empacotado na release. A data da topbar é obrigatória em retroativos e
+correções; a região editorial também é lida quando
+`requireEditorialDateMatchTarget=true`. Os bloqueios são
+`pixel_date_unreadable`, `pixel_date_malformed`, `pixel_date_mismatch` e
+`pixel_relative_date_visible`. A API nunca baixa modelo OCR durante o job.
+
 Referência validada: `PI 90729 / PERRENGUE / grupo 11 / INTERNO DE NOTÍCIAS`, corrigida em `2026-08-04`.
 
 Para esse grupo, o conteúdo crítico deve ser a imagem do artigo histórico

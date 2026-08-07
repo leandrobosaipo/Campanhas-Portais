@@ -23,6 +23,7 @@ import type {
   BulkUpdateResult,
   Campaign,
   CampaignDetail,
+  CaptureProofReviewBody,
   CaptureProofStatus,
   Client,
   ClientBreakdown,
@@ -32,6 +33,7 @@ import type {
   CreateClientBody,
   CreateEvidenceBody,
   CreateInsertionBody,
+  CreatePiSiteExportJob202,
   CreateSiteBody,
   DashboardSummary,
   DrivePiReconcileBody,
@@ -47,14 +49,19 @@ import type {
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
   GetDashboardSummaryParams,
+  GetPiSiteExportJob200,
   HealthStatus,
   InsertionDetail,
   InsertionWithRelations,
   ListCampaignsParams,
   ListInsertionsParams,
   MediaConsistencyResult,
+  MediaSelectionBody,
   OpsJobAccepted,
   OpsRuntimeTopology,
+  PiSiteExportJobBody,
+  ReviewCaptureProof200,
+  SelectInsertionDriveMedia200,
   Site,
   SiteBreakdown,
   UpdateAgencyBody,
@@ -2334,6 +2341,358 @@ export function useGetCaptureProofStatus<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const getReviewCaptureProofUrl = (id: number) => {
+  return `/api/insertions/${id}/capture-proof/reviews`;
+};
+
+export const reviewCaptureProof = async (
+  id: number,
+  captureProofReviewBody: CaptureProofReviewBody,
+  options?: RequestInit,
+): Promise<ReviewCaptureProof200> => {
+  return customFetch<ReviewCaptureProof200>(getReviewCaptureProofUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(captureProofReviewBody),
+  });
+};
+
+export const getReviewCaptureProofMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    TError,
+    { id: number; data: BodyType<CaptureProofReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reviewCaptureProof>>,
+  TError,
+  { id: number; data: BodyType<CaptureProofReviewBody> },
+  TContext
+> => {
+  const mutationKey = ["reviewCaptureProof"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    { id: number; data: BodyType<CaptureProofReviewBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return reviewCaptureProof(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReviewCaptureProofMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reviewCaptureProof>>
+>;
+export type ReviewCaptureProofMutationBody = BodyType<CaptureProofReviewBody>;
+export type ReviewCaptureProofMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const useReviewCaptureProof = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    TError,
+    { id: number; data: BodyType<CaptureProofReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reviewCaptureProof>>,
+  TError,
+  { id: number; data: BodyType<CaptureProofReviewBody> },
+  TContext
+> => {
+  return useMutation(getReviewCaptureProofMutationOptions(options));
+};
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const getSelectInsertionDriveMediaUrl = (id: number) => {
+  return `/api/insertions/${id}/media-selection`;
+};
+
+export const selectInsertionDriveMedia = async (
+  id: number,
+  mediaSelectionBody: MediaSelectionBody,
+  options?: RequestInit,
+): Promise<SelectInsertionDriveMedia200> => {
+  return customFetch<SelectInsertionDriveMedia200>(
+    getSelectInsertionDriveMediaUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(mediaSelectionBody),
+    },
+  );
+};
+
+export const getSelectInsertionDriveMediaMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    TError,
+    { id: number; data: BodyType<MediaSelectionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+  TError,
+  { id: number; data: BodyType<MediaSelectionBody> },
+  TContext
+> => {
+  const mutationKey = ["selectInsertionDriveMedia"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    { id: number; data: BodyType<MediaSelectionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return selectInsertionDriveMedia(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SelectInsertionDriveMediaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>
+>;
+export type SelectInsertionDriveMediaMutationBody =
+  BodyType<MediaSelectionBody>;
+export type SelectInsertionDriveMediaMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const useSelectInsertionDriveMedia = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    TError,
+    { id: number; data: BodyType<MediaSelectionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+  TError,
+  { id: number; data: BodyType<MediaSelectionBody> },
+  TContext
+> => {
+  return useMutation(getSelectInsertionDriveMediaMutationOptions(options));
+};
+
+/**
+ * @summary Create an idempotent PI/site delivery job
+ */
+export const getCreatePiSiteExportJobUrl = () => {
+  return `/api/pi-site-exports/jobs`;
+};
+
+export const createPiSiteExportJob = async (
+  piSiteExportJobBody: PiSiteExportJobBody,
+  options?: RequestInit,
+): Promise<CreatePiSiteExportJob202> => {
+  return customFetch<CreatePiSiteExportJob202>(getCreatePiSiteExportJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(piSiteExportJobBody),
+  });
+};
+
+export const getCreatePiSiteExportJobMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<PiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<PiSiteExportJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createPiSiteExportJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    { data: BodyType<PiSiteExportJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPiSiteExportJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePiSiteExportJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>
+>;
+export type CreatePiSiteExportJobMutationBody = BodyType<PiSiteExportJobBody>;
+export type CreatePiSiteExportJobMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create an idempotent PI/site delivery job
+ */
+export const useCreatePiSiteExportJob = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<PiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<PiSiteExportJobBody> },
+  TContext
+> => {
+  return useMutation(getCreatePiSiteExportJobMutationOptions(options));
+};
+
+/**
+ * @summary Read delivery status, position artifacts and human review state
+ */
+export const getGetPiSiteExportJobUrl = (jobId: string) => {
+  return `/api/pi-site-exports/jobs/${jobId}`;
+};
+
+export const getPiSiteExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<GetPiSiteExportJob200> => {
+  return customFetch<GetPiSiteExportJob200>(getGetPiSiteExportJobUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPiSiteExportJobQueryKey = (jobId: string) => {
+  return [`/api/pi-site-exports/jobs/${jobId}`] as const;
+};
+
+export const getGetPiSiteExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<unknown>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPiSiteExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>
+  > = ({ signal }) => getPiSiteExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPiSiteExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPiSiteExportJob>>
+>;
+export type GetPiSiteExportJobQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Read delivery status, position artifacts and human review state
+ */
+
+export function useGetPiSiteExportJob<
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<unknown>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPiSiteExportJobQueryOptions(jobId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
