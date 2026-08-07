@@ -73,6 +73,13 @@ onlyBuiltDependencies:
   - msw
   - unrs-resolver
 
+# Tesseract's postinstall only prints an OpenCollective message. The OCR
+# runtime and packaged language model do not depend on it, so production
+# installs explicitly ignore the script instead of failing on an unreviewed
+# dependency build.
+ignoredBuiltDependencies:
+  - tesseract.js
+
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms
   "esbuild>@esbuild/darwin-x64": "-"

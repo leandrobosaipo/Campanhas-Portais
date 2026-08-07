@@ -92,19 +92,25 @@ upload_to_volume() {
 
   run_in_upload_container() {
     local command="$1"
-    local exec_id exit_code exec_state exec_running exec_attempt
+    local exec_id exit_code exec_state exec_running exec_attempt output_file
+    output_file="$(mktemp)"
     exec_id="$(curl -fsS --max-time 30 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
       -d "$(jq -n --arg command "$command" --arg workingDir "$mount_path" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:$workingDir,Cmd:["sh","-lc",$command]}')" \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/exec" | jq -r '.Id')"
-    curl -fsS --max-time 300 \
+    if ! curl -fsS --max-time 300 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
       -d '{"Detach":false,"Tty":false}' \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null || true
+      -o "$output_file" \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start"; then
+      printf 'Upload container exec request failed for volume=%s.\n' "$volume" >&2
+      rm -f "$output_file"
+      return 1
+    fi
     exit_code=""
     for exec_attempt in $(seq 1 120); do
       exec_state="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
@@ -114,7 +120,13 @@ upload_to_volume() {
       [[ "$exec_attempt" == "120" ]] && { printf 'Upload container command timed out for volume=%s.\n' "$volume" >&2; return 1; }
       sleep 5
     done
-    [[ "$exit_code" == "0" ]] || { printf 'Upload container command failed for volume=%s.\n' "$volume" >&2; return 1; }
+    if [[ "$exit_code" != "0" ]]; then
+      printf 'Upload container command failed for volume=%s exit=%s. Output follows:\n' "$volume" "$exit_code" >&2
+      LC_ALL=C tr -cd '\11\12\15\40-\176' < "$output_file" | tail -n 80 >&2 || true
+      rm -f "$output_file"
+      return 1
+    fi
+    rm -f "$output_file"
   }
 
   if [[ -n "$prepare_command" ]]; then
