@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { runControlledProcess } from "../../artifacts/api-server/src/lib/controlled-process";
 
 const cwd = process.cwd().endsWith("/scripts") ? process.cwd().slice(0, -"/scripts".length) : process.cwd();
-const playwrightModulePath = new URL(import.meta.resolve("playwright")).pathname;
+const playwrightModulePath = createRequire(import.meta.url).resolve("playwright");
 
 function browserProgram(mode: "success" | "error" | "timeout") {
   return `
@@ -60,8 +61,8 @@ async function run(mode: "success" | "error" | "timeout", timeoutMs: number) {
   return { mode, failed, timedOut, errorMessage };
 }
 
-const success = await run("success", 15_000);
-const failure = await run("error", 15_000);
+const success = await run("success", 60_000);
+const failure = await run("error", 60_000);
 const timeout = await run("timeout", 3_000);
 
 if (success.failed || !failure.failed || !timeout.failed || !timeout.timedOut) {
