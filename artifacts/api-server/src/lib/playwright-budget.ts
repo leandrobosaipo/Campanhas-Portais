@@ -139,7 +139,11 @@ function isTimeout(error: unknown) {
   return error.name.includes("Timeout") || code.includes("TIMEOUT") || /timeout/i.test(error.message);
 }
 
-export async function withPlaywrightPermit<T>(label: string, operation: () => Promise<T>): Promise<T> {
+export async function withPlaywrightPermit<T>(
+  label: string,
+  operation: () => Promise<T>,
+  options?: { onAcquired?: (timing: { startedAt: string; queueWaitMs: number }) => void | Promise<void> },
+): Promise<T> {
   const queuedAt = Date.now();
   let release: (() => void) | null = null;
   let globalLock: { client: PoolClient; slot: number } | null = null;
@@ -147,9 +151,11 @@ export async function withPlaywrightPermit<T>(label: string, operation: () => Pr
   try {
     release = await acquireLocal();
     globalLock = await acquireGlobal(queuedAt + queueTimeoutMs);
-    counters.totalQueueWaitMs += Date.now() - queuedAt;
+    const queueWaitMs = Date.now() - queuedAt;
+    counters.totalQueueWaitMs += queueWaitMs;
     active += 1;
     startedAt = Date.now();
+    await options?.onAcquired?.({ startedAt: new Date(startedAt).toISOString(), queueWaitMs });
     const result = await operation();
     counters.completed += 1;
     return result;

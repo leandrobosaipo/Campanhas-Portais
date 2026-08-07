@@ -96,13 +96,14 @@ class LocalPrintRunner implements PrintRunnerPort {
   }
 
   private async execute(job: PrintRunnerJobResult, payload: PrintRunnerJobPayload): Promise<PrintRunnerJobResult> {
-    job.status = "running";
-    job.startedAt = new Date().toISOString();
-    job.queueWaitMs = Date.parse(job.startedAt) - Date.parse(job.queuedAt ?? job.createdAt);
-    await this.save(job, payload);
-
     for (const target of payload.targets) {
-      const item = await this.executeTarget(job.id, target);
+      const item = await this.executeTarget(job.id, target, async (timing) => {
+        if (job.startedAt) return;
+        job.status = "running";
+        job.startedAt = timing.startedAt;
+        job.queueWaitMs = Date.parse(timing.startedAt) - Date.parse(job.queuedAt ?? job.createdAt);
+        await this.save(job, payload);
+      });
       job.items.push(item);
       job.completedTargets = job.items.filter((entry) => entry.status !== "skipped").length;
       job.failedTargets = job.items.filter((entry) => entry.status === "error").length;
@@ -117,7 +118,11 @@ class LocalPrintRunner implements PrintRunnerPort {
     return job;
   }
 
-  private async executeTarget(jobId: string, target: PrintRunnerJobPayload["targets"][number]): Promise<PrintRunnerJobResultItem> {
+  private async executeTarget(
+    jobId: string,
+    target: PrintRunnerJobPayload["targets"][number],
+    onPermitAcquired: (timing: { startedAt: string; queueWaitMs: number }) => void | Promise<void>,
+  ): Promise<PrintRunnerJobResultItem> {
     try {
       const capture = await runLocalCaptureProof(target.insertionId, {
         replaceExisting: target.replaceExisting,
@@ -125,6 +130,7 @@ class LocalPrintRunner implements PrintRunnerPort {
         runnerJobId: jobId,
         candidateOnly: target.candidateOnly === true,
         promoteCandidate: target.promoteCandidate === true,
+        onPermitAcquired,
       });
       return {
         insertionId: target.insertionId,

@@ -58,6 +58,7 @@ export type LocalCaptureOptions = {
   diagnosticMode?: boolean;
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
+  onPermitAcquired?: (timing: { startedAt: string; queueWaitMs: number }) => void | Promise<void>;
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
@@ -105,8 +106,9 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= cleanContextRetries + 1; attempt += 1) {
     try {
-      const { stdout } = await withPlaywrightPermit(`capture:${insertionId}:${attempt}`, () =>
-        runControlledProcess("node", [...args, "--captureAttempt", String(attempt)], {
+      const { stdout } = await withPlaywrightPermit(
+        `capture:${insertionId}:${attempt}`,
+        () => runControlledProcess("node", [...args, "--captureAttempt", String(attempt)], {
           cwd: runtime.projectRoot,
           env: {
             ...process.env,
@@ -116,6 +118,7 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
           killGraceMs,
           maxBuffer: 10 * 1024 * 1024,
         }),
+        { onAcquired: options?.onPermitAcquired },
       );
       return JSON.parse(stdout);
     } catch (error) {
