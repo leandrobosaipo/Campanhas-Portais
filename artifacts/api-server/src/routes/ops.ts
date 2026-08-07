@@ -1180,12 +1180,12 @@ router.get("/ops/runtime-metrics", async (_req, res): Promise<void> => {
       `SELECT
          COUNT(*) FILTER (WHERE status IN ('queued','ready_for_runner')) AS ready,
          COUNT(*) FILTER (WHERE status = 'running') AS running,
-         MIN(created_at) FILTER (WHERE status IN ('queued','ready_for_runner','running')) AS oldest_created_at,
-         COUNT(*) FILTER (WHERE status = 'completed' AND updated_at >= now() - interval '24 hours') AS completed_24h,
-         COUNT(*) FILTER (WHERE status = 'failed' AND updated_at >= now() - interval '24 hours') AS failed_24h,
-         COUNT(*) FILTER (WHERE updated_at >= now() - interval '24 hours' AND (COALESCE(error_text, '') ILIKE '%timeout%' OR COALESCE(result_json, '') ILIKE '%timeout%')) AS timeout_24h,
-         AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at >= now() - interval '24 hours') AS average_duration_ms,
-         MAX(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at >= now() - interval '24 hours') AS max_duration_ms
+         (MIN(created_at::timestamptz) FILTER (WHERE status IN ('queued','ready_for_runner','running')))::text AS oldest_created_at,
+         COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::timestamptz >= now() - interval '24 hours') AS completed_24h,
+         COUNT(*) FILTER (WHERE status = 'failed' AND updated_at::timestamptz >= now() - interval '24 hours') AS failed_24h,
+         COUNT(*) FILTER (WHERE updated_at::timestamptz >= now() - interval '24 hours' AND (COALESCE(error_text, '') ILIKE '%timeout%' OR COALESCE(result_json, '') ILIKE '%timeout%')) AS timeout_24h,
+         AVG(EXTRACT(EPOCH FROM (updated_at::timestamptz - created_at::timestamptz)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at::timestamptz >= now() - interval '24 hours') AS average_duration_ms,
+         MAX(EXTRACT(EPOCH FROM (updated_at::timestamptz - created_at::timestamptz)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at::timestamptz >= now() - interval '24 hours') AS max_duration_ms
        FROM ops_jobs`,
     ),
     pool.query<{
