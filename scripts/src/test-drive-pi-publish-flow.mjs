@@ -53,6 +53,14 @@ assert.equal(
   ).mediaItem.driveFileId,
   "home",
 );
+assert.equal(
+  runner.selectDriveImageForInsertion(
+    { media: [{ driveFileId: "top", mimeType: "image/gif", name: "PI-14609-TOPO.gif" }, { driveFileId: "home", mimeType: "image/gif", name: "HOME.gif" }] },
+    { localFormato: "TOPO" },
+    { piCodigo: "PI 14609" },
+  ).ambiguous,
+  true,
+);
 const clickResolved = runner.resolveDrivePiClickUrl(
   { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
   { textObservations: [{ links: [{ url: "https://cdn.example.com/banner.gif", kind: "image" }, { url: "https://cliente.example.com/landing", kind: "unknown" }] }] },

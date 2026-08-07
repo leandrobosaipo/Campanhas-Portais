@@ -117,6 +117,49 @@ Conferir fila:
 curl -fsSL "$ADOPS_API_BASE_URL/api/ops/queue/overview"
 ```
 
+Conferir orçamento, concorrência e memória sem expor payloads de campanha:
+
+```bash
+curl -fsSL "$ADOPS_API_BASE_URL/api/ops/runtime-metrics"
+```
+
+O runtime serializa Chromium por padrão (`ADOPS_PLAYWRIGHT_CONCURRENCY=1`).
+Uma fila FIFO no processo é combinada com advisory lock do PostgreSQL, portanto
+mais de uma instância da API continua respeitando o mesmo teto global.
+
+Campos operacionais principais:
+
+- `queue.ready`, `queue.waitingForPermit`, `queue.active` e `queue.oldestJobAgeMs`;
+- `playwright.limit`, `playwright.active`, `playwright.queued` e `playwright.draining`;
+- sucesso, falha, timeout, duração e espera das últimas 24 horas;
+- RSS/heap do Node e `memory.current`, `memory.max`, `memory.events`,
+  `pids.current` do cgroup.
+
+Alertas iniciais:
+
+- memória em 70% do limite: ajustar para o próximo múltiplo de 128 MiB acima de
+  `1,5 × pico` e repetir a carga;
+- memória entre 70% e 85%: rollout não liberado até elevar e retestar;
+- memória acima de 85%, `oom_kill > 0`, restart ou zombie: reprovar e fazer
+  rollback;
+- fila de impressão com idade acima de 2 horas: investigar consumidor/lock.
+
+Knobs sem segredo:
+
+```text
+ADOPS_PLAYWRIGHT_CONCURRENCY=1
+ADOPS_PLAYWRIGHT_QUEUE_TIMEOUT_MS=7200000
+ADOPS_CAPTURE_TIMEOUT_MS=300000
+ADOPS_CAPTURE_KILL_GRACE_MS=5000
+ADOPS_RUNNER_POLL_MIN_MS=2000
+ADOPS_RUNNER_POLL_MAX_MS=10000
+```
+
+Os budgets Docker ficam em `ops/portainer/adops-stack/.env.example`. Para
+aumentar memória, altere somente a variável do serviço, valide o Compose,
+espere a fila ficar vazia e rode o deploy imutável. Preserve o snapshot do
+stack vivo e o backup PostgreSQL produzidos pelo script até o aceite.
+
 Conferir prontidão de integrações sem expor segredos:
 
 ```bash
@@ -460,7 +503,7 @@ intactos no storage do AdOps.
 ```bash
 curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
-  -H "Idempotency-Key: pi-16628-perrengue-delivery-v1" \
+  -H "Idempotency-Key: $ADOPS_IDEMPOTENCY_KEY" \
   -H "Content-Type: application/json" \
   "$ADOPS_API_BASE_URL/api/pi-site-exports/jobs" \
   -d '{

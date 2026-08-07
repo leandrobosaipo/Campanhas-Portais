@@ -2,7 +2,17 @@
 
 ## Resumo executivo
 
-O projeto está em fase de base funcional local, com interface usável e dados reais importados no ambiente local. O fluxo de importação ainda não está pronto para uso operacional por usuário final.
+O projeto possui operação em produção no Mac Mini por Portainer. O estado publicado deve ser confirmado pelo SHA de release da API, painel e runners; textos históricos abaixo não substituem essa leitura viva.
+
+## Atualização operacional — 2026-08-07
+
+- auditoria OCR sobre o PNG final, com falha fechada para data ilegível, malformada, divergente ou relativa;
+- revisão humana por hash para retroativos, correções e retrabalhos rejeitados;
+- um ZIP e um PDF independentes por posição, com envio sequencial e idempotente ao Telegram;
+- identidade canônica de inserção e arquivamento com vínculo de duplicatas;
+- seleção auditada de mídia do Drive e snapshots históricos do AdRotate;
+- migração idempotente após backup e deploy do SHA exato por volumes imutáveis;
+- AFL/PI 14609 é o canário obrigatório antes da expansão serial aos demais portais.
 
 ## Atualizacao operacional - 2026-05-29
 

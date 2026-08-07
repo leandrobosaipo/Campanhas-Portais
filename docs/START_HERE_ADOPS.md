@@ -41,8 +41,10 @@ PI/email/PDF/Drive
   -> publicar/vincular mídia sem duplicar
   -> limpar cache
   -> gerar print retroativo
-  -> auditar evidência
-  -> enviar Telegram
+  -> auditar DOM e pixels do PNG final
+  -> aprovação por hash quando retroativo/correção
+  -> ZIP + PDF separados por posição
+  -> enviar Telegram pela API
 ```
 
 ## Para cadastrar nova PI
@@ -136,16 +138,16 @@ POST /api/campaign-fulfillments/jobs  (PI + portal, Idempotency-Key estável)
   -> atualiza Drive e sincroniza planilha
   -> deduplica, vincula mídia e publica no AdRotate
   -> reaudita e recompõe datas inválidas/ausentes
-  -> gera ZIP só com imagens + PDF separado por posição
+  -> gera um ZIP + um PDF separado para cada posição
   -> materializa recorte da planilha + prévia do pedido da agência
-  -> Telegram recebe ZIP + todos os PDFs por posição
+  -> Telegram recebe um par ZIP + PDF por posição
   -> GET /api/campaign-fulfillments/jobs/{jobId}/report
   -> GET /api/campaign-fulfillments/jobs/{jobId}/report.pdf
 ```
 
 Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
-jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e um
-`PI-<codigo>-<portal>-<posicao>.pdf` para cada banner; todos são enviados ao Telegram.
+jornalista, monta `PI-<codigo>-<portal>-<posicao>.zip` somente com JPEGs e um
+`PI-<codigo>-<portal>-<posicao>.pdf` para cada banner; cada par é enviado ao Telegram.
 Use `POST /api/pi-site-exports/jobs` apenas para regenerar a entrega de uma
 campanha cujo cadastro, mídia e publicação já estejam resolvidos.
 
@@ -178,6 +180,7 @@ campanha cujo cadastro, mídia e publicação já estejam resolvidos.
 - `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md`
 - `scripts/src/harness-drive-pi-monitor-first-v4.mjs`
 - `docs/adops/capture-config/README.md`
+- `docs/adops/postmortem-pi-14609-evidencias.md`
 - `docs/adops/ga4-monthly-report-ui/README.md`
 - `docs/adops/ga4-monthly-report-ui/RUNBOOK_MAIO_2026_UI_PDFS.md`
 - `docs/reports/adops-ga4-ui-rotina-maio-2026/index.html`

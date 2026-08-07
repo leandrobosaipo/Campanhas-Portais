@@ -114,6 +114,26 @@ Quando `DRIVE_INTEGRATION_MODE` não é informado no terminal, o deploy preserva
 
 Se o smoke falhar depois da troca, o trap restaura os volumes anteriores. Não remova os volumes da release anterior antes do aceite público.
 
+O deploy de produção também guarda o Compose vivo do Portainer para rollback
+exato. Antes da primeira atualização com drain gracioso, confirme diretamente
+no PostgreSQL que não existem jobs `queued`/`running`, pause os dois runners e
+a API, repita a consulta e só então troque o stack. Se surgir atividade,
+despause e aborte.
+
+Budgets padrão do Compose standalone:
+
+| Serviço | CPU | Reserva | Limite | PIDs | init | stop grace |
+|---|---:|---:|---:|---:|---:|---:|
+| `adops-api` | 2.0 | 512 MiB | 1280 MiB | 256 | sim | 7 min |
+| `adops-runner` | 1.0 | 128 MiB | 768 MiB | 192 | sim | 15 min |
+| `adops-runner-print-single` | 0.5 | 96 MiB | 384 MiB | 128 | sim | 7 min |
+| `adops-drive-pi-monitor-stack` | 0.5 | 96 MiB | 384 MiB | 128 | sim | 2 min |
+| `adops-postgres` | 1.0 | 256 MiB | 768 MiB | 128 | não | padrão |
+
+Todos os valores são configuráveis por `ADOPS_*`. O limite da API é 1280 MiB
+porque o print candidato pré-rollout atingiu aproximadamente 817,5 MiB; o
+valor original de 1 GiB não deixaria a margem de 1,5 vezes exigida.
+
 O script gera relatório em:
 
 ```text

@@ -13,6 +13,7 @@ import * as zod from "zod";
  */
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
+  releaseSha: zod.string().nullish(),
 });
 
 /**
@@ -908,6 +909,8 @@ export const GetCaptureProofStatusResponse = zod.object({
     blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
     warnings: zod.array(zod.record(zod.string(), zod.unknown())),
   }),
+  pixelDateProof: zod.record(zod.string(), zod.unknown()).nullish(),
+  review: zod.record(zod.string(), zod.unknown()).nullish(),
   status: zod.enum([
     "audited",
     "audited_best_effort",
@@ -916,6 +919,125 @@ export const GetCaptureProofStatusResponse = zod.object({
     "missing",
   ]),
 });
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const ReviewCaptureProofParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const reviewCaptureProofBodyNoteMax = 2000;
+
+export const reviewCaptureProofBodyExpectedArtifactSha256RegExp = new RegExp(
+  "^[a-f0-9]{64}$",
+);
+export const reviewCaptureProofBodyReviewedByMin = 3;
+
+export const ReviewCaptureProofBody = zod.object({
+  date: zod.coerce.date(),
+  decision: zod.enum(["approved", "rejected"]),
+  note: zod.string().max(reviewCaptureProofBodyNoteMax).nullish(),
+  expectedArtifactSha256: zod
+    .string()
+    .regex(reviewCaptureProofBodyExpectedArtifactSha256RegExp),
+  reviewedBy: zod.string().min(reviewCaptureProofBodyReviewedByMin),
+});
+
+export const ReviewCaptureProofResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const SelectInsertionDriveMediaParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const selectInsertionDriveMediaBodySha256RegExp = new RegExp(
+  "^[a-fA-F0-9]{64}$",
+);
+
+export const selectInsertionDriveMediaBodyReasonMin = 8;
+
+export const selectInsertionDriveMediaBodySelectedByMin = 3;
+
+export const SelectInsertionDriveMediaBody = zod.object({
+  driveFileId: zod.string(),
+  canonicalUrl: zod.string().url().nullish(),
+  sha256: zod
+    .string()
+    .regex(selectInsertionDriveMediaBodySha256RegExp)
+    .nullish(),
+  bytes: zod.number().min(1).nullish(),
+  width: zod.number().min(1).nullish(),
+  height: zod.number().min(1).nullish(),
+  reason: zod.string().min(selectInsertionDriveMediaBodyReasonMin),
+  selectedBy: zod.string().min(selectInsertionDriveMediaBodySelectedByMin),
+});
+
+export const SelectInsertionDriveMediaResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Create an idempotent PI/site delivery job
+ */
+export const createPiSiteExportJobHeaderIdempotencyKeyMin = 8;
+export const createPiSiteExportJobHeaderIdempotencyKeyMax = 160;
+
+export const CreatePiSiteExportJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createPiSiteExportJobHeaderIdempotencyKeyMin)
+    .max(createPiSiteExportJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createPiSiteExportJobBodyModeDefault = `delivery`;
+export const createPiSiteExportJobBodyVariantDefault = `web`;
+export const createPiSiteExportJobBodySplitZipByPositionDefault = true;
+export const createPiSiteExportJobBodyDeliveryReasonDefault = `standard`;
+export const createPiSiteExportJobBodySendTelegramDefault = true;
+
+export const CreatePiSiteExportJobBody = zod.object({
+  piCodigo: zod.string(),
+  siteSigla: zod.string(),
+  mode: zod
+    .enum(["delivery", "full", "prints-only", "pdf", "full-pdf"])
+    .default(createPiSiteExportJobBodyModeDefault),
+  variant: zod
+    .enum(["original", "web"])
+    .default(createPiSiteExportJobBodyVariantDefault),
+  splitZipByPosition: zod
+    .literal(true)
+    .default(createPiSiteExportJobBodySplitZipByPositionDefault),
+  positions: zod.array(zod.string()).optional(),
+  deliveryReason: zod
+    .enum(["standard", "retroactive", "correction", "rejected_rework"])
+    .default(createPiSiteExportJobBodyDeliveryReasonDefault),
+  sendTelegram: zod
+    .boolean()
+    .default(createPiSiteExportJobBodySendTelegramDefault),
+  chatId: zod.string().nullish(),
+  requestedBy: zod.string().nullish(),
+  source: zod.string().nullish(),
+});
+
+/**
+ * @summary Read delivery status, position artifacts and human review state
+ */
+export const GetPiSiteExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const GetPiSiteExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
 
 /**
  * @summary Validate capture proof, including strict readiness gates

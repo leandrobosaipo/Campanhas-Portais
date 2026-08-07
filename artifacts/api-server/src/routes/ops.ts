@@ -3,6 +3,8 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
+import { getPlaywrightBudgetSnapshot } from "../lib/playwright-budget";
+import { readRuntimeResourceMetrics } from "../lib/runtime-metrics";
 
 type JobKind =
   | "print-batch"
@@ -23,7 +25,7 @@ type JobKind =
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
-type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
+type JobStatus = "queued" | "ready_for_runner" | "running" | "awaiting_human_review" | "completed" | "failed";
 
 type OpsJobRecord = {
   id: string;
@@ -85,7 +87,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "runtime-readiness-probe",
 ];
 
-const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
+const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "awaiting_human_review", "completed", "failed"];
 
 type RuntimeEnvCheck = {
   name: string;
@@ -696,7 +698,9 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
   const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-fulfillment" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
+  const printJob = kind === "print-single" || kind === "print-batch" || kind === "print-backfill";
   if (status === "queued" || status === "ready_for_runner") {
+    if (printJob) return 120 * 60_000;
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
   if (status === "running") {
@@ -1047,6 +1051,16 @@ router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => 
   res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
 });
 
+router.post("/ops/runner/jobs/:id/await-review", async (req, res): Promise<void> => {
+  const updated = await updateOpsJob(req.params.id, {
+    status: "awaiting_human_review",
+    result: req.body?.result ?? { stage: "awaiting_human_review" },
+    error: null,
+    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+  });
+  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+});
+
 router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
   const updated = await updateOpsJob(req.params.id, {
     status: "failed",
@@ -1060,23 +1074,52 @@ router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
 router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
   const dryRun = Boolean(req.body?.dryRun);
   const limit = Math.min(Number(req.body?.limit) || 200, 500);
-  const active = await pool.query<OpsJobRecord>(
-    "SELECT * FROM ops_jobs WHERE status IN ('queued','ready_for_runner','running') ORDER BY created_at ASC LIMIT $1",
-    [limit],
-  );
+  const [active, activePrints] = await Promise.all([
+    pool.query<OpsJobRecord>(
+      "SELECT * FROM ops_jobs WHERE status IN ('queued','ready_for_runner','running') ORDER BY created_at ASC LIMIT $1",
+      [limit],
+    ),
+    pool.query<{ id: string; kind: string; status: string; created_at: string; started_at: string | null }>(
+      `SELECT id, kind, status, created_at::text, started_at::text
+         FROM print_jobs
+        WHERE status IN ('queued','running')
+          AND COALESCE(started_at, created_at) < now() - interval '2 hours'
+        ORDER BY created_at ASC
+        LIMIT $1`,
+      [limit],
+    ),
+  ]);
   const stale: OpsJobRecord[] = active.rows.filter((record: OpsJobRecord) => getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
+  const detectedAt = nowIso();
   if (!dryRun) {
     for (const record of stale) {
-      const failure = buildWatchdogFailure(record, nowIso());
+      const failure = buildWatchdogFailure(record, detectedAt);
       await updateOpsJob(record.id, { status: "failed", error: failure.error, result: failure.result, runnerId: record.runner_id });
+    }
+    if (activePrints.rows.length > 0) {
+      await pool.query(
+        `UPDATE print_jobs
+            SET status = 'failed',
+                finished_at = COALESCE(finished_at, $1::timestamptz),
+                updated_at = $1::timestamptz,
+                meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object(
+                  'watchdog', true,
+                  'timedOut', true,
+                  'detectedAt', $1::text,
+                  'reason', 'print_job_orphaned_after_2h'
+                )
+          WHERE id = ANY($2::text[])
+            AND status IN ('queued','running')`,
+        [detectedAt, activePrints.rows.map((record) => record.id)],
+      );
     }
   }
   res.json({
     ok: true,
     dryRun,
-    checked: active.rows.length,
-    staleCount: stale.length,
-    failedCount: dryRun ? 0 : stale.length,
+    checked: active.rows.length + activePrints.rows.length,
+    staleCount: stale.length + activePrints.rows.length,
+    failedCount: dryRun ? 0 : stale.length + activePrints.rows.length,
     stale: stale.map((record: OpsJobRecord) => ({
       id: record.id,
       kind: record.kind,
@@ -1084,6 +1127,12 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
       ageMinutes: Math.round(getJobAgeMs(record) / 60_000),
       requestedBy: record.requested_by,
       runnerId: record.runner_id,
+    })),
+    stalePrintJobs: activePrints.rows.map((record) => ({
+      id: record.id,
+      kind: record.kind,
+      status: record.status,
+      ageMinutes: Math.round((Date.now() - Date.parse(record.started_at ?? record.created_at)) / 60_000),
     })),
   });
 });
@@ -1122,6 +1171,90 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
       completedToday: Number(row.completed_today ?? 0) || 0,
       failedToday: Number(row.failed_today ?? 0) || 0,
     },
+  });
+});
+
+router.get("/ops/runtime-metrics", async (_req, res): Promise<void> => {
+  const [resources, ops, prints] = await Promise.all([
+    readRuntimeResourceMetrics(),
+    pool.query<{
+      ready: string | number | null;
+      running: string | number | null;
+      oldest_created_at: string | null;
+      completed_24h: string | number | null;
+      failed_24h: string | number | null;
+      timeout_24h: string | number | null;
+      average_duration_ms: string | number | null;
+      max_duration_ms: string | number | null;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('queued','ready_for_runner')) AS ready,
+         COUNT(*) FILTER (WHERE status = 'running') AS running,
+         (MIN(created_at::timestamptz) FILTER (WHERE status IN ('queued','ready_for_runner','running')))::text AS oldest_created_at,
+         COUNT(*) FILTER (WHERE status = 'completed' AND updated_at::timestamptz >= now() - interval '24 hours') AS completed_24h,
+         COUNT(*) FILTER (WHERE status = 'failed' AND updated_at::timestamptz >= now() - interval '24 hours') AS failed_24h,
+         COUNT(*) FILTER (WHERE updated_at::timestamptz >= now() - interval '24 hours' AND (COALESCE(error_text, '') ILIKE '%timeout%' OR COALESCE(result_json, '') ILIKE '%timeout%')) AS timeout_24h,
+         AVG(EXTRACT(EPOCH FROM (updated_at::timestamptz - created_at::timestamptz)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at::timestamptz >= now() - interval '24 hours') AS average_duration_ms,
+         MAX(EXTRACT(EPOCH FROM (updated_at::timestamptz - created_at::timestamptz)) * 1000) FILTER (WHERE status IN ('completed','failed') AND updated_at::timestamptz >= now() - interval '24 hours') AS max_duration_ms
+       FROM ops_jobs`,
+    ),
+    pool.query<{
+      queued: string | number | null;
+      running: string | number | null;
+      completed_24h: string | number | null;
+      failed_24h: string | number | null;
+      timeout_24h: string | number | null;
+      average_duration_ms: string | number | null;
+      max_duration_ms: string | number | null;
+      average_queue_wait_ms: string | number | null;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'queued') AS queued,
+         COUNT(*) FILTER (WHERE status = 'running') AS running,
+         COUNT(*) FILTER (WHERE status = 'completed' AND finished_at >= now() - interval '24 hours') AS completed_24h,
+         COUNT(*) FILTER (WHERE status = 'failed' AND finished_at >= now() - interval '24 hours') AS failed_24h,
+         COUNT(*) FILTER (WHERE finished_at >= now() - interval '24 hours' AND (COALESCE(meta->>'timedOut', 'false') = 'true' OR items::text ILIKE '%timeout%')) AS timeout_24h,
+         AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000) FILTER (WHERE finished_at >= now() - interval '24 hours') AS average_duration_ms,
+         MAX(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000) FILTER (WHERE finished_at >= now() - interval '24 hours') AS max_duration_ms,
+         AVG(EXTRACT(EPOCH FROM (started_at - created_at)) * 1000) FILTER (WHERE started_at >= now() - interval '24 hours') AS average_queue_wait_ms
+       FROM print_jobs`,
+    ),
+  ]);
+  const opsRow = ops.rows[0] ?? {};
+  const printRow = prints.rows[0] ?? {};
+  const oldestTimestamp = opsRow.oldest_created_at ? Date.parse(opsRow.oldest_created_at) : Number.NaN;
+  const playwright = getPlaywrightBudgetSnapshot();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    observedAt: nowIso(),
+    queue: {
+      ready: Number(opsRow.ready ?? 0),
+      waitingForPermit: playwright.queued,
+      active: playwright.active,
+      running: Number(opsRow.running ?? 0),
+      oldestJobAgeMs: Number.isFinite(oldestTimestamp) ? Math.max(0, Date.now() - oldestTimestamp) : null,
+    },
+    playwright,
+    jobs24h: {
+      ops: {
+        completed: Number(opsRow.completed_24h ?? 0),
+        failed: Number(opsRow.failed_24h ?? 0),
+        timedOut: Number(opsRow.timeout_24h ?? 0),
+        averageDurationMs: Math.round(Number(opsRow.average_duration_ms ?? 0)),
+        maxDurationMs: Math.round(Number(opsRow.max_duration_ms ?? 0)),
+      },
+      print: {
+        queued: Number(printRow.queued ?? 0),
+        running: Number(printRow.running ?? 0),
+        completed: Number(printRow.completed_24h ?? 0),
+        failed: Number(printRow.failed_24h ?? 0),
+        timedOut: Number(printRow.timeout_24h ?? 0),
+        averageDurationMs: Math.round(Number(printRow.average_duration_ms ?? 0)),
+        maxDurationMs: Math.round(Number(printRow.max_duration_ms ?? 0)),
+        averageQueueWaitMs: Math.round(Number(printRow.average_queue_wait_ms ?? 0)),
+      },
+    },
+    resources,
   });
 });
 
@@ -1239,6 +1372,14 @@ export function buildOpsApiCatalog() {
         curl: `curl -fsSL ${base}/api/ops/queue/overview`,
       },
       {
+        id: "runtime-metrics",
+        method: "GET",
+        path: "/api/ops/runtime-metrics",
+        purpose: "Ver fila, permit Playwright, durações, timeouts, memória e cgroup sem payloads ou segredos.",
+        authRequired: false,
+        curl: `curl -fsSL ${base}/api/ops/runtime-metrics`,
+      },
+      {
         id: "runtime-readiness",
         method: "GET",
         path: "/api/ops/runtime-readiness",
@@ -1333,6 +1474,14 @@ export function buildOpsApiCatalog() {
         authRequired: false,
         curl: `curl -fsSL "${base}/api/insertions/1663/capture-proof/status?date=2026-07-01"`,
       },
+      {
+        id: "capture-proof-review",
+        method: "POST",
+        path: "/api/insertions/{id}/capture-proof/reviews",
+        purpose: "Aprovar ou rejeitar o hash exato do PNG final após pixelDateProof.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/insertions/1663/capture-proof/reviews -d '{"date":"2026-07-01","decision":"approved","expectedArtifactSha256":"SHA256","reviewedBy":"operador"}'`,
+      },
       ],
     },
     {
@@ -1394,6 +1543,14 @@ export function buildOpsApiCatalog() {
         purpose: "Baixar a versão PDF do dossiê operacional.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/campaign-fulfillments/jobs/JOB_ID/report.pdf -o dossie.pdf`,
+      },
+      {
+        id: "pi-site-export-position-delivery",
+        method: "POST",
+        path: "/api/pi-site-exports/jobs",
+        purpose: "Gerar um ZIP e um PDF por posição; retroativos aguardam revisão humana por hash.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: delivery:14609:AFL:v2' ${base}/api/pi-site-exports/jobs -d '{"piCodigo":"14609","siteSigla":"AFL","mode":"delivery","splitZipByPosition":true,"deliveryReason":"correction","sendTelegram":true}'`,
       },
       ],
     },
@@ -1679,6 +1836,7 @@ function buildOpsQuickstart() {
       swaggerUi: "/api/ops/docs",
       openApiJson: "/api/ops/openapi.json",
       runtimeReadiness: "/api/ops/runtime-readiness",
+      runtimeMetrics: "/api/ops/runtime-metrics",
     },
     safety: [
       "Nunca colocar token em Git, chat ou documentação.",
@@ -2250,6 +2408,9 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     imageMaxWidth,
     imageQuality,
     sendTelegram: req.body?.sendTelegram !== false,
+    splitZipByPosition: mode === "delivery" ? req.body?.splitZipByPosition !== false : false,
+    positions: Array.isArray(req.body?.positions) ? req.body.positions.filter((item: unknown) => typeof item === "string") : [],
+    deliveryClass: readOptionalString(req.body?.deliveryReason) ?? "standard",
     chatId: readOptionalString(req.body?.chatId),
     source: "macmini-api",
   }, "ops-api");
@@ -2266,6 +2427,7 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     imageMaxWidth,
     imageQuality,
     sendTelegram: req.body?.sendTelegram !== false,
+    splitZipByPosition: mode === "delivery" ? req.body?.splitZipByPosition !== false : false,
   });
 });
 

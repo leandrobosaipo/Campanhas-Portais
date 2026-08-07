@@ -32,6 +32,12 @@ Este arquivo sintetiza o conhecimento operacional do projeto local SPM para uso 
 - Confianca abaixo do minimo configurado bloqueia auto-apply.
 - Divergencia contra planilha, AdOps, AdRotate ou mapa de sites bloqueia auto-apply.
 - Scripts deterministas sao a unica camada autorizada a aplicar mudancas.
+- A identidade de insercao e `PI + portal + posicao normalizada + inicio + fim`; duplicata deve ser ligada a canônica, nunca recriada ou apagada.
+- Mais de uma midia candidata gera `media_ambiguous`. O agente nao escolhe por semelhanca; um operador registra a escolha pela API.
+- `status=audited` nao basta para retroativos: exigir `pixelDateProof.ok=true` no PNG final.
+- Retroativo, correcao e retrabalho rejeitado exigem aprovacao humana do hash exato antes do Telegram.
+- A entrega final sempre usa `POST /api/pi-site-exports/jobs`, com um ZIP e um PDF por posicao.
+- O agente deve comparar o SHA divulgado pela API, painel e runners antes de afirmar que uma melhoria esta em producao.
 
 ## Sites e formatos
 

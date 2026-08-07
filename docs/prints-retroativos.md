@@ -119,6 +119,18 @@ GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD
 
 `status=audited` so vale quando `validate-proof.approved=true`.
 
+Para retroativos e correcoes, existe um segundo gate sobre o arquivo final:
+
+```http
+GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD
+POST /api/insertions/{id}/capture-proof/reviews
+```
+
+O primeiro endpoint deve retornar `pixelDateProof.ok=true`. A aprovação informa
+`expectedArtifactSha256`; se o PNG for regenerado, o hash muda e a aprovação
+anterior deixa de valer. Enquanto houver data pendente, o job fica em
+`awaiting_human_review` e não envia arquivos ao Telegram.
+
 A auditoria nao verifica so se a URL do print responde `200`.
 
 Ela tambem valida:
@@ -176,9 +188,9 @@ GET /api/pi-site-exports/jobs/{jobId}/download
 GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
-- `mode=delivery`: modo assíncrono padrão; gera ZIP somente com JPEGs, um PDF separado por posição e envia todos ao Telegram;
+- `mode=delivery`: modo assíncrono padrão; gera um ZIP de JPEGs e um PDF para cada posição e envia cada par separadamente ao Telegram;
 - `mode=full`: mantém os PNGs originais no ZIP para compatibilidade;
-- `mode=prints-only&variant=web`: entrega ZIP somente com JPEGs progressivos comprimidos;
+- `mode=prints-only&variant=web`: entrega genérica somente com JPEGs; com `presentation=journalist`, inclui também auditoria, contact sheet e checksums;
 - `mode=pdf`: retorna um PDF comprimido por posição; sem filtro, retorna ZIP de PDFs quando a PI possui várias posições;
 - `mode=full-pdf`: mantém documentos e Analytics no ZIP e inclui:
   - `01-PRINTS-PDF/<POSICAO>/*.pdf`, com uma evidência por página;

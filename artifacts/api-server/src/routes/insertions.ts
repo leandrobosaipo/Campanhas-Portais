@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { and, desc, eq, sql, inArray } from "drizzle-orm";
-import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable } from "@workspace/db";
+import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable, captureProofReviewsTable, insertionMediaSelectionsTable, adrotatePublicationSnapshotsTable } from "@workspace/db";
 import {
   CreateInsertionBody,
   GetInsertionParams,
@@ -66,8 +66,20 @@ import {
 } from "../lib/evidence-export";
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
 import { mediaNamesCompatible } from "../lib/media-consistency";
+import { buildInsertionCanonicalIdentity } from "../lib/insertion-identity";
 
 const router: IRouter = Router();
+
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJsonStringify(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
 
 const execFileAsync = promisify(execFile);
 const printRunner = getPrintRunner();
@@ -209,6 +221,72 @@ async function writeRetroAuditArtifacts(options: {
     entries,
   };
   await writeFile(join(auditDir, "AUDITORIA-RETRO-CONTENT.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  return report;
+}
+
+async function writeDeliveryAuditArtifacts(options: {
+  rootDir: string;
+  descriptor: Awaited<ReturnType<typeof describePiSiteExport>> & {};
+  insertions: EnrichedInsertion[];
+  requireHumanReview: boolean;
+}) {
+  const auditDir = join(options.rootDir, "04-AUDITORIA");
+  await mkdir(auditDir, { recursive: true });
+  const entries: Array<Record<string, unknown>> = [];
+
+  for (const insertion of options.insertions) {
+    const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
+    const dates = Array.from(new Set(
+      evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)).filter((value): value is string => Boolean(value)),
+    )).sort();
+    for (const date of dates) {
+      const status = await resolveEvidenceAuditStatus(insertion, date, evidences);
+      const artifactSha256 = status.pixelDateProof && typeof status.pixelDateProof === "object"
+        ? String((status.pixelDateProof as Record<string, unknown>).artifactSha256 ?? "")
+        : "";
+      const [review] = artifactSha256
+        ? await db.select().from(captureProofReviewsTable).where(and(
+            eq(captureProofReviewsTable.insertionId, insertion.id),
+            eq(captureProofReviewsTable.targetDate, date),
+            eq(captureProofReviewsTable.artifactSha256, artifactSha256),
+          )).orderBy(desc(captureProofReviewsTable.reviewedAt)).limit(1)
+        : [];
+      const reviewApproved = review?.decision === "approved";
+      if (status.status !== "ok" || (options.requireHumanReview && !reviewApproved)) {
+        throw new EvidenceExportInputError(
+          `Evidência não liberada para entrega na inserção ${insertion.id}, data ${date}.`,
+          422,
+        );
+      }
+      entries.push({
+        insertionId: insertion.id,
+        date,
+        status: status.status,
+        arquivoUrl: status.arquivoUrl,
+        pixelDateProof: status.pixelDateProof,
+        retroContentProof: status.audit?.retroContentProof ?? null,
+        humanReview: review
+          ? {
+              decision: review.decision,
+              reviewedBy: review.reviewedBy,
+              reviewedAt: review.reviewedAt,
+              artifactSha256: review.artifactSha256,
+            }
+          : null,
+      });
+    }
+  }
+
+  const report = {
+    ok: entries.length > 0,
+    generatedAt: new Date().toISOString(),
+    piCodigo: options.descriptor.piCodigo,
+    siteSigla: options.descriptor.siteSigla,
+    requireHumanReview: options.requireHumanReview,
+    total: entries.length,
+    entries,
+  };
+  await writeFile(join(auditDir, "AUDITORIA-ENTREGA.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return report;
 }
 
@@ -941,6 +1019,13 @@ async function resolveEvidenceAuditStatus(
     metadata,
   });
   const audit = checklistValidation.audit;
+  const metadataRecord = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : null;
+  const pixelDateProof = metadataRecord?.pixelDateProof && typeof metadataRecord.pixelDateProof === "object"
+    ? metadataRecord.pixelDateProof as Record<string, unknown>
+    : null;
+  const pixelProofRequired = targetDate < formatIsoDate(new Date()) ||
+    (metadataRecord?.requiredGates as Record<string, unknown> | undefined)?.requireEditorialDateMatchTarget === true;
+  const pixelProofApproved = !pixelProofRequired || pixelDateProof?.ok === true;
   let urlStatus: number | null = null;
   let isReachable = false;
 
@@ -955,7 +1040,7 @@ async function resolveEvidenceAuditStatus(
   }
 
   const downgraded = audit?.visualAudit?.frameSelectionDowngraded === true;
-  const status: "ok" | "ok_best_effort" | "invalid_audit" | "invalid_url" | "missing" = evidence && isReachable && checklistValidation.approved
+  const status: "ok" | "ok_best_effort" | "invalid_audit" | "invalid_url" | "missing" = evidence && isReachable && checklistValidation.approved && pixelProofApproved
     ? (downgraded ? "ok_best_effort" : "ok")
     : evidence
       ? (isReachable ? "invalid_audit" : "invalid_url")
@@ -978,6 +1063,9 @@ async function resolveEvidenceAuditStatus(
       : null,
     audit,
     checklistValidation,
+    pixelDateProof,
+    pixelProofRequired,
+    pixelProofApproved,
     status,
   };
 }
@@ -1195,6 +1283,30 @@ async function enrichInsertion(ins: typeof insertionsTable.$inferSelect) {
   };
 }
 
+async function resolveCanonicalIdentity(input: {
+  campanhaId: number;
+  siteId: number | null;
+  localFormato: string | null;
+  localFormatoNormalizado: string | null;
+  periodoInicio: string | null;
+  periodoFim: string | null;
+}) {
+  const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, input.campanhaId)).limit(1);
+  const [site] = input.siteId
+    ? await db.select().from(sitesTable).where(eq(sitesTable.id, input.siteId)).limit(1)
+    : [null];
+  if (!campaign?.piCodigo || !site?.sigla) return null;
+  const position = input.localFormatoNormalizado ?? input.localFormato;
+  return buildInsertionCanonicalIdentity({
+    piCodigo: campaign.piCodigo,
+    siteSigla: site.sigla,
+    position,
+    groupId: getAdRotateGroupId(site.sigla, position),
+    periodStart: input.periodoInicio,
+    periodEnd: input.periodoFim,
+  });
+}
+
 function normalizeTextKey(value: string | null | undefined) {
   return String(value ?? "")
     .normalize("NFD")
@@ -1223,6 +1335,7 @@ async function listPiSiteInsertions(piCodigo: string, siteSigla: string) {
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
   return enriched
+    .filter((item) => !item.supersededByInsertionId && !item.archivedAt)
     .filter((item) => normalizePiDigitsKey(item.piCodigo) === requestedPi)
     .filter((item) => normalizeTextKey(item.siteSigla) === requestedSite)
     .filter((item) => item.statusNormalizado !== "cancelado")
@@ -1528,6 +1641,10 @@ router.get("/insertions", async (req, res): Promise<void> => {
   }
 
   let allInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.createdAt);
+  const includeSuperseded = req.query.includeSuperseded === "true";
+  if (!includeSuperseded) {
+    allInsertions = allInsertions.filter((item) => !item.supersededByInsertionId && !item.archivedAt);
+  }
 
   if (params.data.siteId) {
     allInsertions = allInsertions.filter(i => i.siteId === params.data.siteId);
@@ -2139,6 +2256,34 @@ router.get("/insertions/:id/capture-proof/status", async (req, res): Promise<voi
   const arquivoUrl = evidence?.arquivoUrl ?? null;
   const metadata = await loadCaptureMetadataForAudit(insertionId, targetDate);
   const checklistValidation = await validateAuditChecklist({ insertionId, date: targetDate, metadata });
+  const [latestReview] = await db.select().from(captureProofReviewsTable).where(
+    and(
+      eq(captureProofReviewsTable.insertionId, insertionId),
+      eq(captureProofReviewsTable.targetDate, targetDate),
+    ),
+  ).orderBy(desc(captureProofReviewsTable.reviewedAt)).limit(1);
+  const pixelDateProof = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>).pixelDateProof ?? null
+    : null;
+  const currentArtifactSha256 = pixelDateProof && typeof pixelDateProof === "object" && !Array.isArray(pixelDateProof)
+    ? String((pixelDateProof as Record<string, unknown>).artifactSha256 ?? "") || null
+    : null;
+  const review = latestReview
+    ? {
+        decision: latestReview.decision,
+        note: latestReview.note,
+        reviewedBy: latestReview.reviewedBy,
+        reviewedAt: latestReview.reviewedAt,
+        artifactSha256: latestReview.artifactSha256,
+        currentArtifact: latestReview.artifactSha256 === currentArtifactSha256,
+        approved: latestReview.decision === "approved" && latestReview.artifactSha256 === currentArtifactSha256,
+      }
+    : null;
+  const metadataRecord = metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata as Record<string, unknown> : null;
+  const pixelProofRequired = targetDate < formatIsoDate(new Date()) ||
+    (metadataRecord?.requiredGates as Record<string, unknown> | undefined)?.requireEditorialDateMatchTarget === true;
+  const pixelProofApproved = !pixelProofRequired ||
+    (pixelDateProof && typeof pixelDateProof === "object" && !Array.isArray(pixelDateProof) && (pixelDateProof as Record<string, unknown>).ok === true);
   const audit = checklistValidation.audit;
   let urlStatus: number | null = null;
   let isReachable = false;
@@ -2158,7 +2303,7 @@ router.get("/insertions/:id/capture-proof/status", async (req, res): Promise<voi
   const today = parseDateOnly(targetDate);
   const inPeriod = Boolean(start && end && today && today >= start && today <= end);
   const downgraded = audit?.visualAudit?.frameSelectionDowngraded === true;
-  const status = evidence && isReachable && checklistValidation.approved
+  const status = evidence && isReachable && checklistValidation.approved && pixelProofApproved
     ? (downgraded ? "audited_best_effort" : "audited")
     : evidence
       ? (isReachable ? "invalid_audit" : "invalid_url")
@@ -2179,8 +2324,152 @@ router.get("/insertions/:id/capture-proof/status", async (req, res): Promise<voi
       : null,
     audit,
     checklistValidation,
+    pixelDateProof,
+    pixelProofRequired,
+    pixelProofApproved,
+    review,
     status,
   });
+});
+
+router.post("/insertions/:id/capture-proof/reviews", async (req, res): Promise<void> => {
+  const insertionId = Number.parseInt(req.params.id, 10);
+  const targetDate = typeof req.body?.date === "string" ? req.body.date : "";
+  const decision = req.body?.decision === "approved" || req.body?.decision === "rejected" ? req.body.decision : null;
+  const artifactSha256 = typeof req.body?.expectedArtifactSha256 === "string" ? req.body.expectedArtifactSha256.trim().toLowerCase() : "";
+  const reviewedBy = typeof req.body?.reviewedBy === "string" ? req.body.reviewedBy.trim() : "";
+  const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 2000) : null;
+  if (!Number.isFinite(insertionId) || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !decision || !/^[a-f0-9]{64}$/.test(artifactSha256) || reviewedBy.length < 3) {
+    res.status(400).json({ error: "invalid_review", details: "Informe date, decision, expectedArtifactSha256 e reviewedBy válidos." });
+    return;
+  }
+  const metadata = await loadCaptureMetadataForAudit(insertionId, targetDate);
+  const pixelDateProof = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>).pixelDateProof as Record<string, unknown> | undefined
+    : undefined;
+  const currentSha = String(pixelDateProof?.artifactSha256 ?? "").toLowerCase();
+  if (pixelDateProof?.ok !== true || currentSha !== artifactSha256) {
+    res.status(409).json({ error: "artifact_changed_or_not_audited", currentArtifactSha256: currentSha || null });
+    return;
+  }
+  const id = crypto.randomUUID();
+  await db.insert(captureProofReviewsTable).values({
+    id, insertionId, targetDate, artifactSha256, decision, note, reviewedBy,
+  }).onConflictDoUpdate({
+    target: [captureProofReviewsTable.insertionId, captureProofReviewsTable.targetDate, captureProofReviewsTable.artifactSha256],
+    set: { decision, note, reviewedBy, reviewedAt: new Date() },
+  });
+
+  const waiting = await pool.query<{ id: string; result_json: unknown }>("SELECT id,result_json FROM ops_jobs WHERE kind IN ('pi-site-export','campaign-fulfillment') AND status='awaiting_human_review'");
+  const resumed: string[] = [];
+  for (const job of waiting.rows) {
+    const stored = parseJobJson(job.result_json);
+    const pending = Array.isArray(stored?.pendingReviews) ? stored.pendingReviews as Array<Record<string, unknown>> : [];
+    if (!pending.some((item) => Number(item.insertionId) === insertionId && item.date === targetDate)) continue;
+    const remaining = await Promise.all(pending.map(async (item) => {
+      const result = await pool.query<{ decision: string }>(
+        "SELECT decision FROM capture_proof_reviews WHERE insertion_id=$1 AND target_date=$2 AND artifact_sha256=$3 ORDER BY reviewed_at DESC LIMIT 1",
+        [Number(item.insertionId), String(item.date), String(item.artifactSha256)],
+      );
+      return result.rows[0]?.decision === "approved" ? null : item;
+    }));
+    if (remaining.every((item) => item === null)) {
+      await pool.query("UPDATE ops_jobs SET status='ready_for_runner',runner_id=NULL,error_text=NULL,updated_at=now() WHERE id=$1 AND status='awaiting_human_review'", [job.id]);
+      resumed.push(job.id);
+    }
+  }
+  res.json({ ok: true, reviewId: id, insertionId, date: targetDate, decision, artifactSha256, resumedJobs: resumed });
+});
+
+router.post("/insertions/:id/media-selection", async (req, res): Promise<void> => {
+  const insertionId = Number.parseInt(req.params.id, 10);
+  const driveFileId = typeof req.body?.driveFileId === "string" ? req.body.driveFileId.trim() : "";
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  const selectedBy = typeof req.body?.selectedBy === "string" ? req.body.selectedBy.trim() : "";
+  const canonicalUrl = typeof req.body?.canonicalUrl === "string" ? req.body.canonicalUrl.trim() : null;
+  const suppliedSha256 = typeof req.body?.sha256 === "string" && /^[a-f0-9]{64}$/i.test(req.body.sha256)
+    ? req.body.sha256.toLowerCase()
+    : null;
+  const suppliedBytes = Number.isSafeInteger(Number(req.body?.bytes)) && Number(req.body.bytes) > 0
+    ? Number(req.body.bytes)
+    : null;
+  const suppliedWidth = Number.isSafeInteger(Number(req.body?.width)) && Number(req.body.width) > 0 ? Number(req.body.width) : null;
+  const suppliedHeight = Number.isSafeInteger(Number(req.body?.height)) && Number(req.body.height) > 0 ? Number(req.body.height) : null;
+  if (!Number.isFinite(insertionId) || !driveFileId || reason.length < 8 || selectedBy.length < 3) {
+    res.status(400).json({ error: "invalid_media_selection" });
+    return;
+  }
+  const [raw] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId)).limit(1);
+  if (!raw) return void res.status(404).json({ error: "Insertion not found" });
+  const insertion = await enrichInsertion(raw);
+  const drive = await findDriveCampaignMedia({ siteSigla: insertion.siteSigla ?? "", piCodigo: insertion.piCodigo ?? "", campaignName: insertion.campanhaName ?? "", refreshDrive: false });
+  const candidates = drive?.mediaFiles ?? [];
+  const selected = candidates.find((item) => String(item.id) === driveFileId);
+  if (!selected) return void res.status(409).json({ error: "drive_file_outside_campaign", candidates: candidates.map((item) => ({ id: item.id, name: item.name })) });
+  if (canonicalUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(canonicalUrl);
+    } catch {
+      return void res.status(400).json({ error: "canonical_url_invalid" });
+    }
+    if (parsed.protocol !== "https:" || /(^|\.)drive\.google\.com$/i.test(parsed.hostname)) return void res.status(400).json({ error: "canonical_url_invalid" });
+    const probe = await fetch(canonicalUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(20_000) });
+    if (!probe.ok) return void res.status(422).json({ error: "canonical_url_unreachable", status: probe.status });
+  }
+  const groupId = getAdRotateGroupId(insertion.siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const id = crypto.randomUUID();
+  await db.insert(insertionMediaSelectionsTable).values({
+    id, insertionId, driveFileId, fileName: selected.name ?? null, mimeType: (selected as any).mimeType ?? null,
+    bytes: suppliedBytes ?? (Number((selected as any).size ?? 0) || null), md5: (selected as any).md5Checksum ?? null,
+    sha256: suppliedSha256,
+    width: suppliedWidth,
+    height: suppliedHeight,
+    canonicalUrl, siteSigla: insertion.siteSigla, position: insertion.localFormatoNormalizado ?? insertion.localFormato,
+    groupId, reason, selectedBy,
+  }).onConflictDoUpdate({
+    target: [insertionMediaSelectionsTable.insertionId, insertionMediaSelectionsTable.driveFileId],
+    set: {
+      canonicalUrl,
+      reason,
+      selectedBy,
+      bytes: suppliedBytes ?? (Number((selected as any).size ?? 0) || null),
+      sha256: suppliedSha256,
+      width: suppliedWidth,
+      height: suppliedHeight,
+      verifiedAt: new Date(),
+    },
+  });
+  if (canonicalUrl) await db.update(insertionsTable).set({ mediaUrl: canonicalUrl, updatedAt: new Date() }).where(eq(insertionsTable.id, insertionId));
+  res.json({ ok: true, selectionId: id, insertionId, driveFileId, canonicalUrl, groupId });
+});
+
+router.post("/insertions/:id/adrotate-publication-snapshots", async (req, res): Promise<void> => {
+  const insertionId = Number.parseInt(req.params.id, 10);
+  const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload as Record<string, unknown> : {};
+  const siteSigla = typeof req.body?.siteSigla === "string" ? req.body.siteSigla.trim().toUpperCase() : "";
+  const source = typeof req.body?.source === "string" ? req.body.source.trim() : "";
+  if (!Number.isFinite(insertionId) || !siteSigla || !source) return void res.status(400).json({ error: "invalid_adrotate_snapshot" });
+  const snapshotHash = crypto.createHash("sha256").update(stableJsonStringify(payload)).digest("hex");
+  const id = crypto.randomUUID();
+  await db.insert(adrotatePublicationSnapshotsTable).values({
+    id, insertionId, siteSigla, groupId: Number(req.body?.groupId) || null, adId: Number(req.body?.adId) || null,
+    mediaUrl: typeof req.body?.mediaUrl === "string" ? req.body.mediaUrl : null,
+    mediaHash: typeof req.body?.mediaHash === "string" ? req.body.mediaHash : null,
+    redirectUrl: typeof req.body?.redirectUrl === "string" ? req.body.redirectUrl : null,
+    periodStart: typeof req.body?.periodStart === "string" ? req.body.periodStart : null,
+    periodEnd: typeof req.body?.periodEnd === "string" ? req.body.periodEnd : null,
+    publicPageUrl: typeof req.body?.publicPageUrl === "string" ? req.body.publicPageUrl : null,
+    source, snapshotHash, payload,
+  }).onConflictDoNothing();
+  res.json({ ok: true, snapshotId: id, snapshotHash });
+});
+
+router.get("/insertions/:id/adrotate-publication-snapshots", async (req, res): Promise<void> => {
+  const insertionId = Number.parseInt(req.params.id, 10);
+  if (!Number.isFinite(insertionId)) return void res.status(400).json({ error: "ID inválido." });
+  const items = await db.select().from(adrotatePublicationSnapshotsTable).where(eq(adrotatePublicationSnapshotsTable.insertionId, insertionId)).orderBy(desc(adrotatePublicationSnapshotsTable.observedAt));
+  res.json({ insertionId, items });
 });
 
 router.post("/insertions/:id/capture-proof/metadata", async (req, res): Promise<void> => {
@@ -2738,6 +3027,31 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       ...(req.body as Record<string, unknown>),
       mode: req.body?.mode ?? "delivery",
     });
+    if (exportOptions.mode === "delivery" && req.body?.splitZipByPosition === false) {
+      res.status(400).json({ error: "consolidated_delivery_disabled", details: "mode=delivery exige um ZIP independente por posição." });
+      return;
+    }
+    const descriptor = await describePiSiteExport(piCodigo, siteSigla);
+    if (!descriptor) {
+      res.status(404).json({ error: "PI/site sem inserções canônicas." });
+      return;
+    }
+    const deliveryRanks = { standard: 0, retroactive: 1, correction: 2, rejected_rework: 3 } as const;
+    const requestedReason = typeof req.body?.deliveryReason === "string" && req.body.deliveryReason in deliveryRanks
+      ? req.body.deliveryReason as keyof typeof deliveryRanks
+      : "standard";
+    const today = formatIsoDate(new Date());
+    const canonicalInsertions = await Promise.all(descriptor.operationalInsertionIds.map(async (id) => {
+      const [row] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, id));
+      return row;
+    }));
+    const inferredReason: keyof typeof deliveryRanks = canonicalInsertions.some((item) => item?.periodoFim && item.periodoFim < today)
+      ? "retroactive"
+      : "standard";
+    const deliveryClass = deliveryRanks[requestedReason] >= deliveryRanks[inferredReason] ? requestedReason : inferredReason;
+    const positions = Array.isArray(req.body?.positions)
+      ? Array.from(new Set(req.body.positions.filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0).map((item: string) => deliverySegment(item, "POSICAO"))))
+      : [];
     const payload = {
       piCodigo,
       siteSigla: siteSigla.toUpperCase(),
@@ -2749,6 +3063,9 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
       imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
       sendTelegram: req.body?.sendTelegram !== false,
+      splitZipByPosition: exportOptions.mode === "delivery",
+      positions,
+      deliveryClass,
       chatId: typeof req.body?.chatId === "string" ? req.body.chatId.trim() : null,
       source: typeof req.body?.source === "string" ? req.body.source : "api-server",
     };
@@ -2779,6 +3096,9 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       mode: exportOptions.mode,
       variant: exportOptions.variant,
       sendTelegram: payload.sendTelegram,
+      splitZipByPosition: payload.splitZipByPosition,
+      positions,
+      deliveryClass,
     });
   } catch (error) {
     res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
@@ -3233,6 +3553,18 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
           failed: failures,
         });
         return;
+      }
+
+      if (journalistPresentation) {
+        const deliveryClass = typeof req.query.deliveryClass === "string" ? req.query.deliveryClass : "standard";
+        await writeDeliveryAuditArtifacts({
+          rootDir: tempDir,
+          descriptor,
+          insertions: exportableInsertions,
+          requireHumanReview: deliveryClass !== "standard",
+        });
+        await writeContactSheet(tempDir, tempDir);
+        await writeSha256Sums(tempDir);
       }
 
       const archiveBase = journalistPresentation
@@ -3786,10 +4118,40 @@ router.post("/insertions", async (req, res): Promise<void> => {
   };
 
   insertData.atrasado = computeAtrasado(insertData);
-
-  const [ins] = await db.insert(insertionsTable).values(insertData).returning();
+  const canonicalIdentityKey = await resolveCanonicalIdentity(insertData);
+  const client = await pool.connect();
+  let ins: typeof insertionsTable.$inferSelect;
+  try {
+    await client.query("BEGIN");
+    if (canonicalIdentityKey) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`insertion:${canonicalIdentityKey}`]);
+      const existing = await client.query<{ id: number }>(
+        "SELECT id FROM insertions WHERE canonical_identity_key = $1 AND superseded_by_insertion_id IS NULL AND archived_at IS NULL LIMIT 1",
+        [canonicalIdentityKey],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        const [row] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, existing.rows[0].id));
+        res.status(200).json({ ...(await enrichInsertion(row!)), duplicate: true });
+        return;
+      }
+    }
+    const inserted = await client.query<{ id: number }>(
+      `INSERT INTO insertions
+       (campanha_id,site_id,local_formato,local_formato_normalizado,periodo_inicio,periodo_fim,periodo_original,status_legado,status_normalizado,banner_publicado_no_site,print_gerado,processo_enviado_agencia,docs_enviados,data_envio_agencia,media_url,observacoes,atrasado,canonical_identity_key,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,now(),now()) RETURNING id`,
+      [insertData.campanhaId, insertData.siteId, insertData.localFormato, insertData.localFormatoNormalizado, insertData.periodoInicio, insertData.periodoFim, insertData.periodoOriginal, insertData.statusLegado, insertData.statusNormalizado, insertData.bannerPublicadoNoSite, insertData.printGerado, insertData.processoEnviadoAgencia, insertData.docsEnviados, insertData.dataEnvioAgencia, insertData.mediaUrl, insertData.observacoes, insertData.atrasado, canonicalIdentityKey],
+    );
+    await client.query("COMMIT");
+    [ins] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, inserted.rows[0]!.id));
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
   const enriched = await enrichInsertion(ins);
-  res.status(201).json(enriched);
+  res.status(201).json({ ...enriched, duplicate: false });
 });
 
 router.get("/insertions/:id", async (req, res): Promise<void> => {
@@ -4050,6 +4412,14 @@ router.patch("/insertions/:id", async (req, res): Promise<void> => {
   if (parsed.data.observacoes !== undefined) updateData.observacoes = parsed.data.observacoes;
 
   const merged = { ...existing, ...updateData };
+  updateData.canonicalIdentityKey = await resolveCanonicalIdentity({
+    campanhaId: merged.campanhaId as number,
+    siteId: merged.siteId as number | null,
+    localFormato: merged.localFormato as string | null,
+    localFormatoNormalizado: merged.localFormatoNormalizado as string | null,
+    periodoInicio: merged.periodoInicio as string | null,
+    periodoFim: merged.periodoFim as string | null,
+  });
   updateData.atrasado = computeAtrasado({
     periodoFim: merged.periodoFim as string | null,
     processoEnviadoAgencia: merged.processoEnviadoAgencia as boolean,
