@@ -1,5 +1,5 @@
 import { db, printJobsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { runLocalCaptureProof } from "./local-capture-runtime";
 import type {
   PrintRunnerJobPayload,
@@ -27,6 +27,13 @@ class LocalPrintRunner implements PrintRunnerPort {
           const current = { ...job };
           current.status = "failed";
           current.finishedAt = new Date().toISOString();
+          current.durationMs = current.startedAt
+            ? Date.parse(current.finishedAt) - Date.parse(current.startedAt)
+            : null;
+          current.timedOut = error instanceof Error && (
+            String((error as Error & { code?: string }).code ?? "").includes("TIMEOUT")
+            || /timeout/i.test(error.message)
+          );
           current.items.push({
             insertionId: payload.targets[0]?.insertionId ?? 0,
             targetDate: payload.targets[0]?.targetDate ?? "",
@@ -53,8 +60,13 @@ class LocalPrintRunner implements PrintRunnerPort {
       kind: row.kind as PrintRunnerJobResult["kind"],
       status: row.status as PrintRunnerJobResult["status"],
       createdAt: row.createdAt.toISOString(),
+      queuedAt: row.createdAt.toISOString(),
       startedAt: row.startedAt?.toISOString() ?? null,
       finishedAt: row.finishedAt?.toISOString() ?? null,
+      queueWaitMs: typeof row.meta?.queueWaitMs === "number" ? row.meta.queueWaitMs : null,
+      durationMs: typeof row.meta?.durationMs === "number" ? row.meta.durationMs : null,
+      timedOut: row.meta?.timedOut === true,
+      runnerId: typeof row.meta?.runnerId === "string" ? row.meta.runnerId : null,
       totalTargets: row.totalTargets,
       completedTargets: row.completedTargets,
       failedTargets: row.failedTargets,
@@ -63,13 +75,19 @@ class LocalPrintRunner implements PrintRunnerPort {
   }
 
   private createJob(payload: PrintRunnerJobPayload, id: string): PrintRunnerJobResult {
+    const now = new Date().toISOString();
     return {
       id,
       kind: payload.kind,
       status: "queued",
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      queuedAt: now,
       startedAt: null,
       finishedAt: null,
+      queueWaitMs: null,
+      durationMs: null,
+      timedOut: false,
+      runnerId: process.env.RUNNER_ID ?? "adops-api-local",
       totalTargets: payload.targets.length,
       completedTargets: 0,
       failedTargets: 0,
@@ -80,6 +98,7 @@ class LocalPrintRunner implements PrintRunnerPort {
   private async execute(job: PrintRunnerJobResult, payload: PrintRunnerJobPayload): Promise<PrintRunnerJobResult> {
     job.status = "running";
     job.startedAt = new Date().toISOString();
+    job.queueWaitMs = Date.parse(job.startedAt) - Date.parse(job.queuedAt ?? job.createdAt);
     await this.save(job, payload);
 
     for (const target of payload.targets) {
@@ -92,6 +111,8 @@ class LocalPrintRunner implements PrintRunnerPort {
 
     job.status = job.failedTargets > 0 ? "failed" : "completed";
     job.finishedAt = new Date().toISOString();
+    job.durationMs = job.startedAt ? Date.parse(job.finishedAt) - Date.parse(job.startedAt) : null;
+    job.timedOut = job.items.some((item) => item.timedOut === true);
     await this.save(job, payload);
     return job;
   }
@@ -122,12 +143,17 @@ class LocalPrintRunner implements PrintRunnerPort {
         manifestHash: typeof capture.manifestHash === "string" ? capture.manifestHash : null,
       };
     } catch (error) {
+      const timedOut = error instanceof Error && (
+        String((error as Error & { code?: string }).code ?? "").includes("TIMEOUT")
+        || /timeout/i.test(error.message)
+      );
       return {
         insertionId: target.insertionId,
         targetDate: target.targetDate,
         captureAt: target.captureAt ?? null,
         status: "error",
         error: error instanceof Error ? error.message : String(error),
+        timedOut,
       };
     }
   }
@@ -143,6 +169,13 @@ class LocalPrintRunner implements PrintRunnerPort {
   }
 
   private async save(job: PrintRunnerJobResult, payload: PrintRunnerJobPayload): Promise<void> {
+    const runtimeMeta = {
+      queuedAt: job.queuedAt ?? job.createdAt,
+      queueWaitMs: job.queueWaitMs ?? null,
+      durationMs: job.durationMs ?? null,
+      timedOut: job.timedOut === true,
+      runnerId: job.runnerId ?? null,
+    };
     const row = {
       id: job.id,
       kind: job.kind,
@@ -156,6 +189,7 @@ class LocalPrintRunner implements PrintRunnerPort {
       failedTargets: job.failedTargets,
       payload: payload as unknown as Record<string, unknown>,
       items: job.items as unknown as Array<Record<string, unknown>>,
+      meta: runtimeMeta,
       startedAt: job.startedAt ? new Date(job.startedAt) : null,
       finishedAt: job.finishedAt ? new Date(job.finishedAt) : null,
       updatedAt: new Date(),
@@ -166,7 +200,10 @@ class LocalPrintRunner implements PrintRunnerPort {
       .values(row)
       .onConflictDoUpdate({
         target: printJobsTable.id,
-        set: row,
+        set: {
+          ...row,
+          meta: sql`COALESCE(${printJobsTable.meta}, '{}'::jsonb) || ${JSON.stringify(runtimeMeta)}::jsonb`,
+        },
       });
   }
 }

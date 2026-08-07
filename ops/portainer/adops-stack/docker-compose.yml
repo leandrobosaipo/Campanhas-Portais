@@ -5,6 +5,10 @@ services:
     image: postgres:16-alpine
     container_name: adops-postgres
     restart: unless-stopped
+    cpus: ${ADOPS_POSTGRES_CPU_LIMIT:-1.0}
+    mem_reservation: ${ADOPS_POSTGRES_MEMORY_RESERVATION:-256m}
+    mem_limit: ${ADOPS_POSTGRES_MEMORY_LIMIT:-768m}
+    pids_limit: ${ADOPS_POSTGRES_PIDS_LIMIT:-128}
     environment:
       POSTGRES_DB: ${ADOPS_POSTGRES_DB:-adops}
       POSTGRES_USER: ${ADOPS_POSTGRES_USER:-adops}
@@ -26,6 +30,12 @@ services:
     image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
     container_name: adops-api
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${ADOPS_API_STOP_GRACE_PERIOD:-7m}
+    cpus: ${ADOPS_API_CPU_LIMIT:-2.0}
+    mem_reservation: ${ADOPS_API_MEMORY_RESERVATION:-512m}
+    mem_limit: ${ADOPS_API_MEMORY_LIMIT:-1280m}
+    pids_limit: ${ADOPS_API_PIDS_LIMIT:-256}
     depends_on:
       adops-postgres:
         condition: service_healthy
@@ -40,6 +50,10 @@ services:
       ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
       ADOPS_GENERATED_PRINTS_ROOT: /app/tmp/generated-prints
       ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
+      ADOPS_CAPTURE_TIMEOUT_MS: ${ADOPS_CAPTURE_TIMEOUT_MS:-300000}
+      ADOPS_CAPTURE_KILL_GRACE_MS: ${ADOPS_CAPTURE_KILL_GRACE_MS:-5000}
+      ADOPS_PLAYWRIGHT_CONCURRENCY: ${ADOPS_PLAYWRIGHT_CONCURRENCY:-1}
+      ADOPS_PLAYWRIGHT_QUEUE_TIMEOUT_MS: ${ADOPS_PLAYWRIGHT_QUEUE_TIMEOUT_MS:-7200000}
       ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:?DO_SPACES_ACCESS_KEY_ID is required}
       DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:?DO_SPACES_SECRET_ACCESS_KEY is required}
@@ -76,6 +90,12 @@ services:
     image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
     container_name: adops-runner
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${ADOPS_RUNNER_STOP_GRACE_PERIOD:-15m}
+    cpus: ${ADOPS_RUNNER_CPU_LIMIT:-1.0}
+    mem_reservation: ${ADOPS_RUNNER_MEMORY_RESERVATION:-128m}
+    mem_limit: ${ADOPS_RUNNER_MEMORY_LIMIT:-768m}
+    pids_limit: ${ADOPS_RUNNER_PIDS_LIMIT:-192}
     depends_on:
       adops-api:
         condition: service_healthy
@@ -106,10 +126,13 @@ services:
       ADOPS_MULTISITE_SSH_PORT: ${ADOPS_MULTISITE_SSH_PORT:-22}
       ADOPS_MULTISITE_SSH_USER: ${ADOPS_MULTISITE_SSH_USER:-cod5adops}
       ADOPS_MULTISITE_SSH_KEY_PATH: ${ADOPS_MULTISITE_SSH_KEY_PATH:-/root/.ssh/id_rsa_facilnam_adops}
-      OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
+      OPS_POLL_MIN_MS: ${OPS_POLL_MIN_MS:-2000}
+      OPS_POLL_MAX_MS: ${OPS_POLL_MAX_MS:-10000}
+      OPS_REQUEST_TIMEOUT_MS: ${OPS_REQUEST_TIMEOUT_MS:-30000}
+      ADOPS_RUNNER_HEALTH_PORT: "4012"
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
-      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe}
+      OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,analytics-report,pi-site-export,campaign-fulfillment,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe}
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: ${DRIVE_PI_MONITOR_ENABLED:-false}
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
@@ -151,6 +174,11 @@ services:
       - adops_runner_state:/var/lib/adops
       - adops_pnpm_store:/var/lib/adops/.pnpm-store
       - adops_ssh:/root/.ssh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4012/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
     networks:
       - adops_internal
 
@@ -159,6 +187,12 @@ services:
     image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
     container_name: adops-drive-pi-monitor-stack
     restart: unless-stopped
+    init: true
+    stop_grace_period: ${ADOPS_DRIVE_MONITOR_STOP_GRACE_PERIOD:-2m}
+    cpus: ${ADOPS_DRIVE_MONITOR_CPU_LIMIT:-0.5}
+    mem_reservation: ${ADOPS_DRIVE_MONITOR_MEMORY_RESERVATION:-96m}
+    mem_limit: ${ADOPS_DRIVE_MONITOR_MEMORY_LIMIT:-384m}
+    pids_limit: ${ADOPS_DRIVE_MONITOR_PIDS_LIMIT:-128}
     depends_on:
       adops-api:
         condition: service_healthy
@@ -175,7 +209,9 @@ services:
       ADOPS_RUNNER_HEALTH_PORT: "4012"
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
-      OPS_POLL_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
+      OPS_POLL_MIN_MS: ${OPS_POLL_MIN_MS:-2000}
+      OPS_POLL_MAX_MS: ${OPS_POLL_MAX_MS:-10000}
+      OPS_REQUEST_TIMEOUT_MS: ${OPS_REQUEST_TIMEOUT_MS:-30000}
       OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh,media-monitor
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: "true"
@@ -219,6 +255,47 @@ services:
       ADOPS_TELEGRAM_BOT_URL: ${ADOPS_TELEGRAM_BOT_URL:-https://adops-telegram-bot.leandro471.workers.dev}
     volumes:
       - adops_drive_pi_monitor_state:/var/lib/adops
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4012/healthz >/dev/null"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - adops_internal
+
+  adops-runner-print-single:
+    image: cod5/adops-runtime:${ADOPS_IMAGE_TAG:?ADOPS_IMAGE_TAG is required}
+    container_name: adops-runner-print-single
+    restart: unless-stopped
+    init: true
+    stop_grace_period: ${ADOPS_PRINT_RUNNER_STOP_GRACE_PERIOD:-7m}
+    cpus: ${ADOPS_PRINT_RUNNER_CPU_LIMIT:-0.5}
+    mem_reservation: ${ADOPS_PRINT_RUNNER_MEMORY_RESERVATION:-96m}
+    mem_limit: ${ADOPS_PRINT_RUNNER_MEMORY_LIMIT:-384m}
+    pids_limit: ${ADOPS_PRINT_RUNNER_PIDS_LIMIT:-128}
+    depends_on:
+      adops-api:
+        condition: service_healthy
+    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    environment:
+      TZ: America/Cuiaba
+      DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
+      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api.codigo5.com.br}
+      OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
+      PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
+      CAMPANHAS_PORTAIS_ROOT: /app
+      OPS_POLL_MIN_MS: ${OPS_POLL_MIN_MS:-2000}
+      OPS_POLL_MAX_MS: ${OPS_POLL_MAX_MS:-10000}
+      OPS_REQUEST_TIMEOUT_MS: ${OPS_REQUEST_TIMEOUT_MS:-30000}
+      OPS_JOB_KINDS: print-single
+      RUNNER_ID: runner-print-single
+      ADOPS_RUNNER_HEALTH_PORT: "4012"
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
+    volumes:
+      - adops_runner_state:/var/lib/adops
+      - adops_pnpm_store:/var/lib/adops/.pnpm-store
+      - adops_ssh:/root/.ssh:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4012/healthz >/dev/null"]
       interval: 20s

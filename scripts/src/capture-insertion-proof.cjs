@@ -6677,8 +6677,8 @@ async function main() {
       `--host-resolver-rules=MAP ${mapping.domain} ${mapping.originIp}`,
     ];
   }
-  const browser = await chromium.launch(launchOptions);
-  const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+  let browser = null;
+  let page = null;
   const resourceFailures = [];
   const recordResourceFailure = (url, resourceType, status, reason) => {
     if (!url || !["image", "media", "font"].includes(resourceType)) return;
@@ -6690,16 +6690,17 @@ async function main() {
     if (resourceFailures.some((item) => item.url === sanitizedUrl && item.status === status && item.reason === reason)) return;
     resourceFailures.push({ url: sanitizedUrl, resourceType, status, reason });
   };
-  page.on("requestfailed", (request) => {
-    recordResourceFailure(request.url(), request.resourceType(), null, request.failure()?.errorText || "request_failed");
-  });
-  page.on("response", (response) => {
-    if (response.status() < 400) return;
-    const request = response.request();
-    recordResourceFailure(response.url(), request.resourceType(), response.status(), `http_${response.status()}`);
-  });
-
   try {
+    browser = await chromium.launch(launchOptions);
+    page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+    page.on("requestfailed", (request) => {
+      recordResourceFailure(request.url(), request.resourceType(), null, request.failure()?.errorText || "request_failed");
+    });
+    page.on("response", (response) => {
+      if (response.status() < 400) return;
+      const request = response.request();
+      recordResourceFailure(response.url(), request.resourceType(), response.status(), `http_${response.status()}`);
+    });
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
     if (args.apiBase && internalCaptureToken) {
       try {
@@ -8000,8 +8001,10 @@ async function main() {
 
     throw error;
   } finally {
-    await page.close();
-    await browser.close();
+    await Promise.allSettled([
+      page ? page.close() : Promise.resolve(),
+      browser ? browser.close() : Promise.resolve(),
+    ]);
   }
 }
 
