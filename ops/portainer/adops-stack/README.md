@@ -124,15 +124,16 @@ Budgets padrão do Compose standalone:
 
 | Serviço | CPU | Reserva | Limite | PIDs | init | stop grace |
 |---|---:|---:|---:|---:|---:|---:|
-| `adops-api` | 2.0 | 512 MiB | 1280 MiB | 256 | sim | 7 min |
+| `adops-api` | 2.0 | 512 MiB | 1536 MiB | 256 | sim | 7 min |
 | `adops-runner` | 1.0 | 128 MiB | 768 MiB | 192 | sim | 15 min |
 | `adops-runner-print-single` | 0.5 | 96 MiB | 384 MiB | 128 | sim | 7 min |
 | `adops-drive-pi-monitor-stack` | 0.5 | 96 MiB | 384 MiB | 128 | sim | 2 min |
 | `adops-postgres` | 1.0 | 256 MiB | 768 MiB | 128 | não | padrão |
 
-Todos os valores são configuráveis por `ADOPS_*`. O limite da API é 1280 MiB
-porque o print candidato pré-rollout atingiu aproximadamente 817,5 MiB; o
-valor original de 1 GiB não deixaria a margem de 1,5 vezes exigida.
+Todos os valores são configuráveis por `ADOPS_*`. O limite da API foi elevado
+para 1536 MiB porque a carga concorrente validada atingiu 955 MiB de working
+set; 1280 MiB ultrapassou o gate de 70%. O novo valor é o próximo múltiplo de
+128 MiB acima da margem de 1,5 vezes e não excede o teto de 1,5 GiB.
 
 O script gera relatório em:
 

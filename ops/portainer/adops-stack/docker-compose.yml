@@ -34,7 +34,7 @@ services:
     stop_grace_period: ${ADOPS_API_STOP_GRACE_PERIOD:-7m}
     cpus: ${ADOPS_API_CPU_LIMIT:-2.0}
     mem_reservation: ${ADOPS_API_MEMORY_RESERVATION:-512m}
-    mem_limit: ${ADOPS_API_MEMORY_LIMIT:-1280m}
+    mem_limit: ${ADOPS_API_MEMORY_LIMIT:-1536m}
     pids_limit: ${ADOPS_API_PIDS_LIMIT:-256}
     depends_on:
       adops-postgres:

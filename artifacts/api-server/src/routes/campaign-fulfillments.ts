@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
-import { chromium } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
+import { withPlaywrightPermit } from "../lib/playwright-budget";
 
 type FulfillmentJobRow = {
   id: string;
@@ -226,23 +227,29 @@ router.get("/campaign-fulfillments/jobs/:jobId/report", async (req, res): Promis
 router.get("/campaign-fulfillments/jobs/:jobId/report.pdf", async (req, res): Promise<void> => {
   const job = await findJob(req.params.jobId);
   if (!job) return void res.status(404).send("Job de fulfillment não encontrado.");
-  let browser;
-  try {
-    browser = await chromium.launch({
-      headless: true,
-      ...(process.env["ADOPS_CHROMIUM_EXECUTABLE_PATH"]?.trim()
-        ? { executablePath: process.env["ADOPS_CHROMIUM_EXECUTABLE_PATH"]!.trim() }
-        : {}),
-    });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await page.setContent(renderReport(job), { waitUntil: "networkidle" });
-    const pdf = await page.pdf({ format: "A4", printBackground: true, margin: { top: "12mm", right: "10mm", bottom: "12mm", left: "10mm" } });
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Content-Disposition", `inline; filename=PI-${String(describeJob(job).piCodigo)}-${String(describeJob(job).siteSigla)}.pdf`);
-    res.type("application/pdf").send(pdf);
-  } finally {
-    await browser?.close();
-  }
+  const pdf = await withPlaywrightPermit(`campaign-fulfillment-report:${job.id}`, async () => {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        ...(process.env["ADOPS_CHROMIUM_EXECUTABLE_PATH"]?.trim()
+          ? { executablePath: process.env["ADOPS_CHROMIUM_EXECUTABLE_PATH"]!.trim() }
+          : {}),
+      });
+      page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+      await page.setContent(renderReport(job), { waitUntil: "networkidle" });
+      return page.pdf({ format: "A4", printBackground: true, margin: { top: "12mm", right: "10mm", bottom: "12mm", left: "10mm" } });
+    } finally {
+      await Promise.allSettled([
+        page ? page.close() : Promise.resolve(),
+        browser ? browser.close() : Promise.resolve(),
+      ]);
+    }
+  });
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Disposition", `inline; filename=PI-${String(describeJob(job).piCodigo)}-${String(describeJob(job).siteSigla)}.pdf`);
+  res.type("application/pdf").send(pdf);
 });
 
 export default router;
