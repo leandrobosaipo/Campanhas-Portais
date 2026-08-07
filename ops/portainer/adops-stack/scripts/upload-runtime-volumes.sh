@@ -180,7 +180,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs -C "$REPO_ROOT/artifacts/adops/dist/public" -
 tar --no-xattrs -C "$RELEASE_DIR" -rf "$WEB_TAR" cod5-release.json
 
 upload_to_volume "$APP_VOLUME" mcr.microsoft.com/playwright:v1.59.1-noble /app "$APP_TAR" \
-  'corepack enable && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile' \
+  'corepack enable && cod5_pnpm_ready=0; for cod5_attempt in 1 2 3 4; do if corepack prepare pnpm@10.17.0 --activate; then cod5_pnpm_ready=1; break; fi; sleep $((cod5_attempt * 3)); done; test "$cod5_pnpm_ready" = 1 && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile' \
   'test -s /app/cod5-release.json && test -s /app/artifacts/api-server/dist/index.mjs && test -d /app/node_modules'
 upload_to_volume "$WEB_VOLUME" nginx:1.27-alpine /usr/share/nginx/html "$WEB_TAR" "" \
   'test -s /usr/share/nginx/html/cod5-release.json && test -s /usr/share/nginx/html/index.html'
