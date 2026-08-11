@@ -236,12 +236,14 @@
         "animatedBannerDelayMs": 2200,
         "postVisualWaitMs": 2600,
         "viewportTrimBottomPx": 120,
-        "gifFrameSelection": "source_preferred",
-        "requireStableFrame": false,
-        "requireLegibleFrame": true,
-        "preferBestLegibleFrame": true
-      }
-    },
+          "gifFrameSelection": "source_preferred",
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "preferBestLegibleFrame": true,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
+        }
+      },
     {
       "groupId": 8,
       "operationalName": "LATERAL 03",
