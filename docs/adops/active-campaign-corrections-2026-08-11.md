@@ -39,6 +39,7 @@ A inserção acidental 1863 foi removida somente depois de o anúncio 26 ter sid
 - ID preservado: `1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu`;
 - revisão anterior mantida indefinidamente;
 - revisão nova: `0B-HSjT0FZ9rHZkVROEJ4YXdWQ0k3SzZtV1d4UC84bkRJZVcwPQ`;
+- tamanho e SHA-256 relidos do Drive: `311046` bytes, `bc684e0c5d3584539296c9953813a986ccfe878384864b3268fc30dc21508c12`;
 - `AGOSTO 2026!G25`: `LATERAL 02 — SIDEBAR — 300x250`;
 - status atualizados somente após publicação confirmada: H24, H25, H59 e H60;
 - 76 membros OOXML preservados; o arquivo de origem e a revisão nova não possuem `vbaProject.bin`.
@@ -72,6 +73,14 @@ Provas vivas confirmadas em 11/08:
 - 1831: auditada, HTTP 200.
 
 Os retroativos foram enfileirados por inserção em lotes pequenos. Datas passadas somente podem ser aprovadas como `audited_reconstruction` com preview assinado e prova editorial suficiente. Ausência de prova deve continuar bloqueada.
+
+Checkpoint após o primeiro lote:
+
+- as 2 evidências antes inválidas foram regeneradas e aprovadas;
+- lote da inserção 1841 concluído: 10/10 datas validadas, zero erro;
+- painel: 67 auditadas, 79 ausentes e zero inválida;
+- 12 lotes continuam assíncronos, um em execução e onze aguardando o runner;
+- `hasDivergence=0` no reconciliador ativo.
 
 ## Releases e rollback
 
