@@ -48,6 +48,8 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 ## Fluxo para nova PI
 
 1. Conferir PI/email/PDF e identificar campanha, cliente, agência, portal, posição, período, mídia e destino.
+   - Ler todas as linhas da tabela de veiculação e todos os arquivos da pasta de mídia, inclusive `.txt`/Docs com links.
+   - Relacionar cada linha a uma mídia por tipo e dimensão antes de alterar planilha, AdOps ou AdRotate.
 2. Sincronizar planilha.
 3. Verificar se campanha/inserção já existem no AdOps.
 4. Verificar AdRotate do portal e evitar duplicidade.
@@ -57,6 +59,14 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 8. Gerar prints obrigatórios, incluindo retroativos em aberto.
 9. Validar auditoria por data.
 10. Enviar resumo e prints no Telegram quando solicitado.
+
+Ao editar a planilha operacional `.xlsm` no Drive:
+
+- baixar novamente imediatamente antes da alteração;
+- comparar revisão, `modifiedTime`, tamanho e estrutura ZIP;
+- reaplicar apenas as células pretendidas sobre a revisão mais recente;
+- publicar como nova versão do mesmo arquivo, preservando ID e nome;
+- reler a revisão remota e manter a versão anterior recuperável.
 
 ## Comandos operacionais principais
 
