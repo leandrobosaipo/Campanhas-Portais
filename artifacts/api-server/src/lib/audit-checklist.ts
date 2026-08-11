@@ -728,7 +728,12 @@ export async function validateAuditChecklist(input: {
       }
     }
 
-    if (resolvedRule.proofStyle === "viewport_with_slot_inset" || metadataString(metadata, "finalProofStyle") === "viewport_with_slot_inset") {
+    const finalProofStyle = metadataString(metadata, "finalProofStyle") || (
+      typeof finalPngSlotAudit?.finalProofStyle === "string"
+        ? finalPngSlotAudit.finalProofStyle.trim()
+        : ""
+    );
+    if (finalProofStyle === "viewport_with_slot_inset") {
       blockingIssues.push(issue(
         "proof_style_inset_forbidden",
         "proofStyle",
