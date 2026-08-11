@@ -212,8 +212,8 @@ function resolveReachableMediaUrl(value) {
     const url = new URL(String(value).startsWith("//") ? `https:${value}` : String(value));
     if (url.hostname === "perrenguematogrosso.com" && url.pathname.startsWith("/app/uploads/")) {
       url.hostname = "admin.perrenguematogrosso.com";
-      return url.toString();
     }
+    return url.toString();
   } catch {}
   return value;
 }
