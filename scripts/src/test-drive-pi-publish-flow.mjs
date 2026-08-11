@@ -60,6 +60,15 @@ const clickResolved = runner.resolveDrivePiClickUrl(
 assert.equal(clickResolved.clickUrl, "https://cliente.example.com/landing");
 assert.equal(clickResolved.fields.insertions[0].clickUrl, "https://cliente.example.com/landing");
 assert.equal(clickResolved.fields.insertions[1].clickUrl, undefined, "link de banner não pode ser herdado pelo vídeo");
+assert.equal(
+  runner.resolveInsertionClickUrl({ localFormato: "VIDEO", mediaType: "video" }, { clickUrl: "https://cliente.example.com/landing" }),
+  null,
+  "aplicação da PI não pode reintroduzir no vídeo o link global destinado aos banners",
+);
+assert.equal(
+  runner.resolveInsertionClickUrl({ localFormato: "LATERAL 02", mediaType: "image" }, { clickUrl: "https://cliente.example.com/landing" }),
+  "https://cliente.example.com/landing",
+);
 
 const pi90892Text = await readFile(path.join(root, "scripts/fixtures/pi-90892-extracted.txt"), "utf8");
 const pi90892Lines = runner.parsePiMediaLinesFromText(pi90892Text, "PERRENGUE");

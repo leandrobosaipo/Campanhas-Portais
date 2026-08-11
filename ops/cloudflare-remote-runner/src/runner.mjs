@@ -511,6 +511,11 @@ function resolveDrivePiClickUrl(fields, packageContext) {
   };
 }
 
+function resolveInsertionClickUrl(raw, fields) {
+  if (isVideoInsertion(raw)) return null;
+  return readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields?.clickUrl || null;
+}
+
 function scoreImageMediaForInsertion(mediaItem, raw, fields) {
   const haystack = normalizeText(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`);
   let score = 0;
@@ -3425,7 +3430,7 @@ async function applyDrivePiToAdOps(fields, payload) {
     if (duplicate) {
       const duplicatePatch = {};
       const mediaUrl = readStringRecord(raw, ["mediaUrl"]);
-      const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
+      const clickUrl = resolveInsertionClickUrl(raw, fields);
       if (mediaUrl && mediaUrl !== duplicate.mediaUrl) duplicatePatch.mediaUrl = mediaUrl;
       if (readStringRecord(raw, ["periodoOriginal"]) && readStringRecord(raw, ["periodoOriginal"]) !== duplicate.periodoOriginal) {
         duplicatePatch.periodoOriginal = readStringRecord(raw, ["periodoOriginal"]);
@@ -3443,7 +3448,7 @@ async function applyDrivePiToAdOps(fields, payload) {
       skippedInsertions.push({ id: duplicate.id, reason: "duplicate" });
       continue;
     }
-    const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
+    const clickUrl = resolveInsertionClickUrl(raw, fields);
     const insertion = await privateApi("/api/insertions", {
       campanhaId: campaign.id,
       siteId,
@@ -5592,6 +5597,7 @@ export {
   parsePiMediaLinesFromText,
   planDrivePiMediaAssignments,
   resolveDrivePiClickUrl,
+  resolveInsertionClickUrl,
   resolveCanonicalPortalPosition,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
