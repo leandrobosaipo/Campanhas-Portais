@@ -107,6 +107,21 @@ const perrengueConfig = JSON.parse(await readFile(path.join(root, "config/adrota
 assert.deepEqual(perrengueConfig.formatMappings.map((item) => item.groupId).sort((a, b) => a - b), Array.from({ length: 14 }, (_, index) => index + 1));
 assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "TOPO LATERAL", mediaType: "image" }).groupId, 10);
 assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "BANNER LATERAL SEGUNDA DOBRA", dimensions: "300x250", mediaType: "image" }).groupId, 7);
+assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "MEGABANNER HOME 1", dimensions: "670x90", mediaType: "image" }).groupId, 2);
+assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PPMT", contractedPosition: "MEGABANNER HOME 1", dimensions: "670x90", mediaType: "image" }).groupId, 2);
+assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PPMT", contractedPosition: "MEGABANNER HOME 1", dimensions: "300x250", mediaType: "image" }).ok, false);
+
+const activeCampaignFixtures = await Promise.all([
+  ["pi-009746-extracted.txt", "PERRENGUE"],
+  ["pi-17111-extracted.txt", "PERRENGUE"],
+  ["pi-17048-extracted.txt", "PPMT"],
+].map(async ([filename, siteSigla]) => runner.parsePiMediaLinesFromText(
+  await readFile(path.join(root, "scripts/fixtures", filename), "utf8"),
+  siteSigla,
+)));
+assert.deepEqual(activeCampaignFixtures.map((items) => items.length), [1, 1, 2]);
+assert.deepEqual(activeCampaignFixtures.flat().map((item) => item.adrotateGroupId), [2, 7, 2, 1]);
+assert.deepEqual(activeCampaignFixtures.flat().map((item) => item.dimensions), ["670x90", "300x250", "670x90", "825x120"]);
 
 const readiness = runner.validateDrivePiPackageReadiness(
   { hasPdf: true, hasMedia: true },

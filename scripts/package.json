@@ -23,6 +23,7 @@
     "test:public-worker-auth": "node ./src/test-public-worker-auth.mjs",
     "test:drive-pi-event-flow": "node ./src/test-drive-pi-event-flow.mjs",
     "test:drive-pi-publish-flow": "node ./src/test-drive-pi-publish-flow.mjs",
+    "test:active-campaign-format-contracts": "ADOPS_PROJECT_ROOT=.. tsx ./src/test-active-campaign-format-contracts.ts",
     "test:drive-inventory-flow": "node ./src/test-drive-inventory-flow.mjs",
     "test:git-platform-pilot": "node ./src/test-git-platform-pilot.mjs",
     "test:api-bundle-runtime": "node ./src/test-api-bundle-runtime.mjs",
