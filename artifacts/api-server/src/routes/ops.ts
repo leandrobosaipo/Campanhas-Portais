@@ -2128,6 +2128,11 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
   const replaceExisting = req.body?.replaceExisting !== false;
   const purgeCache = req.body?.purgeCache !== false;
   const generateEvidence = req.body?.generateEvidence === true;
+  const reuseExternalKey = readOptionalString(req.body?.reuseExternalKey);
+  if (reuseExternalKey && !/^ADOPS-[A-Z0-9_-]+-\d+$/i.test(reuseExternalKey)) {
+    res.status(400).json({ error: "bad_request", details: "reuseExternalKey inválida." });
+    return;
+  }
   const date = readOptionalString(req.body?.date);
   const captureAt = readOptionalString(req.body?.captureAt);
 
@@ -2137,6 +2142,7 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
     replaceExisting,
     purgeCache,
     generateEvidence,
+    reuseExternalKey,
     date,
     captureAt,
     mode: apply ? "apply" : "preview",

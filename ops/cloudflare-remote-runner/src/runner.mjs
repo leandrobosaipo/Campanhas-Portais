@@ -2863,7 +2863,7 @@ function destinationUrlFromObservations(value) {
   return match?.[1] ? trimUrlPunctuation(match[1]) : null;
 }
 
-function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence }) {
+function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence, reuseExternalKey = null }) {
   const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
   const mediaUrl = firstNonEmptyString(
     checklist?.expectedMedia?.mediaUrl,
@@ -2897,7 +2897,7 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
   if (!mediaUrl) throw new Error(`Inserção ${insertion.id} sem mediaUrl resolvida.`);
   if (!campaignId) throw new Error(`Inserção ${insertion.id} sem campanha vinculada.`);
   const siteSigla = firstNonEmptyString(site?.sigla, insertion.siteSigla, insertion.site?.sigla);
-  const externalKey = siteSigla ? `ADOPS-${siteSigla}-${insertion.id}` : `ADOPS-${insertion.id}`;
+  const externalKey = reuseExternalKey || (siteSigla ? `ADOPS-${siteSigla}-${insertion.id}` : `ADOPS-${insertion.id}`);
 
   return {
     insertion_id: insertion.id,
@@ -3436,7 +3436,7 @@ async function applyDrivePiToAdOps(fields, payload) {
     const periodoFim = readStringRecord(raw, ["periodoFim", "fim"]);
     const duplicate = existingInsertions.find((item) =>
       Number(item.siteId ?? 0) === Number(siteId) &&
-      normalizeSlotKey(item.localFormatoNormalizado ?? item.localFormato) === normalizeSlotKey(localFormato) &&
+      sameCanonicalInsertionSlot(raw, item) &&
       item.periodoInicio === periodoInicio &&
       item.periodoFim === periodoFim
     );
@@ -3489,6 +3489,21 @@ async function applyDrivePiToAdOps(fields, payload) {
     createdInsertions: createdInsertions.map((item) => item.id),
     skippedInsertions,
   };
+}
+
+function sameCanonicalInsertionSlot(raw, existing) {
+  const rawSlot = normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+  const existingSlot = normalizeSlotKey(readStringRecord(existing, ["localFormatoNormalizado", "localFormato"]));
+  if (rawSlot && rawSlot === existingSlot) return true;
+  const siteSigla = readStringRecord(raw, ["siteSigla"]);
+  const rawGroupId = readNumberRecord(raw, ["adrotateGroupId", "groupId"]);
+  if (!siteSigla || !rawGroupId) return false;
+  const existingCanonical = resolveCanonicalPortalPosition({
+    siteSigla,
+    contractedPosition: readStringRecord(existing, ["localFormatoNormalizado", "localFormato"]),
+    groupId: rawGroupId,
+  });
+  return existingCanonical.ok && Number(existingCanonical.groupId) === Number(rawGroupId);
 }
 
 function insertionScopeKey(raw) {
@@ -3699,6 +3714,10 @@ async function executeAdrotatePublishJob(payload) {
   const replaceExisting = payload?.replaceExisting !== false;
   const purgeCache = payload?.purgeCache !== false;
   const generateEvidence = payload?.generateEvidence === true;
+  const reuseExternalKey = firstNonEmptyString(payload?.reuseExternalKey);
+  if (reuseExternalKey && !/^ADOPS-[A-Z0-9_-]+-\d+$/i.test(reuseExternalKey)) {
+    throw new Error("adrotate-publish recebeu reuseExternalKey inválida.");
+  }
   const targetDate = firstNonEmptyString(payload?.date) ?? todayInCuiaba();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
     throw new Error("adrotate-publish exige date em YYYY-MM-DD quando informado.");
@@ -3740,6 +3759,7 @@ async function executeAdrotatePublishJob(payload) {
     replaceExisting,
     purgeCache,
     generateEvidence,
+    reuseExternalKey,
   });
   const payloadJson = JSON.stringify(publishPayload);
   const wpCliCommand = [
@@ -5612,6 +5632,7 @@ export {
   resolveDrivePiClickUrl,
   resolveInsertionClickUrl,
   resolveCanonicalPortalPosition,
+  sameCanonicalInsertionSlot,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectObservedMediaLink,

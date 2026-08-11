@@ -110,6 +110,10 @@ assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", con
 assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "MEGABANNER HOME 1", dimensions: "670x90", mediaType: "image" }).groupId, 2);
 assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PPMT", contractedPosition: "MEGABANNER HOME 1", dimensions: "670x90", mediaType: "image" }).groupId, 2);
 assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PPMT", contractedPosition: "MEGABANNER HOME 1", dimensions: "300x250", mediaType: "image" }).ok, false);
+assert.equal(runner.sameCanonicalInsertionSlot(
+  { siteSigla: "PPMT", localFormato: "TOPO", localFormatoNormalizado: "MEGABANNER TOPO", adrotateGroupId: 1 },
+  { localFormato: "TOPO", localFormatoNormalizado: "MEGABANNER TOPO" },
+), true);
 
 const activeCampaignFixtures = await Promise.all([
   ["pi-009746-extracted.txt", "PERRENGUE"],
@@ -152,6 +156,8 @@ for (const source of [publicApi, privateApi]) {
   assert(source.includes("strictInsertionScope"));
   assert(source.includes("allowPdfInsertions"));
 }
+assert(privateApi.includes("reuseExternalKey"), "API privada sem recuperação explícita de chave AdRotate");
+assert((await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8")).includes("reuseExternalKey"));
 assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
 assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");
 assert(perrenguePluginDeploy.includes("echo WP_CONTENT_DIR;"), "deploy PMT deve resolver o diretório de conteúdo ativo do Bedrock");
