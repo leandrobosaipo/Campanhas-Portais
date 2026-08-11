@@ -167,6 +167,8 @@ async function writeRetroAuditArtifacts(options: {
         ? rawMetadata.retroContentManifest as Record<string, unknown>
         : {};
       const proof = status.audit?.retroContentProof ?? null;
+      const captureMode = rawMetadata.captureMode === "live_capture" ? "live_capture" : "audited_reconstruction";
+      const liveCapture = captureMode === "live_capture";
       const manifest = {
         version: 1,
         piCodigo: options.descriptor.piCodigo,
@@ -174,13 +176,15 @@ async function writeRetroAuditArtifacts(options: {
         insertionId: insertion.id,
         date,
         cutoff: typeof rawManifest.cutoff === "string" ? rawManifest.cutoff : status.audit?.requestedCaptureAt ?? null,
-        source: typeof rawManifest.source === "string" ? rawManifest.source : proof?.sourceMode ?? null,
-        reconstructed: rawManifest.reconstructed === true,
+        source: liveCapture ? "live_capture" : (typeof rawManifest.source === "string" ? rawManifest.source : proof?.sourceMode ?? null),
+        reconstructed: liveCapture ? false : rawManifest.reconstructed === true,
         expectedPosts: sanitizeEditorialPosts(rawManifest.expectedPosts),
         visiblePosts: sanitizeEditorialPosts(rawManifest.visiblePosts),
         proof,
       };
-      const approved = status.status === "ok" && proof?.status === "approved" && proof?.futureCount === 0 && Boolean(proof?.manifestHash);
+      const approved = status.status === "ok" && (
+        liveCapture || (proof?.status === "approved" && proof?.futureCount === 0 && Boolean(proof?.manifestHash))
+      );
       if (!approved) {
         throw new EvidenceExportInputError(`Prova editorial não aprovada na inserção ${insertion.id}, data ${date}.`, 422);
       }
@@ -190,6 +194,8 @@ async function writeRetroAuditArtifacts(options: {
         insertionId: insertion.id,
         date,
         status: "audited",
+        approved,
+        captureMode,
         retroContentProof: proof,
         manifestFile: `04-AUDITORIA/MANIFESTOS-EDITORIAIS/${manifestName}`,
       });
@@ -197,12 +203,12 @@ async function writeRetroAuditArtifacts(options: {
   }
 
   const report = {
-    ok: entries.length > 0 && entries.every((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved"),
+    ok: entries.length > 0 && entries.every((entry) => entry.approved === true),
     generatedAt: new Date().toISOString(),
     piCodigo: options.descriptor.piCodigo,
     siteSigla: options.descriptor.siteSigla,
     total: entries.length,
-    approved: entries.filter((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved").length,
+    approved: entries.filter((entry) => entry.approved === true).length,
     futureCount: entries.reduce((sum, entry) => sum + Number((entry.retroContentProof as Record<string, unknown>)?.futureCount || 0), 0),
     entries,
   };

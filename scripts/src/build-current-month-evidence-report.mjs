@@ -679,12 +679,14 @@ function renderHtml({ insertions, portals, audits, summary }) {
           ['Formato', item.localFormatoNormalizado || item.localFormato],
           ['Período', item.periodoInicio + ' a ' + item.periodoFim],
           ['Evidências', item.auditedDays + '/' + item.requiredDays.length],
+          ['Tipo da prova', day?.captureMode === 'live_capture' ? 'captura viva' : day?.captureMode === 'audited_reconstruction' ? 'reconstrução auditada' : '-'],
           ['Status', item.statusDetail],
           ['Pendentes', item.missingDates.length ? item.missingDates.join(', ') : '-'],
           ['Inválidas', item.invalidDates.length ? item.invalidDates.join(', ') : '-'],
           ['Grupo', item.adrotateGroupId || '-']
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
+          iconLink(day?.url, 'print original'),
           iconLink(item.portalUrl, 'portal'),
           iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'adrotate ad' : 'adrotate grupo'),
           iconLink(item.mediaUrl, 'mídia'),
@@ -775,6 +777,7 @@ async function main() {
         date,
         status: status.status || "missing",
         url: status.arquivoUrl || status.url || "",
+        captureMode: status.audit?.captureMode || status.audit?.retroContentProof?.sourceMode || null,
         issues: status.audit?.issues || status.issues || [],
         statusDetail:
           status.status === "audited"
@@ -834,11 +837,22 @@ async function main() {
     audits,
     insertions: enriched,
   };
+  const reportMetadata = {
+    title: `AdOps · Evidências de ${competencia}`,
+    description: `Acompanhamento diário de inserções, auditorias e prints de ${competencia}.`,
+    kind: "relatorio",
+    thumb: "assets/thumb.png",
+    favicon: "assets/favicon.png",
+    logo: "assets/logo.png",
+    updatedAt: targetDate,
+  };
 
   await writeFile(outputPath, html, "utf8");
   await writeFile(snapshotPath, html, "utf8");
   await writeFile(path.join(latestDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
   await writeFile(path.join(snapshotDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
+  await writeFile(path.join(latestDir, "report.json"), JSON.stringify(reportMetadata, null, 2), "utf8");
+  await writeFile(path.join(snapshotDir, "report.json"), JSON.stringify(reportMetadata, null, 2), "utf8");
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
     await publishReport();

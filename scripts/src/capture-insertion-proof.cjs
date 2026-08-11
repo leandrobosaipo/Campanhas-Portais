@@ -5296,6 +5296,17 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
   return result;
 }
 
+function classifyCaptureMode(captureDate, now = new Date()) {
+  const isoDate = getDateLabel(captureDate).isoDate;
+  const todayIsoDate = getDateLabel(now).isoDate;
+  return {
+    isoDate,
+    todayIsoDate,
+    future: isoDate > todayIsoDate,
+    captureMode: isoDate < todayIsoDate ? "audited_reconstruction" : "live_capture",
+  };
+}
+
 async function main() {
   const { chromium } = loadPlaywright();
   const args = parseArgs(process.argv.slice(2));
@@ -5311,6 +5322,12 @@ async function main() {
   const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
+  const classification = classifyCaptureMode(captureDate);
+  const { todayIsoDate, captureMode } = classification;
+  if (classification.future) {
+    throw new Error(`capture_date_in_future: ${isoDate} > ${todayIsoDate}`);
+  }
+  const historicalCapture = captureMode === "audited_reconstruction";
 
   const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
   const outDir = args.candidateOnly
@@ -5381,6 +5398,11 @@ async function main() {
   }
   const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+  const applyHistoricalPreview = async () => {
+    if (!historicalCapture) return;
+    retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
+    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+  };
 
   try {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
@@ -5396,13 +5418,18 @@ async function main() {
       }
     }
 
-    const signedRetroPreviewRequired = Boolean(effectiveCaptureAt && mapping.auditConfig?.requireSignedRetroPreview !== false);
-    const previewSignature = args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret);
+    const signedRetroPreviewRequired = Boolean(historicalCapture && effectiveCaptureAt && mapping.auditConfig?.requireSignedRetroPreview !== false);
+    const previewSignature = historicalCapture
+      ? (args.previewSignature || signPreviewCapture(effectiveCaptureAt, mapping.previewSecret))
+      : null;
     if (signedRetroPreviewRequired && !previewSignature) {
       throw new Error("retro_preview_not_active: não foi possível assinar a captura retroativa");
     }
     const pageResolvedStage = trace.start("page_resolved");
-    const candidateUrls = await resolvePageUrls(page, mapping, { captureAt: effectiveCaptureAt, previewSignature });
+    const candidateUrls = await resolvePageUrls(page, mapping, {
+      captureAt: historicalCapture ? effectiveCaptureAt : null,
+      previewSignature,
+    });
     trace.finish(pageResolvedStage, "ok", {
       candidateCount: candidateUrls.length,
       captureAt: effectiveCaptureAt,
@@ -5420,15 +5447,13 @@ async function main() {
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping) });
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-        retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+        await applyHistoricalPreview();
         await page.waitForSelector(mapping.slotSelector, { state: "attached", timeout: 12000 });
         await page.waitForTimeout(2500);
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-        retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+        await applyHistoricalPreview();
         const candidateMatch = await findCreativeMatch(page, mapping.slotSelector, mediaBasename);
         if (candidateMatch.ok) {
           targetUrl = candidateUrl;
@@ -5546,8 +5571,7 @@ async function main() {
     }
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-    retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+    await applyHistoricalPreview();
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
     creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, {
       attempts: Number(mapping.auditConfig?.creativePlacementAuditAttempts ?? 4),
@@ -5775,8 +5799,7 @@ async function main() {
     const slotCapturedStage = trace.start("slot_captured");
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-    retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+    await applyHistoricalPreview();
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
     await forceMatchedAdVisible(page);
     if (gifSourceAllowed && frameSelection?.chosenPngPath) {
@@ -5858,7 +5881,15 @@ async function main() {
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
     retroContentManifest = retroContentEvidence.manifest;
-    retroContentProof = retroContentEvidence.retroContentProof;
+    retroContentProof = historicalCapture
+      ? retroContentEvidence.retroContentProof
+      : {
+          status: "not_required",
+          sourceMode: "live_capture",
+          reconstructed: false,
+          futureCount: 0,
+          issues: [],
+        };
 
     systemDateTime = new Intl.DateTimeFormat("pt-BR", {
       timeZone: "America/Cuiaba",
@@ -5879,7 +5910,7 @@ async function main() {
       pageDateText,
       contentDateSamples,
       retroContentProof,
-      requireRetroContentProof: mapping.auditConfig?.requireRetroContentProof === true,
+      requireRetroContentProof: historicalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
       requireDomFrameSimilarity: frameSelection?.frameSelectionMode === "gif_source",
@@ -5990,6 +6021,7 @@ async function main() {
 
     metadata = {
       auditContractVersion: "audit-checklist-v1",
+      captureMode,
       resolvedRuleVersionHash: mapping.ruleVersionHash || null,
       requiredGates: {
         requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true,
@@ -6514,6 +6546,7 @@ if (require.main === module) {
     auditFinalPngSlotPixels,
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
+    classifyCaptureMode,
     parseIsoLikeDate,
     evaluateContentTimeline,
     evaluateRetroContentProof,

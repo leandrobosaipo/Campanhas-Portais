@@ -3,9 +3,28 @@
 const assert = require("node:assert/strict");
 const {
   parseIsoLikeDate,
+  classifyCaptureMode,
   evaluateContentTimeline,
   evaluateRetroContentProof,
 } = require("./capture-insertion-proof.cjs");
+
+assert.deepEqual(
+  classifyCaptureMode(new Date("2026-08-11T10:58:00Z"), new Date("2026-08-11T11:00:00Z")),
+  { isoDate: "2026-08-11", todayIsoDate: "2026-08-11", future: false, captureMode: "live_capture" },
+  "captura do dia atual deve permanecer viva",
+);
+
+assert.equal(
+  classifyCaptureMode(new Date("2026-08-10T23:00:00Z"), new Date("2026-08-11T11:00:00Z")).captureMode,
+  "audited_reconstruction",
+  "data anterior em Cuiabá deve ser classificada como reconstrução auditada",
+);
+
+assert.equal(
+  classifyCaptureMode(new Date("2026-08-12T12:00:00Z"), new Date("2026-08-11T11:00:00Z")).future,
+  true,
+  "data futura deve ser bloqueada",
+);
 
 assert.equal(
   parseIsoLikeDate("10/07/2026")?.toISOString(),

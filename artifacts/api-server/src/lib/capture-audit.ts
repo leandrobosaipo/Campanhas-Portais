@@ -280,6 +280,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === "object"
     ? metadata.retroContentProof
     : null;
+  const captureMode = typeof metadata.captureMode === "string" ? metadata.captureMode : null;
   const slotVisibility = metadata.slotVisibility && typeof metadata.slotVisibility === "object"
     ? metadata.slotVisibility
     : {};
@@ -387,7 +388,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
-  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true;
+  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true && captureMode !== "live_capture";
   const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof && contentTimeline.reason !== "future_samples");
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const visualsOk = Boolean(
@@ -571,6 +572,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     });
   }
   return {
+    captureMode,
     requestedCaptureAt,
     systemDateTime,
     pageDateText,
