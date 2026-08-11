@@ -5391,7 +5391,11 @@ async function main() {
     launchOptions.executablePath = chromeExecutable;
   }
   const disableOriginOverride = process.env.ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE === "1" || Boolean(mapping.disableOriginOverride);
-  if (effectiveCaptureAt && mapping.originIp && mapping.domain && !disableOriginOverride) {
+  // Capturas vivas devem seguir a mesma rota pública que o operador e o HTML
+  // auditado. O override do origin existe apenas para o preview retroativo
+  // assinado; aplicá-lo no dia corrente pode apontar o runner para uma versão
+  // de origem anterior ao rebuild publicado no edge.
+  if (historicalCapture && effectiveCaptureAt && mapping.originIp && mapping.domain && !disableOriginOverride) {
     launchOptions.args = [
       `--host-resolver-rules=MAP ${mapping.domain} ${mapping.originIp}`,
     ];
