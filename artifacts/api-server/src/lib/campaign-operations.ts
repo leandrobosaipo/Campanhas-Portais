@@ -22,7 +22,7 @@ import {
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
 import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
-import { isFormatCompatible } from "./campaign-operations-matching";
+import { isEligibleCampaignInsertionStatus, isFormatCompatible } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
 
@@ -364,7 +364,8 @@ function scoreAdopsMatch(row: CurrentSheetCampaignRow, insertion: MinimalEnriche
 }
 
 function selectBestAdopsMatch(row: CurrentSheetCampaignRow, matches: MinimalEnrichedInsertion[]) {
-  const compatible = matches.filter((insertion) => isFormatCompatible(
+  const eligible = matches.filter((insertion) => isEligibleCampaignInsertionStatus(insertion.statusNormalizado));
+  const compatible = eligible.filter((insertion) => isFormatCompatible(
     row.blockSite,
     row.localFormato,
     insertion.localFormatoNormalizado ?? insertion.localFormato,

@@ -1,6 +1,10 @@
 import { getAdRotateGroupId } from "./adrotate-sites";
 import { normalizeFormato } from "./current-sheet-campaigns";
 
+export function isEligibleCampaignInsertionStatus(status: string | null | undefined) {
+  return !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeFormato(status));
+}
+
 export function isFormatCompatible(
   siteSigla: string,
   sheetFormat: string,
