@@ -105,6 +105,7 @@
       "operationalName": "HOME 1",
       "canonicalName": "HOME 01 — 728x90",
       "dimensions": "728x90",
+      "acceptedDimensions": ["670x90", "728x90"],
       "mediaTypes": ["image"],
         "aliases": [
           "PRIMEIRA DOBRA",
@@ -884,6 +885,11 @@
     "formatMappings": [
       {
         "groupId": 1,
+        "operationalName": "MEGABANNER TOPO",
+        "canonicalName": "TOPO — 825x120 — HEADER",
+        "dimensions": "825x120",
+        "acceptedDimensions": ["825x120"],
+        "mediaTypes": ["image"],
         "aliases": [
           "MEGABANNER TOPO"
         ],
@@ -907,6 +913,11 @@
       },
       {
         "groupId": 2,
+        "operationalName": "HOME 1",
+        "canonicalName": "HOME 01 — 728x90",
+        "dimensions": "728x90",
+        "acceptedDimensions": ["670x90", "728x90"],
+        "mediaTypes": ["image"],
         "aliases": [
           "FULLBANNER",
           "FULL BANNER",

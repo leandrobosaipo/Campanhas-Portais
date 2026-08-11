@@ -22,6 +22,7 @@ import {
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
 import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
+import { isFormatCompatible } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
 
@@ -199,17 +200,6 @@ function clampRequiredDates(row: CurrentSheetCampaignRow, targetDate: string) {
   return eachIsoDay(row.periodoInicio, end);
 }
 
-function isFormatCompatible(sheetFormat: string, adopsFormat: string | null | undefined) {
-  const sheet = normalizeFormato(sheetFormat);
-  const adops = normalizeFormato(adopsFormat);
-  if (!sheet || !adops) return false;
-  if (sheet === adops) return true;
-  if (sheet === "TOPO" && adops.includes("TOPO")) return true;
-  if (sheet === "LATERAL" && adops.includes("LATERAL")) return true;
-  if (sheet === "VIDEO" && adops.includes("VIDEO")) return true;
-  return false;
-}
-
 function isCampaignNameCompatible(sheetName: string, adopsName: string | null | undefined) {
   const sheet = normalizeForMatch(sheetName);
   const adops = normalizeForMatch(adopsName);
@@ -364,7 +354,7 @@ function periodsOverlap(row: CurrentSheetCampaignRow, insertion: MinimalEnriched
 function scoreAdopsMatch(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion) {
   let score = 0;
   const adopsFormat = insertion.localFormatoNormalizado ?? insertion.localFormato;
-  if (isFormatCompatible(row.localFormato, adopsFormat)) score += 100;
+  if (isFormatCompatible(row.blockSite, row.localFormato, adopsFormat)) score += 100;
   if (insertion.periodoInicio === row.periodoInicio && insertion.periodoFim === row.periodoFim) score += 60;
   else if (periodsOverlap(row, insertion)) score += 30;
   if (insertion.mediaUrl) score += 20;
@@ -374,7 +364,11 @@ function scoreAdopsMatch(row: CurrentSheetCampaignRow, insertion: MinimalEnriche
 }
 
 function selectBestAdopsMatch(row: CurrentSheetCampaignRow, matches: MinimalEnrichedInsertion[]) {
-  const compatible = matches.filter((insertion) => isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
+  const compatible = matches.filter((insertion) => isFormatCompatible(
+    row.blockSite,
+    row.localFormato,
+    insertion.localFormatoNormalizado ?? insertion.localFormato,
+  ));
   if (compatible.length === 0) return { insertion: null, compatible };
   const ranked = compatible
     .map((insertion) => ({ insertion, score: scoreAdopsMatch(row, insertion) }))
@@ -528,7 +522,11 @@ export async function getActiveCampaignOperations(options: {
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) requiredActions.push("generate_evidence");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
-    const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
+    const formatDivergent = Boolean(insertion && !isFormatCompatible(
+      row.blockSite,
+      row.localFormato,
+      insertion.localFormatoNormalizado ?? insertion.localFormato,
+    ));
     if (periodDivergent) requiredActions.push("review_period_divergence");
     if (formatDivergent) requiredActions.push("review_format_divergence");
     if (liveSlotIssues.length) {
@@ -623,7 +621,11 @@ export async function getActiveCampaignOperations(options: {
     if (!insertion || insertion.bannerPublicadoNoSite !== true) requiredActions.push("publish_on_site");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
-    const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
+    const formatDivergent = Boolean(insertion && !isFormatCompatible(
+      row.blockSite,
+      row.localFormato,
+      insertion.localFormatoNormalizado ?? insertion.localFormato,
+    ));
     if (periodDivergent) requiredActions.push("review_period_divergence");
     if (formatDivergent) requiredActions.push("review_format_divergence");
     if (liveSlotIssues.length) {

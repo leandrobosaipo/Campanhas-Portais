@@ -3,6 +3,11 @@ import path from "node:path";
 
 export type SiteFormatMapping = {
   groupId: number;
+  operationalName?: string;
+  canonicalName?: string;
+  dimensions?: string;
+  acceptedDimensions?: string[];
+  mediaTypes?: Array<"image" | "video">;
   aliases: string[];
   page: "home" | "article";
   slotSelector: string;
@@ -63,6 +68,12 @@ export function normalizeLocalFormato(value: string | null | undefined): string 
     .trim();
 }
 
+function formatNameMatches(candidate: string, normalizedInput: string) {
+  const normalizedCandidate = normalizeLocalFormato(candidate);
+  if (normalizedCandidate === normalizedInput) return true;
+  return normalizedInput.replace(/\s+\d+\s*X\s*\d+$/, "") === normalizedCandidate;
+}
+
 export function getSiteIntegrations() {
   return loadRawConfig();
 }
@@ -100,7 +111,11 @@ export function getSiteFormatMapping(siteSigla: string | null | undefined, local
   const site = getSiteIntegration(siteSigla);
   if (!site) return null;
   const normalized = normalizeLocalFormato(localFormato);
-  return site.formatMappings.find((item) => item.aliases.some((alias) => normalizeLocalFormato(alias) === normalized)) ?? null;
+  return site.formatMappings.find((item) =>
+    [item.operationalName, item.canonicalName, ...item.aliases]
+      .filter((name): name is string => Boolean(name))
+      .some((name) => formatNameMatches(name, normalized)),
+  ) ?? null;
 }
 
 type FormatMappingContext = {
@@ -138,7 +153,9 @@ export function getSiteFormatMappingByContext(
   const contextSelector = String(context.contextSelector ?? "").trim();
 
   let candidates = site.formatMappings.filter((item) =>
-    item.aliases.some((alias) => normalizeLocalFormato(alias) === normalized),
+    [item.operationalName, item.canonicalName, ...item.aliases]
+      .filter((name): name is string => Boolean(name))
+      .some((name) => formatNameMatches(name, normalized)),
   );
   if (!candidates.length && slotSelector) {
     candidates = site.formatMappings.filter((item) => item.slotSelector === slotSelector);

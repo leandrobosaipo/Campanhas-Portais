@@ -332,7 +332,10 @@ function resolveCanonicalPortalPosition({ siteSigla, contractedPosition, dimensi
       .map(normalizeSlotKey)
       .filter(Boolean);
     const nameMatches = !normalizedContracted || names.includes(normalizedContracted);
-    const dimensionMatches = !normalizedDimensions || !mapping.dimensions || normalizeDimension(mapping.dimensions) === normalizedDimensions;
+    const acceptedDimensions = [mapping.dimensions, ...(Array.isArray(mapping.acceptedDimensions) ? mapping.acceptedDimensions : [])]
+      .map(normalizeDimension)
+      .filter(Boolean);
+    const dimensionMatches = !normalizedDimensions || acceptedDimensions.length === 0 || acceptedDimensions.includes(normalizedDimensions);
     const mediaMatches = !normalizedMediaType || !Array.isArray(mapping.mediaTypes) || mapping.mediaTypes.includes(normalizedMediaType);
     return nameMatches && dimensionMatches && mediaMatches;
   });
@@ -350,7 +353,11 @@ function resolveCanonicalPortalPosition({ siteSigla, contractedPosition, dimensi
     groupId: Number(mapping.groupId),
     operationalName: mapping.operationalName || mapping.aliases?.[0] || mapping.canonicalName,
     canonicalPosition: mapping.canonicalName || mapping.operationalName || mapping.aliases?.[0],
-    dimensions: normalizeDimension(mapping.dimensions),
+    dimensions: normalizedDimensions || normalizeDimension(mapping.dimensions),
+    slotDimensions: normalizeDimension(mapping.dimensions),
+    acceptedDimensions: [mapping.dimensions, ...(Array.isArray(mapping.acceptedDimensions) ? mapping.acceptedDimensions : [])]
+      .map(normalizeDimension)
+      .filter(Boolean),
     mediaType: normalizedMediaType || mapping.mediaTypes?.[0] || null,
     source: `config/adrotate-sites.json:${String(siteSigla).toUpperCase()}:G${String(mapping.groupId).padStart(2, "0")}`,
   };
@@ -1404,36 +1411,42 @@ async function resolveDrivePiEntityIds(parsedFromPdf) {
 function parsePiMediaLinesFromText(text, siteSigla) {
   const normalizedLineText = String(text || "").replace(/\r/g, "").replace(/\n(?=DOBRA\b)/gi, " ");
   const definitions = [
-    { pattern: /\bMEGABANNER(?:\s+TOPO)?\s*-\s*(825\s*[xX×]\s*120)\b/i, mediaType: "image" },
-    { pattern: /\bBANNER\s+LATERAL\s+SEGUNDA\s+DOBRA\s*-\s*(300\s*[xX×]\s*250)\b/i, mediaType: "image" },
-    { pattern: /\bPUBLI\s+V[IÍ]DEO(?:\s+DE)?\s+60[\"”']?/i, mediaType: "video" },
+    { pattern: /\bMEGABANNER\s+HOME\s*1(?:\s*\(DI[AÁ]RIA\))?[\s\S]{0,80}?(670\s*[xX×]\s*90|728\s*[xX×]\s*90)(?!\d)/gi, mediaType: "image", positionName: "MEGABANNER HOME 1" },
+    { pattern: /\bMEGABANNER(?:\s+TOPO)?(?:\s*\(DI[AÁ]RIA\))?[\s\S]{0,80}?(825\s*[xX×]\s*120)(?!\d)/gi, mediaType: "image", positionName: "MEGABANNER TOPO" },
+    { pattern: /\bBANNER\s+LATERAL\s+SEGUNDA\s+DOBRA(?:\s*\(DI[AÁ]RIA\))?[\s\S]{0,80}?(300\s*[xX×]\s*250)(?!\d)/gi, mediaType: "image", positionName: "BANNER LATERAL SEGUNDA DOBRA" },
+    { pattern: /\bPUBLI\s+V[IÍ]DEO(?:\s+DE)?\s+60[\"”']?/gi, mediaType: "video", positionName: "PUBLI VIDEO 60S" },
   ];
   const insertions = [];
   for (const definition of definitions) {
-    const match = normalizedLineText.match(definition.pattern);
-    if (!match) continue;
-    const contractedPosition = match[0].replace(/\s+/g, " ").trim();
-    const dimensions = normalizeDimension(match[1] || contractedPosition);
-    const canonical = resolveCanonicalPortalPosition({
-      siteSigla,
-      contractedPosition,
-      dimensions,
-      mediaType: definition.mediaType,
-    });
-    insertions.push({
-      contractedPosition,
-      canonicalPosition: canonical.ok ? canonical.canonicalPosition : null,
-      localFormato: contractedPosition,
-      localFormatoNormalizado: canonical.ok ? canonical.operationalName : null,
-      adrotateGroupId: canonical.ok ? canonical.groupId : null,
-      dimensions: canonical.ok ? canonical.dimensions : dimensions,
-      mediaType: definition.mediaType,
-      positionSource: canonical.ok ? canonical.source : "PI PDF",
-      sourceCitation: `PI PDF: ${contractedPosition}`,
-      mappingIssue: canonical.ok ? null : canonical.reason,
-    });
+    for (const match of normalizedLineText.matchAll(definition.pattern)) {
+      const contractedPosition = match[0].replace(/\s+/g, " ").trim();
+      const dimensions = normalizeDimension(match[1] || contractedPosition);
+      const canonical = resolveCanonicalPortalPosition({
+        siteSigla,
+        contractedPosition: definition.positionName,
+        dimensions,
+        mediaType: definition.mediaType,
+      });
+      const dedupeKey = `${canonical.ok ? canonical.groupId : normalizeSlotKey(contractedPosition)}:${dimensions || ""}:${definition.mediaType}`;
+      if (insertions.some((item) => item.dedupeKey === dedupeKey)) continue;
+      insertions.push({
+        dedupeKey,
+        contractedPosition,
+        canonicalPosition: canonical.ok ? canonical.canonicalPosition : null,
+        localFormato: contractedPosition,
+        localFormatoNormalizado: canonical.ok ? canonical.operationalName : null,
+        adrotateGroupId: canonical.ok ? canonical.groupId : null,
+        dimensions: canonical.ok ? canonical.dimensions : dimensions,
+        slotDimensions: canonical.ok ? canonical.slotDimensions : null,
+        acceptedDimensions: canonical.ok ? canonical.acceptedDimensions : [],
+        mediaType: definition.mediaType,
+        positionSource: canonical.ok ? canonical.source : "PI PDF",
+        sourceCitation: `PI PDF: ${contractedPosition}`,
+        mappingIssue: canonical.ok ? null : canonical.reason,
+      });
+    }
   }
-  return insertions;
+  return insertions.map(({ dedupeKey: _dedupeKey, ...item }) => item);
 }
 
 async function parseDrivePiPdfFields(archived) {
