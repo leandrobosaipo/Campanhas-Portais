@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,13 +246,22 @@ async function publishReport() {
   if (!sites) throw new Error("Container sites-index nao encontrado.");
   const inspect = await portainer("GET", `/api/endpoints/3/docker/containers/${sites.Id}/json`);
   const appMount = (inspect.Mounts || []).find((mount) => mount.Destination === "/app" && mount.Type === "bind");
-  if (!appMount?.Source) throw new Error("Bind mount /app do sites-index nao encontrado.");
+  const reportsMount = (inspect.Mounts || []).find((mount) => mount.Destination === "/app/reports" && mount.Type === "bind");
+  const reportsSource = reportsMount?.Source || (appMount?.Source ? path.join(appMount.Source, "reports") : "");
+  if (!reportsSource) throw new Error("Bind mount /app ou /app/reports do sites-index nao encontrado.");
 
   const publishRoot = path.join("/tmp", `${slug}-publish-${Date.now()}`);
   const publishDir = path.join(publishRoot, slug);
   const tarPath = path.join("/tmp", `${slug}.tar`);
   await mkdir(publishDir, { recursive: true });
-  await writeFile(path.join(publishDir, "index.html"), await readFile(outputPath));
+  await Promise.all([
+    writeFile(path.join(publishDir, "index.html"), await readFile(outputPath)),
+    cp(path.join(latestDir, "data.json"), path.join(publishDir, "data.json")),
+    cp(path.join(latestDir, "report.json"), path.join(publishDir, "report.json")),
+    existsSync(path.join(latestDir, "assets"))
+      ? cp(path.join(latestDir, "assets"), path.join(publishDir, "assets"), { recursive: true })
+      : Promise.resolve(),
+  ]);
   const tar = spawnSync("tar", ["--no-xattrs", "-C", publishRoot, "-cf", tarPath, slug], {
     encoding: "utf8",
     env: { ...process.env, COPYFILE_DISABLE: "1" },
@@ -269,7 +278,7 @@ async function publishReport() {
     },
     Cmd: ["sh", "-lc", "mkdir -p /target && sleep 120"],
     HostConfig: {
-      Binds: [`${appMount.Source}/reports:/target`],
+      Binds: [`${reportsSource}:/target`],
       NetworkMode: "none",
       RestartPolicy: { Name: "no" },
     },
@@ -503,6 +512,13 @@ function renderHtml({ insertions, portals, audits, summary }) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AdOps Evidências · ${escapeHtml(competencia)}</title>
+  <meta name="description" content="Acompanhamento diário de inserções, auditorias e prints de ${escapeHtml(competencia)}.">
+  <meta property="og:title" content="AdOps Evidências · ${escapeHtml(competencia)}">
+  <meta property="og:description" content="Relatório operacional auditável de campanhas e evidências.">
+  <meta property="og:image" content="${escapeHtml(publicUrl)}assets/og.png">
+  <link rel="canonical" href="${escapeHtml(publicUrl)}">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <style>
     :root {
       --bg: oklch(0.955 0.006 170);
@@ -841,7 +857,7 @@ async function main() {
     title: `AdOps · Evidências de ${competencia}`,
     description: `Acompanhamento diário de inserções, auditorias e prints de ${competencia}.`,
     kind: "relatorio",
-    thumb: "assets/thumb.png",
+    thumb: "assets/og.png",
     favicon: "assets/favicon.png",
     logo: "assets/logo.png",
     updatedAt: targetDate,

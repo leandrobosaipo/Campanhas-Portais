@@ -179,7 +179,9 @@ async function publishReport() {
   if (!sites) throw new Error("Container sites-index nao encontrado");
   const sitesInspect = await portainer("GET", `/api/endpoints/3/docker/containers/${sites.Id}/json`);
   const appMount = (sitesInspect.Mounts || []).find((mount) => mount.Destination === "/app" && mount.Type === "bind");
-  if (!appMount?.Source) throw new Error("Bind mount /app do sites-index nao encontrado");
+  const reportsMount = (sitesInspect.Mounts || []).find((mount) => mount.Destination === "/app/reports" && mount.Type === "bind");
+  const reportsSource = reportsMount?.Source || (appMount?.Source ? path.join(appMount.Source, "reports") : "");
+  if (!reportsSource) throw new Error("Bind mount /app ou /app/reports do sites-index nao encontrado");
   const tarPath = path.join("/tmp", `${slug}.tar`);
   const tarRoot = path.join("/tmp", `${slug}-publish`);
   await mkdir(path.join(tarRoot, slug), { recursive: true });
@@ -200,7 +202,7 @@ async function publishReport() {
     },
     Cmd: ["sh", "-lc", "mkdir -p /target && sleep 120"],
     HostConfig: {
-      Binds: [`${appMount.Source}/reports:/target`],
+      Binds: [`${reportsSource}:/target`],
       NetworkMode: "none",
       RestartPolicy: { Name: "no" },
     },
