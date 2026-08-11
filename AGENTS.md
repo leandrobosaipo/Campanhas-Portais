@@ -26,6 +26,9 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Preservar operação em produção: nunca quebrar prints, planilha, AdRotate, Telegram ou Cloudflare por mudança não testada.
 - Ao trabalhar com PI, a prioridade de fonte é: PDF/email da PI, depois planilha, depois AdOps, depois AdRotate.
 - Em caso de divergência, registrar a divergência e corrigir sem duplicar anúncio, campanha ou inserção.
+- Preservar separadamente o nome comercial da PI (`contractedPosition`) e a posição técnica do portal (`canonicalPosition`, `localFormatoNormalizado`, `adrotateGroupId`).
+- No Perrengue: vídeo 60s é G06; banner lateral segunda dobra é G07; topo lateral é exclusivamente G10. A fonte canônica é `config/adrotate-sites.json`.
+- Link descrito como direcionamento de banner não deve ser herdado por vídeo.
 
 ## Mapa rápido
 
@@ -36,6 +39,7 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Base ampla do projeto: `docs/base-de-conhecimento-do-projeto.md`
 - Status consolidado: `docs/status-do-projeto.md`
 - Configuração de captura/auditoria: `docs/adops/capture-config/README.md`
+- Inventário Perrengue G01-G14: `docs/adops/perrengue-position-inventory.md`
 - Prints retroativos: `docs/prints-retroativos.md`
 - Sincronização planilha/AdRotate: `docs/spec-reconcile-planilha-adrotate-v1.md`
 - Telegram: `docs/fluxos-telegram-bot-adops.md`

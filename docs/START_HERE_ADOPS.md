@@ -164,6 +164,7 @@ Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
 - `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md`
 - `scripts/src/harness-drive-pi-monitor-first-v4.mjs`
 - `docs/adops/capture-config/README.md`
+- `docs/adops/perrengue-position-inventory.md`
 - `docs/adops/ga4-monthly-report-ui/README.md`
 - `docs/adops/ga4-monthly-report-ui/RUNBOOK_MAIO_2026_UI_PDFS.md`
 - `docs/reports/adops-ga4-ui-rotina-maio-2026/index.html`

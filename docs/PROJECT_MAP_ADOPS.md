@@ -31,6 +31,7 @@
 - `docs/adops/system/` é a fonte primária para arquitetura, contratos, migração Portainer, harness, runbook, playbook e prompts operacionais.
 - `docs/adops/pi-automation-v3/` é o pacote oficial para automação de PI, Drive, WhatsApp, e-mail, planilha, AdRotate, GIF capture-only e evidências retroativas.
 - `docs/adops/pi-automation-v4-monitor-first-ai-gate.md` é o contrato atual para monitor-first: `intake_locked`, Telegram inicial, classificador de pacote e gate IA/OpenAI antes do auto-apply.
+- `docs/adops/perrengue-position-inventory.md` documenta o contrato G01-G14 e a separação obrigatória entre nome comercial da PI e posição técnica.
 - `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md` é o plano de migração do control plane Cloudflare/D1/Queue/Telegram para Mac Mini/Portainer, preservando todo histórico e evitando duplicidade.
 - `docs/adops/ga4-monthly-report-ui/` é o pacote atual para fechamento mensal de Analytics usando a página do Google Analytics, sem API personalizada.
 - `docs/adops/roo-layout-drive-pi-v2/` fica como referência histórica. Não usar como fonte principal para novas decisões.

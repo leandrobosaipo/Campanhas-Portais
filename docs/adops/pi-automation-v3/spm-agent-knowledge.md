@@ -22,6 +22,7 @@ Este arquivo sintetiza o conhecimento operacional do projeto local SPM para uso 
 - `localFormato`
 - `media`
 - `clickUrl`, quando existir na PI
+- Por inserção: `contractedPosition`, `canonicalPosition`, `adrotateGroupId`, `dimensions`, `mediaType`, `mediaDriveFileId`, `clickUrl` e `sourceCitation`.
 
 ## Regras de seguranca
 
@@ -31,13 +32,20 @@ Este arquivo sintetiza o conhecimento operacional do projeto local SPM para uso 
 - Cada campo critico precisa de citacao curta do PDF, nome do arquivo ou caminho da pasta.
 - Confianca abaixo do minimo configurado bloqueia auto-apply.
 - Divergencia contra planilha, AdOps, AdRotate ou mapa de sites bloqueia auto-apply.
+- Extrair todas as linhas da tabela de veiculação. A primeira linha não representa automaticamente toda a PI.
+- O número de inserções contratadas deve ser conciliado com o número de mídias do pacote.
+- Link descrito como "do banner" ou "direcionamento do banner" é aplicado somente a imagens.
+- Dimensão incompatível, empate entre arquivos e posição inexistente bloqueiam a publicação.
 - Scripts deterministas sao a unica camada autorizada a aplicar mudancas.
 
 ## Sites e formatos
 
 - Usar o nome do veiculo da PI para resolver o site via cadastro local do AdOps.
 - Usar o formato descrito na PI como entrada; a normalizacao final fica com os scripts e mapas locais.
+- Preservar o nome comercial em `contractedPosition`; nunca sobrescrevê-lo com o nome técnico.
+- Resolver a posição técnica exclusivamente pelo inventário de `config/adrotate-sites.json`.
 - Se houver midia com dimensao no nome, usar como evidencia auxiliar, nao como unica fonte do formato.
+- Perrengue: vídeo/publicação de vídeo 60s = G06; banner lateral segunda dobra = G07; topo lateral = G10.
 
 ## Saida esperada
 

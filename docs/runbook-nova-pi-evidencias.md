@@ -1,6 +1,6 @@
 # Runbook - Nova PI, AdOps, AdRotate e evidencias
 
-Atualizado em: 2026-05-23
+Atualizado em: 2026-08-11
 
 Este e o guia de entrada para um projeto/agente novo entender onde esta cada coisa e o que fazer para cadastrar uma PI, sincronizar midia, gerar evidencias atuais e retroativas, auditar e entregar relatorio.
 
@@ -20,6 +20,7 @@ docs/PROJECT_MAP_ADOPS.md                        mapa tecnico
 docs/runbook-nova-pi-evidencias.md               este runbook
 docs/prints-retroativos.md                       regras de retroativos
 docs/adops/capture-config/README.md              regras de captura/auditoria
+docs/adops/perrengue-position-inventory.md       contrato G01-G14 do Perrengue
 docs/adops/pi-automation-v3/runbook.md           automacao de intake de PI
 config/adrotate-sites.json                       mapa portal/posicao/slot
 scripts/src/capture-insertion-proof.cjs          capturador de evidencias
@@ -75,10 +76,16 @@ Extrair do PDF/e-mail/Drive:
 - site/veiculo;
 - periodo;
 - formato/posicao;
+- nome comercial contratado e posição técnica, em campos separados;
+- `groupId`, dimensão e tipo de mídia de cada linha de veiculação;
 - midia;
 - link de redirecionamento;
 - exigencias documentais;
 - pasta Drive.
+
+O preflight deve listar todas as linhas da tabela e exibir `PI -> posição canônica -> grupo -> arquivo -> destino -> citação`. Não publicar se a contagem de linhas e mídias divergir, houver empate entre artes, dimensão incompatível ou posição ausente no inventário.
+
+Um link descrito como direcionamento do banner é aplicado apenas às inserções de imagem. Não copiar esse link para vídeo sem fonte explícita.
 
 Se houver pasta local de PI, rodar:
 
@@ -148,6 +155,12 @@ siteSigla + groupId
 ```
 
 Nao publicar duas regras ativas para a mesma chave.
+
+No Perrengue, não confundir nomes comerciais:
+
+- vídeo 60s -> G06;
+- banner lateral segunda dobra -> G07;
+- topo lateral -> G10.
 
 ### 5. Sincronizar midia
 
