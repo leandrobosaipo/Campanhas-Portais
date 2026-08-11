@@ -52,10 +52,15 @@
       "retroContentDateSelectors": []
     },
     "formatMappings": [
-      {
-        "groupId": 1,
-        "aliases": [
-          "MEGABANNER TOPO"
+    {
+      "groupId": 1,
+      "operationalName": "MEGABANNER TOPO",
+      "canonicalName": "TOPO — 825x120 — HEADER",
+      "dimensions": "825x120",
+      "mediaTypes": ["image"],
+      "aliases": [
+        "MEGABANNER TOPO",
+        "MEGABANNER"
         ],
         "page": "home",
         "slotSelector": ".g.g-1",
@@ -77,8 +82,12 @@
           "finalPngSlotMinContentStddev": 4
         }
       },
-      {
-        "groupId": 10,
+    {
+      "groupId": 10,
+      "operationalName": "TOPO LATERAL",
+      "canonicalName": "TOPO LATERAL — 380x120 — HEADER",
+      "dimensions": "380x120",
+      "mediaTypes": ["image"],
         "aliases": [
           "BANNER TOPO LATERAL",
           "TOPO LATERAL",
@@ -89,8 +98,12 @@
         "contextSelector": "#header-ads-row",
         "scrollMode": "top"
       },
-      {
-        "groupId": 2,
+    {
+      "groupId": 2,
+      "operationalName": "HOME 1",
+      "canonicalName": "HOME 01 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
         "aliases": [
           "PRIMEIRA DOBRA",
           "HOME 1",
@@ -110,8 +123,12 @@
           "viewportTrimBottomPx": 160
         }
       },
-      {
-        "groupId": 3,
+    {
+      "groupId": 3,
+      "operationalName": "HOME 2",
+      "canonicalName": "HOME 02 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
         "aliases": [
           "HOME 2",
           "SEGUNDA DOBRA"
@@ -125,23 +142,52 @@
           "finalPngSlotMinContentStddev": 4
         }
       },
-      {
-        "groupId": 4,
+    {
+      "groupId": 4,
+      "operationalName": "HOME 3",
+      "canonicalName": "HOME 03 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
         "aliases": [
           "HOME 3"
         ],
         "page": "home",
         "slotSelector": ".g.g-4",
         "contextSelector": ".g.g-4",
-        "scrollMode": "slot"
-      },
-      {
-        "groupId": 6,
-        "aliases": [
-          "VIDEO",
-          "VIDEO LATERAL",
-          "LATERAL",
-          "LATERAL PRIMEIRA DOBRA"
+      "scrollMode": "slot"
+    },
+    {
+      "groupId": 5,
+      "operationalName": "HOME 4",
+      "canonicalName": "HOME 04 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
+      "aliases": [
+        "HOME 4",
+        "HOME 04",
+        "MEGABANNER HOME 4",
+        "MEGABANNER HOME 04"
+      ],
+      "page": "home",
+      "slotSelector": ".g.g-5",
+      "contextSelector": ".g.g-5",
+      "scrollMode": "slot"
+    },
+    {
+      "groupId": 6,
+      "operationalName": "VIDEO",
+      "canonicalName": "LATERAL 01 — 300x250 — SIDEBAR POSIÇÃO 1",
+      "dimensions": "300x250",
+      "mediaTypes": ["video"],
+      "aliases": [
+        "VIDEO",
+        "VIDEO LATERAL",
+        "PUBLI VIDEO 60",
+        "PUBLI VIDEO 60S",
+        "PUBLI VIDEO DE 60",
+        "PUBLI VIDEO DE 60S",
+        "LATERAL",
+        "LATERAL PRIMEIRA DOBRA"
         ],
         "page": "home",
         "slotSelector": ".g.g-6",
@@ -159,10 +205,59 @@
           "finalPngSlotMinContentStddev": 4,
           "requireStableFrame": false,
           "requireLegibleFrame": true
-        }
-      },
-      {
-        "groupId": 9,
+      }
+    },
+    {
+      "groupId": 7,
+      "operationalName": "LATERAL 02",
+      "canonicalName": "LATERAL 02 — 300x250 — SIDEBAR POSIÇÃO 2",
+      "dimensions": "300x250",
+      "mediaTypes": ["image"],
+      "aliases": [
+        "BANNER LATERAL SEGUNDA DOBRA",
+        "LATERAL 02",
+        "LATERAL SEGUNDA DOBRA",
+        "SEGUNDA DOBRA SIDEBAR"
+      ],
+      "page": "home",
+      "slotSelector": ".g.g-7",
+      "contextSelector": ".g.g-7",
+      "scrollMode": "slot",
+      "proofStyle": "viewport_only",
+      "auditOverrides": {
+        "animatedBannerDelayMs": 2200,
+        "postVisualWaitMs": 2600,
+        "viewportTrimBottomPx": 120,
+        "gifFrameSelection": "source_preferred",
+        "requireStableFrame": false,
+        "requireLegibleFrame": true,
+        "preferBestLegibleFrame": true
+      }
+    },
+    {
+      "groupId": 8,
+      "operationalName": "LATERAL 03",
+      "canonicalName": "LATERAL 03 — 300x250 — SIDEBAR STICKY",
+      "dimensions": "300x250",
+      "mediaTypes": ["image", "video"],
+      "aliases": [
+        "LATERAL 03",
+        "LATERAL STICKY",
+        "ULTIMO LATERAL",
+        "ULTIMA POSICAO SIDEBAR"
+      ],
+      "page": "home",
+      "slotSelector": ".g.g-8",
+      "contextSelector": ".g.g-8",
+      "scrollMode": "slot",
+      "proofStyle": "viewport_only"
+    },
+    {
+      "groupId": 9,
+      "operationalName": "POP UP",
+      "canonicalName": "POPUP — 970x90 — SITEWIDE",
+      "dimensions": "970x90",
+      "mediaTypes": ["image"],
         "aliases": [
           "POP UP",
           "POPUP",
@@ -183,8 +278,12 @@
           "requireSlotVisibleInViewport": true
         }
       },
-      {
-        "groupId": 11,
+    {
+      "groupId": 11,
+      "operationalName": "INTERNO DE NOTICIAS",
+      "canonicalName": "INTERNO — 728x90 — MATÉRIA",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
         "aliases": [
           "BANNER INTERNO NOTICIAS",
           "INTERNO DE NOTICIAS",
@@ -209,8 +308,44 @@
           "stableFrameMinMidtoneRatio": 0.18,
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4
-        }
       }
+    },
+    {
+      "groupId": 12,
+      "operationalName": "HOME 5",
+      "canonicalName": "HOME 05 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
+      "aliases": ["HOME 5", "HOME 05", "MEGABANNER HOME 5", "MEGABANNER HOME 05"],
+      "page": "home",
+      "slotSelector": ".g.g-12",
+      "contextSelector": ".g.g-12",
+      "scrollMode": "slot"
+    },
+    {
+      "groupId": 13,
+      "operationalName": "HOME 6",
+      "canonicalName": "HOME 06 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
+      "aliases": ["HOME 6", "HOME 06", "MEGABANNER HOME 6", "MEGABANNER HOME 06"],
+      "page": "home",
+      "slotSelector": ".g.g-13",
+      "contextSelector": ".g.g-13",
+      "scrollMode": "slot"
+    },
+    {
+      "groupId": 14,
+      "operationalName": "HOME 7",
+      "canonicalName": "HOME 07 — 728x90",
+      "dimensions": "728x90",
+      "mediaTypes": ["image"],
+      "aliases": ["HOME 7", "HOME 07", "MEGABANNER HOME 7", "MEGABANNER HOME 07"],
+      "page": "home",
+      "slotSelector": ".g.g-14",
+      "contextSelector": ".g.g-14",
+      "scrollMode": "slot"
+    }
     ]
   },
   "OMT": {

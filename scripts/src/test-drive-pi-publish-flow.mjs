@@ -54,11 +54,50 @@ assert.equal(
   "home",
 );
 const clickResolved = runner.resolveDrivePiClickUrl(
-  { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
+  { insertions: [{ siteId: 33, localFormato: "TOPO" }, { siteId: 33, localFormato: "VIDEO", mediaType: "video" }], raw: {} },
   { textObservations: [{ links: [{ url: "https://cdn.example.com/banner.gif", kind: "image" }, { url: "https://cliente.example.com/landing", kind: "unknown" }] }] },
 );
 assert.equal(clickResolved.clickUrl, "https://cliente.example.com/landing");
 assert.equal(clickResolved.fields.insertions[0].clickUrl, "https://cliente.example.com/landing");
+assert.equal(clickResolved.fields.insertions[1].clickUrl, undefined, "link de banner não pode ser herdado pelo vídeo");
+
+const pi90892Text = await readFile(path.join(root, "scripts/fixtures/pi-90892-extracted.txt"), "utf8");
+const pi90892Lines = runner.parsePiMediaLinesFromText(pi90892Text, "PERRENGUE");
+assert.equal(pi90892Lines.length, 3);
+assert.deepEqual(pi90892Lines.map((item) => item.adrotateGroupId), [1, 7, 6]);
+assert.deepEqual(pi90892Lines.map((item) => item.localFormatoNormalizado), ["MEGABANNER TOPO", "LATERAL 02", "VIDEO"]);
+assert.deepEqual(pi90892Lines.map((item) => item.dimensions), ["825x120", "300x250", "300x250"]);
+
+const pi90892MediaPlan = runner.planDrivePiMediaAssignments(
+  { insertions: pi90892Lines, campaignName: "ACELERA VG", piCodigo: "PI 90892" },
+  { media: [
+    { driveFileId: "top", mimeType: "image/gif", name: "aceleravg_825x120 (3).gif" },
+    { driveFileId: "lateral", mimeType: "image/gif", name: "aceleravg_300x250.gif" },
+    { driveFileId: "video", mimeType: "video/mp4", name: "PREF DE VG - VT ACELERA VG 60s.mp4" },
+  ] },
+);
+assert.deepEqual(pi90892MediaPlan.fields.insertions.map((item) => item.mediaDriveFileId), ["top", "lateral", "video"]);
+assert.deepEqual(pi90892MediaPlan.issues, []);
+
+const ambiguousPlan = runner.planDrivePiMediaAssignments(
+  { insertions: [pi90892Lines[0]], campaignName: "ACELERA VG", piCodigo: "PI 90892" },
+  { media: [
+    { driveFileId: "top-a", mimeType: "image/gif", name: "aceleravg_825x120-a.gif" },
+    { driveFileId: "top-b", mimeType: "image/gif", name: "aceleravg_825x120-b.gif" },
+  ] },
+);
+assert(ambiguousPlan.issues.some((item) => item.startsWith("media_ambiguous:")));
+
+const mismatchPlan = runner.planDrivePiMediaAssignments(
+  { insertions: [pi90892Lines[0]], campaignName: "ACELERA VG", piCodigo: "PI 90892" },
+  { media: [{ driveFileId: "wrong", mimeType: "image/gif", name: "aceleravg_300x250.gif" }] },
+);
+assert(mismatchPlan.issues.some((item) => item.startsWith("media_dimension_mismatch:")));
+
+const perrengueConfig = JSON.parse(await readFile(path.join(root, "config/adrotate-sites.json"), "utf8")).PERRENGUE;
+assert.deepEqual(perrengueConfig.formatMappings.map((item) => item.groupId).sort((a, b) => a - b), Array.from({ length: 14 }, (_, index) => index + 1));
+assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "TOPO LATERAL", mediaType: "image" }).groupId, 10);
+assert.equal(runner.resolveCanonicalPortalPosition({ siteSigla: "PERRENGUE", contractedPosition: "BANNER LATERAL SEGUNDA DOBRA", dimensions: "300x250", mediaType: "image" }).groupId, 7);
 
 const readiness = runner.validateDrivePiPackageReadiness(
   { hasPdf: true, hasMedia: true },

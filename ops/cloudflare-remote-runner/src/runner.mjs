@@ -2,10 +2,12 @@ import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,7 +16,9 @@ const OPS_API_TOKEN = process.env.OPS_API_TOKEN || "";
 const PRIVATE_ADOPS_API_BASE_URL = (process.env.PRIVATE_ADOPS_API_BASE_URL || "http://127.0.0.1:4011").replace(/\/$/, "");
 const PRIVATE_ADOPS_API_TOKEN = process.env.PRIVATE_ADOPS_API_TOKEN || "";
 const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}`;
-const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
+const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const ADROTATE_SITES_CONFIG_PATH = process.env.ADOPS_SITES_CONFIG_PATH || path.join(PROJECT_ROOT, "config/adrotate-sites.json");
+const ADROTATE_SITES_CONFIG = JSON.parse(readFileSync(ADROTATE_SITES_CONFIG_PATH, "utf8"));
 const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
@@ -306,6 +310,52 @@ function normalizeSlotKey(value) {
     .trim();
 }
 
+function normalizeDimension(value) {
+  const match = String(value || "").match(/(?<!\d)(\d{2,4})\s*[xX×]\s*(\d{2,4})(?!\d)/);
+  return match ? `${Number(match[1])}x${Number(match[2])}` : null;
+}
+
+function portalPositionMappings(siteSigla) {
+  return Array.isArray(ADROTATE_SITES_CONFIG?.[String(siteSigla || "").toUpperCase()]?.formatMappings)
+    ? ADROTATE_SITES_CONFIG[String(siteSigla || "").toUpperCase()].formatMappings
+    : [];
+}
+
+function resolveCanonicalPortalPosition({ siteSigla, contractedPosition, dimensions = null, mediaType = null, groupId = null }) {
+  const mappings = portalPositionMappings(siteSigla);
+  const normalizedContracted = normalizeSlotKey(contractedPosition);
+  const normalizedDimensions = normalizeDimension(dimensions || contractedPosition);
+  const normalizedMediaType = String(mediaType || "").toLowerCase();
+  const candidates = mappings.filter((mapping) => {
+    if (groupId && Number(mapping.groupId) !== Number(groupId)) return false;
+    const names = [mapping.operationalName, mapping.canonicalName, ...(Array.isArray(mapping.aliases) ? mapping.aliases : [])]
+      .map(normalizeSlotKey)
+      .filter(Boolean);
+    const nameMatches = !normalizedContracted || names.includes(normalizedContracted);
+    const dimensionMatches = !normalizedDimensions || !mapping.dimensions || normalizeDimension(mapping.dimensions) === normalizedDimensions;
+    const mediaMatches = !normalizedMediaType || !Array.isArray(mapping.mediaTypes) || mapping.mediaTypes.includes(normalizedMediaType);
+    return nameMatches && dimensionMatches && mediaMatches;
+  });
+  if (candidates.length !== 1) {
+    return {
+      ok: false,
+      ambiguous: candidates.length > 1,
+      reason: candidates.length ? "ambiguous_portal_position" : "portal_position_not_found",
+      candidates: candidates.map((item) => Number(item.groupId)),
+    };
+  }
+  const mapping = candidates[0];
+  return {
+    ok: true,
+    groupId: Number(mapping.groupId),
+    operationalName: mapping.operationalName || mapping.aliases?.[0] || mapping.canonicalName,
+    canonicalPosition: mapping.canonicalName || mapping.operationalName || mapping.aliases?.[0],
+    dimensions: normalizeDimension(mapping.dimensions),
+    mediaType: normalizedMediaType || mapping.mediaTypes?.[0] || null,
+    source: `config/adrotate-sites.json:${String(siteSigla).toUpperCase()}:G${String(mapping.groupId).padStart(2, "0")}`,
+  };
+}
+
 const SOCIAL_INSERTION_PATTERN = /\b(instagram|stories?|reels?|social|sociais|redes sociais|feed|bonificacao|facebook|tiktok)\b/;
 
 function isSocialInsertion(raw) {
@@ -447,7 +497,12 @@ function resolveDrivePiClickUrl(fields, packageContext) {
       clickUrl,
       insertions: (Array.isArray(fields?.insertions) ? fields.insertions : []).map((item) => ({
         ...item,
-        ...(readUrlRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || !clickUrl ? {} : { clickUrl }),
+        ...(readUrlRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || !clickUrl || isVideoInsertion(item) ? {} : {
+          clickUrl,
+          clickUrlSource: packageContext?.textObservations?.find((observation) =>
+            observation?.links?.some((link) => link?.kind === "unknown" && link?.url === clickUrl)
+          )?.name || "txt_observation",
+        }),
       })),
     },
     clickUrl,
@@ -467,6 +522,9 @@ function scoreImageMediaForInsertion(mediaItem, raw, fields) {
   for (const word of normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "").split(/\s+/).filter((item) => item.length >= 4)) {
     if (haystack.includes(word)) score += 6;
   }
+  const expectedDimension = normalizeDimension(readStringRecord(raw, ["dimensions", "dimension", "dimensao", "canonicalPosition", "localFormato"]));
+  const mediaDimension = normalizeDimension(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`);
+  if (expectedDimension && mediaDimension) score += expectedDimension === mediaDimension ? 120 : -120;
   if (/\.(gif|png|jpe?g|webp)$/i.test(String(mediaItem?.name || ""))) score += 10;
   return score;
 }
@@ -481,14 +539,72 @@ function selectDriveImageForInsertion(packageContext, raw, fields) {
       ? { mediaItem: exact, ambiguous: false, candidates: 1, selectedBy: "explicit_drive_file_id" }
       : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
   }
-  if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
+  if (images.length === 1) {
+    const expectedDimension = normalizeDimension(readStringRecord(raw, ["dimensions", "dimension", "dimensao", "canonicalPosition", "localFormato"]));
+    const selectedDimension = normalizeDimension(`${images[0]?.name || ""} ${images[0]?.path || ""}`);
+    return {
+      mediaItem: images[0],
+      ambiguous: false,
+      candidates: 1,
+      dimensionMatch: !expectedDimension || !selectedDimension ? null : expectedDimension === selectedDimension,
+      expectedDimension,
+      selectedDimension,
+    };
+  }
   const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
+  const expectedDimension = normalizeDimension(readStringRecord(raw, ["dimensions", "dimension", "dimensao", "canonicalPosition", "localFormato"]));
+  const selectedDimension = normalizeDimension(`${ranked[0].item?.name || ""} ${ranked[0].item?.path || ""}`);
   return {
     mediaItem: ranked[0].item,
     ambiguous: ranked[0].score === ranked[1].score,
     candidates: images.length,
     score: ranked[0].score,
+    dimensionMatch: !expectedDimension || !selectedDimension ? null : expectedDimension === selectedDimension,
+    expectedDimension,
+    selectedDimension,
   };
+}
+
+function planDrivePiMediaAssignments(fields, packageContext) {
+  const issues = [];
+  const plannedInsertions = (Array.isArray(fields?.insertions) ? fields.insertions : []).map((raw) => {
+    if (readStringRecord(raw, ["mediaUrl", "media_url"])) {
+      return {
+        ...raw,
+        mediaAssignment: {
+          mediaDriveFileId: readStringRecord(raw, ["mediaDriveFileId"]),
+          filename: null,
+          dimensions: normalizeDimension(readStringRecord(raw, ["dimensions", "canonicalPosition", "localFormato"])),
+          ambiguous: false,
+          dimensionMatch: null,
+          sourceCitation: readStringRecord(raw, ["mediaSource", "sourceCitation"]),
+        },
+      };
+    }
+    const selected = isVideoInsertion(raw)
+      ? selectDriveVideoForInsertion(packageContext, raw, fields)
+      : selectDriveImageForInsertion(packageContext, raw, fields);
+    const mediaItem = selected.mediaItem || null;
+    if (!mediaItem) issues.push(`media_missing:${readStringRecord(raw, ["canonicalPosition", "localFormatoNormalizado", "localFormato"]) || "insercao"}`);
+    if (selected.ambiguous) issues.push(`media_ambiguous:${readStringRecord(raw, ["canonicalPosition", "localFormatoNormalizado", "localFormato"]) || "insercao"}`);
+    if (selected.dimensionMatch === false) issues.push(`media_dimension_mismatch:${readStringRecord(raw, ["canonicalPosition", "localFormatoNormalizado", "localFormato"]) || "insercao"}`);
+    return {
+      ...raw,
+      ...(mediaItem?.driveFileId ? { mediaDriveFileId: mediaItem.driveFileId } : {}),
+      ...(mediaItem?.name || mediaItem?.path ? { mediaSource: mediaItem.path || mediaItem.name } : {}),
+      mediaAssignment: {
+        mediaDriveFileId: mediaItem?.driveFileId || null,
+        filename: mediaItem?.name || null,
+        dimensions: normalizeDimension(`${mediaItem?.name || ""} ${mediaItem?.path || ""}`),
+        ambiguous: Boolean(selected.ambiguous),
+        dimensionMatch: selected.dimensionMatch ?? null,
+        sourceCitation: mediaItem?.path || mediaItem?.name || null,
+      },
+    };
+  });
+  const usedIds = plannedInsertions.map((item) => item.mediaDriveFileId).filter(Boolean);
+  if (new Set(usedIds).size !== usedIds.length) issues.push("media_file_reused_for_multiple_insertions");
+  return { fields: { ...fields, insertions: plannedInsertions }, issues: uniqueStrings(issues) };
 }
 
 async function downloadExternalMediaToArchive(url, fallbackName = "media") {
@@ -843,6 +959,8 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
       resolvedInsertions.push({
         ...raw,
         mediaUrl: publicUrl,
+        mediaDriveFileId: selected.mediaItem?.driveFileId || observed.link?.driveFileId || null,
+        mediaSource: selected.mediaItem?.path || selected.mediaItem?.name || observed.link?.sourceName || observed.link?.url || null,
         mediaProcessingNote: `Video comprimido no Mac Mini e publicado no Spaces: ${objectKey}`,
       });
     } catch (error) {
@@ -875,8 +993,13 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
     }
     const observed = selectObservedMediaLink(packageContext, "image");
     const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields);
-    if ((!observed.link && !selected.mediaItem?.driveFileId) || observed.ambiguous || selected.ambiguous) {
-      issues.push(`${observed.ambiguous || selected.ambiguous ? "image_media_ambiguous" : "image_media_missing"}:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"}`);
+    if ((!observed.link && !selected.mediaItem?.driveFileId) || observed.ambiguous || selected.ambiguous || selected.dimensionMatch === false) {
+      const issueCode = observed.ambiguous || selected.ambiguous
+        ? "image_media_ambiguous"
+        : selected.dimensionMatch === false
+          ? "image_media_dimension_mismatch"
+          : "image_media_missing";
+      issues.push(`${issueCode}:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"}`);
       resolvedInsertions.push(raw);
       continue;
     }
@@ -927,6 +1050,8 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
       resolvedInsertions.push({
         ...raw,
         mediaUrl,
+        mediaDriveFileId: selected.mediaItem?.driveFileId || observed.link?.driveFileId || null,
+        mediaSource: selected.mediaItem?.path || selected.mediaItem?.name || observed.link?.sourceName || observed.link?.url || null,
         mediaProcessingNote: `Mídia resolvida da pasta Drive e publicada em URL canônica: ${mediaUrl}`,
       });
     } catch (error) {
@@ -1271,6 +1396,41 @@ async function resolveDrivePiEntityIds(parsedFromPdf) {
   };
 }
 
+function parsePiMediaLinesFromText(text, siteSigla) {
+  const normalizedLineText = String(text || "").replace(/\r/g, "").replace(/\n(?=DOBRA\b)/gi, " ");
+  const definitions = [
+    { pattern: /\bMEGABANNER(?:\s+TOPO)?\s*-\s*(825\s*[xX×]\s*120)\b/i, mediaType: "image" },
+    { pattern: /\bBANNER\s+LATERAL\s+SEGUNDA\s+DOBRA\s*-\s*(300\s*[xX×]\s*250)\b/i, mediaType: "image" },
+    { pattern: /\bPUBLI\s+V[IÍ]DEO(?:\s+DE)?\s+60[\"”']?/i, mediaType: "video" },
+  ];
+  const insertions = [];
+  for (const definition of definitions) {
+    const match = normalizedLineText.match(definition.pattern);
+    if (!match) continue;
+    const contractedPosition = match[0].replace(/\s+/g, " ").trim();
+    const dimensions = normalizeDimension(match[1] || contractedPosition);
+    const canonical = resolveCanonicalPortalPosition({
+      siteSigla,
+      contractedPosition,
+      dimensions,
+      mediaType: definition.mediaType,
+    });
+    insertions.push({
+      contractedPosition,
+      canonicalPosition: canonical.ok ? canonical.canonicalPosition : null,
+      localFormato: contractedPosition,
+      localFormatoNormalizado: canonical.ok ? canonical.operationalName : null,
+      adrotateGroupId: canonical.ok ? canonical.groupId : null,
+      dimensions: canonical.ok ? canonical.dimensions : dimensions,
+      mediaType: definition.mediaType,
+      positionSource: canonical.ok ? canonical.source : "PI PDF",
+      sourceCitation: `PI PDF: ${contractedPosition}`,
+      mappingIssue: canonical.ok ? null : canonical.reason,
+    });
+  }
+  return insertions;
+}
+
 async function parseDrivePiPdfFields(archived) {
   const extracted = await extractTextFromArchivedPdf(archived);
   if (!extracted) return {};
@@ -1279,8 +1439,11 @@ async function parseDrivePiPdfFields(archived) {
   const piNumber = firstMatch(text, /\bPI\s+PEDIDO DE INSERÇÃO\s+(\d{3,})/i) || firstMatch(text, /\bPI\s*(\d{3,})\b/i);
   const competencia = firstMatch(text, /PERÍODO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i) || firstMatch(text, /COLOCAÇÃO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
-  const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
   const bboxPeriodo = parsePeriodoFromBboxText(extracted.bbox, competencia);
+  const vehicleName = firstMatch(text, /VEÍCULO\s+([^\n]+)/i);
+  const siteSigla = normalizeSiteAlias(vehicleName);
+  const periodo = bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia);
+  const parsedInsertionLines = parsePiMediaLinesFromText(text, siteSigla);
   const parsed = {
     piCodigo: piNumber ? `PI ${piNumber}` : null,
     campaignName,
@@ -1289,10 +1452,10 @@ async function parseDrivePiPdfFields(archived) {
     clientLegalName: firstMatch(text, /RAZÃO SOCIAL\s+([^\n]+)/i),
     clientCnpj: firstMatch(text, /CNPJ\s+(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/i),
     agencyName: firstMatch(text, /^([A-Z0-9 .&-]*DMD[^\n]+)/im) || "DMD",
-    vehicleName: firstMatch(text, /VEÍCULO\s+([^\n]+)/i),
+    vehicleName,
     valorLiquido: parseCurrencyPtBr(firstMatch(text, /LIQUIDO R\$\s+([\d.,]+)/i)),
     clickUrl: firstMatch(text, /(https:\/\/[^\s)]+)/i),
-    periodo: bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia),
+    periodo,
     rawTextExcerpt: text.slice(0, 1200),
     parseError: extracted.error || null,
   };
@@ -1307,16 +1470,17 @@ async function parseDrivePiPdfFields(archived) {
     clickUrl: parsed.clickUrl,
     rawTextExcerpt: parsed.rawTextExcerpt,
     parseError: parsed.parseError,
-    insertions: ids.siteId && parsed.localFormato && parsed.periodo.periodoInicio && parsed.periodo.periodoFim
-      ? [{
+    mediaLineCount: parsedInsertionLines.length,
+    insertions: ids.siteId && parsed.periodo.periodoInicio && parsed.periodo.periodoFim
+      ? parsedInsertionLines.map((item) => ({
+          ...item,
           siteId: ids.siteId,
-          localFormato: parsed.localFormato.replace(/\s*-\s*[0-9 Xx]+$/, "").trim(),
-          localFormatoNormalizado: "MEGABANNER TOPO",
+          siteSigla,
           periodoInicio: parsed.periodo.periodoInicio,
           periodoFim: parsed.periodo.periodoFim,
           periodoOriginal: parsed.periodo.periodoOriginal,
-          clickUrl: parsed.clickUrl,
-        }]
+          ...(item.mediaType === "image" && parsed.clickUrl ? { clickUrl: parsed.clickUrl } : {}),
+        }))
       : [],
   };
 }
@@ -1665,6 +1829,16 @@ function buildPiAgentJsonSchema() {
     },
     required: ["value", "confidence", "source"],
   };
+  const nullableNumberField = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      value: { type: ["number", "null"] },
+      confidence: { type: "number" },
+      source: { type: ["string", "null"] },
+    },
+    required: ["value", "confidence", "source"],
+  };
   return {
     type: "object",
     additionalProperties: false,
@@ -1696,10 +1870,13 @@ function buildPiAgentJsonSchema() {
           properties: {
             filename: { type: ["string", "null"] },
             format: { type: ["string", "null"] },
+            mediaDriveFileId: { type: ["string", "null"] },
+            dimensions: { type: ["string", "null"] },
+            sourceCitation: { type: ["string", "null"] },
             confidence: { type: "number" },
             source: { type: ["string", "null"] },
           },
-          required: ["filename", "format", "confidence", "source"],
+          required: ["filename", "format", "mediaDriveFileId", "dimensions", "sourceCitation", "confidence", "source"],
         },
       },
       clickUrl: nullableTextField,
@@ -1711,11 +1888,19 @@ function buildPiAgentJsonSchema() {
           properties: {
             site: nullableTextField,
             localFormato: nullableTextField,
+            contractedPosition: nullableTextField,
+            canonicalPosition: nullableTextField,
+            adrotateGroupId: nullableNumberField,
+            dimensions: nullableTextField,
+            mediaType: nullableTextField,
+            mediaDriveFileId: nullableTextField,
+            clickUrl: nullableTextField,
+            sourceCitation: nullableTextField,
             periodoInicio: nullableTextField,
             periodoFim: nullableTextField,
             periodoOriginal: nullableTextField,
           },
-          required: ["site", "localFormato", "periodoInicio", "periodoFim", "periodoOriginal"],
+          required: ["site", "localFormato", "contractedPosition", "canonicalPosition", "adrotateGroupId", "dimensions", "mediaType", "mediaDriveFileId", "clickUrl", "sourceCitation", "periodoInicio", "periodoFim", "periodoOriginal"],
         },
       },
       conflicts: { type: "array", items: { type: "string" } },
@@ -1760,6 +1945,9 @@ async function callPiAgentOpenAI(packageContext) {
       "Responda apenas JSON no schema solicitado.",
       "Nao invente campos; use null quando nao houver evidencia.",
       "Use citacao curta da PI, nome de arquivo ou caminho para cada campo critico.",
+      "Extraia uma insercao para cada linha da tabela de veiculacao, nao apenas a primeira.",
+      "Para cada insercao relacione nome contratado, posicao canonica, grupo AdRotate, dimensao, tipo, arquivo Drive, destino e citacao.",
+      "Link descrito como direcionamento do banner deve ser associado somente a midias de imagem, nunca ao video.",
       "Quando houver periodoInicio e periodoFim no mesmo mes, preencha competencia como MM/YYYY a partir do periodoInicio.",
       "A IA nao aplica mudancas; scripts deterministas validam e executam depois.",
     ],
@@ -1891,6 +2079,7 @@ async function normalizeAgentParsedPi(agentParsedPi) {
   const clientName = readAgentValue(agentParsedPi, ["cliente"]);
   const agencyName = readAgentValue(agentParsedPi, ["agencia"]);
   const siteName = readAgentValue(agentParsedPi, ["site"]);
+  const siteSigla = normalizeSiteAlias(siteName);
   const localFormato = readAgentValue(agentParsedPi, ["localFormato"]);
   const clickUrl = readUrlRecord({ clickUrl: readAgentValue(agentParsedPi, ["clickUrl", "redirectUrl", "urlDestino"]) }, ["clickUrl"]);
   const periodo = agentParsedPi.periodo && typeof agentParsedPi.periodo === "object" ? agentParsedPi.periodo : {};
@@ -1903,15 +2092,32 @@ async function normalizeAgentParsedPi(agentParsedPi) {
     vehicleName: siteName,
   });
   const agentInsertions = Array.isArray(agentParsedPi.insertions) && agentParsedPi.insertions.length
-    ? agentParsedPi.insertions.map((item) => ({
-        siteId: readNumberRecord(item, ["siteId"]) ?? ids.siteId,
-        localFormato: readAgentValue(item, ["localFormato"]) ?? localFormato,
-        localFormatoNormalizado: readAgentValue(item, ["localFormatoNormalizado"]) ?? readAgentValue(item, ["localFormato"]) ?? localFormato,
-        periodoInicio: readAgentValue(item, ["periodoInicio", "inicio"]) ?? periodoInicio,
-        periodoFim: readAgentValue(item, ["periodoFim", "fim"]) ?? periodoFim,
-        periodoOriginal: readAgentValue(item, ["periodoOriginal", "original"]) ?? periodoOriginal,
-        clickUrl,
-      }))
+    ? agentParsedPi.insertions.map((item) => {
+        const contractedPosition = readAgentValue(item, ["contractedPosition", "localFormato"]) ?? localFormato;
+        const dimensions = normalizeDimension(readAgentValue(item, ["dimensions", "dimensao"]) || contractedPosition);
+        const mediaType = String(readAgentValue(item, ["mediaType", "tipoMidia"]) || "").toLowerCase() || null;
+        const requestedGroupId = Number(readAgentValue(item, ["adrotateGroupId", "groupId"])) || null;
+        const canonical = resolveCanonicalPortalPosition({ siteSigla, contractedPosition, dimensions, mediaType, groupId: requestedGroupId });
+        const insertionClickUrl = readAgentValue(item, ["clickUrl", "urlDestino"]) || clickUrl;
+        return {
+          siteId: readNumberRecord(item, ["siteId"]) ?? ids.siteId,
+          siteSigla,
+          contractedPosition,
+          canonicalPosition: canonical.ok ? canonical.canonicalPosition : readAgentValue(item, ["canonicalPosition"]),
+          localFormato: contractedPosition,
+          localFormatoNormalizado: canonical.ok ? canonical.operationalName : readAgentValue(item, ["canonicalPosition", "localFormatoNormalizado"]) ?? contractedPosition,
+          adrotateGroupId: canonical.ok ? canonical.groupId : requestedGroupId,
+          dimensions: canonical.ok ? canonical.dimensions : dimensions,
+          mediaType,
+          mediaDriveFileId: readAgentValue(item, ["mediaDriveFileId"]),
+          sourceCitation: readAgentValue(item, ["sourceCitation"]) || readAgentSource(item, ["contractedPosition", "localFormato"]),
+          mappingIssue: canonical.ok ? null : canonical.reason,
+          periodoInicio: readAgentValue(item, ["periodoInicio", "inicio"]) ?? periodoInicio,
+          periodoFim: readAgentValue(item, ["periodoFim", "fim"]) ?? periodoFim,
+          periodoOriginal: readAgentValue(item, ["periodoOriginal", "original"]) ?? periodoOriginal,
+          ...(mediaType === "video" || !insertionClickUrl ? {} : { clickUrl: insertionClickUrl }),
+        };
+      })
     : ids.siteId && localFormato && periodoInicio && periodoFim
       ? [{
           siteId: ids.siteId,
@@ -1976,6 +2182,34 @@ function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true }
   };
 }
 
+async function normalizeDrivePiPositionMappings(fields) {
+  const siteSiglaById = await getSiteSiglaByIdMap();
+  return {
+    ...fields,
+    insertions: (Array.isArray(fields?.insertions) ? fields.insertions : []).map((raw) => {
+      const siteId = readNumberRecord(raw, ["siteId"]);
+      const siteSigla = (readStringRecord(raw, ["siteSigla"]) || siteSiglaById.get(Number(siteId)) || "").toUpperCase();
+      const contractedPosition = readStringRecord(raw, ["contractedPosition", "localFormato", "localFormatoNormalizado"]);
+      const dimensions = normalizeDimension(readStringRecord(raw, ["dimensions", "dimension", "dimensao"]) || contractedPosition);
+      const mediaType = String(readStringRecord(raw, ["mediaType", "tipoMidia"]) || (isVideoInsertion(raw) ? "video" : "image")).toLowerCase();
+      const requestedGroupId = readNumberRecord(raw, ["adrotateGroupId", "groupId"]);
+      const canonical = resolveCanonicalPortalPosition({ siteSigla, contractedPosition, dimensions, mediaType, groupId: requestedGroupId });
+      return {
+        ...raw,
+        siteSigla: siteSigla || null,
+        contractedPosition,
+        dimensions: canonical.ok ? canonical.dimensions : dimensions,
+        mediaType,
+        canonicalPosition: canonical.ok ? canonical.canonicalPosition : readStringRecord(raw, ["canonicalPosition"]),
+        localFormatoNormalizado: canonical.ok ? canonical.operationalName : readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]),
+        adrotateGroupId: canonical.ok ? canonical.groupId : requestedGroupId,
+        positionSource: canonical.ok ? canonical.source : readStringRecord(raw, ["positionSource"]),
+        mappingIssue: canonical.ok ? null : canonical.reason,
+      };
+    }),
+  };
+}
+
 async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {
   const hasPayloadParsedPi = payload?.parsedPi && typeof payload.parsedPi === "object" && !Array.isArray(payload.parsedPi);
   const parsed = hasPayloadParsedPi
@@ -2024,6 +2258,9 @@ function validateDrivePiApplyFields(fields) {
       const missingInsertion = [];
       if (!readNumberRecord(item, ["siteId"])) missingInsertion.push("siteId");
       if (!readStringRecord(item, ["localFormato", "localFormatoNormalizado"])) missingInsertion.push("localFormato");
+      if (item.mappingIssue) missingInsertion.push("canonicalPositionMapping");
+      if (readStringRecord(item, ["siteSigla"]) && portalPositionMappings(readStringRecord(item, ["siteSigla"])).length && !readNumberRecord(item, ["adrotateGroupId", "groupId"])) missingInsertion.push("adrotateGroupId");
+      if (readNumberRecord(item, ["adrotateGroupId", "groupId"]) && !readStringRecord(item, ["canonicalPosition"])) missingInsertion.push("canonicalPosition");
       if (!readStringRecord(item, ["periodoInicio", "inicio"])) missingInsertion.push("periodoInicio");
       if (!readStringRecord(item, ["periodoFim", "fim"])) missingInsertion.push("periodoFim");
       return missingInsertion.length ? { index, missing: missingInsertion } : null;
@@ -2160,6 +2397,9 @@ function validateDrivePiPackageReadiness(packageClassification, fields, mediaPro
   const issues = [];
   if (!packageClassification?.hasPdf) issues.push("missing_pi_pdf");
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
+  const parsedMediaLineCount = Number(fields?.raw?.mediaLineCount || 0);
+  if (parsedMediaLineCount > 0 && parsedMediaLineCount !== fields.insertions.length) issues.push("pi_media_line_insertion_count_mismatch");
+  if (parsedMediaLineCount > 0 && Number(packageClassification?.mediaCount || 0) !== parsedMediaLineCount) issues.push("media_insertion_count_mismatch");
   if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
   if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
   for (const issue of mediaProcessing?.issues || []) issues.push(issue);
@@ -3842,12 +4082,15 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  fields = await normalizeDrivePiPositionMappings(fields);
   const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
   fields = clickUrlResolution.fields;
   const insertionScope = (payload?.strictInsertionScope === true || payload?.publish === true)
     ? filterSiteInsertions(fields.insertions)
     : { accepted: fields.insertions, excluded: [] };
   fields = { ...fields, insertions: insertionScope.accepted };
+  const mediaAssignmentPlan = planDrivePiMediaAssignments(fields, packageContext);
+  fields = mediaAssignmentPlan.fields;
   const shouldResolveMedia = payload?.resolveMedia === true || payload?.publish === true;
   const videoResolution = shouldResolveMedia
     ? await resolveDrivePiVideoMedia(fields, packageContext, payload)
@@ -3859,7 +4102,20 @@ async function executeDrivePiIngest(payload) {
   fields = imageResolution.fields;
   const mediaProcessing = {
     results: [...(videoResolution.videoMediaProcessing?.results || []), ...(imageResolution.imageMediaProcessing?.results || [])],
-    issues: [...(videoResolution.videoMediaProcessing?.issues || []), ...(imageResolution.imageMediaProcessing?.issues || [])],
+    issues: [...mediaAssignmentPlan.issues, ...(videoResolution.videoMediaProcessing?.issues || []), ...(imageResolution.imageMediaProcessing?.issues || [])],
+    assignmentPlan: fields.insertions.map((item) => ({
+      contractedPosition: item.contractedPosition || item.localFormato,
+      canonicalPosition: item.canonicalPosition || item.localFormatoNormalizado,
+      adrotateGroupId: item.adrotateGroupId || null,
+      dimensions: item.dimensions || null,
+      mediaType: item.mediaType || (isVideoInsertion(item) ? "video" : "image"),
+      mediaDriveFileId: item.mediaDriveFileId || null,
+      mediaSource: item.mediaSource || null,
+      clickUrl: readUrlRecord(item, ["clickUrl"]),
+      clickUrlSource: item.clickUrlSource || null,
+      sourceCitation: item.sourceCitation || null,
+      mediaAssignment: item.mediaAssignment || null,
+    })),
     video: videoResolution.videoMediaProcessing,
     image: imageResolution.imageMediaProcessing,
   };
@@ -4180,6 +4436,7 @@ async function executeDrivePiIngest(payload) {
       clienteId: fields.clienteId,
       agenciaId: fields.agenciaId,
       insertions: fields.insertions.length,
+      insertionPlan: mediaProcessing.assignmentPlan,
     },
     validation,
     packageClassification,
@@ -5332,7 +5589,10 @@ export {
   isSocialInsertion,
   mediaKindFromUrl,
   mergeDrivePiFields,
+  parsePiMediaLinesFromText,
+  planDrivePiMediaAssignments,
   resolveDrivePiClickUrl,
+  resolveCanonicalPortalPosition,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectObservedMediaLink,
