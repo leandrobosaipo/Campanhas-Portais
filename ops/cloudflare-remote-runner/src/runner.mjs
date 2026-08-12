@@ -5277,8 +5277,10 @@ async function executePiSiteExport(job) {
   }
 
   const descriptor = await privateApiGet(`/api/pi-site-exports?piCodigo=${encodeURIComponent(piCodigo)}&siteSigla=${encodeURIComponent(siteSigla)}`);
-  const operationalInsertionIds = Array.isArray(descriptor?.operationalInsertionIds)
-    ? descriptor.operationalInsertionIds
+  const operationalInsertionIds = Array.isArray(descriptor?.exportableInsertionIds)
+    ? descriptor.exportableInsertionIds
+    : Array.isArray(descriptor?.operationalInsertionIds)
+      ? descriptor.operationalInsertionIds
     : descriptor?.insertionIds;
   if (!operationalInsertionIds?.length) {
     throw new Error(`Nenhuma inserção encontrada para PI ${piCodigo} no site ${siteSigla}.`);
