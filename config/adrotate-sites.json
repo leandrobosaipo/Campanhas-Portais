@@ -186,6 +186,8 @@
           "viewportTrimBottomPx": 120,
           "gifFrameSelection": "source_preferred",
           "forceReferenceFrameOnSlot": true,
+          "criticalContentSelectors": [],
+          "requireCriticalContentPainted": false,
           "requireStableFrame": false,
           "requireLegibleFrame": true,
           "preferBestLegibleFrame": true,
