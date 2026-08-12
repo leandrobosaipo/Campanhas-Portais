@@ -448,6 +448,36 @@ function buildEvidenceExportFileName(
 
 const ANALYTICS_PUBLIC_API_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
 
+async function proxyCampaignEvidenceWorkerRequest(req: any, res: any) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const upstream = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}${req.originalUrl}`, {
+      method: req.method,
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        accept: req.header("accept") || "application/json",
+        ...(req.method === "POST" ? { "content-type": "application/json" } : {}),
+        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key") } : {}),
+      },
+      ...(req.method === "POST" ? { body: JSON.stringify(req.body ?? {}) } : {}),
+    });
+    for (const header of ["content-type", "cache-control", "location"]) {
+      const value = upstream.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.status(503).json({
+      error: "campaign_evidence_worker_unavailable",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
   if (!captureAt) return false;
   if (isCaptureAtInRetroWindow(captureAt)) return false;
@@ -2877,6 +2907,10 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
     });
   }
 });
+
+router.post("/campaign-evidence-exports/jobs", proxyCampaignEvidenceWorkerRequest);
+router.get("/campaign-evidence-exports/jobs/:jobId", proxyCampaignEvidenceWorkerRequest);
+router.get("/campaign-evidence-exports/jobs/:jobId/download", proxyCampaignEvidenceWorkerRequest);
 
 router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void> => {
   let tempDir: string | null = null;

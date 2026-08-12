@@ -608,14 +608,14 @@ async function fetchDeliveryWithRetry(url, options, timeoutMs, attempts = 3) {
   throw lastError;
 }
 
-async function validateZipDelivery(url, { complete = false } = {}) {
+async function validateZipDelivery(url, { complete = false, expectedImages = null } = {}) {
   const response = await fetchDeliveryWithRetry(url, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 10 * 60_000);
   if (!response.ok) throw new Error(`ZIP de amostra indisponível: HTTP ${response.status}.`);
   const tempDir = await mkdtemp(path.join(tmpdir(), "adops-zip-validation-"));
   const zipPath = path.join(tempDir, "sample.zip");
   try {
     await writeFile(zipPath, Buffer.from(await response.arrayBuffer()));
-    const tested = spawnSync("python3", ["-c", EVIDENCE_ZIP_VALIDATION_PYTHON, zipPath, ...(complete ? ["complete"] : [])], { encoding: "utf8" });
+    const tested = spawnSync("python3", ["-c", EVIDENCE_ZIP_VALIDATION_PYTHON, zipPath, ...(complete ? ["complete", String(expectedImages ?? "")] : [])], { encoding: "utf8" });
     if (tested.status !== 0) throw new Error(`ZIP inválido: ${tested.error?.message || tested.stderr || tested.stdout || `exit ${tested.status}`}`);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -638,7 +638,12 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   for (const [index, url] of batchSamples.entries()) await validateDeliveryUrl(url, `ZIP de campanha ${index + 1}`);
   for (const [index, url] of completeSamples.entries()) await validateDeliveryUrl(url, `ZIP completo da campanha ${index + 1}`);
   if (batchSamples[0]) await validateZipDelivery(batchSamples[0]);
-  if (completeSamples[0]) await validateZipDelivery(completeSamples[0], { complete: true });
+  if (completeSamples[0]) {
+    const expectedImages = insertions
+      .filter((item) => item.completeCampaignDownloadUrl === completeSamples[0])
+      .reduce((total, item) => total + item.evidenceDays.filter((day) => day.status.startsWith("audited")).length, 0);
+    await validateZipDelivery(completeSamples[0], { complete: true, expectedImages });
+  }
 }
 
 function dayTitle(day, item) {

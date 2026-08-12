@@ -21,11 +21,17 @@ with zipfile.ZipFile(archive) as package:
     if package.testzip() is not None:
         raise SystemExit('corrupt member')
     base = checksum_names[0].rsplit('/', 1)[0] + '/' if '/' in checksum_names[0] else ''
+    listed = set()
     for line in package.read(checksum_names[0]).decode('utf-8').splitlines():
         digest, relative = line.split(None, 1)
         member = base + relative.lstrip(' *./')
+        listed.add(member)
         if hashlib.sha256(package.read(member)).hexdigest() != digest:
             raise SystemExit('checksum mismatch: ' + member)
+    if set(images) != listed:
+        raise SystemExit('SHA256SUMS.txt must list every JPEG exactly once')
+    if len(sys.argv) > 3 and int(sys.argv[3]) != len(images):
+        raise SystemExit('unexpected image count')
 `;
 
 export function buildDeliveryProbeOptions() {

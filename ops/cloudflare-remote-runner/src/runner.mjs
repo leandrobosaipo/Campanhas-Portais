@@ -5180,7 +5180,7 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
     : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
-async function ensureInsertionCaptureCoverage(insertion) {
+async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride = null) {
   const start = parseIsoDate(insertion.periodoInicio);
   const end = parseIsoDate(insertion.periodoFim);
   const today = parseIsoDate(new Intl.DateTimeFormat("en-CA", {
@@ -5203,10 +5203,12 @@ async function ensureInsertionCaptureCoverage(insertion) {
 
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
-  const firstPassDates = eachIsoDay(start, effectiveEnd);
+  const firstPassDates = Array.isArray(requiredDatesOverride)
+    ? Array.from(new Set(requiredDatesOverride.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))))).sort()
+    : eachIsoDay(start, effectiveEnd);
   const firstPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   const hasInvalid = firstPassStatuses.some((item) => item?.status === "invalid_audit" || item?.status === "invalid_url");
-  if (hasInvalid) {
+  if (hasInvalid && !Array.isArray(requiredDatesOverride)) {
     const fixed = await privateApi(`/api/insertions/${insertion.id}/capture-proof/fix-invalid`, {});
     if (Array.isArray(fixed?.deletedEvidenceIds)) {
       invalidatedEvidenceIds.push(...fixed.deletedEvidenceIds);
@@ -5420,7 +5422,8 @@ async function executeCampaignEvidenceExport(job) {
   await progressJob(job.id, { stage: "reauditando evidências da campanha", piCodigo, competencia, insertionIds: descriptor.insertionIds });
   for (const insertionId of descriptor.insertionIds) {
     const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
-    await ensureInsertionCaptureCoverage(insertion);
+    const requiredDates = descriptor?.requiredDatesByInsertion?.[String(insertionId)];
+    await ensureInsertionCaptureCoverage(insertion, requiredDates);
   }
   descriptor = await privateApiGet(descriptorPath);
   if (descriptor?.readiness?.ready !== true) {
