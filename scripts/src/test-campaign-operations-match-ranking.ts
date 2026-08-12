@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   type CampaignOperationMatchCandidate,
+  findCampaignIdentityMatches,
   isFormatCompatible,
   selectBestAdopsMatch,
 } from "../../artifacts/api-server/src/lib/campaign-operations-matching";
@@ -59,6 +60,21 @@ test("mantem ambiguidade quando duplicatas empatadas apontam para midias diferen
   const segunda = insertion({ id: 1941, localFormatoNormalizado: "LATERAL 02", mediaUrl: "https://cdn.example.test/b.gif" });
   const result = selectBestAdopsMatch(row("LATERAL 02 — SIDEBAR — 300x250"), [primeira, segunda]);
   assert.equal(result.insertion, null);
+});
+
+test("associa PI sem numero somente por portal, campanha e periodo exatos", () => {
+  const candidates = [
+    { ...insertion({ id: 1944 }), campaignName: "RADAR", piCodigo: "PI - TCE", siteSigla: "PERRENGUE" },
+    { ...insertion({ id: 1940 }), campaignName: "RADAR", piCodigo: "PI 17190 - TCE", siteSigla: "OMT" },
+  ];
+  const matches = findCampaignIdentityMatches({
+    piCodigo: "PI - TCE",
+    campaignName: "RADAR",
+    blockSite: "PERRENGUE",
+    periodoInicio: "2026-07-20",
+    periodoFim: "2026-07-31",
+  }, candidates);
+  assert.deepEqual(matches.map((candidate) => candidate.id), [1944]);
 });
 
 test("prioriza insercao publicada em vez de duplicata cancelada", () => {

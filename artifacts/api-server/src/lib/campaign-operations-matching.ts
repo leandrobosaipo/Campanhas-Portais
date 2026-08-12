@@ -6,6 +6,14 @@ import {
 
 type MatchRow = Pick<CurrentSheetCampaignRow, "localFormato" | "periodoInicio" | "periodoFim">;
 
+type CampaignIdentityRow = Pick<CurrentSheetCampaignRow, "piCodigo" | "campaignName" | "blockSite" | "periodoInicio" | "periodoFim">;
+
+type CampaignIdentityCandidate = CampaignOperationMatchCandidate & {
+  campaignName: string | null;
+  piCodigo: string | null;
+  siteSigla: string | null;
+};
+
 export type CampaignOperationMatchCandidate = {
   id: number;
   localFormato: string | null;
@@ -16,6 +24,23 @@ export type CampaignOperationMatchCandidate = {
   bannerPublicadoNoSite: boolean | null;
   mediaUrl: string | null;
 };
+
+function piDigits(value: string | null | undefined) {
+  return String(value ?? "").match(/\d+/g)?.join("") || null;
+}
+
+export function findCampaignIdentityMatches<T extends CampaignIdentityCandidate>(row: CampaignIdentityRow, candidates: T[]) {
+  const sheetPi = piDigits(row.piCodigo);
+  return candidates.filter((candidate) => {
+    if (normalizeForMatch(candidate.siteSigla) !== normalizeForMatch(row.blockSite)) return false;
+    if (sheetPi) return piDigits(candidate.piCodigo) === sheetPi;
+    const sheetCampaign = normalizeForMatch(row.campaignName);
+    const adopsCampaign = normalizeForMatch(candidate.campaignName);
+    return Boolean(sheetCampaign && adopsCampaign && (sheetCampaign === adopsCampaign || sheetCampaign.includes(adopsCampaign) || adopsCampaign.includes(sheetCampaign)))
+      && candidate.periodoInicio === row.periodoInicio
+      && candidate.periodoFim === row.periodoFim;
+  });
+}
 
 export function isFormatCompatible(sheetFormat: string, adopsFormat: string | null | undefined) {
   const sheet = normalizeFormato(sheetFormat);
