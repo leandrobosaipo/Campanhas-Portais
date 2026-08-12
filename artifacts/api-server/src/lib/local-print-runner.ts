@@ -134,6 +134,7 @@ class LocalPrintRunner implements PrintRunnerPort {
         };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
+        if (/capture_audit_failed|invalid_audit/i.test(lastError)) break;
         if (attempt < PRINT_TARGET_MAX_ATTEMPTS && PRINT_RETRY_BASE_MS > 0) {
           await sleep(PRINT_RETRY_BASE_MS * attempt);
         }

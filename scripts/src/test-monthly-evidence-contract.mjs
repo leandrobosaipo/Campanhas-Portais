@@ -15,6 +15,7 @@ test("classifica audited, missing e invalid sem aceitar HTTP 200 isolado", () =>
   assert.equal(contract.classifyEvidenceStatus({ status: "missing" }), "missing");
   assert.equal(contract.classifyEvidenceStatus({ status: "ok", isReachable: true, checklistValidation: { approved: false } }), "invalid");
   assert.equal(contract.classifyEvidenceStatus({ status: "invalid_url", isReachable: false }), "invalid");
+  assert.equal(contract.classifyEvidenceStatus({ status: "audited", isReachable: false, arquivoUrl: "https://example.com/prova.png", checklistValidation: { approved: true } }), "invalid");
 });
 
 test("calcula entradas e vencimentos nos sete dias seguintes", () => {

@@ -15,7 +15,7 @@ export function classifyEvidenceStatus(status) {
   if (!status || status.status === "missing" || status.hasEvidenceForDate === false) return "missing";
   const approvedState = status.status === "ok" || status.status === "ok_best_effort" || status.status === "audited" || status.status === "audited_best_effort";
   const approvedChecklist = status.checklistValidation?.approved === true;
-  const reachable = status.isReachable === true || (status.status === "audited" && Boolean(status.arquivoUrl || status.url));
+  const reachable = status.isReachable === true;
   if (approvedState && approvedChecklist && reachable) {
     return status.status === "ok_best_effort" || status.status === "audited_best_effort"
       ? "audited_best_effort"

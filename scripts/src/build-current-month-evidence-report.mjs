@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" };
 import {
@@ -508,6 +509,34 @@ async function validateDeliveryUrl(url, label) {
   if (!response.ok) throw new Error(`${label} indisponível: HTTP ${response.status}.`);
 }
 
+async function validateZipDelivery(url) {
+  const response = await fetchWithTimeout(url, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 10 * 60_000);
+  if (!response.ok) throw new Error(`ZIP de amostra indisponível: HTTP ${response.status}.`);
+  const tempDir = await mkdtemp(path.join(tmpdir(), "adops-zip-validation-"));
+  const zipPath = path.join(tempDir, "sample.zip");
+  try {
+    await writeFile(zipPath, Buffer.from(await response.arrayBuffer()));
+    const tested = spawnSync("unzip", ["-t", zipPath], { encoding: "utf8" });
+    if (tested.status !== 0) throw new Error(`ZIP corrompido: ${tested.stderr || tested.stdout}`);
+    const listed = spawnSync("unzip", ["-Z1", zipPath], { encoding: "utf8" });
+    if (listed.status !== 0) throw new Error("Não foi possível listar o ZIP de amostra.");
+    const files = listed.stdout.split(/\r?\n/).filter((item) => item && !item.endsWith("/"));
+    const images = files.filter((item) => /\.jpe?g$/i.test(item));
+    if (!images.length || files.some((item) => !/\.jpe?g$/i.test(item) && !/(^|\/)SHA256SUMS\.txt$/.test(item))) {
+      throw new Error(`ZIP contém arquivos fora do contrato: ${files.join(", ")}`);
+    }
+    if (!files.some((item) => /(^|\/)SHA256SUMS\.txt$/.test(item))) throw new Error("ZIP sem SHA256SUMS.txt.");
+    const extractDir = path.join(tempDir, "extract");
+    await mkdir(extractDir, { recursive: true });
+    const extracted = spawnSync("unzip", ["-q", zipPath, "-d", extractDir], { encoding: "utf8" });
+    if (extracted.status !== 0) throw new Error("Falha ao extrair ZIP para validar checksums.");
+    const checksums = spawnSync("shasum", ["-a", "256", "-c", "SHA256SUMS.txt"], { cwd: extractDir, encoding: "utf8" });
+    if (checksums.status !== 0) throw new Error(`Checksums inválidos no ZIP: ${checksums.stderr || checksums.stdout}`);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function validateGeneratedReport({ data, reportManifest, insertions }) {
   const html = await readFile(outputPath, "utf8");
   if (!html.includes('<meta name="robots" content="noindex,nofollow">')) throw new Error("HTML sem noindex,nofollow.");
@@ -521,6 +550,7 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   const batchSamples = Array.from(new Set(insertions.map((item) => item.batchDownloadUrl).filter(Boolean)));
   for (const [index, url] of individualSamples.entries()) await validateDeliveryUrl(url, `JPEG individual ${index + 1}`);
   for (const [index, url] of batchSamples.entries()) await validateDeliveryUrl(url, `ZIP de campanha ${index + 1}`);
+  if (batchSamples[0]) await validateZipDelivery(batchSamples[0]);
 }
 
 function dayTitle(day, item) {
@@ -1069,8 +1099,24 @@ async function main() {
       throw new Error(`Publicação bloqueada: missing=${summary.missingDates}, invalid=${summary.invalidDates}.`);
     }
     await publishReport();
-    const validation = await fetchWithTimeout(publicUrl, { redirect: "follow" }, 20000);
-    if (!validation.ok) throw new Error(`URL publica falhou: HTTP ${validation.status}`);
+    const cacheToken = encodeURIComponent(generatedAt.toISOString());
+    const [htmlValidation, manifestValidation, catalogValidation] = await Promise.all([
+      fetchWithTimeout(`${publicUrl}?v=${cacheToken}`, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 20_000),
+      fetchWithTimeout(`${publicUrl}report.json?v=${cacheToken}`, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 20_000),
+      fetchWithTimeout(`https://sites.codigo5.com.br/api/sites?v=${cacheToken}`, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 20_000),
+    ]);
+    if (!htmlValidation.ok || !manifestValidation.ok) throw new Error(`Readback público falhou: HTML ${htmlValidation.status}, manifest ${manifestValidation.status}.`);
+    const publishedManifest = await manifestValidation.json();
+    if (publishedManifest.generatedAt !== reportManifest.generatedAt || publishedManifest.visibility !== "unlisted") {
+      throw new Error("Readback público não corresponde ao manifest recém-publicado.");
+    }
+    if (catalogValidation.ok) {
+      const catalog = await catalogValidation.json();
+      const entries = Array.isArray(catalog) ? catalog : Array.isArray(catalog?.items) ? catalog.items : Array.isArray(catalog?.sites) ? catalog.sites : [];
+      if (entries.some((item) => String(item?.slug || item?.path || item?.url || "").includes(slug))) {
+        throw new Error("Relatório unlisted apareceu no catálogo público.");
+      }
+    }
   }
 
   console.log(JSON.stringify({ ok: true, outputPath, snapshotPath, publicUrl, summary }, null, 2));

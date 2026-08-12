@@ -1163,18 +1163,30 @@ async function createIdempotentOpsJob(
   requestedBy: string | null,
   idempotencyKey: string,
 ) {
-  const existing = await env.adops_ops
+  const jobId = crypto.randomUUID();
+  const now = nowIso();
+  const inserted = await env.adops_ops
     .prepare(
-      `SELECT id, status FROM ops_jobs
-       WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ?
-       ORDER BY created_at DESC LIMIT 1`,
+      `INSERT OR IGNORE INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+       VALUES (?, ?, 'queued', ?, NULL, NULL, ?, NULL, ?, ?)`,
     )
-    .bind(kind, idempotencyKey)
-    .first<{ id: string; status: JobStatus }>();
-  if (existing) {
+    .bind(jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, now, now)
+    .run();
+  if ((inserted.meta?.changes ?? 0) === 0) {
+    const existing = await env.adops_ops
+      .prepare(`SELECT id, status FROM ops_jobs WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1`)
+      .bind(kind, idempotencyKey)
+      .first<{ id: string; status: JobStatus }>();
+    if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
     return { jobId: existing.id, status: existing.status, duplicate: true };
   }
-  const jobId = await createOpsJob(env, kind, { ...payload, idempotencyKey }, requestedBy);
+  try {
+    await env.adops_ops_queue.send({ jobId, kind });
+  } catch (error) {
+    const queueError = error instanceof Error ? error.message : String(error);
+    await env.adops_ops.prepare(`UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, updated_at = ? WHERE id = ?`)
+      .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), jobId).run();
+  }
   return { jobId, status: "queued" as JobStatus, duplicate: false };
 }
 
@@ -1548,7 +1560,12 @@ async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: stri
   const statement = env.adops_ops.prepare(sql);
   const row = await statement.bind(...(kinds ?? [])).first<OpsJobRecord>();
   if (!row) return null;
-  return updateOpsJob(env, row.id, { status: "running", runnerId, error: null });
+  const claimed = await env.adops_ops
+    .prepare(`UPDATE ops_jobs SET status = 'running', runner_id = ?, error_text = NULL, updated_at = ? WHERE id = ? AND status = 'ready_for_runner'`)
+    .bind(runnerId, nowIso(), row.id)
+    .run();
+  if ((claimed.meta?.changes ?? 0) !== 1) return null;
+  return env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(row.id).first<OpsJobRecord>();
 }
 
 function todayInCuiaba() {

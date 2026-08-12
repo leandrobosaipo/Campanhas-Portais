@@ -706,7 +706,7 @@ paths:
       summary: Export insertion evidence package
       description: >-
         Exports the existing full operational package by default. Use
-        mode=prints-only and variant=web to receive only optimized PNG copies;
+        mode=prints-only and variant=web to receive only optimized progressive JPEG copies;
         canonical evidence files and audit URLs are not changed.
       parameters:
         - name: id

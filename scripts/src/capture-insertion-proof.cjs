@@ -1646,6 +1646,52 @@ function uploadToSpaces(env, bucket, key, localFile) {
   return `https://${bucket}.${env.region}.digitaloceanspaces.com/${key}`;
 }
 
+function buildEvidenceReplacementArchivePlan({ evidenceUrl, bucket, competencia, campaignId, insertionId, targetDate }) {
+  if (!evidenceUrl || !bucket) return null;
+  let url;
+  try {
+    url = new URL(evidenceUrl);
+  } catch {
+    return null;
+  }
+  if (!url.hostname.startsWith(`${bucket}.`)) return null;
+  const sourceKey = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  if (!sourceKey || sourceKey.includes("..")) return null;
+  const fileName = path.basename(sourceKey);
+  const version = String(url.searchParams.get("v") || "unversioned").replace(/[^A-Za-z0-9._-]/g, "");
+  const archiveKey = [
+    "adops-evidence-originals",
+    slugify(competencia || "sem-competencia").toUpperCase(),
+    String(campaignId),
+    String(insertionId),
+    targetDate,
+    `${version}-${fileName}`,
+  ].join("/");
+  return { sourceKey, archiveKey };
+}
+
+function archiveEvidenceBeforeReplacement(env, bucket, plan) {
+  execFileSync("aws", [
+    "--endpoint-url",
+    env.endpoint,
+    "s3",
+    "cp",
+    `s3://${bucket}/${plan.sourceKey}`,
+    `s3://${bucket}/${plan.archiveKey}`,
+    "--acl",
+    "private",
+  ], {
+    env: {
+      ...process.env,
+      AWS_ACCESS_KEY_ID: env.accessKeyId,
+      AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
+      AWS_DEFAULT_REGION: env.region,
+    },
+    stdio: "pipe",
+  });
+  return plan;
+}
+
 async function persistCaptureLog(apiBase, insertionId, payload) {
   const response = await fetch(`${apiBase}/insertions/${insertionId}/capture-proof/logs`, {
     method: "POST",
@@ -7313,6 +7359,22 @@ async function main() {
     if (args.upload) {
       if (!args.spacesEnv) throw new Error("Use --spacesEnv para subir o print ao Spaces.");
       spacesEnv = parseEnvFile(args.spacesEnv);
+      if (args.replaceExisting) {
+        const titleKey = `Print ${isoDate}`;
+        const existingEvidence = (insertion.evidences || []).find((item) => item.titulo && item.titulo.includes(titleKey));
+        const archivePlan = buildEvidenceReplacementArchivePlan({
+          evidenceUrl: existingEvidence?.arquivoUrl || null,
+          bucket: args.spacesBucket,
+          competencia: insertion.competencia,
+          campaignId: insertion.campanhaId,
+          insertionId: insertion.id,
+          targetDate: isoDate,
+        });
+        if (existingEvidence?.arquivoUrl && !archivePlan) {
+          throw new Error("evidence_replacement_archive_failed: URL anterior não pertence ao bucket configurado.");
+        }
+        if (archivePlan) metadata.replacementArchive = archiveEvidenceBeforeReplacement(spacesEnv, args.spacesBucket, archivePlan);
+      }
       const competenciaSlug = slugify(insertion.competencia || "sem-competencia").toUpperCase();
       const candidateSegment = args.candidateOnly
         ? `candidates/${slugify(args.runnerJobId || args.jobId || String(Date.now()))}/`
@@ -7729,5 +7791,6 @@ if (require.main === module) {
     evaluateContentTimeline,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    buildEvidenceReplacementArchivePlan,
   };
 }

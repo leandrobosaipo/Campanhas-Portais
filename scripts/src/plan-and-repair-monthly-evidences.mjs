@@ -200,7 +200,8 @@ if (cod5_resume) {
     if (error?.code !== "ENOENT") throw error;
   }
 }
-const cod5_completedKeys = new Set(cod5_results.map((item) => `${item.insertionId}:${item.date}`));
+const cod5_completedKeys = new Set(cod5_results.filter((item) => item.ok).map((item) => `${item.insertionId}:${item.date}`));
+cod5_results = cod5_results.filter((item) => item.ok);
 for (const [cod5_pendingIndex, cod5_entry] of cod5_pending.entries()) {
   const cod5_entryKey = `${cod5_entry.insertionId}:${cod5_entry.date}`;
   if (cod5_completedKeys.has(cod5_entryKey)) {
