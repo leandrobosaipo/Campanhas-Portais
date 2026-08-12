@@ -993,6 +993,22 @@ export interface CompetenciaBreakdown {
   atrasadas: number;
 }
 
+export type ListOpsJobsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  status?: string;
+  kind?: string;
+};
+
+export type ListOpsJobs200 = { [key: string]: unknown };
+
+export type GetOpsJob200 = { [key: string]: unknown };
+
+export type GetOpsJobProgress200 = { [key: string]: unknown };
+
 export type GetActiveCampaignOperationsParams = {
   date?: string;
   siteSigla?: string;
@@ -1089,6 +1105,45 @@ export const ExportInsertionEvidencesVariant = {
   original: "original",
   web: "web",
 } as const;
+
+export type CreatePiSiteExportJobBodyMode =
+  (typeof CreatePiSiteExportJobBodyMode)[keyof typeof CreatePiSiteExportJobBodyMode];
+
+export const CreatePiSiteExportJobBodyMode = {
+  "full-pdf": "full-pdf",
+  "prints-only": "prints-only",
+} as const;
+
+export type CreatePiSiteExportJobBodyVariant =
+  (typeof CreatePiSiteExportJobBodyVariant)[keyof typeof CreatePiSiteExportJobBodyVariant];
+
+export const CreatePiSiteExportJobBodyVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type CreatePiSiteExportJobBody = {
+  piCodigo: string;
+  siteSigla: string;
+  mode?: CreatePiSiteExportJobBodyMode;
+  variant?: CreatePiSiteExportJobBodyVariant;
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreatePiSiteExportJob200 = { [key: string]: unknown };
+
+export type CreatePiSiteExportJob202 = { [key: string]: unknown };
+
+export type GetPiSiteExportJob200 = { [key: string]: unknown };
 
 export type ExportPiSitePackageParams = {
   piCodigo: string;

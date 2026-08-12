@@ -10,6 +10,7 @@
     "sync:planilha": "tsx ./src/sync-planilha-latest.ts",
     "reconcile:planilha-adrotate": "tsx ./src/reconcile-planilha-adrotate.ts",
     "report:evidences-current-month": "node ./src/build-current-month-evidence-report.mjs",
+    "report:adops-operational-manual": "node ./src/build-adops-operational-manual.mjs",
     "fix:perrengue-media": "tsx ./src/fix-perrengue-media.ts",
     "capture:proof": "node ./src/capture-insertion-proof.cjs",
     "frame:build-windows-template": "node ./src/build-windows-frame-kit.mjs",

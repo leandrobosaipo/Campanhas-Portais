@@ -1,0 +1,27 @@
+{
+  "slug": "adops-manual-operacional",
+  "title": "Manual Operacional AdOps",
+  "description": "Rotinas vigentes para cadastrar, publicar, auditar, entregar e manter campanhas AdOps.",
+  "kind": "guia",
+  "generatedAt": "2026-08-12T20:00:00.000Z",
+  "updatedAt": "2026-08-12",
+  "visibility": "unlisted",
+  "thumb": "assets/thumb.png",
+  "favicon": "assets/favicon.png",
+  "logo": "assets/logo.png",
+  "publication": {
+    "preset": "corporate-base",
+    "density": "medium",
+    "hero": "compact",
+    "typography": "sans",
+    "accent": "institutional-blue",
+    "radius": 4,
+    "metricsColumns": 4,
+    "tableMode": "cards-on-mobile",
+    "evidenceLayout": "grid",
+    "motion": "reduced",
+    "audience": "mixed"
+  },
+  "url": "https://sites.codigo5.com.br/reports/adops-manual-operacional/",
+  "sourceHash": "f1e9bc4eb559c173c6abb238e9e8f3d6efc8dabb9d49c2082e41f3591c24a6ca"
+}

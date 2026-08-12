@@ -39,6 +39,9 @@ import type {
   CreateClientBody,
   CreateEvidenceBody,
   CreateInsertionBody,
+  CreatePiSiteExportJob200,
+  CreatePiSiteExportJob202,
+  CreatePiSiteExportJobBody,
   CreateSiteBody,
   DashboardSummary,
   DownloadInsertionEvidenceParams,
@@ -58,13 +61,18 @@ import type {
   GetDashboardSummaryParams,
   GetMonthlyEvidenceSource200,
   GetMonthlyEvidenceSourceParams,
+  GetOpsJob200,
+  GetOpsJobProgress200,
   GetPendingCampaignOperations200,
   GetPendingCampaignOperationsParams,
+  GetPiSiteExportJob200,
   HealthStatus,
   InsertionDetail,
   InsertionWithRelations,
   ListCampaignsParams,
   ListInsertionsParams,
+  ListOpsJobs200,
+  ListOpsJobsParams,
   MediaConsistencyResult,
   OpsJobAccepted,
   OpsRuntimeTopology,
@@ -324,6 +332,272 @@ export const useCreateDrivePiReconcileJob = <
 > => {
   return useMutation(getCreateDrivePiReconcileJobMutationOptions(options));
 };
+
+/**
+ * @summary List operational jobs in compact form
+ */
+export const getListOpsJobsUrl = (params?: ListOpsJobsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/jobs?${stringifiedParams}`
+    : `/api/ops/jobs`;
+};
+
+export const listOpsJobs = async (
+  params?: ListOpsJobsParams,
+  options?: RequestInit,
+): Promise<ListOpsJobs200> => {
+  return customFetch<ListOpsJobs200>(getListOpsJobsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOpsJobsQueryKey = (params?: ListOpsJobsParams) => {
+  return [`/api/ops/jobs`, ...(params ? [params] : [])] as const;
+};
+
+export const getListOpsJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOpsJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListOpsJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListOpsJobsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listOpsJobs>>> = ({
+    signal,
+  }) => listOpsJobs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOpsJobs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOpsJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOpsJobs>>
+>;
+export type ListOpsJobsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List operational jobs in compact form
+ */
+
+export function useListOpsJobs<
+  TData = Awaited<ReturnType<typeof listOpsJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListOpsJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOpsJobsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+export const getGetOpsJobUrl = (id: string) => {
+  return `/api/ops/jobs/${id}`;
+};
+
+export const getOpsJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<GetOpsJob200> => {
+  return customFetch<GetOpsJob200>(getGetOpsJobUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpsJobQueryKey = (id: string) => {
+  return [`/api/ops/jobs/${id}`] as const;
+};
+
+export const getGetOpsJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpsJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpsJobQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getOpsJob>>> = ({
+    signal,
+  }) => getOpsJob(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getOpsJob>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetOpsJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpsJob>>
+>;
+export type GetOpsJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+
+export function useGetOpsJob<
+  TData = Awaited<ReturnType<typeof getOpsJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpsJobQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+export const getGetOpsJobProgressUrl = (id: string) => {
+  return `/api/ops/jobs/${id}/progress`;
+};
+
+export const getOpsJobProgress = async (
+  id: string,
+  options?: RequestInit,
+): Promise<GetOpsJobProgress200> => {
+  return customFetch<GetOpsJobProgress200>(getGetOpsJobProgressUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpsJobProgressQueryKey = (id: string) => {
+  return [`/api/ops/jobs/${id}/progress`] as const;
+};
+
+export const getGetOpsJobProgressQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpsJobProgress>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJobProgress>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpsJobProgressQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpsJobProgress>>
+  > = ({ signal }) => getOpsJobProgress(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpsJobProgress>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpsJobProgressQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpsJobProgress>>
+>;
+export type GetOpsJobProgressQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+
+export function useGetOpsJobProgress<
+  TData = Awaited<ReturnType<typeof getOpsJobProgress>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJobProgress>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpsJobProgressQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
@@ -2930,6 +3204,273 @@ export function useExportInsertionEvidences<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const getCreatePiSiteExportJobUrl = () => {
+  return `/api/pi-site-exports/jobs`;
+};
+
+export const createPiSiteExportJob = async (
+  createPiSiteExportJobBody: CreatePiSiteExportJobBody,
+  options?: RequestInit,
+): Promise<CreatePiSiteExportJob200 | CreatePiSiteExportJob202> => {
+  return customFetch<CreatePiSiteExportJob200 | CreatePiSiteExportJob202>(
+    getCreatePiSiteExportJobUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(createPiSiteExportJobBody),
+    },
+  );
+};
+
+export const getCreatePiSiteExportJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<CreatePiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<CreatePiSiteExportJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createPiSiteExportJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    { data: BodyType<CreatePiSiteExportJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPiSiteExportJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePiSiteExportJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>
+>;
+export type CreatePiSiteExportJobMutationBody =
+  BodyType<CreatePiSiteExportJobBody>;
+export type CreatePiSiteExportJobMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const useCreatePiSiteExportJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<CreatePiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<CreatePiSiteExportJobBody> },
+  TContext
+> => {
+  return useMutation(getCreatePiSiteExportJobMutationOptions(options));
+};
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+export const getGetPiSiteExportJobUrl = (jobId: string) => {
+  return `/api/pi-site-exports/jobs/${jobId}`;
+};
+
+export const getPiSiteExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<GetPiSiteExportJob200> => {
+  return customFetch<GetPiSiteExportJob200>(getGetPiSiteExportJobUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPiSiteExportJobQueryKey = (jobId: string) => {
+  return [`/api/pi-site-exports/jobs/${jobId}`] as const;
+};
+
+export const getGetPiSiteExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPiSiteExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>
+  > = ({ signal }) => getPiSiteExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPiSiteExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPiSiteExportJob>>
+>;
+export type GetPiSiteExportJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+
+export function useGetPiSiteExportJob<
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPiSiteExportJobQueryOptions(jobId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+export const getDownloadPiSiteExportJobUrl = (jobId: string) => {
+  return `/api/pi-site-exports/jobs/${jobId}/download`;
+};
+
+export const downloadPiSiteExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getDownloadPiSiteExportJobUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadPiSiteExportJobQueryKey = (jobId: string) => {
+  return [`/api/pi-site-exports/jobs/${jobId}/download`] as const;
+};
+
+export const getDownloadPiSiteExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getDownloadPiSiteExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadPiSiteExportJob>>
+  > = ({ signal }) =>
+    downloadPiSiteExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadPiSiteExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadPiSiteExportJob>>
+>;
+export type DownloadPiSiteExportJobQueryError = ErrorType<void | ErrorResponse>;
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+
+export function useDownloadPiSiteExportJob<
+  TData = Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadPiSiteExportJobQueryOptions(jobId, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

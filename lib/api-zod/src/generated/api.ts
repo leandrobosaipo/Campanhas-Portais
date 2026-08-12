@@ -74,6 +74,45 @@ export const CreateDrivePiReconcileJobResponse = zod.object({
 });
 
 /**
+ * @summary List operational jobs in compact form
+ */
+export const listOpsJobsQueryLimitDefault = 20;
+export const listOpsJobsQueryLimitMax = 100;
+
+export const ListOpsJobsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listOpsJobsQueryLimitMax)
+    .default(listOpsJobsQueryLimitDefault),
+  status: zod.coerce.string().optional(),
+  kind: zod.coerce.string().optional(),
+});
+
+export const ListOpsJobsResponse = zod.record(zod.string(), zod.unknown());
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+export const GetOpsJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetOpsJobResponse = zod.record(zod.string(), zod.unknown());
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+export const GetOpsJobProgressParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetOpsJobProgressResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
  */
 export const getActiveCampaignOperationsQueryIncludeEvidenceDefault = true;
@@ -1008,6 +1047,75 @@ export const ExportInsertionEvidencesQueryParams = zod.object({
     .enum(["original", "web"])
     .default(exportInsertionEvidencesQueryVariantDefault),
   source: zod.coerce.string().nullish(),
+});
+
+/**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const createPiSiteExportJobHeaderIdempotencyKeyMin = 8;
+export const createPiSiteExportJobHeaderIdempotencyKeyMax = 160;
+
+export const CreatePiSiteExportJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createPiSiteExportJobHeaderIdempotencyKeyMin)
+    .max(createPiSiteExportJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createPiSiteExportJobBodyModeDefault = `full-pdf`;
+export const createPiSiteExportJobBodyVariantDefault = `web`;
+export const createPiSiteExportJobBodyImageMaxWidthDefault = 1600;
+export const createPiSiteExportJobBodyImageMaxWidthMin = 800;
+export const createPiSiteExportJobBodyImageMaxWidthMax = 2560;
+
+export const createPiSiteExportJobBodyImageQualityDefault = 72;
+export const createPiSiteExportJobBodyImageQualityMin = 45;
+export const createPiSiteExportJobBodyImageQualityMax = 90;
+
+export const CreatePiSiteExportJobBody = zod.object({
+  piCodigo: zod.string(),
+  siteSigla: zod.string(),
+  mode: zod
+    .enum(["full-pdf", "prints-only"])
+    .default(createPiSiteExportJobBodyModeDefault),
+  variant: zod
+    .enum(["original", "web"])
+    .default(createPiSiteExportJobBodyVariantDefault),
+  imageMaxWidth: zod
+    .number()
+    .min(createPiSiteExportJobBodyImageMaxWidthMin)
+    .max(createPiSiteExportJobBodyImageMaxWidthMax)
+    .default(createPiSiteExportJobBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createPiSiteExportJobBodyImageQualityMin)
+    .max(createPiSiteExportJobBodyImageQualityMax)
+    .default(createPiSiteExportJobBodyImageQualityDefault),
+});
+
+export const CreatePiSiteExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+export const GetPiSiteExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const GetPiSiteExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+export const DownloadPiSiteExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
 });
 
 /**

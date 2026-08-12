@@ -1,77 +1,116 @@
-# Runbook - Atualizar relatorio mensal de evidencias
+# How-to — Relatório mensal de evidências
 
-## Atualizacao padrao
+> Estado: vigente
+> Público: equipe operacional e agentes
+> Última validação: 2026-08-12
+> Release: 47e0dab
+> Fonte autoritativa: job `evidence-monthly-report`, fonte mensal agregada e relatório público
+
+## Finalidade
+
+Gerar e publicar o relatório navegável sem substituir a última versão válida quando alguma evidência, ZIP ou validação falhar.
+
+## Fluxo atual
+
+```text
+fonte mensal agregada
+→ gate de auditoria
+→ plano de cache por fingerprint
+→ até 3 ZIPs simultâneos
+→ HTML/JSON/assets em staging
+→ validação
+→ troca atômica
+→ leitura pública
+```
+
+O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `print-single` e `print-backfill`.
+
+## Execução
+
+Antes de qualquer geração:
 
 ```bash
 cd /Users/leandrobosaipo/Projetos/AdOps
-node --check scripts/src/build-current-month-evidence-report.mjs
 pnpm --dir scripts run audit:capture-rules-integrity
-pnpm --filter @workspace/scripts run report:evidences-current-month
-curl -I --max-time 20 https://sites.codigo5.com.br/reports/adops-evidencias-maio-2026/
 ```
 
-## Atualizacao sem publicar
+Dry-run local, sem publicar:
 
 ```bash
-ADOPS_REPORT_SKIP_PUBLISH=1 pnpm --filter @workspace/scripts run report:evidences-current-month
-```
-
-## Mes especifico
-
-```bash
-ADOPS_REPORT_MONTH=2026-05 \
-ADOPS_REPORT_COMPETENCIA='MAIO/2026' \
-ADOPS_REPORT_SLUG=adops-evidencias-maio-2026 \
+ADOPS_REPORT_SKIP_PUBLISH=1 \
 pnpm --filter @workspace/scripts run report:evidences-current-month
 ```
 
-## Artefatos
+Execução operacional rastreável: crie o job `evidence-monthly-report` pela API e acompanhe exclusivamente em `/api/ops/jobs/{id}/progress` até o estado terminal.
 
-- Latest: `docs/reports/adops-evidencias-maio-2026/index.html`
-- Dados latest: `docs/reports/adops-evidencias-maio-2026/data.json`
-- Snapshots: `docs/reports/adops-evidencias-maio-2026/<timestamp>/`
-- Publico: `https://sites.codigo5.com.br/reports/adops-evidencias-maio-2026/`
+## Configuração de competência
+
+Use as variáveis já reconhecidas pelo gerador, sem inventar novas:
+
+```bash
+ADOPS_REPORT_MONTH=2026-08 \
+ADOPS_REPORT_COMPETENCIA='AGOSTO/2026' \
+ADOPS_REPORT_SLUG=adops-evidencias-agosto-2026 \
+ADOPS_REPORT_SKIP_PUBLISH=1 \
+pnpm --filter @workspace/scripts run report:evidences-current-month
+```
+
+## Gates de publicação
+
+- somente inserções canônicas da fonte agregada;
+- todas as datas obrigatórias presentes na resposta canônica;
+- evidências `audited` ou `audited_best_effort`, acessíveis e sem blockers;
+- ZIPs completos ou cache hits com fingerprint vigente;
+- HTML, JSON, assets e downloads válidos;
+- `report.json` com `visibility: "unlisted"`;
+- `noindex,nofollow` no HTML;
+- zero credencial, token ou header real.
+
+Se qualquer gate falhar, o staging é rejeitado.
+
+## Recursos do relatório
+
+- busca por campanha, PI e portal;
+- filtro dedicado de portal combinado com estados;
+- calendário das datas contratadas;
+- JPEG individual;
+- ZIP por PI + portal;
+- ZIP completo por campanha;
+- entradas e vencimentos em sete dias;
+- layout mobile e navegação por teclado.
+
+## Cache e desempenho
+
+O hash ordenado inclui as evidências aprovadas. Hash igual produz cache hit; somente campanhas alteradas geram novo ZIP. Exportações executam com concorrência máxima três, enquanto captura continua com concorrência um.
+
+Na validação de 2026-08-12, o ciclo da release 47e0dab terminou em aproximadamente 3min48s com 163 datas auditadas. Esses números são um retrato datado, não uma garantia permanente.
+
+As durações relevantes são `sourceFetch`, `audit`, `cachePlan`, `exports`, `validation` e `publish`.
+
+## Validação
+
+```bash
+curl -fsSI https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/
+curl -fsSL https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/report.json
+```
+
+Além do HTTP 200, valide busca, filtros, três JPEGs, um ZIP completo, checksums e amostra visual em desktop e celular.
 
 ## Rollback
 
-1. Escolher snapshot anterior em `docs/reports/adops-evidencias-maio-2026/<timestamp>/`.
-2. Copiar o HTML desejado para `docs/reports/adops-evidencias-maio-2026/index.html`.
-3. Rodar novamente o publicador com o script normal.
+A publicação cria backup e realiza troca atômica. Em falha:
 
-## Falhas comuns
+1. não mova o staging para o destino;
+2. preserve o relatório público atual;
+3. identifique o último backup válido;
+4. restaure o diretório versionado pelo mesmo mecanismo do publicador;
+5. confirme HTML, JSON, downloads e consumidor real.
 
-- `OPS_API_TOKEN ausente`: conferir `.env.adops-operator.local` sem imprimir o valor.
-- `PORTAINER_API_KEY ausente`: conferir `/Users/leandrobosaipo/Projetos/macmini/.env.portainer`.
-- `sites-index nao encontrado`: validar Portainer endpoint `3 local`.
-- HTTP publico diferente de 200: verificar container `sites-index` e rota `/reports/<slug>/`.
-- Insercao aparece como `sem publicação`, mas o banner esta visivel no portal:
-  1. Conferir a home/slot do portal e identificar imagem, link, grupo AdRotate e seletor.
-  2. Corrigir no AdOps apenas se houver prova publica: `bannerPublicadoNoSite=true`, `statusNormalizado=em_veiculacao` e `mediaUrl`.
-  3. Conferir se o alias da posicao existe em `config/adrotate-sites.json`.
-  4. Se a regra publicada de captura divergir do JSON, criar nova draft, validar e publicar a regra.
-  5. Rodar `pnpm --dir scripts run audit:capture-rules-integrity`.
-  6. Gerar evidencias retroativas das datas exigidas.
-  7. Regenerar e publicar o relatorio.
+Não copie um `index.html` isolado sobre dados de outra versão.
 
-## Interpretacao dos estados
+## Regras aprendidas
 
-- `em dia`: todos os dias exigidos ate a data alvo tem evidencia `audited` com URL.
-- `pendente`: banner publicado no site, mas existe dia exigido sem evidencia auditada.
-- `erro`: banner publicado no site, mas existe evidencia reprovada pela auditoria.
-- `sem publicação`: a insercao aparece no mes, mas o AdOps ainda nao marca o banner como publicado no site. Nao conta como pendencia ate ser confirmado no portal/AdRotate.
-- `agendada`: periodo ainda nao iniciou.
-
-Para corrigir `pendente` ou `erro`, gere print individual das datas listadas no modal ou use o fluxo de retroativo por insercao quando aplicavel.
-
-## Caso auditado - PPMT #1252
-
-Em 2026-05-12, a insercao `#1252` estava aparecendo como `sem publicação`, mas a home do `portalpantanalmt.com` exibia o banner `pi-8227-calcada-viva-825x120-1.gif` no grupo AdRotate `2`.
-
-Correcoes aplicadas:
-
-- AdOps atualizado com `mediaUrl`, `bannerPublicadoNoSite=true` e `statusNormalizado=em_veiculacao`.
-- `PPMT:2` passou a aceitar aliases `FULLBANNER` e `FULL BANNER`.
-- Regra publicada de captura recriada como `ruleId=41`.
-- Evidencias retroativas de `2026-05-01` a `2026-05-12` geradas e auditadas.
-
-Resultado esperado no relatorio: insercao `#1252` como `em dia`, com `12/12` evidencias.
+- Recalcular status por centenas de chamadas aumentava tempo e tokens; a fonte agregada é canônica.
+- Recuperar o job completo em todo polling é desperdício; `/progress` é a visão padrão.
+- O deadlock entre relatório e exportação desapareceu ao separar o runner mensal do claim dedicado.
+- Falha de staging nunca pode apagar a última entrega válida.

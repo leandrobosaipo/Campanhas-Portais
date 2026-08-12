@@ -94,6 +94,88 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /ops/jobs:
+    get:
+      operationId: listOpsJobs
+      tags: [operations]
+      summary: List operational jobs in compact form
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Operational jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /ops/jobs/{id}:
+    get:
+      operationId: getOpsJob
+      tags: [operations]
+      summary: Read the complete operational job for final inspection or diagnosis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Complete operational job
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ops/jobs/{id}/progress:
+    get:
+      operationId: getOpsJobProgress
+      tags: [operations]
+      summary: Read compact operational job progress for polling
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Compact progress, stage and heartbeat
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /campaign-operations/active:
     get:
       operationId: getActiveCampaignOperations
@@ -815,6 +897,124 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
           description: One or more source images could not be prepared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports/jobs:
+    post:
+      operationId: createPiSiteExportJob
+      tags: [evidences]
+      summary: Queue an asynchronous evidence package for one PI and site
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 160
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [piCodigo, siteSigla]
+              properties:
+                piCodigo:
+                  type: string
+                siteSigla:
+                  type: string
+                mode:
+                  type: string
+                  enum: [full-pdf, prints-only]
+                  default: full-pdf
+                variant:
+                  type: string
+                  enum: [original, web]
+                  default: web
+                imageMaxWidth:
+                  type: integer
+                  minimum: 800
+                  maximum: 2560
+                  default: 1600
+                imageQuality:
+                  type: integer
+                  minimum: 45
+                  maximum: 90
+                  default: 72
+      responses:
+        "200":
+          description: Existing idempotent PI/site export returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "202":
+          description: PI/site export queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports/jobs/{jobId}:
+    get:
+      operationId: getPiSiteExportJob
+      tags: [evidences]
+      summary: Read asynchronous PI/site export status
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: PI/site export job
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports/jobs/{jobId}/download:
+    get:
+      operationId: downloadPiSiteExportJob
+      tags: [evidences]
+      summary: Redirect to the completed PI/site export artifact
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the completed artifact
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Export is not completed
           content:
             application/json:
               schema:
