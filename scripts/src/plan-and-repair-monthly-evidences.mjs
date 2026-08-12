@@ -147,6 +147,14 @@ async function cod5_waitJob(jobId) {
 }
 
 async function cod5_repairEntry(entry) {
+  if (entry?.status?.hasMedia !== true) {
+    return {
+      ok: false,
+      ...entry,
+      blocker: "insertion_media_missing",
+      attempts: [],
+    };
+  }
   const cod5_firstEndpoint = entry.classification === "missing" ? "/api/ops/jobs/print-backfill" : "/api/ops/jobs/print-single";
   const cod5_firstBody = entry.classification === "missing"
     ? { insertionId: entry.insertionId, fromDate: entry.date, toDate: entry.date, replace: false, force: false }
