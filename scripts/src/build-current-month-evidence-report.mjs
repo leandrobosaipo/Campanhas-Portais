@@ -9,6 +9,7 @@ import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" }
 import {
   buildAtomicPublishCommand,
   buildCampaignExportIdempotencyKey,
+  buildMonthlyPublicationGate,
   buildMonthlyReportManifest,
   buildSevenDayForecast,
   classifyEvidenceStatus,
@@ -1051,6 +1052,7 @@ async function main() {
     invalidDates: enriched.reduce((sum, item) => sum + item.invalidDates.length, 0),
     value: enriched.reduce((sum, item) => sum + Number(item.valorLiquido || 0), 0),
   };
+  summary.publicationGate = buildMonthlyPublicationGate(enriched);
   const forecast = buildSevenDayForecast(enriched, targetDate);
   const portals = buildPortalGroups(enriched);
   const audits = Object.fromEntries(auditsRaw);
@@ -1095,8 +1097,8 @@ async function main() {
   await validateGeneratedReport({ data, reportManifest, insertions: enriched });
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
-    if (!isMonthlyReportPublishable({ missing: summary.missingDates, invalid: summary.invalidDates })) {
-      throw new Error(`Publicação bloqueada: missing=${summary.missingDates}, invalid=${summary.invalidDates}.`);
+    if (!isMonthlyReportPublishable(summary.publicationGate)) {
+      throw new Error(`Publicação bloqueada: missing=${summary.publicationGate.missing}, invalid=${summary.publicationGate.invalid}.`);
     }
     await publishReport();
     const cacheToken = encodeURIComponent(generatedAt.toISOString());

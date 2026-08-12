@@ -71,6 +71,17 @@ test("bloqueia publicacao com pendencias e monta troca atomica com rollback", ()
   assert.doesNotMatch(command, /rm -rf/);
 });
 
+test("gate ignora evidencias de insercoes ainda nao publicadas", () => {
+  const summary = contract.buildMonthlyPublicationGate([
+    { id: 1, bannerPublicadoNoSite: true, missingDates: [], invalidDates: [] },
+    { id: 2, bannerPublicadoNoSite: false, missingDates: ["2026-08-12"], invalidDates: [] },
+    { id: 3, bannerPublicadoNoSite: true, missingDates: [], invalidDates: ["2026-08-11"] },
+  ]);
+
+  assert.deepEqual(summary, { missing: 0, invalid: 1 });
+  assert.equal(contract.isMonthlyReportPublishable(summary), false);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

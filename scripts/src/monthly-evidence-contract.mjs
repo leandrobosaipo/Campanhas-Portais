@@ -78,6 +78,18 @@ export function isMonthlyReportPublishable(summary) {
   return Number(summary?.missing || 0) === 0 && Number(summary?.invalid || 0) === 0;
 }
 
+export function buildMonthlyPublicationGate(insertions) {
+  return (insertions || [])
+    .filter((item) => item?.bannerPublicadoNoSite === true)
+    .reduce(
+      (summary, item) => ({
+        missing: summary.missing + (Array.isArray(item.missingDates) ? item.missingDates.length : 0),
+        invalid: summary.invalid + (Array.isArray(item.invalidDates) ? item.invalidDates.length : 0),
+      }),
+      { missing: 0, invalid: 0 },
+    );
+}
+
 export function isAuditFailureJob(job) {
   return job?.status === "failed" && /capture_audit_failed|invalid_audit/i.test(String(job?.error || job?.error_text || ""));
 }
