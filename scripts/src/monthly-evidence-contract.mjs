@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 export const MONTHLY_REPORT_SOURCE_TIMEOUT_MS = 120_000;
+export const MONTHLY_REPORT_PORTAINER_TIMEOUT_MS = 60_000;
 export const EVIDENCE_ZIP_VALIDATION_PYTHON = String.raw`
 import hashlib, pathlib, sys, zipfile
 archive = pathlib.Path(sys.argv[1])

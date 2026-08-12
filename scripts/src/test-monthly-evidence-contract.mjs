@@ -116,6 +116,10 @@ test("readback amostra tres downloads por contrato", () => {
   assert.deepEqual(contract.takeDeliverySamples([1, 2, 3, 4]), [1, 2, 3]);
 });
 
+test("publicacao Portainer tolera a latencia observada sem remover timeout", () => {
+  assert.equal(contract.MONTHLY_REPORT_PORTAINER_TIMEOUT_MS, 60_000);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

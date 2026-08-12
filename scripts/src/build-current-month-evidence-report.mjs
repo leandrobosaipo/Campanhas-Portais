@@ -17,6 +17,7 @@ import {
   findReportsMountSource,
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
+  MONTHLY_REPORT_PORTAINER_TIMEOUT_MS,
   buildDeliveryProbeOptions,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
@@ -244,15 +245,29 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
 async function portainer(method, apiPath, body, rawBody, rawHeaders = {}) {
   const env = { ...parseEnvFile(portainerEnvFile), ...process.env };
   if (!env.PORTAINER_URL || !env.PORTAINER_API_KEY) throw new Error("PORTAINER_URL ou PORTAINER_API_KEY ausente.");
-  const response = await fetchWithTimeout(`${env.PORTAINER_URL.replace(/\/$/, "")}${apiPath}`, {
-    method,
-    headers: {
-      "X-API-Key": env.PORTAINER_API_KEY,
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...rawHeaders,
-    },
-    body: body ? JSON.stringify(body) : rawBody,
-  }, 20000);
+  const url = `${env.PORTAINER_URL.replace(/\/$/, "")}${apiPath}`;
+  let response;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetchWithTimeout(url, {
+        method,
+        headers: {
+          "X-API-Key": env.PORTAINER_API_KEY,
+          ...(body ? { "content-type": "application/json" } : {}),
+          ...rawHeaders,
+        },
+        body: body ? JSON.stringify(body) : rawBody,
+      }, MONTHLY_REPORT_PORTAINER_TIMEOUT_MS);
+      if (!shouldRetryDeliveryStatus(response.status) || attempt === 3) break;
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3) throw new Error(`Portainer ${method} ${apiPath} falhou após 3 tentativas: ${error.message}`, { cause: error });
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+  }
+  if (!response) throw lastError;
   const text = await response.text();
   let payload = null;
   try {
