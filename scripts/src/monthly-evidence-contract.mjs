@@ -136,7 +136,8 @@ export function adaptAggregatedEvidenceDay(day) {
 }
 
 export function canonicalRequiredDates(item) {
-  return Array.isArray(item?.evidence?.requiredDates) ? [...item.evidence.requiredDates] : [];
+  if (Array.isArray(item?.evidence?.requiredDates)) return [...item.evidence.requiredDates];
+  return Array.isArray(item?.evidenceDays) ? item.evidenceDays.map((day) => day?.date).filter(Boolean) : [];
 }
 
 export function buildSevenDayForecast(insertions, targetDate) {
