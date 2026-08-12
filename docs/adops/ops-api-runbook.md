@@ -433,15 +433,85 @@ curl -fsSL -X POST \
 
 Este fluxo é o melhor para entrega completa.
 
-Ele garante cobertura de evidências, documentos operacionais e ZIP por PI/site.
+Ele garante cobertura de evidências, documentos operacionais e entrega por PI/site.
+
+Modos de entrega:
+
+- `mode=full`: compatibilidade; inclui cada PNG original e não reduz significativamente o tamanho;
+- `mode=prints-only&variant=web`: ZIP somente com JPEGs progressivos comprimidos;
+- `mode=pdf`: entrega somente um PDF comprimido, com uma evidência auditada por página;
+- `mode=full-pdf`: entrega o pacote operacional com PDF comprimido e uma pasta
+  `01-PRINTS-PDF/IMAGENS-INDEPENDENTES/` contendo uma imagem JPEG comprimida
+  para cada página.
+
+No PDF, a compressão padrão limita a largura a `1920 px`, usa qualidade JPEG
+`68` e resolução lógica de `120 DPI`. Os PNGs auditados originais permanecem
+intactos no storage do AdOps.
 
 ```bash
 curl -fsSL -X POST \
   -H "Authorization: Bearer $OPS_API_TOKEN" \
+  -H "Idempotency-Key: pi-16628-perrengue-full-pdf-v1" \
   -H "Content-Type: application/json" \
-  "$ADOPS_API_BASE_URL/api/ops/jobs/pi-site-export" \
-  -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'
+  "$ADOPS_API_BASE_URL/api/pi-site-exports/jobs" \
+  -d '{
+    "piCodigo":"16628",
+    "siteSigla":"PERRENGUE",
+    "mode":"full-pdf",
+    "variant":"web",
+    "pdfMaxWidth":1920,
+    "pdfQuality":68,
+    "pdfResolution":120,
+    "imageMaxWidth":1600,
+    "imageQuality":72
+  }'
 ```
+
+O retorno `202` contém `jobId`. Consulte
+`GET /api/pi-site-exports/jobs/{jobId}` até `status=completed`; então use
+`GET /api/pi-site-exports/jobs/{jobId}/download`. Uma repetição com a mesma
+`Idempotency-Key` retorna o mesmo job e `duplicate=true`. O endpoint legado
+`POST /api/ops/jobs/pi-site-export` permanece como alias de compatibilidade,
+mas não deve ser usado em novas automações.
+
+Download direto, sem criar job (somente diagnóstico ou pacote pequeno):
+
+```bash
+curl -fL \
+  "$ADOPS_API_BASE_URL/api/pi-site-exports?piCodigo=16628&siteSigla=PERRENGUE&mode=pdf&variant=web&download=1" \
+  -o PI-16628-PERRENGUE-prints-auditados-comprimidos.pdf
+```
+
+O endpoint valida os limites recebidos:
+
+- `pdfMaxWidth`: `800` a `2560`;
+- `pdfQuality`: `45` a `85`;
+- `pdfResolution`: `72` a `180`.
+- `imageMaxWidth`: `800` a `2560`, padrão `1600`;
+- `imageQuality`: `45` a `90`, padrão `72`.
+
+O PNG auditado permanece intacto no storage. A variante `web` gera uma cópia
+JPEG progressiva; essa distinção evita chamar de "comprimido" um PNG lossless
+que continuaria quase do mesmo tamanho. Para pacotes grandes, prefira o job
+assíncrono: ele monta o artefato pela rede interna e publica o download final
+no Spaces sem depender do timeout HTTP do Cloudflare.
+
+## Swagger completo com FastAPI
+
+A versão pública e os contratos existentes continuam no mesmo domínio. A
+aplicação FastAPI documenta todas as rotas Express publicadas sem substituir o
+backend operacional:
+
+```text
+GET https://adops-api.codigo5.com.br/api/docs
+GET https://adops-api.codigo5.com.br/api/redoc
+GET https://adops-api.codigo5.com.br/api/openapi.json
+```
+
+O Swagger antigo do catálogo operacional permanece compatível em
+`/api/ops/docs`. O novo documento informa a mesma versão pública
+`adops-ops-api-catalog-v2` e inclui a origem de cada rota e uma impressão
+digital SHA-256 do catálogo.
 
 ## Reconciliar Planilha + AdRotate
 
@@ -847,6 +917,21 @@ Resumo dos gates:
 - vídeo com controles e progresso visíveis;
 - GIF em frame permitido quando configurado;
 - `finalPngSlotAudit.ok=true` quando exigido.
+- `retroContentProof.status=approved` em qualquer evidência retroativa;
+- preview assinado ativo ou reconstrução auditada com manifesto;
+
+No `mode=full-pdf`, o ZIP só é considerado completo quando também contém
+`04-AUDITORIA/AUDITORIA-RETRO-CONTENT.json`, um manifesto por data,
+contact sheet e `SHA256SUMS.txt`. O checksum deve validar todos os arquivos e
+o pacote web deve ter zero PNG.
+- mínimo de três notícias correspondentes em home e uma em artigo;
+- nenhuma data editorial posterior ao `requestedCaptureAt`.
+
+Para capturas demoradas, usar
+`POST /api/insertions/{id}/capture-proof/jobs` com `Idempotency-Key` e polling
+em `GET /api/insertions/{id}/capture-proof/jobs/{jobId}`. Não repetir uma
+chamada síncrona após `524` sem consultar o job ou o status da evidência: o
+runner pode ter continuado após o timeout da borda.
 
 Se qualquer item obrigatório falhar, o fluxo deve corrigir a origem antes de gerar lote:
 

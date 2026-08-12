@@ -9,6 +9,9 @@ const app: Express = express();
 
 const internalApiToken = process.env["ADOPS_INTERNAL_API_TOKEN"]?.trim() ?? "";
 const operatorApiToken = process.env["OPS_API_TOKEN"]?.trim() ?? "";
+const fastApiDocsBaseUrl = (process.env["ADOPS_FASTAPI_DOCS_URL"]?.trim() || "http://127.0.0.1:4013").replace(/\/+$/, "");
+const fastApiDocsPaths = new Set(["/api/docs", "/api/docs/", "/api/redoc", "/api/openapi.json"]);
+const fastApiDocsAssetPrefix = "/api/docs-assets/";
 
 function internalApiGuard(req: Request, res: Response, next: NextFunction) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())) {
@@ -62,6 +65,35 @@ app.use(
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+app.get(
+  [...Array.from(fastApiDocsPaths), `${fastApiDocsAssetPrefix}:asset`],
+  async (req: Request, res: Response): Promise<void> => {
+  if (!fastApiDocsPaths.has(req.path) && !req.path.startsWith(fastApiDocsAssetPrefix)) {
+    res.status(404).json({ error: "docs_asset_not_found" });
+    return;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const upstream = await fetch(`${fastApiDocsBaseUrl}${req.path}`, {
+      signal: controller.signal,
+      headers: { accept: req.header("accept") || "*/*" },
+    });
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.setHeader("cache-control", "no-store");
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.status(503).json({
+      error: "fastapi_docs_unavailable",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+  },
+);
 
 app.use("/api", internalApiGuard, router);
 

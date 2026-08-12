@@ -86,6 +86,22 @@ function parseIsoLikeDate(value: string | null | undefined) {
     const fallback = new Date(`${numeric[3]}-${month}-${day}T${hour}:${numeric[5]}:${numeric[6] ?? "00"}-04:00`);
     if (!Number.isNaN(fallback.getTime())) return fallback;
   }
+  const cod5PtDateOnly = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (cod5PtDateOnly) {
+    const cod5DayNumber = Number(cod5PtDateOnly[1]);
+    const cod5MonthNumber = Number(cod5PtDateOnly[2]);
+    const cod5YearNumber = Number(cod5PtDateOnly[3]);
+    const cod5MaxDay = cod5MonthNumber >= 1 && cod5MonthNumber <= 12
+      ? new Date(Date.UTC(cod5YearNumber, cod5MonthNumber, 0)).getUTCDate()
+      : 0;
+    if (cod5DayNumber >= 1 && cod5DayNumber <= cod5MaxDay) {
+      const cod5Day = String(cod5DayNumber).padStart(2, "0");
+      const cod5Month = String(cod5MonthNumber).padStart(2, "0");
+      const cod5Candidate = new Date(`${cod5YearNumber}-${cod5Month}-${cod5Day}T00:00:00-04:00`);
+      if (!Number.isNaN(cod5Candidate.getTime())) return cod5Candidate;
+    }
+    return null;
+  }
   const parsed = new Date(raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
   return null;
@@ -93,15 +109,18 @@ function parseIsoLikeDate(value: string | null | undefined) {
 
 function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureAt: string | null) {
   const captureAtDate = parseIsoLikeDate(requestedCaptureAt);
-  if (!captureAtDate || !Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
-    return { ok: true, maxObserved: null as string | null, futureSamples: [] as string[] };
+  if (!captureAtDate) {
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "invalid_capture_at" };
+  }
+  if (!Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "empty_samples" };
   }
   const maxAllowed = captureAtDate.getTime() + 90 * 1000;
   const parsedSamples = contentDateSamples
     .map((value) => ({ raw: value, parsed: parseIsoLikeDate(value) }))
     .filter((item) => item.parsed);
   if (parsedSamples.length === 0) {
-    return { ok: true, maxObserved: null as string | null, futureSamples: [] as string[] };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: contentDateSamples.length, reason: "unparseable_samples" };
   }
   const futureSamples = parsedSamples.filter((item) => item.parsed!.getTime() > maxAllowed);
   const maxObserved = parsedSamples.reduce<Date | null>((acc, item) => (
@@ -111,6 +130,9 @@ function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureA
     ok: futureSamples.length === 0,
     maxObserved: maxObserved ? maxObserved.toISOString() : null,
     futureSamples: futureSamples.slice(0, 5).map((item) => item.raw),
+    parsedCount: parsedSamples.length,
+    sampleCount: contentDateSamples.length,
+    reason: futureSamples.length ? "future_samples" : null,
   };
 }
 
@@ -255,6 +277,9 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const contentDateSamples = Array.isArray(metadata.contentDateSamples)
     ? metadata.contentDateSamples.filter((value: unknown) => typeof value === "string")
     : [];
+  const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === "object"
+    ? metadata.retroContentProof
+    : null;
   const slotVisibility = metadata.slotVisibility && typeof metadata.slotVisibility === "object"
     ? metadata.slotVisibility
     : {};
@@ -282,6 +307,10 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     requireIdentityFrame?: boolean;
     requireSlotVisibleInViewport?: boolean;
     gifAllowedFrameRanges?: Array<[number, number]>;
+    requireSignedRetroPreview?: boolean;
+    requireRetroContentProof?: boolean;
+    minRetroContentMatches?: number;
+    allowAuditedReconstruction?: boolean;
   };
   const desktopMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
@@ -366,6 +395,9 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
+  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true;
+  const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof && contentTimeline.reason !== "future_samples");
+  const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const visualsOk = Boolean(
     visualAuditAvailable &&
     viewportImagesOk &&
@@ -398,12 +430,33 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
         : `O site não exibiu a data esperada para ${targetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
-  if (!contentTimeline.ok) {
+  if (!contentTimeline.ok && (requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
-      code: "content_time_mismatch",
-      label: "Conteúdo da página não está retroativo",
-      detail: `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`,
+      code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
+      label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
+      detail: contentTimeline.reason === "future_samples"
+        ? `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`
+        : `A evidência não contém amostras editoriais válidas. reason=${contentTimeline.reason}; parsed=${contentTimeline.parsedCount}/${contentTimeline.sampleCount}.`,
     });
+  }
+  if (requireRetroContentProof && retroContentProof?.status !== "approved") {
+    const proofIssues = Array.isArray(retroContentProof?.issues) ? retroContentProof.issues : [];
+    if (!proofIssues.length) {
+      issues.push({
+        code: "retro_content_unverified",
+        label: "Prova editorial retroativa ausente",
+        detail: "A regra exige retroContentProof aprovado, mas a evidência não contém essa prova.",
+      });
+    } else {
+      for (const issue of proofIssues.slice(0, 10)) {
+        const code = typeof issue?.code === "string" ? issue.code : "retro_content_unverified";
+        issues.push({
+          code,
+          label: "Prova editorial retroativa reprovada",
+          detail: typeof issue?.detail === "string" ? issue.detail : code,
+        });
+      }
+    }
   }
   if (requireSlotVisibleInViewport && !slotMostlyVisible) {
     issues.push({
@@ -589,6 +642,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       resolvedGroupId: resolvedMapping?.groupId ?? null,
     },
     contentTimeline,
+    retroContentProof,
     mediaProof: {
       ok: mediaMatchesInsertion,
       mediaBasename: mediaBasename || null,
@@ -618,7 +672,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
     visualsOk,
     issues,
-    ok: desktopMatches && pageMatches && visualsOk && contentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

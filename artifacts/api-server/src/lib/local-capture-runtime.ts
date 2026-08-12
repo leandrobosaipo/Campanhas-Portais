@@ -58,6 +58,8 @@ export type LocalCaptureOptions = {
   jobId?: string | null;
   runnerJobId?: string | null;
   diagnosticMode?: boolean;
+  candidateOnly?: boolean;
+  promoteCandidate?: boolean;
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
@@ -87,6 +89,17 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
   }
   if (options?.diagnosticMode) {
     args.push("--diagnosticMode", "true");
+  }
+  if (options?.candidateOnly) {
+    args.push(
+      "--candidateOnly",
+      "true",
+      "--saveEvidence",
+      options.promoteCandidate ? "true" : "false",
+    );
+    if (options.promoteCandidate && !options.replaceExisting) {
+      args.push("--replaceExisting", "true");
+    }
   }
   const cleanContextRetries = Math.min(2, Math.max(0, Number(process.env.ADOPS_CAPTURE_CLEAN_CONTEXT_RETRIES ?? 2)));
   let lastError: unknown = null;

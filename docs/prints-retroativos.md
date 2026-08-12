@@ -164,6 +164,71 @@ Checklist obrigatorio:
 - o pacote operacional contem `prints/`, `metadata/`, `diagnostics/`, `manifest.json`, `status.csv`, `visual-contact-sheet.png` e `00-LEIA-ME.txt`;
 - quando o cliente pedir somente imagens, gerar um ZIP separado apenas com PNGs a partir de `prints/`.
 
+## Entrega comprimida por PI e site
+
+O endpoint consolidado aceita tres modos:
+
+```text
+GET /api/pi-site-exports?piCodigo={PI}&siteSigla={SITE}&mode={full|prints-only|pdf|full-pdf}&variant={original|web}&download=1
+POST /api/pi-site-exports/jobs
+GET /api/pi-site-exports/jobs/{jobId}
+GET /api/pi-site-exports/jobs/{jobId}/download
+```
+
+- `mode=full`: mantém os PNGs originais no ZIP para compatibilidade;
+- `mode=prints-only&variant=web`: entrega ZIP somente com JPEGs progressivos comprimidos;
+- `mode=pdf`: retorna um PDF comprimido com uma evidência auditada por página;
+- `mode=full-pdf`: mantém documentos e Analytics no ZIP e inclui:
+  - `01-PRINTS-PDF/*.pdf`, com uma evidência por página;
+  - `01-PRINTS-PDF/IMAGENS-INDEPENDENTES/**/*.jpg`, com cada evidência também como imagem comprimida independente.
+
+A compressao nunca sobrescreve o PNG auditado nem altera a URL da evidencia.
+Ela atua somente na copia de entrega:
+
+1. reduz a largura da cópia web para no máximo `1600 px` por padrão;
+2. usa reamostragem `LANCZOS`;
+3. converte a cópia de entrega para JPEG RGB progressivo sobre fundo branco;
+4. incorpora cada pagina no PDF com qualidade JPEG `68`;
+5. no `full-pdf`, grava a mesma página como JPEG independente e progressivo;
+6. confirma número de páginas, imagens, bytes de origem, bytes finais e razão de compressão.
+
+Parâmetros opcionais e limites:
+
+- `pdfMaxWidth`: `800` a `2560`;
+- `pdfQuality`: `45` a `85`;
+- `pdfResolution`: `72` a `180`.
+- `imageMaxWidth`: `800` a `2560`, padrão `1600`;
+- `imageQuality`: `45` a `90`, padrão `72`.
+
+Um ZIP comum não comprime bem screenshots PNG porque o conteúdo do PNG já usa
+compressão interna. Por isso `variant=web` não promete mais um "PNG otimizado":
+ele entrega JPEG progressivo comprimido. Para preservar os PNGs sem alteração,
+usar `variant=original`.
+
+O endpoint assíncrono `POST /api/pi-site-exports/jobs` cria o mesmo job local
+do runner oficial. O runner materializa o arquivo pela rede interna, publica o
+artefato final no Spaces e devolve uma URL pronta, evitando timeout do
+Cloudflare em pacotes grandes. Analytics é anexo opcional e não bloqueia a
+entrega das evidências.
+
+Para entrega final, `mode=full-pdf` e `variant=web` são os padrões do contrato.
+Envie uma `Idempotency-Key` estável, faça polling até `status=completed` e só
+então use o endpoint `/download`. O GET síncrono fica restrito a diagnóstico ou
+artefatos pequenos.
+
+O runner captura somente inserções efetivamente publicadas
+(`bannerPublicadoNoSite=true`) e com mídia resolvida. Rascunhos, aliases
+provisórios e linhas sem mídia continuam visíveis no descritor como
+`skippedInsertions`, mas não geram evidência falsa nem bloqueiam as
+veiculações válidas da mesma PI.
+
+Falhas transitórias de captura passam por até três tentativas com espera
+progressiva. Antes de repetir, o runner consulta novamente o status da data;
+se a evidência já estiver auditada, ele segue sem gerar uma cópia duplicada.
+As tentativas adicionais usam 18:00 e 20:00 na mesma data, dentro da janela
+operacional permitida, para contornar slots que não aparecem em determinado
+horário do preview sem alterar a data comprovada.
+
 ## Regra Perrengue mobile em noticia
 
 Para evidencias ativas do `PERRENGUE` em mobile:
@@ -379,3 +444,73 @@ Endpoint da previa:
   - `10/04/2026`
   - `10 de abril de 2026`
 - Para `VIDEO`, o padrao de prova passou a exigir hover no player, controles visiveis e barra de progresso aparente sempre que o navegador permitir.
+
+## Contrato editorial retroativo v2 — 2026-07-31
+
+Alterar apenas a data da moldura ou do cabeçalho não comprova veiculação retroativa. Toda captura com `requestedCaptureAt` deve provar também o conteúdo editorial visível naquele corte.
+
+Requisitos:
+
+- preview HMAC assinado e marcador `cod5-adops-retro-preview=active` confirmado;
+- consultas WordPress limitadas a `post_date <= requestedCaptureAt`;
+- no mínimo três notícias históricas correspondentes na home;
+- um artigo correspondente em página interna;
+- nenhuma notícia posterior ao corte;
+- correspondência das URLs visíveis com posts elegíveis consultados pela API REST do WordPress;
+- até 25 amostras sanitizadas e manifesto com SHA-256 persistidos na evidência;
+- reconstrução aceita somente com manifesto e quantidade mínima comprovada.
+
+Falhas novas:
+
+- `retro_preview_not_active`;
+- `retro_content_unverified`;
+- `content_time_mismatch`;
+- `retro_content_expected_mismatch`;
+- `retro_reconstruction_failed`.
+
+`contentDateSamples=[]` é falha. O exportador só libera PDF/ZIP quando todas as datas retornarem `audited` e `retroContentProof.status=approved`.
+
+### Captura assíncrona e promoção auditada
+
+Capturas que podem ultrapassar o timeout da borda devem usar:
+
+```http
+POST /api/insertions/{id}/capture-proof/jobs
+Idempotency-Key: retro-v2:<rodada>:<insercao>:<data>:<hora>
+Content-Type: application/json
+
+{
+  "date": "2026-07-24",
+  "captureAt": "2026-07-24T20:00:00-04:00",
+  "candidate": true,
+  "promote": true
+}
+```
+
+Consultar `GET /api/insertions/{id}/capture-proof/jobs/{jobId}` até
+`completed`. O candidato fica isolado; com `promote=true`, a troca ocorre
+somente depois da prova editorial local ser aprovada. Em seguida, confirmar
+`GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD` com
+`status=audited` e `retroContentProof.status=approved`.
+
+Em página interna reconstruída, URL pública, título, data e corpo precisam
+pertencer ao mesmo post histórico. Cards relacionados atuais não substituem
+nem invalidam a data editorial do artigo principal verificado.
+
+O MU-plugin compatível é `Código5 AdOps Retro Preview 1.0.2`. Sem parâmetros de preview, o portal continua com comportamento normal.
+
+### Conteúdo obrigatório do pacote `full-pdf`
+
+Além do PDF e dos JPEGs progressivos, a API inclui:
+
+- `04-AUDITORIA/AUDITORIA-RETRO-CONTENT.json`;
+- um manifesto editorial sanitizado para cada inserção/data;
+- `04-AUDITORIA/CONTACT-SHEET-PRIMEIRA-INTERMEDIARIA-ULTIMA.jpg`;
+- `SHA256SUMS.txt`, cobrindo todos os demais arquivos do ZIP;
+- zero PNG no pacote web; os PNGs originais continuam preservados na fonte da evidência.
+
+O relatório e os manifestos são gerados pela API. Não devem ser montados manualmente depois do download.
+
+### Prompt operacional recomendado
+
+> Use somente os endpoints da API AdOps. Consulte a PI e o site, gere todas as capturas retroativas com `candidate=true` e `promote=true`, e aguarde cada job assíncrono. Libere somente datas com `status=audited` e `retroContentProof.status=approved`. Depois crie um job de exportação `mode=full-pdf` e `variant=web`. Confirme no ZIP: mesma quantidade de JPEGs progressivos, páginas de PDF e manifestos; zero PNG; `futureCount=0`; contact sheet presente; e `SHA256SUMS.txt` válido. Não entregue pacote parcial.

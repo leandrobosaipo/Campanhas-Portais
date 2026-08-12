@@ -102,6 +102,8 @@ class LocalPrintRunner implements PrintRunnerPort {
         replaceExisting: target.replaceExisting,
         captureAt: target.captureAt ?? null,
         runnerJobId: jobId,
+        candidateOnly: target.candidateOnly === true,
+        promoteCandidate: target.promoteCandidate === true,
       });
       return {
         insertionId: target.insertionId,
@@ -114,6 +116,8 @@ class LocalPrintRunner implements PrintRunnerPort {
         readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
           ? capture.readinessAudit as Record<string, unknown>
           : null,
+        retroContentProof: capture.retroContentProof ?? null,
+        manifestHash: capture.manifestHash ?? null,
       };
     } catch (error) {
       return {

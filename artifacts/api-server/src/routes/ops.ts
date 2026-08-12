@@ -1360,9 +1360,9 @@ function buildOpsApiCatalog() {
         id: "pi-site-export",
         method: "POST",
         path: "/api/ops/jobs/pi-site-export",
-        purpose: "Garantir evidências retroativas, documentos operacionais e ZIP por PI + site.",
+        purpose: "Garantir evidências retroativas e entrega em ZIP, PNG web, PDF comprimido ou ZIP com PDF por PI + site.",
         authRequired: true,
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/pi-site-export -d '{"piCodigo":"16628","siteSigla":"PERRENGUE"}'`,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/pi-site-export -d '{"piCodigo":"16628","siteSigla":"PERRENGUE","mode":"full-pdf"}'`,
       },
       {
         id: "drive-pi-preflight",
@@ -2043,12 +2043,44 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "Informe piCodigo e siteSigla." });
     return;
   }
+  const requestedMode = readOptionalString(req.body?.mode)?.toLowerCase() ?? "full-pdf";
+  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(requestedMode) ? requestedMode : "full-pdf";
+  const requestedVariant = readOptionalString(req.body?.variant)?.toLowerCase();
+  const variant = mode === "pdf" || mode === "full-pdf"
+    ? "web"
+    : requestedVariant === "web"
+      ? "web"
+      : "original";
+  const pdfMaxWidth = Math.max(800, Math.min(2560, Math.round(readOptionalNumber(req.body?.pdfMaxWidth) ?? 1920)));
+  const pdfQuality = Math.max(45, Math.min(85, Math.round(readOptionalNumber(req.body?.pdfQuality) ?? 68)));
+  const pdfResolution = Math.max(72, Math.min(180, Math.round(readOptionalNumber(req.body?.pdfResolution) ?? 120)));
+  const imageMaxWidth = Math.max(800, Math.min(2560, Math.round(readOptionalNumber(req.body?.imageMaxWidth) ?? 1600)));
+  const imageQuality = Math.max(45, Math.min(90, Math.round(readOptionalNumber(req.body?.imageQuality) ?? 72)));
   const jobId = await createOpsJob("pi-site-export", {
     piCodigo,
     siteSigla,
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
     source: "macmini-api",
   }, "ops-api");
-  res.status(202).json({ ok: true, jobId, kind: "pi-site-export", status: "ready_for_runner" });
+  res.status(202).json({
+    ok: true,
+    jobId,
+    kind: "pi-site-export",
+    status: "ready_for_runner",
+    mode,
+    variant,
+    pdfMaxWidth,
+    pdfQuality,
+    pdfResolution,
+    imageMaxWidth,
+    imageQuality,
+  });
 });
 
 router.post("/ops/jobs/reconcile-adrotate", async (req, res): Promise<void> => {

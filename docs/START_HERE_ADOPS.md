@@ -124,6 +124,25 @@ Validar compositor de print:
 node --check scripts/src/capture-insertion-proof.cjs
 ```
 
+## Entrega final comprimida
+
+O caminho canônico é assíncrono e idempotente:
+
+```text
+POST /api/pi-site-exports/jobs  (mode=full-pdf, variant=web)
+  -> GET /api/pi-site-exports/jobs/{jobId}
+  -> status=completed
+  -> GET /api/pi-site-exports/jobs/{jobId}/download
+```
+
+Esse fluxo mantém os PNGs auditados intactos e monta a cópia de entrega com
+JPEGs progressivos, PDF, manifestos de auditoria, contact sheet e checksums.
+Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
+
+- Swagger: `https://adops-api.codigo5.com.br/api/docs`
+- ReDoc: `https://adops-api.codigo5.com.br/api/redoc`
+- OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`
+
 ## Docs essenciais
 
 - `docs/README.md`

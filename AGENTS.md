@@ -86,6 +86,26 @@ Consultar status de evidência:
 GET https://adops-api-public.leandro471.workers.dev/api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD
 ```
 
+## Entrega final obrigatória por PI + portal
+
+Para qualquer entrega final de evidências, usar somente o fluxo assíncrono da API AdOps:
+
+```text
+POST /api/pi-site-exports/jobs
+  mode=full-pdf
+  variant=web
+  Idempotency-Key=<chave estável>
+GET /api/pi-site-exports/jobs/{jobId}
+GET /api/pi-site-exports/jobs/{jobId}/download
+```
+
+- Não montar o pacote final manualmente quando a API estiver disponível.
+- Não usar o endpoint síncrono para pacotes grandes.
+- Preservar os PNGs auditados no storage; a compressão ocorre apenas na cópia de entrega.
+- O ZIP final deve conter PDF, JPEGs progressivos independentes, auditoria, contact sheet e `SHA256SUMS.txt`.
+- Antes de liberar: `status=completed`, páginas do PDF = JPEGs, zero PNG na cópia web, checksums válidos e amostragem visual com topbar/domínio/data/hora/banner visíveis.
+- Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
+
 ## Gate obrigatório de captura/auditoria
 
 Bloqueia publicação ou regeneração em lote se houver:

@@ -157,7 +157,7 @@
           "stableFrameMinStddev": 18,
           "stableFrameMinEdgeMean": 8,
           "stableFrameMinMidtoneRatio": 0.02,
-          "finalPngSlotMinSimilarity": 0.74,
+        "finalPngSlotMinSimilarity": 0.48,
           "finalPngSlotMinContentStddev": 4,
           "requireStableFrame": false,
           "requireLegibleFrame": true
@@ -198,7 +198,19 @@
         "contextSelector": ".g.g-11",
         "scrollMode": "slot",
         "auditOverrides": {
-          "preferArticleFallbackForRetro": true
+          "preferArticleFallbackForRetro": true,
+          "gifFrameSelection": "source_preferred",
+          "allowViewportImageMisses": 1,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "preferBestLegibleFrame": true,
+          "stableFrameSampleCount": 8,
+          "stableFrameSampleIntervalMs": 320,
+          "stableFrameMinStddev": 22,
+          "stableFrameMinEdgeMean": 12,
+          "stableFrameMinMidtoneRatio": 0.18,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
         }
       }
     ]
@@ -209,7 +221,7 @@
     "domain": "omatogrossense.com",
     "homeUrl": "https://omatogrossense.com/",
     "adminBaseUrl": "https://omatogrossense.com/wp/wp-admin",
-    "articleFallbackUrl": null,
+    "articleFallbackUrl": "https://omatogrossense.com/motociclista-e-ferido-por-linha-de-pipa-e-acaba-hospitalizado-em-cuiaba-veja-video/",
     "browserTitle": "O Matogrossense",
     "hostLabel": "omatogrossense.com",
     "originIp": "66.253.112.200",
@@ -249,7 +261,13 @@
     "auditConfig": {
       "animatedBannerDelayMs": 2000,
       "postVisualWaitMs": 2600,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {
@@ -375,7 +393,7 @@
     "domain": "afolhalivre.com",
     "homeUrl": "https://afolhalivre.com/",
     "adminBaseUrl": "https://afolhalivre.com/wp/wp-admin",
-    "articleFallbackUrl": null,
+    "articleFallbackUrl": "https://afolhalivre.com/horoscopo/",
     "browserTitle": "A Folha Livre",
     "hostLabel": "afolhalivre.com",
     "originIp": "66.253.112.200",
@@ -411,7 +429,13 @@
     "auditConfig": {
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 2000,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {
@@ -436,8 +460,7 @@
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
           "forceReferenceFrameOnSlot": true,
-          "requireSlotVisibleInViewport": true,
-          "disableSignedPreview": true
+          "requireSlotVisibleInViewport": true
         }
       },
       {
@@ -494,11 +517,18 @@
         "page": "home",
         "slotSelector": ".g.g-6",
         "contextSelector": ".g.g-6",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "auditOverrides": {
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true
+        }
       },
       {
         "groupId": 14,
         "aliases": [
+          "INTERNO",
           "INTERNO DE NOTICIAS",
           "BANNER INTERNO NOTICIAS",
           "INTERNO NOTICIA"
@@ -530,7 +560,7 @@
     "articleFallbackUrl": "https://portalnortemt.com/ex-jogadores-do-manchester-united-criticam-postura-da-argentina-na-final-da-copa/",
     "browserTitle": "Portal Norte MT",
     "hostLabel": "portalnortemt.com",
-    "originIp": "66.253.112.200",
+    "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-pnmt-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
@@ -562,7 +592,13 @@
     "auditConfig": {
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 1100,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {
@@ -582,6 +618,8 @@
           "gifFrameSelection": "source_preferred",
           "domFrameMinSimilarity": 0.26,
           "domFrameMinNonBgRatio": 0.03,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
           "requireSlotVisibleInViewport": true
@@ -656,10 +694,10 @@
     "domain": "portalpantanalmt.com",
     "homeUrl": "https://portalpantanalmt.com/",
     "adminBaseUrl": "https://portalpantanalmt.com/wp/wp-admin",
-    "articleFallbackUrl": null,
+    "articleFallbackUrl": "https://portalpantanalmt.com/prefeitura-compra-cacau-por-r-77-a-embalagem-de-500-g-preco-supera-valor-cobrado-pela-propria-fabricante/",
     "browserTitle": "Portal Pantanal MT",
     "hostLabel": "portalpantanalmt.com",
-    "originIp": "66.253.112.200",
+    "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-ppmt-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
@@ -691,7 +729,13 @@
     "auditConfig": {
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 1100,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {
@@ -815,7 +859,7 @@
     "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
     "browserTitle": "Roo Notícias",
     "hostLabel": "roonoticias.com",
-    "originIp": "66.253.112.200",
+    "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-roo-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
@@ -847,7 +891,13 @@
     "auditConfig": {
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 1100,
-      "viewportTrimBottomPx": 0
+      "viewportTrimBottomPx": 0,
+      "requireSignedRetroPreview": true,
+      "requireRetroContentProof": true,
+      "minRetroContentMatches": 3,
+      "allowAuditedReconstruction": true,
+      "retroContentCardSelectors": [],
+      "retroContentDateSelectors": []
     },
     "formatMappings": [
       {
@@ -872,8 +922,7 @@
           "forceReferenceFrameOnSlot": true,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true,
-          "disableSignedPreview": true
+          "requireSlotVisibleInViewport": true
         }
       },
       {
@@ -887,10 +936,17 @@
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
-        "proofStyle": "viewport_with_slot_inset",
+        "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 2400,
-          "viewportTrimBottomPx": 180
+          "viewportTrimBottomPx": 180,
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
+          "preferBestLegibleFrame": true,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
         }
       },
       {
