@@ -112,6 +112,10 @@ test("readback repete apenas falha transitoria", () => {
   assert.equal(contract.shouldRetryDeliveryStatus(404), false);
 });
 
+test("readback amostra tres downloads por contrato", () => {
+  assert.deepEqual(contract.takeDeliverySamples([1, 2, 3, 4]), [1, 2, 3]);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

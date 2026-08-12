@@ -20,6 +20,7 @@ import {
   buildDeliveryProbeOptions,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
+  takeDeliverySamples,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -551,8 +552,8 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   JSON.parse(await readFile(path.join(latestDir, "report.json"), "utf8"));
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
-  const individualSamples = insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl).filter(Boolean)).slice(0, 3);
-  const batchSamples = Array.from(new Set(insertions.map((item) => item.batchDownloadUrl).filter(Boolean)));
+  const individualSamples = takeDeliverySamples(insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl)));
+  const batchSamples = takeDeliverySamples(insertions.map((item) => item.batchDownloadUrl));
   for (const [index, url] of individualSamples.entries()) await validateDeliveryUrl(url, `JPEG individual ${index + 1}`);
   for (const [index, url] of batchSamples.entries()) await validateDeliveryUrl(url, `ZIP de campanha ${index + 1}`);
   if (batchSamples[0]) await validateZipDelivery(batchSamples[0]);

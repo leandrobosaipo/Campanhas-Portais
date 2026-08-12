@@ -30,6 +30,10 @@ export function shouldRetryDeliveryStatus(status) {
   return status === 429 || status >= 500;
 }
 
+export function takeDeliverySamples(values) {
+  return Array.from(new Set(values || [])).filter(Boolean).slice(0, 3);
+}
+
 export function buildPiSiteExportDownloadUrl(baseUrl, jobId) {
   const base = String(baseUrl || "").replace(/\/$/, "").replace(/\/api$/, "");
   return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
