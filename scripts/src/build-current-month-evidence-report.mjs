@@ -19,6 +19,7 @@ import {
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   buildDeliveryProbeOptions,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
+  shouldRetryDeliveryStatus,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -507,12 +508,28 @@ async function materializeCampaignExports(items) {
 }
 
 async function validateDeliveryUrl(url, label) {
-  const response = await fetchWithTimeout(url, buildDeliveryProbeOptions(), 120_000);
+  const response = await fetchDeliveryWithRetry(url, buildDeliveryProbeOptions(), 120_000);
   if (!response.ok) throw new Error(`${label} indisponível: HTTP ${response.status}.`);
 }
 
+async function fetchDeliveryWithRetry(url, options, timeoutMs, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(url, options, timeoutMs);
+      if (!shouldRetryDeliveryStatus(response.status) || attempt === attempts) return response;
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+  }
+  throw lastError;
+}
+
 async function validateZipDelivery(url) {
-  const response = await fetchWithTimeout(url, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 10 * 60_000);
+  const response = await fetchDeliveryWithRetry(url, { redirect: "follow", headers: { "cache-control": "no-cache" } }, 10 * 60_000);
   if (!response.ok) throw new Error(`ZIP de amostra indisponível: HTTP ${response.status}.`);
   const tempDir = await mkdtemp(path.join(tmpdir(), "adops-zip-validation-"));
   const zipPath = path.join(tempDir, "sample.zip");

@@ -106,6 +106,12 @@ test("validador ZIP nao depende do binario unzip", () => {
   assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /SHA256SUMS\.txt/);
 });
 
+test("readback repete apenas falha transitoria", () => {
+  assert.equal(contract.shouldRetryDeliveryStatus(500), true);
+  assert.equal(contract.shouldRetryDeliveryStatus(429), true);
+  assert.equal(contract.shouldRetryDeliveryStatus(404), false);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },
