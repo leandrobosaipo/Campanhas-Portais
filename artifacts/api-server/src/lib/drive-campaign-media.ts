@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { extractPiDigits, normalizeForMatch } from "./current-sheet-campaigns";
 import { listCurrentDriveInventoryItems } from "./drive-inventory";
+import { selectDriveInventorySource } from "./drive-inventory-source";
 
 export const DRIVE_CAMPAIGN_MEDIA_VERSION = "drive-campaign-media-v1" as const;
 
@@ -305,17 +306,21 @@ export async function findDriveCampaignMedia(input: {
   let items: DriveRawItem[] = [];
   let source: "cache" | "live" | "snapshot" | "none" = "none";
 
-  if (process.env.DRIVE_INTEGRATION_MODE === "monitor") {
-    try {
-      items = await listCurrentDriveInventoryItems();
-      if (items.length) source = "snapshot";
-      else warnings.push("Snapshot do Drive ainda não possui itens.");
-    } catch (error) {
-      warnings.push(`Snapshot do Drive indisponível: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  try {
+    items = await listCurrentDriveInventoryItems();
+    if (items.length) source = "snapshot";
+    else warnings.push("Snapshot do Drive ainda não possui itens.");
+  } catch (error) {
+    warnings.push(`Snapshot do Drive indisponível: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  if (!items.length && input.refreshDrive && process.env.DRIVE_INTEGRATION_MODE !== "monitor") {
+  const selectedSource = selectDriveInventorySource({
+    snapshotItems: items.length,
+    refreshDrive: Boolean(input.refreshDrive),
+    directCredentials: Boolean(process.env.GOOGLE_DRIVE_ACCESS_TOKEN || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || process.env.GOOGLE_APPLICATION_CREDENTIALS),
+  });
+
+  if (!items.length && selectedSource === "live") {
     try {
       const live = await listLiveDriveItems(rootFolderId);
       items = live.items;
