@@ -18,6 +18,7 @@ import {
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   buildDeliveryProbeOptions,
+  EVIDENCE_ZIP_VALIDATION_PYTHON,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -517,22 +518,8 @@ async function validateZipDelivery(url) {
   const zipPath = path.join(tempDir, "sample.zip");
   try {
     await writeFile(zipPath, Buffer.from(await response.arrayBuffer()));
-    const tested = spawnSync("unzip", ["-t", zipPath], { encoding: "utf8" });
-    if (tested.status !== 0) throw new Error(`ZIP corrompido: ${tested.stderr || tested.stdout}`);
-    const listed = spawnSync("unzip", ["-Z1", zipPath], { encoding: "utf8" });
-    if (listed.status !== 0) throw new Error("Não foi possível listar o ZIP de amostra.");
-    const files = listed.stdout.split(/\r?\n/).filter((item) => item && !item.endsWith("/"));
-    const images = files.filter((item) => /\.jpe?g$/i.test(item));
-    if (!images.length || files.some((item) => !/\.jpe?g$/i.test(item) && !/(^|\/)SHA256SUMS\.txt$/.test(item))) {
-      throw new Error(`ZIP contém arquivos fora do contrato: ${files.join(", ")}`);
-    }
-    if (!files.some((item) => /(^|\/)SHA256SUMS\.txt$/.test(item))) throw new Error("ZIP sem SHA256SUMS.txt.");
-    const extractDir = path.join(tempDir, "extract");
-    await mkdir(extractDir, { recursive: true });
-    const extracted = spawnSync("unzip", ["-q", zipPath, "-d", extractDir], { encoding: "utf8" });
-    if (extracted.status !== 0) throw new Error("Falha ao extrair ZIP para validar checksums.");
-    const checksums = spawnSync("shasum", ["-a", "256", "-c", "SHA256SUMS.txt"], { cwd: extractDir, encoding: "utf8" });
-    if (checksums.status !== 0) throw new Error(`Checksums inválidos no ZIP: ${checksums.stderr || checksums.stdout}`);
+    const tested = spawnSync("python3", ["-c", EVIDENCE_ZIP_VALIDATION_PYTHON, zipPath], { encoding: "utf8" });
+    if (tested.status !== 0) throw new Error(`ZIP inválido: ${tested.error?.message || tested.stderr || tested.stdout || `exit ${tested.status}`}`);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

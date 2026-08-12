@@ -101,6 +101,11 @@ test("ZIP usa a mesma API publica que possui o job de exportacao", () => {
   );
 });
 
+test("validador ZIP nao depende do binario unzip", () => {
+  assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /zipfile\.ZipFile/);
+  assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /SHA256SUMS\.txt/);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

@@ -1,6 +1,26 @@
 import crypto from "node:crypto";
 
 export const MONTHLY_REPORT_SOURCE_TIMEOUT_MS = 120_000;
+export const EVIDENCE_ZIP_VALIDATION_PYTHON = String.raw`
+import hashlib, pathlib, sys, zipfile
+archive = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(archive) as package:
+    names = [name for name in package.namelist() if not name.endswith('/')]
+    images = [name for name in names if name.lower().endswith(('.jpg', '.jpeg'))]
+    checksum_names = [name for name in names if name == 'SHA256SUMS.txt' or name.endswith('/SHA256SUMS.txt')]
+    if not images or len(checksum_names) != 1:
+        raise SystemExit('missing images or SHA256SUMS.txt')
+    if any(not name.lower().endswith(('.jpg', '.jpeg')) and name not in checksum_names for name in names):
+        raise SystemExit('unexpected file in ZIP')
+    if package.testzip() is not None:
+        raise SystemExit('corrupt member')
+    base = checksum_names[0].rsplit('/', 1)[0] + '/' if '/' in checksum_names[0] else ''
+    for line in package.read(checksum_names[0]).decode('utf-8').splitlines():
+        digest, relative = line.split(None, 1)
+        member = base + relative.lstrip(' *./')
+        if hashlib.sha256(package.read(member)).hexdigest() != digest:
+            raise SystemExit('checksum mismatch: ' + member)
+`;
 
 export function buildDeliveryProbeOptions() {
   return { method: "GET", headers: { range: "bytes=0-1023" }, redirect: "follow" };
