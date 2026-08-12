@@ -25,6 +25,7 @@ export function isFormatCompatible(sheetFormat: string, adopsFormat: string | nu
   if (sheet === "TOPO" && adops.includes("TOPO")) return true;
   if (/^HOME [123]$/.test(sheet) && adops.endsWith(sheet)) return true;
   if (sheet === "INTERNO" && adops === "INTERNO DE NOTICIAS") return true;
+  if (sheet.startsWith("LATERAL 02") && adops.startsWith("LATERAL 02")) return true;
   if (sheet === "LATERAL" && adops.includes("LATERAL")) return true;
   if (sheet === "VIDEO" && adops.includes("VIDEO")) return true;
   return false;
@@ -61,5 +62,17 @@ export function selectBestAdopsMatch<T extends CampaignOperationMatchCandidate>(
   if (ranked.length === 1) return { insertion: ranked[0]!.insertion, compatible };
   const [best, second] = ranked;
   if (best && second && best.score > second.score) return { insertion: best.insertion, compatible };
+  if (best && second && best.score === second.score) {
+    const tied = ranked.filter((candidate) => candidate.score === best.score);
+    const fingerprint = (candidate: T) => JSON.stringify({
+      format: normalizeFormato(candidate.localFormatoNormalizado ?? candidate.localFormato),
+      periodoInicio: candidate.periodoInicio,
+      periodoFim: candidate.periodoFim,
+      mediaUrl: candidate.mediaUrl,
+    });
+    if (new Set(tied.map(({ insertion }) => fingerprint(insertion))).size === 1) {
+      return { insertion: tied.map(({ insertion }) => insertion).sort((a, b) => b.id - a.id)[0]!, compatible };
+    }
+  }
   return { insertion: null, compatible };
 }

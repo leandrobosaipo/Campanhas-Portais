@@ -77,13 +77,21 @@ async function cod5_loadBaseline() {
   const cod5_activePayload = await cod5_request(cod5_privateApi, `/api/campaign-operations/active?date=${encodeURIComponent(cod5_targetDate)}`);
   const cod5_activeItems = Array.isArray(cod5_activePayload?.items) ? cod5_activePayload.items : [];
   const cod5_canonicalRefs = cod5_activeItems
-    .filter((item) => Number.isFinite(Number(item?.adops?.insertionId)))
+    .filter((item) => Number.isInteger(Number(item?.adops?.insertionId)) && Number(item.adops.insertionId) > 0)
     .map((item) => ({ ...item, id: Number(item.adops.insertionId) }));
   const cod5_monthPayload = await cod5_request(cod5_privateApi, `/api/insertions?competencia=${encodeURIComponent(cod5_competencia)}&limit=500`);
   const cod5_monthItems = Array.isArray(cod5_monthPayload) ? cod5_monthPayload : cod5_monthPayload?.items || [];
   const cod5_canonicalMonthItems = selectCanonicalInsertions(cod5_canonicalRefs, cod5_monthItems);
-  if (cod5_canonicalRefs.length !== 16 || cod5_canonicalMonthItems.length !== 16) {
-    throw new Error(`Gate canônico recusado: active=${cod5_canonicalRefs.length}, month=${cod5_canonicalMonthItems.length}, esperado=16.`);
+  const cod5_uniqueIds = new Set(cod5_canonicalRefs.map((item) => item.id));
+  if (
+    cod5_canonicalRefs.length === 0
+    || cod5_canonicalRefs.length !== cod5_activeItems.length
+    || cod5_canonicalMonthItems.length !== cod5_canonicalRefs.length
+    || cod5_uniqueIds.size !== cod5_canonicalRefs.length
+    || Number(cod5_activePayload?.summary?.needsCreateInAdOps || 0) > 0
+    || Number(cod5_activePayload?.summary?.hasDivergence || 0) > 0
+  ) {
+    throw new Error(`Gate canônico recusado: sheet=${cod5_activeItems.length}, active=${cod5_canonicalRefs.length}, month=${cod5_canonicalMonthItems.length}, unique=${cod5_uniqueIds.size}, needsCreate=${Number(cod5_activePayload?.summary?.needsCreateInAdOps || 0)}, divergences=${Number(cod5_activePayload?.summary?.hasDivergence || 0)}.`);
   }
   if (cod5_canonicalRefs.some((item) => item.id === 1826)) throw new Error("Gate canônico recusado: inserção duplicada #1826 presente.");
 

@@ -34,6 +34,31 @@ function insertion(overrides: Partial<CampaignOperationMatchCandidate>): Campaig
 test("aceita abreviacoes comerciais da planilha", () => {
   assert.equal(isFormatCompatible("HOME 1", "MEGABANNER HOME 1"), true);
   assert.equal(isFormatCompatible("INTERNO", "INTERNO DE NOTICIAS"), true);
+  assert.equal(isFormatCompatible("LATERAL 02 — SIDEBAR — 300x250", "LATERAL 02"), true);
+});
+
+test("prefere a referencia mais nova somente quando duplicatas operacionais sao identicas", () => {
+  const antiga = insertion({
+    id: 1855,
+    localFormato: "LATERAL 02",
+    localFormatoNormalizado: "LATERAL 02",
+    mediaUrl: "https://cdn.example.test/lateral.gif",
+  });
+  const canonica = insertion({
+    id: 1941,
+    localFormato: "LATERAL 02 — SIDEBAR — 300x250",
+    localFormatoNormalizado: "LATERAL 02",
+    mediaUrl: "https://cdn.example.test/lateral.gif",
+  });
+  const result = selectBestAdopsMatch(row("LATERAL 02 — SIDEBAR — 300x250"), [antiga, canonica]);
+  assert.equal(result.insertion?.id, 1941);
+});
+
+test("mantem ambiguidade quando duplicatas empatadas apontam para midias diferentes", () => {
+  const primeira = insertion({ id: 1855, localFormatoNormalizado: "LATERAL 02", mediaUrl: "https://cdn.example.test/a.gif" });
+  const segunda = insertion({ id: 1941, localFormatoNormalizado: "LATERAL 02", mediaUrl: "https://cdn.example.test/b.gif" });
+  const result = selectBestAdopsMatch(row("LATERAL 02 — SIDEBAR — 300x250"), [primeira, segunda]);
+  assert.equal(result.insertion, null);
 });
 
 test("prioriza insercao publicada em vez de duplicata cancelada", () => {
