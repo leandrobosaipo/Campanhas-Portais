@@ -29,6 +29,10 @@ import type {
   CompetenciaBreakdown,
   CreateAgencyBody,
   CreateCampaignBody,
+  CreateCampaignEvidenceExportBatch200,
+  CreateCampaignEvidenceExportBatch202,
+  CreateCampaignEvidenceExportBatch409,
+  CreateCampaignEvidenceExportBatchBody,
   CreateCampaignEvidenceExportJob200,
   CreateCampaignEvidenceExportJob202,
   CreateCampaignEvidenceExportJobBody,
@@ -52,6 +56,10 @@ import type {
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
   GetDashboardSummaryParams,
+  GetMonthlyEvidenceSource200,
+  GetMonthlyEvidenceSourceParams,
+  GetPendingCampaignOperations200,
+  GetPendingCampaignOperationsParams,
   HealthStatus,
   InsertionDetail,
   InsertionWithRelations,
@@ -418,6 +426,221 @@ export function useGetActiveCampaignOperations<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+export const getGetPendingCampaignOperationsUrl = (
+  params?: GetPendingCampaignOperationsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/campaign-operations/pending-publication?${stringifiedParams}`
+    : `/api/campaign-operations/pending-publication`;
+};
+
+export const getPendingCampaignOperations = async (
+  params?: GetPendingCampaignOperationsParams,
+  options?: RequestInit,
+): Promise<GetPendingCampaignOperations200> => {
+  return customFetch<GetPendingCampaignOperations200>(
+    getGetPendingCampaignOperationsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPendingCampaignOperationsQueryKey = (
+  params?: GetPendingCampaignOperationsParams,
+) => {
+  return [
+    `/api/campaign-operations/pending-publication`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPendingCampaignOperationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPendingCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPendingCampaignOperationsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPendingCampaignOperations>>
+  > = ({ signal }) =>
+    getPendingCampaignOperations(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPendingCampaignOperationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPendingCampaignOperations>>
+>;
+export type GetPendingCampaignOperationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+
+export function useGetPendingCampaignOperations<
+  TData = Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPendingCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPendingCampaignOperationsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+export const getGetMonthlyEvidenceSourceUrl = (
+  params?: GetMonthlyEvidenceSourceParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/campaign-operations/evidence-monthly-source?${stringifiedParams}`
+    : `/api/campaign-operations/evidence-monthly-source`;
+};
+
+export const getMonthlyEvidenceSource = async (
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: RequestInit,
+): Promise<GetMonthlyEvidenceSource200> => {
+  return customFetch<GetMonthlyEvidenceSource200>(
+    getGetMonthlyEvidenceSourceUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMonthlyEvidenceSourceQueryKey = (
+  params?: GetMonthlyEvidenceSourceParams,
+) => {
+  return [
+    `/api/campaign-operations/evidence-monthly-source`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetMonthlyEvidenceSourceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMonthlyEvidenceSourceQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMonthlyEvidenceSource>>
+  > = ({ signal }) =>
+    getMonthlyEvidenceSource(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMonthlyEvidenceSourceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMonthlyEvidenceSource>>
+>;
+export type GetMonthlyEvidenceSourceQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+
+export function useGetMonthlyEvidenceSource<
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMonthlyEvidenceSourceQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -2909,6 +3132,100 @@ export const useCreateCampaignEvidenceExportJob = <
 > => {
   return useMutation(
     getCreateCampaignEvidenceExportJobMutationOptions(options),
+  );
+};
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const getCreateCampaignEvidenceExportBatchUrl = () => {
+  return `/api/campaign-evidence-exports/jobs/batch`;
+};
+
+export const createCampaignEvidenceExportBatch = async (
+  createCampaignEvidenceExportBatchBody: CreateCampaignEvidenceExportBatchBody,
+  options?: RequestInit,
+): Promise<
+  CreateCampaignEvidenceExportBatch200 | CreateCampaignEvidenceExportBatch202
+> => {
+  return customFetch<
+    CreateCampaignEvidenceExportBatch200 | CreateCampaignEvidenceExportBatch202
+  >(getCreateCampaignEvidenceExportBatchUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCampaignEvidenceExportBatchBody),
+  });
+};
+
+export const getCreateCampaignEvidenceExportBatchMutationOptions = <
+  TError = ErrorType<CreateCampaignEvidenceExportBatch409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignEvidenceExportBatch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignEvidenceExportBatch(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignEvidenceExportBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>
+>;
+export type CreateCampaignEvidenceExportBatchMutationBody =
+  BodyType<CreateCampaignEvidenceExportBatchBody>;
+export type CreateCampaignEvidenceExportBatchMutationError =
+  ErrorType<CreateCampaignEvidenceExportBatch409>;
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const useCreateCampaignEvidenceExportBatch = <
+  TError = ErrorType<CreateCampaignEvidenceExportBatch409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignEvidenceExportBatchMutationOptions(options),
   );
 };
 

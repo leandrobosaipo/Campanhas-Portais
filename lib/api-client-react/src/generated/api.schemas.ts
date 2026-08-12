@@ -1002,6 +1002,19 @@ export type GetActiveCampaignOperationsParams = {
 
 export type GetActiveCampaignOperations200 = { [key: string]: unknown };
 
+export type GetPendingCampaignOperationsParams = {
+  date?: string;
+};
+
+export type GetPendingCampaignOperations200 = { [key: string]: unknown };
+
+export type GetMonthlyEvidenceSourceParams = {
+  date?: string;
+  competencia?: string;
+};
+
+export type GetMonthlyEvidenceSource200 = { [key: string]: unknown };
+
 export type ListCampaignsParams = {
   /**
    * @nullable
@@ -1131,6 +1144,37 @@ export type CreateCampaignEvidenceExportJobBody = {
 export type CreateCampaignEvidenceExportJob200 = { [key: string]: unknown };
 
 export type CreateCampaignEvidenceExportJob202 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatchBodyCampaignsItem = {
+  piCodigo: string;
+};
+
+export type CreateCampaignEvidenceExportBatchBody = {
+  competencia: string;
+  /**
+   * @minItems 1
+   * @maxItems 25
+   */
+  campaigns: CreateCampaignEvidenceExportBatchBodyCampaignsItem[];
+  mode?: "prints-only";
+  variant?: "web";
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreateCampaignEvidenceExportBatch200 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatch202 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatch409 = { [key: string]: unknown };
 
 export type GetCampaignEvidenceExportJob200 = { [key: string]: unknown };
 

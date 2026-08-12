@@ -21,6 +21,8 @@ import {
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   MONTHLY_REPORT_PORTAINER_TIMEOUT_MS,
   buildDeliveryProbeOptions,
+  adaptAggregatedEvidenceDay,
+  canonicalRequiredDates,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
   takeDeliverySamples,
@@ -79,6 +81,8 @@ const outputPath = path.join(latestDir, "index.html");
 const snapshotPath = path.join(snapshotDir, "index.html");
 const publicUrl = `https://sites.codigo5.com.br/reports/${slug}/`;
 const reportMarkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="AdOps"><rect width="128" height="128" rx="16" fill="#164e63"/><path d="M28 92 53 32h22l25 60H80l-4-12H52l-4 12H28Zm30-29h12l-6-18-6 18Z" fill="#fff"/></svg>`;
+let apiRequestCount = 0;
+let apiResponseBytes = 0;
 
 const activeStatuses = new Set(["em_veiculacao", "ativa", "publicada", "aguardando_publicacao", "print_gerado"]);
 const terminalStatuses = new Set(["cancelado", "concluido", "finalizado", "finalizada"]);
@@ -211,6 +215,7 @@ async function api(pathname, options = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
+      apiRequestCount += 1;
       const response = await fetchWithTimeout(`${apiBase}${pathname}`, {
         method: options.method || "GET",
         headers: {
@@ -221,6 +226,7 @@ async function api(pathname, options = {}) {
         body: options.body,
       }, timeoutMs);
       const text = await response.text();
+      apiResponseBytes += Buffer.byteLength(text);
       let payload;
       try {
         payload = JSON.parse(text);
@@ -484,6 +490,22 @@ async function mapLimit(values, limit, fn) {
   return results;
 }
 
+async function waitForCompactJob(jobId, label, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  const delays = [2_000, 4_000, 8_000, 15_000];
+  let attempt = 0;
+  for (;;) {
+    const progress = await api(`/api/ops/jobs/${encodeURIComponent(jobId)}/progress`);
+    if (progress.status === "completed") return progress;
+    if (progress.status === "failed") throw new Error(`${label} falhou: ${progress.error || "erro sem detalhe"}.`);
+    if (Date.now() >= deadline) throw new Error(`Timeout em ${label}.`);
+    const baseDelay = delays[Math.min(attempt, delays.length - 1)];
+    const jitter = Math.floor(Math.random() * Math.min(750, baseDelay / 4));
+    await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
+    attempt += 1;
+  }
+}
+
 async function materializeCampaignExports(items) {
   const preloaded = (() => {
     try {
@@ -502,15 +524,15 @@ async function materializeCampaignExports(items) {
   }
 
   const results = new Map();
-  for (const group of groups.values()) {
+  await mapLimit(Array.from(groups.values()), 3, async (group) => {
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
     const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
-    if (!required || evidenceDays.length !== required) continue;
+    if (!required || evidenceDays.length !== required) return;
     if (preloaded[group.key]) {
       results.set(group.key, preloaded[group.key]);
-      continue;
+      return;
     }
-    if (process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") continue;
+    if (process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") return;
     const idempotencyKey = buildCampaignExportIdempotencyKey({
       piCodigo: group.piCodigo,
       siteSigla: group.siteSigla,
@@ -532,16 +554,11 @@ async function materializeCampaignExports(items) {
       headers: { "idempotency-key": idempotencyKey },
       timeoutMs: 60_000,
     });
-    const deadline = Date.now() + 20 * 60_000;
-    let job = created;
-    while (job.status !== "completed" && Date.now() < deadline) {
-      if (job.status === "failed") throw new Error(`Exportação ${group.piCodigo}/${group.siteSigla} falhou.`);
-      await new Promise((resolve) => setTimeout(resolve, 8_000));
-      job = await api(`/api/pi-site-exports/jobs/${encodeURIComponent(created.jobId)}`);
+    if (created.status !== "completed") {
+      await waitForCompactJob(created.jobId, `exportação ${group.piCodigo}/${group.siteSigla}`, 20 * 60_000);
     }
-    if (job.status !== "completed") throw new Error(`Timeout na exportação ${group.piCodigo}/${group.siteSigla}.`);
     results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
-  }
+  });
   return results;
 }
 
@@ -556,15 +573,19 @@ async function materializeCompleteCampaignExports(items) {
     groups.set(key, group);
   }
   const results = new Map();
+  const readyGroups = [];
   for (const group of groups.values()) {
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
     const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
     if (!required || evidenceDays.length !== required || process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") continue;
-    const created = await api("/api/campaign-evidence-exports/jobs", {
+    readyGroups.push(group);
+  }
+  if (!readyGroups.length) return results;
+  const batch = await api("/api/campaign-evidence-exports/jobs/batch", {
       method: "POST",
       body: JSON.stringify({
-        piCodigo: group.piCodigo,
-        competencia: group.competencia,
+        competencia,
+        campaigns: readyGroups.map((group) => ({ piCodigo: group.piCodigo })),
         mode: "prints-only",
         variant: "web",
         imageMaxWidth: 1600,
@@ -574,16 +595,17 @@ async function materializeCompleteCampaignExports(items) {
       }),
       timeoutMs: 120_000,
     });
-    const deadline = Date.now() + 30 * 60_000;
-    let job = created;
-    while (job.status !== "completed" && Date.now() < deadline) {
-      if (job.status === "failed") throw new Error(`Exportação completa da PI ${group.piCodigo} falhou.`);
-      await new Promise((resolve) => setTimeout(resolve, 8_000));
-      job = await api(`/api/campaign-evidence-exports/jobs/${encodeURIComponent(created.jobId)}`);
+  const itemByPi = new Map((batch.items || []).map((item) => [String(item.piCodigo), item]));
+  await Promise.all(readyGroups.map(async (group) => {
+    const created = itemByPi.get(String(group.piCodigo));
+    if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
+      throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
     }
-    if (job.status !== "completed") throw new Error(`Timeout na exportação completa da PI ${group.piCodigo}.`);
+    if (created.status !== "completed") {
+      await waitForCompactJob(created.jobId, `exportação completa da PI ${group.piCodigo}`, 30 * 60_000);
+    }
     results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
-  }
+  }));
   return results;
 }
 
@@ -1039,21 +1061,18 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
 }
 
 async function main() {
+  const startedAtMs = Date.now();
+  const timings = {};
   const bounds = monthBounds(targetMonth);
   const monthEndForEvidence = targetDate < bounds.end ? targetDate : bounds.end;
   await mkdir(latestDir, { recursive: true });
   await mkdir(snapshotDir, { recursive: true });
 
-  const [insertionsRaw, campaignsRaw, auditsRaw, operationsRaw] = await Promise.all([
-    api(`/api/insertions?competencia=${encodeURIComponent(competencia)}&limit=500`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }),
-    api(`/api/campaigns?competencia=${encodeURIComponent(competencia)}&limit=500`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }).catch(() => []),
-    Promise.all(dayRange(bounds.start, monthEndForEvidence).map(async (date) => [date, await api(`/api/insertions/capture-proof/audit?date=${date}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }).catch((error) => ({ error: error.message }))])),
-    api(`/api/campaign-operations/active?date=${encodeURIComponent(targetDate)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }),
-  ]);
-
-  const insertions = Array.isArray(insertionsRaw) ? insertionsRaw : insertionsRaw.items || [];
-  const campaigns = Array.isArray(campaignsRaw) ? campaignsRaw : campaignsRaw.items || [];
-  const campaignMap = new Map(campaigns.map((campaign) => [campaign.id, campaign]));
+  const sourceStartedAtMs = Date.now();
+  const operationsRaw = await api(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(targetDate)}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS });
+  timings.sourceFetchMs = Date.now() - sourceStartedAtMs;
+  const insertions = operationsRaw.insertions || [];
+  const campaignMap = new Map();
   const canonicalOperationItems = [...(operationsRaw.items || []), ...(operationsRaw.upcomingItems || [])]
     .filter((item) => Number.isFinite(Number(item?.adops?.insertionId)))
     .map((item) => ({ ...item, id: Number(item.adops.insertionId) }));
@@ -1066,39 +1085,15 @@ async function main() {
     .filter((item) => item.periodoInicio > targetDate || item.periodoFim >= targetDate || activeStatuses.has(String(item.statusNormalizado || "").toLowerCase()) || item.bannerPublicadoNoSite)
     .sort((a, b) => String(a.siteSigla).localeCompare(String(b.siteSigla)) || String(a.campanhaName).localeCompare(String(b.campanhaName)) || a.id - b.id);
 
-  const statusRequests = [];
-  for (const item of eligible) {
-    const requiredStart = clampDate(item.periodoInicio, bounds.start, monthEndForEvidence);
-    const requiredEnd = item.periodoInicio > targetDate ? "" : clampDate(item.periodoFim, bounds.start, monthEndForEvidence);
-    const dates = requiredEnd ? dayRange(requiredStart, requiredEnd) : [];
-    for (const date of dates) statusRequests.push({ id: item.id, date });
-  }
-
-  console.error(`Coletando status de evidencias: ${statusRequests.length} checks diarios para ${eligible.length} insercoes.`);
-  const statusResults = await mapLimit(statusRequests, 8, async ({ id, date }) => {
-    try {
-      const payload = await api(`/api/insertions/${id}/capture-proof/status?date=${date}`);
-      return [`${id}:${date}`, { ...payload, date }];
-    } catch (error) {
-      return [`${id}:${date}`, { date, status: "failed", error: error.message }];
-    }
-  });
-  const statusMap = new Map(statusResults);
-
-  console.error(`Coletando relacoes AdRotate: ${eligible.length} insercoes.`);
-  const relationResults = await mapLimit(eligible, 8, async (item) => {
-    try {
-      return [item.id, await api(`/api/integrations/adrotate/insertions/${item.id}/relation`, { attempts: 1, timeoutMs: 8000 })];
-    } catch {
-      return [item.id, null];
-    }
-  });
-  const relationMap = new Map(relationResults);
+  const statusMap = new Map(eligible.flatMap((item) => (item.evidenceDays || []).map((day) => [
+    `${item.id}:${day.date}`,
+    adaptAggregatedEvidenceDay(day),
+  ])));
+  const relationMap = new Map();
 
   const enriched = eligible.map((item) => {
-    const requiredStart = clampDate(item.periodoInicio, bounds.start, monthEndForEvidence);
-    const requiredEnd = item.periodoInicio > targetDate ? "" : clampDate(item.periodoFim, bounds.start, monthEndForEvidence);
-    const requiredDays = requiredEnd ? dayRange(requiredStart, requiredEnd) : [];
+    const requiredDays = canonicalRequiredDates(item)
+      .filter((date) => date >= bounds.start && date <= monthEndForEvidence);
     const evidenceDays = requiredDays.map((date) => {
       const status = statusMap.get(`${item.id}:${date}`) || { date, status: "missing" };
       const classification = classifyEvidenceStatus(status);
@@ -1149,8 +1144,12 @@ async function main() {
     };
   });
 
-  const exportLinks = await materializeCampaignExports(enriched);
-  const completeExportLinks = await materializeCompleteCampaignExports(enriched);
+  const exportsStartedAtMs = Date.now();
+  const [exportLinks, completeExportLinks] = await Promise.all([
+    materializeCampaignExports(enriched),
+    materializeCompleteCampaignExports(enriched),
+  ]);
+  timings.exportsMs = Date.now() - exportsStartedAtMs;
   for (const item of enriched) {
     item.batchDownloadUrl = exportLinks.get(`${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`) || "";
     const completeKey = `${String(item.piCodigo || "").replace(/\D/g, "")}:${normalize(item.competencia)}`;
@@ -1173,7 +1172,7 @@ async function main() {
   summary.publicationGate = buildMonthlyPublicationGate(enriched);
   const forecast = buildSevenDayForecast(enriched, targetDate);
   const portals = buildPortalGroups(enriched);
-  const audits = Object.fromEntries(auditsRaw);
+  const audits = {};
   const sources = {
     sheet: operationsRaw.sheet || null,
     driveInventory: operationsRaw.driveInventory || null,
@@ -1212,9 +1211,12 @@ async function main() {
     writeFile(path.join(latestAssets, "favicon.svg"), reportMarkSvg, "utf8"),
     writeFile(path.join(snapshotAssets, "favicon.svg"), reportMarkSvg, "utf8"),
   ]);
+  const validationStartedAtMs = Date.now();
   await validateGeneratedReport({ data, reportManifest, insertions: enriched });
+  timings.validationMs = Date.now() - validationStartedAtMs;
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
+    const publishStartedAtMs = Date.now();
     if (!isMonthlyReportPublishable(summary.publicationGate)) {
       throw new Error(`Publicação bloqueada: missing=${summary.publicationGate.missing}, invalid=${summary.publicationGate.invalid}.`);
     }
@@ -1242,9 +1244,19 @@ async function main() {
         throw new Error("Relatório unlisted apareceu no catálogo público.");
       }
     }
+    timings.publishMs = Date.now() - publishStartedAtMs;
   }
 
-  console.log(JSON.stringify({ ok: true, outputPath, snapshotPath, publicUrl, summary }, null, 2));
+  timings.totalMs = Date.now() - startedAtMs;
+  console.log(JSON.stringify({
+    ok: true,
+    outputPath,
+    snapshotPath,
+    publicUrl,
+    summary,
+    timings,
+    telemetry: { apiRequestCount, apiResponseBytes },
+  }, null, 2));
 }
 
 main().catch((error) => {

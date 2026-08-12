@@ -92,3 +92,97 @@ export function buildCampaignEvidenceExportIdempotencyKey(input: {
   const digest = crypto.createHash("sha256").update(JSON.stringify({ ...identity, imageMaxWidth, imageQuality, variant: "web", mode: "prints-only", evidences })).digest("hex");
   return `campaign-evidence-v1-${digest}`;
 }
+
+export function buildPendingPublicationView<T extends {
+  date: string;
+  generatedAt: string;
+  summary: { needsPublication: number; needsEvidence: number };
+  items: Array<{ requiredActions?: string[] }>;
+  upcomingItems?: unknown[];
+}>(input: T) {
+  const items = input.items.filter((item) => (
+    item.requiredActions?.includes("publish_on_site")
+    || item.requiredActions?.includes("generate_evidence")
+  ));
+  return {
+    date: input.date,
+    generatedAt: input.generatedAt,
+    summary: {
+      pending: items.length,
+      needsPublication: items.filter((item) => item.requiredActions?.includes("publish_on_site")).length,
+      needsEvidence: items.filter((item) => item.requiredActions?.includes("generate_evidence")).length,
+    },
+    items,
+    upcomingItems: input.upcomingItems ?? [],
+  };
+}
+
+export function parseCampaignEvidenceBatch(input: {
+  competencia?: unknown;
+  campaigns?: Array<{ piCodigo?: unknown }>;
+  imageMaxWidth?: unknown;
+  imageQuality?: unknown;
+}) {
+  const competencia = normalizeCompetencia(input.competencia);
+  if (!competencia) throw new CampaignEvidenceExportConflict("A competência é obrigatória para gerar o lote de campanhas.");
+  const piCodes = Array.from(new Set((input.campaigns ?? []).map((item) => normalizePi(item.piCodigo)).filter(Boolean)));
+  if (!piCodes.length) throw new CampaignEvidenceExportConflict("Informe ao menos uma campanha com PI canônica.");
+  if (piCodes.length > 100) throw new CampaignEvidenceExportConflict("O lote aceita no máximo 100 campanhas.");
+  return {
+    competencia,
+    campaigns: piCodes.map((piCodigo) => ({ piCodigo })),
+    mode: "prints-only" as const,
+    variant: "web" as const,
+    imageMaxWidth: Math.max(800, Math.min(2560, Number.parseInt(String(input.imageMaxWidth ?? "1600"), 10) || 1600)),
+    imageQuality: Math.max(45, Math.min(90, Number.parseInt(String(input.imageQuality ?? "72"), 10) || 72)),
+  };
+}
+
+export function buildMonthlyEvidenceSource<T extends {
+  version: string;
+  date: string;
+  generatedAt: string;
+  sheet: unknown;
+  summary: unknown;
+  items: Array<Record<string, any>>;
+  upcomingItems?: Array<Record<string, any>>;
+}>(input: T) {
+  const compactItem = (item: Record<string, any>) => ({
+    campaignName: item.campaignName,
+    piCodigo: item.piCodigo,
+    siteSigla: item.siteSigla,
+    period: item.period,
+    format: item.format,
+    sheetSource: item.sheetSource,
+    sourceIdentity: item.sourceIdentity,
+    adops: item.adops,
+    evidence: item.evidence,
+    drive: item.drive ? {
+      status: item.drive.status,
+      source: item.drive.source,
+      folderId: item.drive.folderId,
+      folderPath: item.drive.folderPath,
+      folderItemCount: item.drive.folderItemCount ?? [
+        ...(item.drive.mediaFiles ?? []),
+        ...(item.drive.pdfFiles ?? []),
+        ...(item.drive.textFiles ?? []),
+        ...(item.drive.otherFiles ?? []),
+      ].length,
+      inventoryScanId: item.drive.inventoryScanId ?? null,
+      resolutionReason: item.drive.resolutionReason ?? item.drive.status,
+      mediaStatus: item.drive.mediaFiles?.length ? "candidate_found" : "missing",
+      documentStatus: item.drive.pdfFiles?.length ? "candidate_found" : "missing",
+    } : null,
+    requiredActions: item.requiredActions ?? [],
+    blockingIssues: item.blockingIssues ?? [],
+  });
+  return {
+    version: input.version,
+    date: input.date,
+    generatedAt: input.generatedAt,
+    sheet: input.sheet,
+    summary: input.summary,
+    items: input.items.map(compactItem),
+    upcomingItems: (input.upcomingItems ?? []).map(compactItem),
+  };
+}

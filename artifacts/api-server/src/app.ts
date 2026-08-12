@@ -15,7 +15,9 @@ const fastApiDocsAssetPrefix = "/api/docs-assets/";
 
 function internalApiGuard(req: Request, res: Response, next: NextFunction) {
   const protectedInternalRead = req.path.startsWith("/internal/");
-  const publicAsyncCampaignExportPost = req.method.toUpperCase() === "POST" && req.path === "/campaign-evidence-exports/jobs";
+  const publicAsyncCampaignExportPost = req.method.toUpperCase() === "POST" && (
+    req.path === "/campaign-evidence-exports/jobs"
+  );
   if (publicAsyncCampaignExportPost) {
     next();
     return;

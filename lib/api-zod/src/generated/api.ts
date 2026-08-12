@@ -96,6 +96,31 @@ export const GetActiveCampaignOperationsResponse = zod.record(
 );
 
 /**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+export const GetPendingCampaignOperationsQueryParams = zod.object({
+  date: zod.date().optional(),
+});
+
+export const GetPendingCampaignOperationsResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+export const GetMonthlyEvidenceSourceQueryParams = zod.object({
+  date: zod.date().optional(),
+  competencia: zod.coerce.string().optional(),
+});
+
+export const GetMonthlyEvidenceSourceResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * @summary List all sites
  */
 export const ListSitesResponseItem = zod.object({
@@ -1057,6 +1082,48 @@ export const CreateCampaignEvidenceExportJobBody = zod.object({
 });
 
 export const CreateCampaignEvidenceExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const createCampaignEvidenceExportBatchBodyCampaignsMax = 25;
+
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthDefault = 1600;
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthMin = 800;
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthMax = 2560;
+
+export const createCampaignEvidenceExportBatchBodyImageQualityDefault = 72;
+export const createCampaignEvidenceExportBatchBodyImageQualityMin = 45;
+export const createCampaignEvidenceExportBatchBodyImageQualityMax = 90;
+
+export const CreateCampaignEvidenceExportBatchBody = zod.object({
+  competencia: zod.string(),
+  campaigns: zod
+    .array(
+      zod.object({
+        piCodigo: zod.string(),
+      }),
+    )
+    .min(1)
+    .max(createCampaignEvidenceExportBatchBodyCampaignsMax),
+  mode: zod.literal("prints-only").optional(),
+  variant: zod.literal("web").optional(),
+  imageMaxWidth: zod
+    .number()
+    .min(createCampaignEvidenceExportBatchBodyImageMaxWidthMin)
+    .max(createCampaignEvidenceExportBatchBodyImageMaxWidthMax)
+    .default(createCampaignEvidenceExportBatchBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createCampaignEvidenceExportBatchBodyImageQualityMin)
+    .max(createCampaignEvidenceExportBatchBodyImageQualityMax)
+    .default(createCampaignEvidenceExportBatchBodyImageQualityDefault),
+});
+
+export const CreateCampaignEvidenceExportBatchResponse = zod.record(
   zod.string(),
   zod.unknown(),
 );

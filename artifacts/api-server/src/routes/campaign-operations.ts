@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus } from "../lib/drive-inventory";
+import { buildPendingPublicationView } from "../lib/campaign-evidence-export";
 
 const router: IRouter = Router();
 
@@ -73,6 +74,22 @@ router.get("/campaign-operations/active", async (req, res): Promise<void> => {
       error: "campaign_operations_failed",
       details: error instanceof Error ? error.message : String(error),
     });
+  }
+});
+
+router.get("/campaign-operations/pending-publication", async (req, res): Promise<void> => {
+  const date = parseDate(req.query.date);
+  if (date === "invalid") {
+    res.status(400).json({ error: "bad_request", details: "date deve estar no formato YYYY-MM-DD." });
+    return;
+  }
+  try {
+    const payload = await getActiveCampaignOperations({ date: date ?? undefined, includeEvidence: true });
+    const inventory = await getDriveInventoryStatus();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ...buildPendingPublicationView(payload), driveInventory: inventory });
+  } catch (error) {
+    res.status(500).json({ error: "pending_publication_failed", details: error instanceof Error ? error.message : String(error) });
   }
 });
 

@@ -1187,6 +1187,7 @@ async function createIdempotentOpsJob(
   payload: Record<string, unknown>,
   requestedBy: string | null,
   idempotencyKey: string,
+  retryFailed = false,
 ) {
   const jobId = crypto.randomUUID();
   const now = nowIso();
@@ -1203,6 +1204,21 @@ async function createIdempotentOpsJob(
       .bind(kind, idempotencyKey)
       .first<{ id: string; status: JobStatus }>();
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
+    if (retryFailed && existing.status === "failed") {
+      const retried = await env.adops_ops.prepare(
+        `UPDATE ops_jobs SET status = 'queued', result_json = NULL, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
+      ).bind(nowIso(), existing.id).run();
+      if ((retried.meta?.changes ?? 0) > 0) {
+        try {
+          await env.adops_ops_queue.send({ jobId: existing.id, kind });
+        } catch (error) {
+          const queueError = error instanceof Error ? error.message : String(error);
+          await env.adops_ops.prepare(`UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, updated_at = ? WHERE id = ?`)
+            .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), existing.id).run();
+        }
+        return { jobId: existing.id, status: "queued" as JobStatus, duplicate: false };
+      }
+    }
     return { jobId: existing.id, status: existing.status, duplicate: true };
   }
   try {
@@ -1213,6 +1229,74 @@ async function createIdempotentOpsJob(
       .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), jobId).run();
   }
   return { jobId, status: "queued" as JobStatus, duplicate: false };
+}
+
+async function createCampaignEvidenceExportJob(
+  env: Env,
+  body: Record<string, unknown>,
+  requestedKey = "",
+) {
+  const piCodigo = String(body.piCodigo || "").replace(/\D/g, "");
+  const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
+  if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
+  if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");
+  if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
+  const descriptorResult = await privateApiGetJson(env, "/api/internal/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
+  if (descriptorResult.response) return descriptorResult.response;
+  const descriptor = descriptorResult.payload!;
+  const readiness = descriptor.readiness as Record<string, unknown> | undefined;
+  if (readiness?.ready !== true) {
+    return jsonNoStore({ error: "campaign_evidence_incomplete", details: "Há evidências ausentes, inválidas ou inacessíveis.", ...descriptor }, { status: 409 });
+  }
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(body.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(body.imageQuality || "72"), 10) || 72));
+  if (requestedKey && !/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) return badRequest("Idempotency-Key inválida.");
+  const evidenceFingerprint = Array.isArray(descriptor.evidences) ? descriptor.evidences : [];
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
+    piCodigo,
+    competencia,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    requestedKey: requestedKey || null,
+    evidences: evidenceFingerprint,
+  })));
+  const idempotencyKey = `campaign-evidence-v1-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  const requestedBy = typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api";
+  const created = await createIdempotentOpsJob(env, "campaign-evidence-export", {
+    piCodigo,
+    competencia,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    evidenceFingerprint,
+    evidenceFingerprintSignature: descriptor.evidenceFingerprintSignature,
+    insertionIds: descriptor.insertionIds,
+    siteSiglas: descriptor.siteSiglas,
+    evidenceCount: descriptor.evidenceCount,
+    campaignName: descriptor.campaignName,
+    requestedBy,
+    source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
+  }, requestedBy, idempotencyKey, true);
+  return jsonNoStore({
+    ok: true,
+    jobId: created.jobId,
+    kind: "campaign-evidence-export",
+    status: created.status,
+    duplicate: created.duplicate,
+    cacheHit: created.duplicate && created.status === "completed",
+    piCodigo,
+    competencia,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    insertionIds: descriptor.insertionIds,
+    siteSiglas: descriptor.siteSiglas,
+    evidenceCount: descriptor.evidenceCount,
+  }, { status: created.duplicate ? 200 : 202 });
 }
 
 async function createDrivePiEventJob(env: Env, event: DrivePiEventPayload, requestedBy: string | null) {
@@ -2053,7 +2137,7 @@ export default {
         );
       }
 
-      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
+      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs/batch" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         if (privateApiEnabled(env)) {
@@ -2516,60 +2600,36 @@ export default {
 
       if (path === "/api/campaign-evidence-exports/jobs") {
         const body = await readBody(request);
-        const piCodigo = String(body.piCodigo || "").replace(/\D/g, "");
-        const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
-        if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
-        if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");
-        if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
-        const descriptorResult = await privateApiGetJson(env, "/api/internal/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
-        if (descriptorResult.response) return descriptorResult.response;
-        const descriptor = descriptorResult.payload!;
-        const readiness = descriptor.readiness as Record<string, unknown> | undefined;
-        if (readiness?.ready !== true) {
-          return jsonNoStore({ error: "campaign_evidence_incomplete", details: "Há evidências ausentes, inválidas ou inacessíveis.", ...descriptor }, { status: 409 });
-        }
-        const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(body.imageMaxWidth || "1600"), 10) || 1600));
-        const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(body.imageQuality || "72"), 10) || 72));
         const requestedKey = request.headers.get("idempotency-key")?.trim() || "";
-        if (requestedKey && !/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) return badRequest("Idempotency-Key inválida.");
-        const evidenceFingerprint = Array.isArray(descriptor.evidences) ? descriptor.evidences : [];
-        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
-          piCodigo,
-          competencia,
-          mode: "prints-only",
-          variant: "web",
-          imageMaxWidth,
-          imageQuality,
-          requestedKey: requestedKey || null,
-          evidences: evidenceFingerprint,
-        })));
-        const idempotencyKey = `campaign-evidence-v1-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-        const created = await createIdempotentOpsJob(env, "campaign-evidence-export", {
-          piCodigo,
-          competencia,
-          mode: "prints-only",
-          variant: "web",
-          imageMaxWidth,
-          imageQuality,
-          requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
-          source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
-        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey);
+        return createCampaignEvidenceExportJob(env, body, requestedKey);
+      }
+
+      if (path === "/api/campaign-evidence-exports/jobs/batch") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
+        const campaigns = Array.isArray(body.campaigns) ? body.campaigns : [];
+        const piCodes = Array.from(new Set(campaigns.map((item) => String((item as Record<string, unknown>)?.piCodigo || "").replace(/\D/g, "")).filter(Boolean)));
+        if (!competencia) return badRequest("Informe competencia para gerar o lote de campanhas.");
+        if (!piCodes.length) return badRequest("Informe ao menos uma campanha com PI canônica.");
+        if (piCodes.length > 25) return badRequest("O lote operacional aceita no máximo 25 campanhas.");
+        const items: Array<Record<string, unknown> & { piCodigo: string; httpStatus: number }> = [];
+        for (let offset = 0; offset < piCodes.length; offset += 3) {
+          const chunk = await Promise.all(piCodes.slice(offset, offset + 3).map(async (piCodigo) => {
+            const response = await createCampaignEvidenceExportJob(env, { ...body, piCodigo, competencia });
+            return { piCodigo, httpStatus: response.status, ...(await response.json() as Record<string, unknown>) };
+          }));
+          items.push(...chunk);
+        }
+        const cacheHits = items.filter((item) => item.cacheHit === true).length;
+        const accepted = items.filter((item) => item.httpStatus === 200 || item.httpStatus === 202).length;
         return jsonNoStore({
-          ok: true,
-          jobId: created.jobId,
-          kind: "campaign-evidence-export",
-          status: created.status,
-          duplicate: created.duplicate,
-          piCodigo,
+          ok: accepted === items.length,
           competencia,
-          mode: "prints-only",
-          variant: "web",
-          imageMaxWidth,
-          imageQuality,
-          insertionIds: descriptor.insertionIds,
-          siteSiglas: descriptor.siteSiglas,
-          evidenceCount: descriptor.evidenceCount,
-        }, { status: created.duplicate ? 200 : 202 });
+          counts: { total: items.length, accepted, cacheHits, queued: accepted - cacheHits, blocked: items.length - accepted },
+          items,
+        }, { status: accepted !== items.length ? 409 : cacheHits === items.length ? 200 : 202 });
       }
 
       if (path === "/api/insertions/capture-proof/backfill-overdue/jobs") {

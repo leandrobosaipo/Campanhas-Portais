@@ -77,3 +77,60 @@ test("chave idempotente e estavel para evidencias aprovadas em varios portais", 
     ],
   }));
 });
+
+test("fila compacta inclui somente operacoes com acao pendente", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-12",
+    generatedAt: "2026-08-12T15:36:28.201Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [
+      { campaignName: "RADAR", piCodigo: "PI - TCE", requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: ["PI ausente"], adops: { insertionId: 1944 } },
+      { campaignName: "FAKE NEWS", piCodigo: "17161", requiredActions: [], blockingIssues: [], adops: { insertionId: 1861 } },
+    ],
+    upcomingItems: [],
+  });
+  assert.deepEqual(result.summary, { pending: 1, needsPublication: 1, needsEvidence: 1 });
+  assert.deepEqual(result.items.map((item) => item.adops.insertionId), [1944]);
+});
+
+test("lote de campanhas normaliza identidade e remove duplicatas", () => {
+  assert.deepEqual(contract.parseCampaignEvidenceBatch({
+    competencia: "agosto/2026",
+    campaigns: [{ piCodigo: "PI 17048" }, { piCodigo: "17048" }, { piCodigo: "17190" }],
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+  }), {
+    competencia: "AGOSTO/2026",
+    campaigns: [{ piCodigo: "17048" }, { piCodigo: "17190" }],
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+  });
+});
+
+test("fonte mensal remove payload pesado do Drive e preserva evidencias por data", () => {
+  const source = contract.buildMonthlyEvidenceSource({
+    version: "campaign-operations-v1",
+    date: "2026-08-12",
+    generatedAt: "2026-08-12T15:36:28.201Z",
+    sheet: { name: "AGOSTO 2026", activeRows: 1 },
+    summary: { activeInSheet: 1 },
+    items: [{
+      campaignName: "RADAR",
+      piCodigo: "PI - TCE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-12", end: "2026-08-25" },
+      format: { normalized: "HOME 1" },
+      adops: { insertionId: 1944 },
+      evidence: { days: [{ date: "2026-08-12", status: "missing", evidenceId: null, url: null, auditHash: null, blockingIssues: [] }] },
+      drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/RADAR", mediaFiles: [{ id: "large" }] },
+      requiredActions: ["generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(source.items[0].drive.folderId, "folder");
+  assert.equal("mediaFiles" in source.items[0].drive, false);
+  assert.deepEqual(source.items[0].evidence.days.map((day) => day.status), ["missing"]);
+});

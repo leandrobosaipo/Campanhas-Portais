@@ -103,6 +103,21 @@ test("consultas agregadas toleram a latencia observada da API sem remover timeou
   assert.equal(contract.MONTHLY_REPORT_SOURCE_TIMEOUT_MS, 120_000);
 });
 
+test("evidencia agregada preserva aprovacao, alcance e datas canonicas", () => {
+  const adapted = contract.adaptAggregatedEvidenceDay({
+    date: "2026-08-12",
+    status: "audited",
+    evidenceId: 77,
+    url: "https://cdn.example/evidence.png",
+    auditHash: "abc",
+    blockingIssues: [],
+  });
+  assert.equal(contract.classifyEvidenceStatus(adapted), "audited");
+  assert.equal(adapted.checklistValidation.approved, true);
+  assert.equal(adapted.isReachable, true);
+  assert.deepEqual(contract.canonicalRequiredDates({ evidence: { requiredDates: ["2026-08-12", "2026-08-14"] } }), ["2026-08-12", "2026-08-14"]);
+});
+
 test("download e validado por leitura parcial real", () => {
   assert.deepEqual(contract.buildDeliveryProbeOptions(), {
     method: "GET",

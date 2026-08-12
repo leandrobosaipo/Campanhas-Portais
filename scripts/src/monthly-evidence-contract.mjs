@@ -124,6 +124,21 @@ export function classifyEvidenceStatus(status) {
   return "invalid";
 }
 
+export function adaptAggregatedEvidenceDay(day) {
+  const approved = day?.status === "audited" || day?.status === "audited_best_effort";
+  return {
+    ...day,
+    arquivoUrl: day?.url || null,
+    checklistValidation: { approved, blockingIssues: day?.blockingIssues || [] },
+    isReachable: approved && Boolean(day?.url),
+    issues: (day?.blockingIssues || []).map((code) => ({ code })),
+  };
+}
+
+export function canonicalRequiredDates(item) {
+  return Array.isArray(item?.evidence?.requiredDates) ? [...item.evidence.requiredDates] : [];
+}
+
 export function buildSevenDayForecast(insertions, targetDate) {
   const windowStart = addIsoDays(targetDate, 1);
   const windowEnd = addIsoDays(targetDate, 7);

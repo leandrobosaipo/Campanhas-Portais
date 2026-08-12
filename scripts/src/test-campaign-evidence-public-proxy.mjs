@@ -30,6 +30,16 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
       res.end(JSON.stringify({ ok: true, jobId: "job-test", status: "queued" }));
       return;
     }
+    if (req.method === "POST" && req.url === "/api/campaign-evidence-exports/jobs/batch") {
+      if (req.headers.authorization !== "Bearer configured-in-production") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "missing_forwarded_authorization" }));
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, counts: { total: 2, queued: 2 }, items: [] }));
+      return;
+    }
     res.writeHead(404).end();
   });
   const workerPort = await listen(worker);
@@ -56,6 +66,19 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
     });
     assert.equal(queued.status, 202);
     assert.equal((await queued.json()).jobId, "job-test");
+    const unauthorizedBatch = await fetch(`${baseUrl}/api/campaign-evidence-exports/jobs/batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ competencia: "AGOSTO/2026", campaigns: [{ piCodigo: "17048" }, { piCodigo: "17190" }] }),
+    });
+    assert.equal(unauthorizedBatch.status, 401);
+    const batch = await fetch(`${baseUrl}/api/campaign-evidence-exports/jobs/batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production" },
+      body: JSON.stringify({ competencia: "AGOSTO/2026", campaigns: [{ piCodigo: "17048" }, { piCodigo: "17190" }] }),
+    });
+    assert.equal(batch.status, 202);
+    assert.equal((await batch.json()).counts.total, 2);
     const internal = await fetch(`${baseUrl}/api/internal/campaign-evidence-exports?piCodigo=17048&competencia=AGOSTO%2F2026`);
     assert.equal(internal.status, 401);
   } finally {

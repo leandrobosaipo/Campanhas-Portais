@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { promisify } from "node:util";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
@@ -70,6 +70,7 @@ import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
 import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
 import {
+  buildMonthlyEvidenceSource,
   CampaignEvidenceExportConflict,
   parseCampaignEvidenceIdentity,
   selectCampaignEvidenceInsertions,
@@ -459,6 +460,7 @@ async function proxyCampaignEvidenceWorkerRequest(req: any, res: any) {
       headers: {
         accept: req.header("accept") || "application/json",
         ...(req.method === "POST" ? { "content-type": "application/json" } : {}),
+        ...(req.header("authorization") ? { authorization: req.header("authorization") } : {}),
         ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key") } : {}),
       },
       ...(req.method === "POST" ? { body: JSON.stringify(req.body ?? {}) } : {}),
@@ -1321,13 +1323,13 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
   };
 }
 
-async function listCampaignEvidenceInsertions(piCodigo: string, competencia: string) {
+async function listCampaignEvidenceInsertions(piCodigo: string, competencia: string, includeEvidence = true) {
   const identity = parseCampaignEvidenceIdentity({ piCodigo, competencia });
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
   const candidates = selectCampaignEvidenceInsertions(enriched, identity);
   const candidateById = new Map(candidates.map((item) => [item.id, item]));
-  const operations = await getActiveCampaignOperations({ includeEvidence: true });
+  const operations = await getActiveCampaignOperations({ includeEvidence });
   const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
     String(item.piCodigo ?? "").replace(/\D/g, "") === identity.piCodigo
     && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
@@ -1346,6 +1348,12 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
       || left.id - right.id
     )),
   };
+}
+
+function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, evidences: unknown[]) {
+  const key = process.env.ADOPS_INTERNAL_API_TOKEN?.trim();
+  if (!key) throw new Error("ADOPS_INTERNAL_API_TOKEN é obrigatório para assinar o descritor de evidências.");
+  return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
 }
 
 async function describeCampaignEvidenceExport(piCodigo: string, competencia: string) {
@@ -1371,6 +1379,13 @@ async function describeCampaignEvidenceExport(piCodigo: string, competencia: str
         evidenceId: Number(status.evidenceId),
         portal: insertion.siteSigla || "SEM-PORTAL",
         date: status.targetDate,
+        url: status.arquivoUrl,
+        auditHash: crypto.createHash("sha256").update(JSON.stringify({
+          version: status.checklistValidation.version,
+          approved: status.checklistValidation.approved,
+          blockingIssues: status.checklistValidation.blockingIssues.map((issue) => issue.code),
+          warnings: status.checklistValidation.warnings.map((issue) => issue.code),
+        })).digest("hex"),
       })),
     });
   }
@@ -1387,6 +1402,7 @@ async function describeCampaignEvidenceExport(piCodigo: string, competencia: str
     siteSiglas: Array.from(new Set(insertions.map((item) => item.siteSigla).filter(Boolean))).sort(),
     evidenceCount: evidences.length,
     evidences,
+    evidenceFingerprintSignature: signCampaignEvidenceFingerprint(identity.piCodigo, identity.competencia, evidences),
     readiness,
     identityBlockers,
     requiredDatesByInsertion: Object.fromEntries(evidenceDescriptors.map((item) => [item.insertionId, item.requiredDates])),
@@ -1810,6 +1826,7 @@ router.get("/insertions/:id/media-consistency", async (req, res): Promise<void> 
           siteSigla,
           piCodigo: insertion.piCodigo ?? "",
           campaignName: insertion.campanhaName ?? "",
+          periodStart: insertion.periodoInicio,
           refreshDrive: false,
         })
       : null;
@@ -2909,28 +2926,138 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
 });
 
 router.post("/campaign-evidence-exports/jobs", proxyCampaignEvidenceWorkerRequest);
+router.post("/campaign-evidence-exports/jobs/batch", proxyCampaignEvidenceWorkerRequest);
 router.get("/campaign-evidence-exports/jobs/:jobId", proxyCampaignEvidenceWorkerRequest);
 router.get("/campaign-evidence-exports/jobs/:jobId/download", proxyCampaignEvidenceWorkerRequest);
 
-router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void> => {
+router.get("/campaign-operations/evidence-monthly-source", async (req, res): Promise<void> => {
+  const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : formatIsoDate(new Date());
+  try {
+    const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true });
+    const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
+    const enrichedInsertions = await Promise.all(rawInsertions.map(enrichInsertion));
+    const insertionById = new Map(enrichedInsertions.map((item) => [item.id, item]));
+    const monthlyItems = await Promise.all(operations.items.map(async (item) => {
+      const insertionId = Number(item.adops.insertionId);
+      const insertion = Number.isFinite(insertionId) ? insertionById.get(insertionId) ?? null : null;
+      if (!insertion) return { operation: item, insertion: null };
+      const evidenceRows = await db.select().from(evidencesTable)
+        .where(eq(evidencesTable.insercaoId, insertion.id))
+        .orderBy(evidencesTable.criadoEm);
+      const days = await Promise.all(item.evidence.requiredDates.map(async (date) => {
+        const status = await resolveEvidenceAuditStatus(insertion, date, evidenceRows);
+        const blockingIssues = status.checklistValidation.blockingIssues.map((issue) => issue.code);
+        const auditHash = crypto.createHash("sha256").update(JSON.stringify({
+          version: status.checklistValidation.version,
+          approved: status.checklistValidation.approved,
+          blockingIssues,
+          warnings: status.checklistValidation.warnings.map((issue) => issue.code),
+        })).digest("hex");
+        return {
+          date,
+          status: status.status === "ok"
+            ? "audited"
+            : status.status === "ok_best_effort"
+              ? "audited_best_effort"
+              : status.status === "missing"
+                ? "missing"
+                : "invalid",
+          evidenceId: status.evidenceId,
+          url: status.arquivoUrl,
+          auditHash,
+          blockingIssues,
+        };
+      }));
+      return {
+        operation: { ...item, evidence: { ...item.evidence, days } },
+        insertion: { ...insertion, evidenceDays: days },
+      };
+    }));
+    const upcomingItems = operations.upcomingItems.map((item) => {
+      const insertionId = Number(item.adops.insertionId);
+      const insertion = Number.isFinite(insertionId) ? insertionById.get(insertionId) ?? null : null;
+      return {
+        operation: item,
+        insertion: insertion ? { ...insertion, evidenceDays: [] } : null,
+      };
+    });
+    const source = buildMonthlyEvidenceSource({
+      ...operations,
+      items: monthlyItems.map((item) => item.operation),
+      upcomingItems: upcomingItems.map((item) => item.operation),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ...source,
+      insertions: [...monthlyItems, ...upcomingItems].map((item) => item.insertion).filter(Boolean),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "evidence_monthly_source_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+async function handleInternalCampaignEvidenceExport(req: Request, res: Response): Promise<void> {
   let tempDir: string | null = null;
   let zipPath: string | null = null;
   try {
     const identity = parseCampaignEvidenceIdentity(req.query);
-    const descriptor = await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia);
-    if (!descriptor) {
+    const suppliedFingerprint = Array.isArray(req.body?.evidenceFingerprint)
+      ? req.body.evidenceFingerprint.filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      : [];
+    const suppliedSignature = typeof req.body?.evidenceFingerprintSignature === "string" ? req.body.evidenceFingerprintSignature : "";
+    const wantsImmutableDownload = String(req.query.download ?? "") === "1";
+    if (wantsImmutableDownload && !suppliedFingerprint.length) {
+      res.status(409).json({ error: "O download exige descritor imutável assinado." });
+      return;
+    }
+    if (suppliedFingerprint.length) {
+      const expectedSignature = signCampaignEvidenceFingerprint(identity.piCodigo, identity.competencia, suppliedFingerprint);
+      const validSignature = suppliedSignature.length === expectedSignature.length
+        && crypto.timingSafeEqual(Buffer.from(suppliedSignature), Buffer.from(expectedSignature));
+      if (!validSignature) {
+        res.status(409).json({ error: "Assinatura do descritor imutável é inválida." });
+        return;
+      }
+    }
+    const fingerprintByEvidenceId = new Map<number, Record<string, unknown>>(
+      suppliedFingerprint.map((item: Record<string, unknown>) => [Number(item.evidenceId), item]),
+    );
+    const requestedEvidenceIds = suppliedFingerprint.length ? new Set(fingerprintByEvidenceId.keys()) : null;
+    if (suppliedFingerprint.length && fingerprintByEvidenceId.size !== suppliedFingerprint.length) {
+      res.status(409).json({ error: "Descritor imutável contém evidências duplicadas." });
+      return;
+    }
+    const immutableDownload = wantsImmutableDownload && requestedEvidenceIds && requestedEvidenceIds.size > 0;
+    const descriptor = immutableDownload
+      ? null
+      : await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia);
+    const immutableSelection = immutableDownload
+      ? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, false)
+      : null;
+    if (immutableDownload && !immutableSelection?.operations.length) {
       res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
       return;
     }
+    if (!descriptor) {
+      if (!immutableDownload) {
+        res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
+        return;
+      }
+    }
     if (String(req.query.download ?? "") !== "1") {
-      res.json({ ...descriptor, mode: "prints-only", variant: "web", imageDefaults: { format: "jpeg", maxWidth: 1600, quality: 72 } });
+      res.json({ ...descriptor!, mode: "prints-only", variant: "web", imageDefaults: { format: "jpeg", maxWidth: 1600, quality: 72 } });
       return;
     }
-    if (!descriptor.readiness.ready) {
-      res.status(409).json({ error: "Pacote bloqueado por evidências ausentes, inválidas ou inacessíveis.", ...descriptor });
+    if (descriptor && !descriptor.readiness.ready) {
+      res.status(409).json({ error: "Pacote bloqueado por evidências ausentes, inválidas ou inacessíveis.", ...descriptor! });
       return;
     }
-    const { insertions } = await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia);
+    const { insertions, operations } = immutableSelection ?? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia);
     const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
     const imageQuality = parseBoundedInteger(req.query.imageQuality, { minimum: 45, maximum: 90, fallback: 72 });
     const requestId = crypto.randomUUID();
@@ -2939,10 +3066,40 @@ router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void
     tempDir = await mkdtemp(join(tmpdir(), `adops-campaign-evidence-${identity.piCodigo}-`));
     for (const insertion of insertions) {
       const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
-      const requiredDates = descriptor.requiredDatesByInsertion[insertion.id] ?? [];
-      const statusesByDate = new Map();
-      for (const date of requiredDates) statusesByDate.set(date, await resolveEvidenceAuditStatus(insertion, date, evidenceRows));
-      const evidences = selectApprovedCanonicalEvidenceRows(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo), statusesByDate);
+      let evidences = evidenceRows.filter((evidence) => immutableDownload && requestedEvidenceIds!.has(evidence.id));
+      if (immutableDownload && suppliedFingerprint.length) {
+        const requiredDates = new Set(immutableSelection!.requiredDatesByInsertion.get(insertion.id) ?? []);
+        const seenDates = new Set<string>();
+        for (const evidence of evidences) {
+          const expected = fingerprintByEvidenceId.get(evidence.id)!;
+          const currentDate = getEvidenceDateKey(evidence.titulo);
+          if (Number(expected.insertionId) !== insertion.id
+            || String(expected.date || "") !== currentDate
+            || String(expected.url || "") !== String(evidence.arquivoUrl || "")
+            || !/^[a-f0-9]{64}$/i.test(String(expected.auditHash || ""))
+            || !currentDate
+            || !requiredDates.has(currentDate)
+            || seenDates.has(currentDate)) {
+            await rm(tempDir, { recursive: true, force: true });
+            tempDir = null;
+            res.status(409).json({ error: "A evidência mudou após a auditoria; gere um novo descritor antes do ZIP.", insertionId: insertion.id, evidenceId: evidence.id });
+            return;
+          }
+          seenDates.add(currentDate);
+        }
+        if (evidences.length !== requiredDates.size) {
+          await rm(tempDir, { recursive: true, force: true });
+          tempDir = null;
+          res.status(409).json({ error: "O descritor não cobre todas as datas canônicas da inserção.", insertionId: insertion.id });
+          return;
+        }
+      }
+      if (!immutableDownload) {
+        const requiredDates = descriptor!.requiredDatesByInsertion[insertion.id] ?? [];
+        const statusesByDate = new Map();
+        for (const date of requiredDates) statusesByDate.set(date, await resolveEvidenceAuditStatus(insertion, date, evidenceRows));
+        evidences = selectApprovedCanonicalEvidenceRows(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo), statusesByDate);
+      }
       const portalDir = join(tempDir, deliverySegment(insertion.siteSigla, "SEM-PORTAL"), resolveOperationalPrintFolder(insertion));
       const delivery = await writePrintDeliveryFolder({
         rootDir: portalDir,
@@ -2956,14 +3113,16 @@ router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void
       mergePrintDeliveryMetrics(metrics, delivery.metrics);
       failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
     }
-    if (failures.length || metrics.generated !== descriptor.evidenceCount) {
+    const expectedEvidenceCount = immutableDownload ? requestedEvidenceIds!.size : descriptor!.evidenceCount;
+    if (failures.length || metrics.generated !== expectedEvidenceCount) {
       await rm(tempDir, { recursive: true, force: true });
       tempDir = null;
       res.status(422).json({ error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.", requestId, failed: failures });
       return;
     }
     await writeSha256Sums(tempDir);
-    const archiveBase = safeFileName(`${descriptor.campaignName}-PI-${identity.piCodigo}-${identity.competencia}-TODOS-OS-PRINTS`, `PI-${identity.piCodigo}-TODOS-OS-PRINTS`);
+    const campaignName = descriptor?.campaignName ?? operations[0]?.campaignName ?? `PI ${identity.piCodigo}`;
+    const archiveBase = safeFileName(`${campaignName}-PI-${identity.piCodigo}-${identity.competencia}-TODOS-OS-PRINTS`, `PI-${identity.piCodigo}-TODOS-OS-PRINTS`);
     zipPath = join(tmpdir(), `${archiveBase}-${requestId}.zip`);
     await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
     setPrintDeliveryHeaders(res, metrics, "web", requestId);
@@ -2975,7 +3134,10 @@ router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void
     const statusCode = error instanceof CampaignEvidenceExportConflict ? error.statusCode : 500;
     res.status(statusCode).json({ error: statusCode === 409 && error instanceof Error ? error.message : "Falha ao gerar o pacote completo da campanha.", details: error instanceof Error ? error.message : String(error) });
   }
-});
+}
+
+router.get("/internal/campaign-evidence-exports", handleInternalCampaignEvidenceExport);
+router.post("/internal/campaign-evidence-exports", handleInternalCampaignEvidenceExport);
 
 router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
   const piCodigo = typeof req.body?.piCodigo === "string" ? req.body.piCodigo.trim() : "";

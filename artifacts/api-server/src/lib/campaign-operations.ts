@@ -525,6 +525,7 @@ export async function getActiveCampaignOperations(options: {
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
       campaignName: row.campaignName,
+      periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
@@ -630,6 +631,7 @@ export async function getActiveCampaignOperations(options: {
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
       campaignName: row.campaignName,
+      periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);

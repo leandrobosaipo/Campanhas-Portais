@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { extractPiDigits, normalizeForMatch } from "./current-sheet-campaigns";
 import { getDriveInventoryStatus, listCurrentDriveInventoryItems } from "./drive-inventory";
-import { selectDriveInventorySource } from "./drive-inventory-source";
+import { hydrateDriveInventoryPaths, scoreDrivePeriodPath, selectDriveInventorySource } from "./drive-inventory-source";
 
 export const DRIVE_CAMPAIGN_MEDIA_VERSION = "drive-campaign-media-v1" as const;
 
@@ -56,6 +56,11 @@ export type DriveCampaignMediaMatch = {
   pdfFiles: DriveCampaignFile[];
   textFiles: DriveCampaignFile[];
   otherFiles: DriveCampaignFile[];
+  folderItemCount: number;
+  inventoryScanId: string | null;
+  resolutionReason: string;
+  mediaStatus: "candidate_found" | "missing";
+  documentStatus: "candidate_found" | "missing";
   sourceIdentity: {
     requestedPi: string | null;
     folderPiCandidates: string[];
@@ -286,19 +291,20 @@ function scoreCampaignItem(item: DriveRawItem, input: { piCodigo: string; campai
   return 0;
 }
 
-function scoreCampaignFolder(folderPath: string, files: DriveRawItem[], input: { piCodigo: string; campaignName: string; siteSigla: string }) {
+function scoreCampaignFolder(folderPath: string, files: DriveRawItem[], input: { piCodigo: string; campaignName: string; siteSigla: string; periodStart?: string | null }) {
   const requestedPi = extractPiDigits(input.piCodigo);
   const folderPis = extractDrivePiCandidates(folderPath);
   if (requestedPi && folderPis.includes(requestedPi)) return 1_000;
   const filePis = uniqueStrings(files.flatMap((item) => extractDrivePiCandidates(`${item.path ?? ""} ${item.name}`)));
   if (requestedPi && filePis.includes(requestedPi)) return 800;
-  return Math.max(0, ...files.map((item) => scoreCampaignItem(item, input)));
+  return scoreDrivePeriodPath(folderPath, input.periodStart) + Math.max(0, ...files.map((item) => scoreCampaignItem(item, input)));
 }
 
 export async function findDriveCampaignMedia(input: {
   siteSigla: string;
   piCodigo: string;
   campaignName: string;
+  periodStart?: string | null;
   refreshDrive?: boolean;
 }): Promise<DriveCampaignMediaMatch> {
   const rootFolderId = process.env.DRIVE_PI_MONITOR_ROOT_FOLDER_ID ?? DEFAULT_ROOT_FOLDER_ID;
@@ -308,7 +314,7 @@ export async function findDriveCampaignMedia(input: {
   const inventoryStatus = await getDriveInventoryStatus();
 
   try {
-    items = await listCurrentDriveInventoryItems();
+    items = hydrateDriveInventoryPaths(await listCurrentDriveInventoryItems());
     if (items.length && !inventoryStatus.stale) source = "snapshot";
     else if (items.length) warnings.push(`Snapshot do Drive vencido (${inventoryStatus.snapshotAgeSeconds ?? "idade desconhecida"}s); ele não será usado como fonte atual.`);
     else warnings.push("Snapshot do Drive ainda não possui itens.");
@@ -328,7 +334,7 @@ export async function findDriveCampaignMedia(input: {
   if (selectedSource === "live") {
     try {
       const live = await listLiveDriveItems(rootFolderId);
-      items = live.items;
+      items = hydrateDriveInventoryPaths(live.items);
       warnings.push(...live.warnings);
       if (items.length) source = "live";
     } catch (error) {
@@ -338,7 +344,7 @@ export async function findDriveCampaignMedia(input: {
 
   if (!items.length) {
     const cached = await readCachedDriveItems();
-    items = cached.items;
+    items = hydrateDriveInventoryPaths(cached.items);
     warnings.push(...cached.warnings);
     if (items.length) source = "cache";
   }
@@ -354,6 +360,11 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      folderItemCount: 0,
+      inventoryScanId: inventoryStatus.scanId ?? null,
+      resolutionReason: "inventory_unavailable",
+      mediaStatus: "missing",
+      documentStatus: "missing",
       sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
@@ -385,6 +396,11 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      folderItemCount: 0,
+      inventoryScanId: inventoryStatus.scanId ?? null,
+      resolutionReason: "campaign_folder_not_found",
+      mediaStatus: "missing",
+      documentStatus: "missing",
       sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
@@ -420,6 +436,11 @@ export async function findDriveCampaignMedia(input: {
     pdfFiles,
     textFiles,
     otherFiles,
+    folderItemCount: files.length,
+    inventoryScanId: inventoryStatus.scanId ?? null,
+    resolutionReason: folderPaths.length > 1 ? "multiple_equal_score_folders" : "best_scored_folder",
+    mediaStatus: mediaFiles.length ? "candidate_found" : "missing",
+    documentStatus: pdfFiles.length ? "candidate_found" : "missing",
     sourceIdentity: identity,
     warnings,
   };

@@ -6,6 +6,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
+import { buildRunnerPools } from "./runner-concurrency.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +17,7 @@ const PRIVATE_ADOPS_API_TOKEN = process.env.PRIVATE_ADOPS_API_TOKEN || "";
 const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}`;
 const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
 const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
+const OPS_CAMPAIGN_EXPORT_CONCURRENCY = Number.parseInt(process.env.OPS_CAMPAIGN_EXPORT_CONCURRENCY || "3", 10);
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
 const RUNNER_HEARTBEAT_INTERVAL_MS = Number.parseInt(process.env.ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS || "60000", 10);
@@ -211,12 +213,14 @@ async function privateApiGet(pathname) {
   return payload;
 }
 
-async function privateApiDownload(pathname) {
+async function privateApiDownload(pathname, body = undefined) {
   const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
-    method: "GET",
+    method: body === undefined ? "GET" : "POST",
     headers: {
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
     },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
     const details = await response.text().catch(() => "");
@@ -4441,6 +4445,8 @@ async function executePrintSingle(payload) {
 }
 
 async function executeEvidenceMonthlyReport(job) {
+  const startedAtMs = Date.now();
+  const timings = {};
   const payload = job?.payload || {};
   const targetDate = String(payload.targetDate || todayInCuiaba());
   const competencia = String(payload.competencia || "").trim();
@@ -4461,6 +4467,7 @@ async function executeEvidenceMonthlyReport(job) {
     timeout: 20 * 60_000,
     maxBuffer: 20 * 1024 * 1024,
   });
+  timings.sheetSyncMs = Date.now() - startedAtMs;
   await progressJob(job.id, {
     stage: "collecting",
     itemsDone: 1,
@@ -4474,6 +4481,7 @@ async function executeEvidenceMonthlyReport(job) {
     timeout: 10 * 60_000,
     maxBuffer: 20 * 1024 * 1024,
   });
+  timings.captureRulesAuditMs = Date.now() - startedAtMs - timings.sheetSyncMs;
   await progressJob(job.id, {
     stage: "exporting",
     itemsDone: 2,
@@ -4481,20 +4489,36 @@ async function executeEvidenceMonthlyReport(job) {
     percentStage: 50,
     percentTotal: 30,
   });
-  const result = await execFileAsync("node", ["scripts/src/build-current-month-evidence-report.mjs"], {
-    cwd: PROJECT_ROOT,
-    env: {
-      ...process.env,
-      ADOPS_REPORT_DATE: targetDate,
-      ADOPS_REPORT_MONTH: targetDate.slice(0, 7),
-      ADOPS_REPORT_COMPETENCIA: competencia,
-      ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
-      ADOPS_REPORT_SKIP_PUBLISH: "0",
-      ADOPS_REPORT_SKIP_EXPORTS: "0",
-    },
-    timeout: 90 * 60_000,
-    maxBuffer: 50 * 1024 * 1024,
-  });
+  const reportHeartbeat = setInterval(() => {
+    progressJob(job.id, {
+      stage: "exporting",
+      itemsDone: 2,
+      itemsTotal: 4,
+      percentStage: 65,
+      percentTotal: 60,
+      elapsedSeconds: Math.round((Date.now() - startedAtMs) / 1000),
+    }).catch(() => null);
+  }, 25_000);
+  let result;
+  try {
+    result = await execFileAsync("node", ["scripts/src/build-current-month-evidence-report.mjs"], {
+      cwd: PROJECT_ROOT,
+      env: {
+        ...process.env,
+        ADOPS_REPORT_DATE: targetDate,
+        ADOPS_REPORT_MONTH: targetDate.slice(0, 7),
+        ADOPS_REPORT_COMPETENCIA: competencia,
+        ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
+        ADOPS_REPORT_SKIP_PUBLISH: "0",
+        ADOPS_REPORT_SKIP_EXPORTS: "0",
+      },
+      timeout: 90 * 60_000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } finally {
+    clearInterval(reportHeartbeat);
+  }
+  timings.reportGenerationMs = Date.now() - startedAtMs - timings.sheetSyncMs - timings.captureRulesAuditMs;
   await progressJob(job.id, {
     stage: "publishing",
     itemsDone: 3,
@@ -4516,6 +4540,8 @@ async function executeEvidenceMonthlyReport(job) {
     competencia,
     publicUrl: report?.publicUrl || null,
     summary: report?.summary || null,
+    timings: { ...timings, ...(report?.timings || {}), totalMs: Date.now() - startedAtMs },
+    telemetry: report?.telemetry || null,
     report,
   };
 }
@@ -5407,6 +5433,7 @@ async function executePiSiteExport(job) {
 }
 
 async function executeCampaignEvidenceExport(job) {
+  const startedAtMs = Date.now();
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const competencia = String(payload.competencia || "").trim().toUpperCase();
@@ -5414,23 +5441,24 @@ async function executeCampaignEvidenceExport(job) {
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
   if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
 
-  const descriptorPath = `/api/internal/campaign-evidence-exports?piCodigo=${encodeURIComponent(piCodigo)}&competencia=${encodeURIComponent(competencia)}`;
-  let descriptor = await privateApiGet(descriptorPath);
-  if (!Array.isArray(descriptor?.insertionIds) || descriptor.insertionIds.length === 0) {
+  const insertionIds = Array.isArray(payload.insertionIds) ? payload.insertionIds.map(Number).filter(Number.isFinite) : [];
+  const siteSiglas = Array.isArray(payload.siteSiglas) ? payload.siteSiglas.map(String) : [];
+  const evidenceFingerprint = Array.isArray(payload.evidenceFingerprint) ? payload.evidenceFingerprint : [];
+  const evidenceFingerprintSignature = String(payload.evidenceFingerprintSignature || "");
+  if (!insertionIds.length || !evidenceFingerprint.length || !evidenceFingerprintSignature) {
     throw new Error(`Nenhuma inserção canônica publicada encontrada para PI ${piCodigo} em ${competencia}.`);
   }
-  await progressJob(job.id, { stage: "reauditando evidências da campanha", piCodigo, competencia, insertionIds: descriptor.insertionIds });
-  for (const insertionId of descriptor.insertionIds) {
-    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
-    const requiredDates = descriptor?.requiredDatesByInsertion?.[String(insertionId)];
-    await ensureInsertionCaptureCoverage(insertion, requiredDates);
-  }
-  descriptor = await privateApiGet(descriptorPath);
-  if (descriptor?.readiness?.ready !== true) {
-    throw new Error(`Pacote completo bloqueado: ${JSON.stringify(descriptor?.readiness || {})}`);
-  }
-
-  await progressJob(job.id, { stage: "materializando ZIP completo da campanha", piCodigo, competencia, insertionIds: descriptor.insertionIds });
+  const descriptorValidatedMs = Date.now();
+  await progressJob(job.id, {
+    stage: "materializando ZIP completo da campanha",
+    stageKey: "compiling",
+    piCodigo,
+    competencia,
+    insertionIds,
+    itemsDone: 0,
+    itemsTotal: evidenceFingerprint.length,
+    percentTotal: 20,
+  });
   const params = new URLSearchParams({
     piCodigo,
     competencia,
@@ -5438,7 +5466,7 @@ async function executeCampaignEvidenceExport(job) {
     imageMaxWidth: String(imageMaxWidth),
     imageQuality: String(imageQuality),
   });
-  const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`);
+  const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`, { evidenceFingerprint, evidenceFingerprintSignature });
   const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
   const artifactObjectKey = [
     ADOPS_EXPORT_BASE_PATH,
@@ -5458,14 +5486,19 @@ async function executeCampaignEvidenceExport(job) {
     variant: "web",
     imageMaxWidth,
     imageQuality,
-    insertionIds: descriptor.insertionIds,
-    siteSiglas: descriptor.siteSiglas,
-    evidenceCount: descriptor.evidenceCount,
+    insertionIds,
+    siteSiglas,
+    evidenceCount: evidenceFingerprint.length,
     downloadUrl,
     artifactBytes: artifact.buffer.length,
     artifactContentType: "application/zip",
     artifactFileName,
     artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+    timings: {
+      descriptorMs: descriptorValidatedMs - startedAtMs,
+      packagingAndUploadMs: Date.now() - descriptorValidatedMs,
+      totalMs: Date.now() - startedAtMs,
+    },
   };
 }
 
@@ -5537,12 +5570,12 @@ async function handleJob(job) {
   throw new Error(`Kind não suportado pelo runner: ${job.kind}`);
 }
 
-async function claimNext() {
+async function claimNext(poolKinds = kinds) {
   const payload = await request("/api/ops/runner/claim-next", {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      kinds,
+      kinds: poolKinds,
     }),
   });
   return payload?.job || null;
@@ -5590,8 +5623,8 @@ async function runWatchdogIfDue(force = false) {
   return payload;
 }
 
-async function runOnce() {
-  const job = await claimNext();
+async function runOnce(poolKinds = kinds) {
+  const job = await claimNext(poolKinds);
   if (!job) {
     console.log(`[runner] nenhum job pronto para ${RUNNER_ID}`);
     return false;
@@ -5618,6 +5651,28 @@ async function runOnce() {
   return true;
 }
 
+async function runPool(pool, workerIndex) {
+  const poolLabel = `${pool.kinds.join("+")}:${workerIndex + 1}/${pool.concurrency}`;
+  for (;;) {
+    try {
+      if (pool.maintenance && workerIndex === 0) {
+        await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
+        await runWatchdogIfDue(false);
+        await runDrivePiMonitorOnce();
+      }
+      const handled = await runOnce(pool.kinds);
+      runnerLastCycleError = null;
+      runnerLastSuccessAt = new Date().toISOString();
+      if (!handled) await sleep(POLL_INTERVAL_MS);
+    } catch (error) {
+      runnerLastCycleError = error instanceof Error ? error.message : String(error);
+      await sendRunnerHeartbeat(true).catch(() => null);
+      console.error(`[runner] pool ${poolLabel} com erro`, runnerLastCycleError);
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+}
+
 async function main() {
   if (!OPS_API_TOKEN) {
     throw new Error("Defina OPS_API_TOKEN para usar o runner remoto.");
@@ -5639,28 +5694,15 @@ async function main() {
   console.log(`[runner] ops=${OPS_API_BASE_URL}`);
   console.log(`[runner] privateApi=${PRIVATE_ADOPS_API_BASE_URL}`);
   console.log(`[runner] kinds=${kinds.join(",")}`);
+  const pools = buildRunnerPools(kinds, OPS_CAMPAIGN_EXPORT_CONCURRENCY);
+  console.log(`[runner] pools=${JSON.stringify(pools)}`);
   console.log(`[runner] drivePiMonitor=${DRIVE_PI_MONITOR_ENABLED ? "enabled" : "disabled"}`);
   startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  while (true) {
-    try {
-      await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
-      await runWatchdogIfDue(false);
-      await runDrivePiMonitorOnce();
-      const handled = await runOnce();
-      runnerLastCycleError = null;
-      runnerLastSuccessAt = new Date().toISOString();
-      if (!handled) {
-        await sleep(POLL_INTERVAL_MS);
-      }
-    } catch (error) {
-      runnerLastCycleError = error instanceof Error ? error.message : String(error);
-      await sendRunnerHeartbeat(true).catch(() => null);
-      console.error("[runner] ciclo com erro", runnerLastCycleError);
-      await sleep(POLL_INTERVAL_MS);
-    }
-  }
+  await Promise.all(pools.flatMap((pool) => (
+    Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex))
+  )));
 }
 
 export {
