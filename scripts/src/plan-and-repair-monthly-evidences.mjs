@@ -183,8 +183,11 @@ const cod5_baseline = cod5_reuseBaseline
   : await cod5_loadBaseline();
 if (
   cod5_baseline?.targetDate !== cod5_targetDate ||
-  cod5_baseline?.summary?.insertions !== 16 ||
+  !Number.isInteger(cod5_baseline?.summary?.insertions) ||
+  cod5_baseline.summary.insertions <= 0 ||
   !Array.isArray(cod5_baseline?.canonicalInsertionIds) ||
+  cod5_baseline.canonicalInsertionIds.length !== cod5_baseline.summary.insertions ||
+  new Set(cod5_baseline.canonicalInsertionIds).size !== cod5_baseline.summary.insertions ||
   cod5_baseline.canonicalInsertionIds.includes(1826)
 ) {
   throw new Error("Baseline reutilizado recusado: data ou conjunto canônico inválido.");
