@@ -670,6 +670,8 @@
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
         "auditOverrides": {
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "requireStickyHeaderInViewport": true,
           "stickyHeaderExpected": "logo_menu_datetime"
         }
