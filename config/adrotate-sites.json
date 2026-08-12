@@ -479,6 +479,7 @@
           "postVisualWaitMs": 2600,
           "viewportTrimBottomPx": 180,
           "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4,
           "finalPngStickyHeaderMinContentStddev": 8,

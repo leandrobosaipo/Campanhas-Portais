@@ -44,6 +44,7 @@
     "test:perrengue-popup-capture-rule": "node ./src/test-perrengue-popup-capture-rule.mjs",
     "test:final-proof-style-contract": "node ./src/test-final-proof-style-contract.mjs && node --import tsx --test ./src/test-proof-style-checklist.ts",
     "test:gif-capture-only-short-frames": "node ./src/test-gif-capture-only-short-frames.mjs",
+    "test:afl-home1-gif-capture-rule": "node ./src/test-afl-home1-gif-capture-rule.mjs",
     "test:windows-frame-template": "node ./src/test-windows-frame-template.mjs",
     "test:responsive-figma": "node ./src/test-adops-responsive-figma.mjs",
     "harness:adops-ux-fila-progresso-v1": "node ./src/harness-adops-ux-fila-progresso.mjs",
