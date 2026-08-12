@@ -11,7 +11,7 @@ const singleKinds = compose.match(/adops-runner-print-single:\n[\s\S]*?OPS_JOB_K
 
 assert(!generalKinds.split(",").map((item) => item.trim()).includes("print-single"));
 assert(generalKinds.split(",").map((item) => item.trim()).includes("campaign-evidence-export"));
-assert.deepEqual(singleKinds.split(",").map((item) => item.trim()), ["print-single", "pi-site-export"]);
+assert.deepEqual(singleKinds.split(",").map((item) => item.trim()), ["print-single", "pi-site-export", "campaign-evidence-export"]);
 const dedicatedRunnerBlock = compose.match(/adops-runner-print-single:\n[\s\S]*?(?=\n  adops-web:)/)?.[0] ?? "";
 for (const variable of ["DO_SPACES_ACCESS_KEY_ID", "DO_SPACES_SECRET_ACCESS_KEY", "ADOPS_EXPORT_BUCKET", "ADOPS_EXPORT_BASE_PATH"]) {
   assert(dedicatedRunnerBlock.includes(variable), `runner dedicado sem ${variable}`);
@@ -38,4 +38,4 @@ assert(
   "endpoint de download deve manter o mesmo recorte de evidências do runner",
 );
 
-console.log(JSON.stringify({ ok: true, generalRunnerOwnsPrintSingle: false, dedicatedRunnerOwnsPrintSingle: true, dedicatedRunnerProvidesExportFailover: true }));
+console.log(JSON.stringify({ ok: true, generalRunnerOwnsPrintSingle: false, dedicatedRunnerOwnsPrintSingle: true, dedicatedRunnerProvidesExportFailover: true, dedicatedRunnerPreventsMonthlyReportExportDeadlock: true }));

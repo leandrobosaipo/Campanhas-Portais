@@ -282,7 +282,7 @@ services:
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: print-single,pi-site-export
+      OPS_JOB_KINDS: print-single,pi-site-export,campaign-evidence-export
       RUNNER_ID: runner-print-single
       ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION: "1"
       DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:-}
