@@ -500,6 +500,29 @@ async function materializeCampaignExports(items) {
   return results;
 }
 
+async function validateDeliveryUrl(url, label) {
+  let response = await fetchWithTimeout(url, { method: "HEAD", redirect: "follow" }, 60_000);
+  if (response.status === 405) {
+    response = await fetchWithTimeout(url, { method: "GET", headers: { range: "bytes=0-1023" }, redirect: "follow" }, 60_000);
+  }
+  if (!response.ok) throw new Error(`${label} indisponível: HTTP ${response.status}.`);
+}
+
+async function validateGeneratedReport({ data, reportManifest, insertions }) {
+  const html = await readFile(outputPath, "utf8");
+  if (!html.includes('<meta name="robots" content="noindex,nofollow">')) throw new Error("HTML sem noindex,nofollow.");
+  if (reportManifest.visibility !== "unlisted") throw new Error("report.json precisa permanecer unlisted.");
+  if (!Array.isArray(data.insertions) || data.insertions.length !== insertions.length) throw new Error("data.json inconsistente com as inserções renderizadas.");
+  JSON.parse(await readFile(path.join(latestDir, "data.json"), "utf8"));
+  JSON.parse(await readFile(path.join(latestDir, "report.json"), "utf8"));
+
+  if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
+  const individualSamples = insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl).filter(Boolean)).slice(0, 3);
+  const batchSamples = Array.from(new Set(insertions.map((item) => item.batchDownloadUrl).filter(Boolean)));
+  for (const [index, url] of individualSamples.entries()) await validateDeliveryUrl(url, `JPEG individual ${index + 1}`);
+  for (const [index, url] of batchSamples.entries()) await validateDeliveryUrl(url, `ZIP de campanha ${index + 1}`);
+}
+
 function dayTitle(day, item) {
   if (day.status.startsWith("audited")) return `${fullDatePt(day.date)}: evidência auditada.`;
   if (day.status === "missing") return `${fullDatePt(day.date)}: sem evidência auditada. ${item.state === "not_published" ? "Não cobrada porque a inserção não está publicada." : "Precisa gerar retroativo."}`;
@@ -514,7 +537,7 @@ function renderThumbs(item) {
     .map((day) => {
       const title = dayTitle(day, item);
       if (day.status.startsWith("audited") && day.url) {
-        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}"><img src="${escapeHtml(day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy"><span>${escapeHtml(datePt(day.date))}</span></button>`;
+        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}"><img src="${escapeHtml(day.downloadUrl || day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span></button>`;
       }
       return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon(day.status === "missing" ? "warn" : "warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "sem evid." : "inválida")}</b></button>`;
     })
@@ -628,7 +651,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       --muted: oklch(0.485 0.018 180);
       --line: oklch(0.86 0.012 180);
       --ok: oklch(0.48 0.13 155);
-      --warn: oklch(0.64 0.14 75);
+      --warn: oklch(0.43 0.12 65);
       --bad: oklch(0.52 0.16 30);
       --steel: oklch(0.33 0.035 205);
       --paper: oklch(0.976 0.006 95);
@@ -782,7 +805,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     ${portals.map(renderPortal).join("") || '<section class="portal"><div class="portal-head"><h2>Sem inserções ativas ou agendadas</h2></div></section>'}
   </main>
   <footer class="wrap">Fonte: Planilha via API AdOps, Google Drive (${escapeHtml(sources?.driveInventory?.snapshotStatus || "indisponível")}, ${escapeHtml(String(sources?.driveInventory?.itemCount ?? 0))} itens), capture-proof/status, auditoria diária e AdRotate. Snapshot: ${escapeHtml(snapshotSlug)}.</footer>
-  <dialog id="modal">
+  <dialog id="modal" aria-labelledby="modalTitle">
     <button class="modal-close" type="button" id="modalClose">fechar</button>
     <div class="modal-grid">
       <div class="modal-image"><img id="modalImg" alt="Evidência ampliada"></div>
@@ -811,7 +834,9 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
         const item = data[button.dataset.modalId];
         const day = item.evidenceDays.find((entry) => entry.date === button.dataset.date) || item.evidenceDays.find((entry) => entry.url);
         modalImg.src = day?.url || '';
-        modalImg.alt = day?.url ? 'Evidência ampliada' : 'Sem imagem de evidência para esta data';
+        modalImg.alt = day?.url
+          ? 'Evidência de ' + item.campanhaName + ' no portal ' + item.siteSigla + ' em ' + day.date
+          : 'Sem imagem de evidência para esta data';
         modalTitle.textContent = '#' + item.id + ' · ' + item.campanhaName;
         modalDays.innerHTML = item.evidenceDays.map((entry) => '<span class="day-dot ' + esc(entry.status) + '" title="' + esc(entry.statusDetail || entry.status) + '">' + esc(entry.date.slice(8, 10)) + '</span>').join('');
         modalMeta.innerHTML = [
@@ -1037,6 +1062,7 @@ async function main() {
     writeFile(path.join(latestAssets, "favicon.svg"), reportMarkSvg, "utf8"),
     writeFile(path.join(snapshotAssets, "favicon.svg"), reportMarkSvg, "utf8"),
   ]);
+  await validateGeneratedReport({ data, reportManifest, insertions: enriched });
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
     if (!isMonthlyReportPublishable({ missing: summary.missingDates, invalid: summary.invalidDates })) {
