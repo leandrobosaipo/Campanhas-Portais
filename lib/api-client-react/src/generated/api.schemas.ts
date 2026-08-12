@@ -1111,6 +1111,33 @@ export const ExportPiSitePackageVariant = {
 
 export type ExportPiSitePackage200One = { [key: string]: unknown };
 
+export type DownloadInsertionEvidenceParams = {
+  variant?: DownloadInsertionEvidenceVariant;
+  imageMaxWidth?: DownloadInsertionEvidenceImageMaxWidth;
+  imageQuality?: DownloadInsertionEvidenceImageQuality;
+};
+
+export type DownloadInsertionEvidenceVariant =
+  (typeof DownloadInsertionEvidenceVariant)[keyof typeof DownloadInsertionEvidenceVariant];
+
+export const DownloadInsertionEvidenceVariant = {
+  web: "web",
+} as const;
+
+export type DownloadInsertionEvidenceImageMaxWidth =
+  (typeof DownloadInsertionEvidenceImageMaxWidth)[keyof typeof DownloadInsertionEvidenceImageMaxWidth];
+
+export const DownloadInsertionEvidenceImageMaxWidth = {
+  NUMBER_1600: 1600,
+} as const;
+
+export type DownloadInsertionEvidenceImageQuality =
+  (typeof DownloadInsertionEvidenceImageQuality)[keyof typeof DownloadInsertionEvidenceImageQuality];
+
+export const DownloadInsertionEvidenceImageQuality = {
+  NUMBER_72: 72,
+} as const;
+
 export type GetDashboardSummaryParams = {
   /**
    * @nullable

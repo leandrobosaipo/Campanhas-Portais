@@ -8,6 +8,14 @@ import type {
   PrintRunnerPort,
 } from "./print-runner-contract";
 
+const PRINT_TARGET_MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.ADOPS_PRINT_TARGET_MAX_ATTEMPTS ?? "3", 10) || 3);
+const PRINT_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.ADOPS_PRINT_RETRY_BASE_MS ?? "15000", 10) || 15_000);
+const PRINT_TARGET_COOLDOWN_MS = Math.max(0, Number.parseInt(process.env.ADOPS_PRINT_TARGET_COOLDOWN_MS ?? "12000", 10) || 12_000);
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class LocalPrintRunner implements PrintRunnerPort {
   async runNow(payload: PrintRunnerJobPayload): Promise<PrintRunnerJobResult> {
     const job = this.createJob(payload, `inline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -82,12 +90,15 @@ class LocalPrintRunner implements PrintRunnerPort {
     job.startedAt = new Date().toISOString();
     await this.save(job, payload);
 
-    for (const target of payload.targets) {
+    for (const [index, target] of payload.targets.entries()) {
       const item = await this.executeTarget(job.id, target);
       job.items.push(item);
       job.completedTargets = job.items.filter((entry) => entry.status !== "skipped").length;
       job.failedTargets = job.items.filter((entry) => entry.status === "error").length;
       await this.save(job, payload);
+      if (index < payload.targets.length - 1 && PRINT_TARGET_COOLDOWN_MS > 0) {
+        await sleep(PRINT_TARGET_COOLDOWN_MS);
+      }
     }
 
     job.status = job.failedTargets > 0 ? "failed" : "completed";
@@ -97,37 +108,44 @@ class LocalPrintRunner implements PrintRunnerPort {
   }
 
   private async executeTarget(jobId: string, target: PrintRunnerJobPayload["targets"][number]): Promise<PrintRunnerJobResultItem> {
-    try {
-      const capture = await runLocalCaptureProof(target.insertionId, {
-        replaceExisting: target.replaceExisting,
-        captureAt: target.captureAt ?? null,
-        runnerJobId: jobId,
-        candidateOnly: target.candidateOnly === true,
-        promoteCandidate: target.promoteCandidate === true,
-      });
-      return {
-        insertionId: target.insertionId,
-        targetDate: target.targetDate,
-        captureAt: target.captureAt ?? null,
-        status: "ok",
-        uploadedUrl: capture.uploadedUrl ?? null,
-        captureLogId: capture.captureLogId ?? null,
-        probableCause: capture.probableCause ?? null,
-        readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
-          ? capture.readinessAudit as Record<string, unknown>
-          : null,
-        retroContentProof: capture.retroContentProof ?? null,
-        manifestHash: capture.manifestHash ?? null,
-      };
-    } catch (error) {
-      return {
-        insertionId: target.insertionId,
-        targetDate: target.targetDate,
-        captureAt: target.captureAt ?? null,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      };
+    let lastError = "Falha desconhecida na captura.";
+    for (let attempt = 1; attempt <= PRINT_TARGET_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const capture = await runLocalCaptureProof(target.insertionId, {
+          replaceExisting: attempt > 1 ? true : target.replaceExisting,
+          captureAt: target.captureAt ?? null,
+          runnerJobId: jobId,
+          candidateOnly: target.candidateOnly === true,
+          promoteCandidate: target.promoteCandidate === true,
+        });
+        return {
+          insertionId: target.insertionId,
+          targetDate: target.targetDate,
+          captureAt: target.captureAt ?? null,
+          status: "ok",
+          uploadedUrl: capture.uploadedUrl ?? null,
+          captureLogId: capture.captureLogId ?? null,
+          probableCause: capture.probableCause ?? null,
+          readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
+            ? capture.readinessAudit as Record<string, unknown>
+            : null,
+          retroContentProof: capture.retroContentProof ?? null,
+          manifestHash: capture.manifestHash ?? null,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        if (attempt < PRINT_TARGET_MAX_ATTEMPTS && PRINT_RETRY_BASE_MS > 0) {
+          await sleep(PRINT_RETRY_BASE_MS * attempt);
+        }
+      }
     }
+    return {
+      insertionId: target.insertionId,
+      targetDate: target.targetDate,
+      captureAt: target.captureAt ?? null,
+      status: "error",
+      error: `${lastError} (${PRINT_TARGET_MAX_ATTEMPTS} tentativa(s))`,
+    };
   }
 
   async updateMeta(jobId: string, meta: Record<string, unknown>): Promise<void> {

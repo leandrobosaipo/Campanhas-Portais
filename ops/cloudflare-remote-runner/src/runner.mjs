@@ -84,7 +84,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,evidence-monthly-report,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -4440,6 +4440,86 @@ async function executePrintSingle(payload) {
   });
 }
 
+async function executeEvidenceMonthlyReport(job) {
+  const payload = job?.payload || {};
+  const targetDate = String(payload.targetDate || todayInCuiaba());
+  const competencia = String(payload.competencia || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !competencia) {
+    throw new Error("evidence-monthly-report exige targetDate e competencia.");
+  }
+
+  await progressJob(job.id, {
+    stage: "collecting",
+    itemsDone: 0,
+    itemsTotal: 4,
+    percentStage: 5,
+    percentTotal: 5,
+  });
+  await execFileAsync("pnpm", ["--filter", "@workspace/scripts", "run", "sync:planilha"], {
+    cwd: PROJECT_ROOT,
+    env: process.env,
+    timeout: 20 * 60_000,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  await progressJob(job.id, {
+    stage: "collecting",
+    itemsDone: 1,
+    itemsTotal: 4,
+    percentStage: 35,
+    percentTotal: 15,
+  });
+  await execFileAsync("pnpm", ["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
+    cwd: PROJECT_ROOT,
+    env: process.env,
+    timeout: 10 * 60_000,
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  await progressJob(job.id, {
+    stage: "exporting",
+    itemsDone: 2,
+    itemsTotal: 4,
+    percentStage: 50,
+    percentTotal: 30,
+  });
+  const result = await execFileAsync("node", ["scripts/src/build-current-month-evidence-report.mjs"], {
+    cwd: PROJECT_ROOT,
+    env: {
+      ...process.env,
+      ADOPS_REPORT_DATE: targetDate,
+      ADOPS_REPORT_MONTH: targetDate.slice(0, 7),
+      ADOPS_REPORT_COMPETENCIA: competencia,
+      ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
+      ADOPS_REPORT_SKIP_PUBLISH: "0",
+      ADOPS_REPORT_SKIP_EXPORTS: "0",
+    },
+    timeout: 90 * 60_000,
+    maxBuffer: 50 * 1024 * 1024,
+  });
+  await progressJob(job.id, {
+    stage: "publishing",
+    itemsDone: 3,
+    itemsTotal: 4,
+    percentStage: 90,
+    percentTotal: 90,
+  });
+  const lines = String(result.stdout || "").trim().split(/\r?\n/).filter(Boolean);
+  let report = null;
+  try {
+    report = JSON.parse(lines.slice(lines.findIndex((line) => line.trim().startsWith("{"))).join("\n"));
+  } catch {
+    report = { stdout: String(result.stdout || "").slice(-4000) };
+  }
+  return {
+    ok: true,
+    stage: "completed",
+    targetDate,
+    competencia,
+    publicUrl: report?.publicUrl || null,
+    summary: report?.summary || null,
+    report,
+  };
+}
+
 async function executeTelegramSendEvidence(payload) {
   const insertionId = Number(payload?.insertionId || 0);
   const date = String(payload?.date || "").trim();
@@ -5357,6 +5437,9 @@ async function handleJob(job) {
   }
   if (job.kind === "pi-site-export") {
     return executePiSiteExport(job);
+  }
+  if (job.kind === "evidence-monthly-report") {
+    return executeEvidenceMonthlyReport(job);
   }
   if (job.kind === "drive-pi-ingest") {
     try {

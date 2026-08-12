@@ -1011,6 +1011,30 @@ export const ExportPiSitePackageResponse = zod.record(
   zod.unknown(),
 );
 
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+export const DownloadInsertionEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+  date: zod.date(),
+});
+
+export const downloadInsertionEvidenceQueryVariantDefault = `web`;
+export const downloadInsertionEvidenceQueryImageMaxWidthDefault = 1600;
+export const downloadInsertionEvidenceQueryImageQualityDefault = 72;
+
+export const DownloadInsertionEvidenceQueryParams = zod.object({
+  variant: zod
+    .enum(["web"])
+    .default(downloadInsertionEvidenceQueryVariantDefault),
+  imageMaxWidth: zod
+    .literal(1600)
+    .default(downloadInsertionEvidenceQueryImageMaxWidthDefault),
+  imageQuality: zod
+    .literal(72)
+    .default(downloadInsertionEvidenceQueryImageQualityDefault),
+});
+
 export const DeleteEvidenceParams = zod.object({
   id: zod.coerce.number(),
 });

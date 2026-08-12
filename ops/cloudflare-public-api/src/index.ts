@@ -1,4 +1,5 @@
 import { snapshot } from "../data/snapshot";
+import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -6,9 +7,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "evidence-monthly-report" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "evidence-monthly-report", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -596,6 +597,18 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha no pacote PI/site",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "evidence-monthly-report": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    queue_received: "Fila recebida",
+    running: "Atualizando portal de evidências",
+    collecting: "Conferindo campanhas e auditorias",
+    rendering: "Gerando relatório em staging",
+    publishing: "Publicando versão validada",
+    completed: "Portal de evidências atualizado",
+    failed: "Falha na atualização do portal",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -623,6 +636,14 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     running: "Atualizando inventário do Drive",
     completed: "Inventário do Drive atualizado",
     failed: "Falha ao atualizar inventário do Drive",
+  },
+  "drive-pi-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Reconciliando PI do Drive",
+    completed: "PI do Drive reconciliada",
+    failed: "Falha na reconciliação da PI do Drive",
+    queue_dispatch_failed: "Falha ao despachar fila",
   },
   "reconcile-adrotate": {
     queued: "Na fila",
@@ -918,7 +939,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "evidence-monthly-report" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -2081,6 +2102,24 @@ export default {
         return json({ ok: true, jobId, kind: "print-single", status: "queued" }, { status: 202 });
       }
 
+      if (path === "/api/ops/jobs/evidence-monthly-report") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const targetDate = typeof body.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.targetDate) ? body.targetDate : null;
+        const competencia = typeof body.competencia === "string" && body.competencia.trim() ? body.competencia.trim().toUpperCase() : null;
+        if (!targetDate || !competencia) return badRequest("Informe targetDate=YYYY-MM-DD e competencia.");
+        const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
+          ? body.idempotencyKey.trim()
+          : `evidence-monthly-report:${targetDate}`;
+        const created = await createIdempotentOpsJob(env, "evidence-monthly-report", {
+          targetDate,
+          competencia,
+          source: typeof body.source === "string" ? body.source : "cloudflare-protected-api",
+        }, "ops-api", idempotencyKey);
+        return jsonNoStore({ ok: true, kind: "evidence-monthly-report", ...created }, { status: created.duplicate ? 200 : 202 });
+      }
+
       if (path === "/api/ops/jobs/drive-pi-preflight" || path === "/api/ops/jobs/drive-pi-folder" || path === "/api/ops/jobs/drive-pi-publish") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
@@ -2226,7 +2265,6 @@ export default {
       if (path === "/api/ops/jobs/drive-inventory-refresh") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
-        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
         const jobId = await createOpsJob(env, "drive-inventory-refresh", {
           scanId: crypto.randomUUID(),
           source: "cloudflare-protected-api",
@@ -2926,6 +2964,22 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (isMonthlyEvidenceReportCron(controller.cron)) {
+      const payload = buildMonthlyEvidenceReportSchedule(new Date(controller.scheduledTime));
+      ctx.waitUntil(
+        createIdempotentOpsJob(
+          env,
+          "evidence-monthly-report",
+          payload,
+          "cloudflare-scheduled",
+          payload.idempotencyKey,
+        ).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("monthly_evidence_report_schedule_failed", { error: message });
+        }),
+      );
+      return;
+    }
     ctx.waitUntil(
       scheduleDailyPrintBatch(env, {
         requestedBy: "cloudflare-scheduled",

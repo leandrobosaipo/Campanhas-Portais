@@ -34,6 +34,7 @@ import type {
   CreateInsertionBody,
   CreateSiteBody,
   DashboardSummary,
+  DownloadInsertionEvidenceParams,
   DrivePiReconcileBody,
   ErrorResponse,
   Evidence,
@@ -2805,6 +2806,130 @@ export function useExportPiSitePackage<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getExportPiSitePackageQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+export const getDownloadInsertionEvidenceUrl = (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/insertions/${id}/evidences/${date}/download?${stringifiedParams}`
+    : `/api/insertions/${id}/evidences/${date}/download`;
+};
+
+export const downloadInsertionEvidence = async (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getDownloadInsertionEvidenceUrl(id, date, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadInsertionEvidenceQueryKey = (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+) => {
+  return [
+    `/api/insertions/${id}/evidences/${date}/download`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getDownloadInsertionEvidenceQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getDownloadInsertionEvidenceQueryKey(id, date, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadInsertionEvidence>>
+  > = ({ signal }) =>
+    downloadInsertionEvidence(id, date, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && date),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadInsertionEvidenceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadInsertionEvidence>>
+>;
+export type DownloadInsertionEvidenceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+
+export function useDownloadInsertionEvidence<
+  TData = Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadInsertionEvidenceQueryOptions(
+    id,
+    date,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

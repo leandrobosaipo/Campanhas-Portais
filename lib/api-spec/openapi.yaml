@@ -841,6 +841,65 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /insertions/{id}/evidences/{date}/download:
+    get:
+      operationId: downloadInsertionEvidence
+      tags: [evidences]
+      summary: Download one approved canonical evidence as a progressive web JPEG
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: variant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [web]
+            default: web
+        - name: imageMaxWidth
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1600]
+            default: 1600
+        - name: imageQuality
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [72]
+            default: 72
+      responses:
+        "200":
+          description: Progressive RGB JPEG attachment
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Insertion or evidence date not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Evidence exists but is not approved for delivery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /evidences/{id}:
     delete:
       operationId: deleteEvidence

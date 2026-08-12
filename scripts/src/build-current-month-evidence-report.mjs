@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" };
+import {
+  buildAtomicPublishCommand,
+  buildCampaignExportIdempotencyKey,
+  buildMonthlyReportManifest,
+  buildSevenDayForecast,
+  classifyEvidenceStatus,
+  findReportsMountSource,
+  isMonthlyReportPublishable,
+  selectCanonicalInsertions,
+} from "./monthly-evidence-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const apiBase = (process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
+const deliveryApiBase = (process.env.ADOPS_DELIVERY_API_BASE_URL || "https://adops-api.codigo5.com.br").replace(/\/$/, "");
 const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops-campanhas-portais.pages.dev").replace(/\/$/, "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const opsEnvFile = process.env.OPS_ENV_FILE || path.join(repoRoot, ".env.adops-operator.local");
@@ -53,6 +64,7 @@ const snapshotDir = path.join(outputRoot, snapshotSlug);
 const outputPath = path.join(latestDir, "index.html");
 const snapshotPath = path.join(snapshotDir, "index.html");
 const publicUrl = `https://sites.codigo5.com.br/reports/${slug}/`;
+const reportMarkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="AdOps"><rect width="128" height="128" rx="16" fill="#164e63"/><path d="M28 92 53 32h22l25 60H80l-4-12H52l-4 12H28Zm30-29h12l-6-18-6 18Z" fill="#fff"/></svg>`;
 
 const activeStatuses = new Set(["em_veiculacao", "ativa", "publicada", "aguardando_publicacao", "print_gerado"]);
 const terminalStatuses = new Set(["cancelado", "concluido", "finalizado", "finalizada"]);
@@ -185,7 +197,15 @@ async function api(pathname, options = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await fetchWithTimeout(`${apiBase}${pathname}`, { headers: apiHeaders() }, timeoutMs);
+      const response = await fetchWithTimeout(`${apiBase}${pathname}`, {
+        method: options.method || "GET",
+        headers: {
+          ...apiHeaders(),
+          ...(options.body ? { "content-type": "application/json" } : {}),
+          ...(options.headers || {}),
+        },
+        body: options.body,
+      }, timeoutMs);
       const text = await response.text();
       let payload;
       try {
@@ -214,7 +234,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
 }
 
 async function portainer(method, apiPath, body, rawBody, rawHeaders = {}) {
-  const env = parseEnvFile(portainerEnvFile);
+  const env = { ...parseEnvFile(portainerEnvFile), ...process.env };
   if (!env.PORTAINER_URL || !env.PORTAINER_API_KEY) throw new Error("PORTAINER_URL ou PORTAINER_API_KEY ausente.");
   const response = await fetchWithTimeout(`${env.PORTAINER_URL.replace(/\/$/, "")}${apiPath}`, {
     method,
@@ -241,25 +261,38 @@ async function getContainer(name) {
   return containers.find((item) => (item.Names || []).includes(`/${name}`));
 }
 
+async function execInContainer(containerId, command) {
+  const created = await portainer("POST", `/api/endpoints/3/docker/containers/${containerId}/exec`, {
+    AttachStdout: true,
+    AttachStderr: true,
+    Cmd: ["sh", "-lc", command],
+  });
+  const result = await portainer("POST", `/api/endpoints/3/docker/exec/${created.Id}/start`, { Detach: false, Tty: false });
+  const inspected = await portainer("GET", `/api/endpoints/3/docker/exec/${created.Id}/json`);
+  if (inspected?.ExitCode !== 0) throw new Error(`Troca atômica falhou: ${String(result || "").slice(0, 500)}`);
+}
+
 async function publishReport() {
   const sites = await getContainer("sites-index");
   if (!sites) throw new Error("Container sites-index nao encontrado.");
   const inspect = await portainer("GET", `/api/endpoints/3/docker/containers/${sites.Id}/json`);
-  const appMount = (inspect.Mounts || []).find((mount) => mount.Destination === "/app" && mount.Type === "bind");
-  if (!appMount?.Source) throw new Error("Bind mount /app do sites-index nao encontrado.");
+  const reportsMountSource = findReportsMountSource(inspect.Mounts);
 
-  const publishRoot = path.join("/tmp", `${slug}-publish-${Date.now()}`);
-  const publishDir = path.join(publishRoot, slug);
-  const tarPath = path.join("/tmp", `${slug}.tar`);
-  await mkdir(publishDir, { recursive: true });
-  await writeFile(path.join(publishDir, "index.html"), await readFile(outputPath));
-  const tar = spawnSync("tar", ["--no-xattrs", "-C", publishRoot, "-cf", tarPath, slug], {
+  const publishToken = Date.now();
+  const stagingName = `${slug}.staging-${publishToken}`;
+  const backupName = `${slug}.backup-${publishToken}`;
+  const publishRoot = path.join("/tmp", `${slug}-publish-${publishToken}`);
+  const publishDir = path.join(publishRoot, stagingName);
+  const tarPath = path.join("/tmp", `${stagingName}.tar`);
+  await mkdir(publishRoot, { recursive: true });
+  await cp(latestDir, publishDir, { recursive: true });
+  const tar = spawnSync("tar", ["--no-xattrs", "-C", publishRoot, "-cf", tarPath, stagingName], {
     encoding: "utf8",
     env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
   if (tar.status !== 0) throw new Error(tar.stderr || "tar falhou.");
 
-  const helperName = `adops-evidence-report-publish-${Date.now()}`;
+  const helperName = `adops-evidence-report-publish-${publishToken}`;
   const helper = await portainer("POST", `/api/endpoints/3/docker/containers/create?name=${helperName}`, {
     Image: "node:22-alpine",
     Labels: {
@@ -269,7 +302,7 @@ async function publishReport() {
     },
     Cmd: ["sh", "-lc", "mkdir -p /target && sleep 120"],
     HostConfig: {
-      Binds: [`${appMount.Source}/reports:/target`],
+      Binds: [`${reportsMountSource}:/target`],
       NetworkMode: "none",
       RestartPolicy: { Name: "no" },
     },
@@ -284,9 +317,14 @@ async function publishReport() {
       bytes,
       { "content-type": "application/x-tar" },
     );
+    await execInContainer(helper.Id, buildAtomicPublishCommand({ slug, stagingName, backupName }));
   } finally {
     await portainer("POST", `/api/endpoints/3/docker/containers/${helper.Id}/stop?t=2`).catch(() => null);
     await portainer("DELETE", `/api/endpoints/3/docker/containers/${helper.Id}?v=false&force=true`).catch(() => null);
+    await Promise.allSettled([
+      rm(publishRoot, { recursive: true, force: true }),
+      rm(tarPath, { force: true }),
+    ]);
   }
 }
 
@@ -316,7 +354,7 @@ function computeInsertionState(item, evidenceDays, today) {
   if (item.periodoInicio > today) return "scheduled";
   if (!item.bannerPublicadoNoSite) return "not_published";
   const missing = evidenceDays.filter((day) => day.status === "missing").length;
-  const invalid = evidenceDays.filter((day) => day.status !== "audited" && day.status !== "missing" && day.date <= today).length;
+  const invalid = evidenceDays.filter((day) => !day.status.startsWith("audited") && day.status !== "missing" && day.date <= today).length;
   if (invalid > 0) return "invalid";
   if (missing > 0) return "pending";
   return "ok";
@@ -364,7 +402,7 @@ function buildPortalGroups(items) {
     portal.stats.total += 1;
     portal.stats[item.state === "scheduled" ? "scheduled" : "active"] += 1;
     portal.stats[item.state] += 1;
-    portal.stats.evidences += item.evidenceDays.filter((day) => day.status === "audited").length;
+    portal.stats.evidences += item.evidenceDays.filter((day) => day.status.startsWith("audited")).length;
     const campaignKey = `${item.campanhaId || "sem"}-${item.campanhaName || ""}`;
     const campaign = portal.campaigns.get(campaignKey) || {
       key: campaignKey,
@@ -401,8 +439,69 @@ async function mapLimit(values, limit, fn) {
   return results;
 }
 
+async function materializeCampaignExports(items) {
+  const preloaded = (() => {
+    try {
+      return JSON.parse(process.env.ADOPS_REPORT_EXPORTS_JSON || "{}");
+    } catch {
+      return {};
+    }
+  })();
+  const groups = new Map();
+  for (const item of items) {
+    if (!item.piCodigo || !item.siteSigla) continue;
+    const key = `${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`;
+    const group = groups.get(key) || { key, piCodigo: item.piCodigo, siteSigla: item.siteSigla, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+
+  const results = new Map();
+  for (const group of groups.values()) {
+    const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
+    const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
+    if (!required || evidenceDays.length !== required) continue;
+    if (preloaded[group.key]) {
+      results.set(group.key, preloaded[group.key]);
+      continue;
+    }
+    if (process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") continue;
+    const idempotencyKey = buildCampaignExportIdempotencyKey({
+      piCodigo: group.piCodigo,
+      siteSigla: group.siteSigla,
+      competencia,
+      evidences: evidenceDays,
+    });
+    const created = await api("/api/pi-site-exports/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        piCodigo: group.piCodigo,
+        siteSigla: group.siteSigla,
+        mode: "prints-only",
+        variant: "web",
+        imageMaxWidth: 1600,
+        imageQuality: 72,
+        requestedBy: "evidence-monthly-report",
+        source: "monthly-report",
+      }),
+      headers: { "idempotency-key": idempotencyKey },
+      timeoutMs: 60_000,
+    });
+    const deadline = Date.now() + 20 * 60_000;
+    let job = created;
+    while (job.status !== "completed" && Date.now() < deadline) {
+      if (job.status === "failed") throw new Error(`Exportação ${group.piCodigo}/${group.siteSigla} falhou.`);
+      await new Promise((resolve) => setTimeout(resolve, 8_000));
+      job = await api(`/api/pi-site-exports/jobs/${encodeURIComponent(created.jobId)}`);
+    }
+    if (job.status !== "completed") throw new Error(`Timeout na exportação ${group.piCodigo}/${group.siteSigla}.`);
+    results.set(group.key, `${deliveryApiBase}/api/pi-site-exports/jobs/${encodeURIComponent(created.jobId)}/download`);
+  }
+  return results;
+}
+
 function dayTitle(day, item) {
-  if (day.status === "audited") return `${fullDatePt(day.date)}: evidência auditada.`;
+  if (day.status.startsWith("audited")) return `${fullDatePt(day.date)}: evidência auditada.`;
   if (day.status === "missing") return `${fullDatePt(day.date)}: sem evidência auditada. ${item.state === "not_published" ? "Não cobrada porque a inserção não está publicada." : "Precisa gerar retroativo."}`;
   return `${fullDatePt(day.date)}: evidência com status ${day.status}. ${day.issues?.map((issue) => issue.label || issue.code || issue).join(", ") || ""}`;
 }
@@ -414,7 +513,7 @@ function renderThumbs(item) {
   return item.evidenceDays
     .map((day) => {
       const title = dayTitle(day, item);
-      if (day.status === "audited" && day.url) {
+      if (day.status.startsWith("audited") && day.url) {
         return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}"><img src="${escapeHtml(day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy"><span>${escapeHtml(datePt(day.date))}</span></button>`;
       }
       return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon(day.status === "missing" ? "warn" : "warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "sem evid." : "inválida")}</b></button>`;
@@ -455,11 +554,22 @@ function renderCampaign(campaign) {
   const notPublished = campaign.items.filter((item) => item.state === "not_published").length;
   const campaignAudited = campaign.items.reduce((sum, item) => sum + item.auditedDays, 0);
   const campaignRequired = campaign.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
-  return `<section class="campaign">
+  const endingWindow = new Date(`${targetDate}T00:00:00.000Z`);
+  endingWindow.setUTCDate(endingWindow.getUTCDate() + 7);
+  const endingWindowDate = endingWindow.toISOString().slice(0, 10);
+  const states = Array.from(new Set(campaign.items.flatMap((item) => [
+    item.state,
+    item.periodoInicio <= targetDate && item.periodoFim >= targetDate ? "active" : null,
+    item.periodoFim > targetDate && item.periodoFim <= endingWindowDate ? "ending" : null,
+  ].filter(Boolean)))).join(" ");
+  const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
+  const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
+  return `<section class="campaign" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
     <div class="campaign-head">
       <div>
         <h3>${escapeHtml(campaign.name)}</h3>
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
+        ${batchDownloadUrl ? linkButton(batchDownloadUrl, "baixar campanha em ZIP", "image") : ""}
       </div>
       <div class="mini-stats">
         <b>${campaign.items.length}</b><span>ins.</span>
@@ -495,14 +605,21 @@ function renderPortal(portal) {
   </section>`;
 }
 
-function renderHtml({ insertions, portals, audits, summary }) {
+function renderForecast(items, dateField, emptyText) {
+  if (!items.length) return `<p>${escapeHtml(emptyText)}</p>`;
+  return `<ul>${items.map((item) => `<li><b>${escapeHtml(item.campanhaName || item.campaignName || `Inserção #${item.id}`)}</b><span>${escapeHtml(item.siteSigla || "-")} · ${escapeHtml(item.piCodigo || "sem PI")} · ${fullDatePt(item[dateField])}</span></li>`).join("")}</ul>`;
+}
+
+function renderHtml({ insertions, portals, audits, summary, forecast, sources }) {
   const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, item]));
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
   <title>AdOps Evidências · ${escapeHtml(competencia)}</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <style>
     :root {
       --bg: oklch(0.955 0.006 170);
@@ -517,6 +634,7 @@ function renderHtml({ insertions, portals, audits, summary }) {
       --paper: oklch(0.976 0.006 95);
     }
     * { box-sizing: border-box; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
     body { margin: 0; background: var(--bg); color: var(--ink); font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
     a { color: inherit; text-decoration: none; }
     svg { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; }
@@ -532,8 +650,10 @@ function renderHtml({ insertions, portals, audits, summary }) {
     .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
     .kpi span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 800; }
     .kpi b { display: block; margin-top: 5px; font-size: clamp(18px, 2vw, 28px); line-height: 1; }
-    .filters { display: flex; gap: 8px; padding-bottom: 14px; overflow: auto; }
-    .filter { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 8px 11px; font-weight: 800; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .tools { display: grid; gap: 10px; padding-bottom: 14px; }
+    .search { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
+    .filters { display: flex; gap: 8px; overflow: auto; }
+    .filter { min-height: 44px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 4px; padding: 8px 11px; font-weight: 800; font-size: 12px; cursor: pointer; white-space: nowrap; }
     .filter.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
     main { padding: 18px 0 42px; }
     .portal { margin: 0 0 22px; border: 1px solid var(--line); background: color-mix(in oklch, var(--panel) 78%, var(--paper)); border-radius: 8px; overflow: clip; }
@@ -570,9 +690,9 @@ function renderHtml({ insertions, portals, audits, summary }) {
     .bar { height: 6px; border-radius: 999px; background: var(--bg); overflow: hidden; }
     .bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
     .links { display: flex; flex-wrap: wrap; gap: 6px; }
-    .icon-link { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 7px; font-size: 11px; font-weight: 800; color: var(--steel); background: var(--bg); }
+    .icon-link { min-height: 44px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; font-size: 11px; font-weight: 800; color: var(--steel); background: var(--bg); }
     .thumbs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(118px, 34%); gap: 6px; align-content: start; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x proximity; }
-    .thumb { position: relative; border: 0; padding: 0; background: var(--bg); border-radius: 6px; overflow: hidden; cursor: pointer; aspect-ratio: 16 / 9; scroll-snap-align: start; }
+    .thumb { position: relative; min-width: 44px; min-height: 78px; border: 0; padding: 0; background: var(--bg); border-radius: 4px; overflow: hidden; cursor: pointer; aspect-ratio: 16 / 9; scroll-snap-align: start; }
     .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .thumb span { position: absolute; left: 5px; bottom: 5px; padding: 2px 5px; border-radius: 999px; background: rgba(6, 12, 12, .72); color: white; font-size: 10px; font-weight: 900; }
     .thumb-empty, .day-card { min-height: 78px; display: grid; place-items: center; gap: 3px; color: var(--muted); background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; scroll-snap-align: start; }
@@ -594,16 +714,26 @@ function renderHtml({ insertions, portals, audits, summary }) {
     .day-dot.audited { color: var(--ok); border-color: color-mix(in oklch, var(--ok) 40%, var(--line)); }
     .day-dot.missing { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); }
     .day-dot.invalid_audit, .day-dot.failed, .day-dot.invalid_url { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, var(--line)); }
-    .modal-close { position: absolute; top: 8px; right: 8px; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; background: rgba(0,0,0,.46); color: white; padding: 8px 10px; cursor: pointer; font-weight: 900; }
+    .modal-close { position: absolute; min-width: 44px; min-height: 44px; top: 8px; right: 8px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; background: rgba(0,0,0,.66); color: white; padding: 8px 10px; cursor: pointer; font-weight: 900; }
+    .forecast { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+    .forecast article { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
+    .forecast h2 { font-size: 16px; }
+    .forecast p, .forecast ul { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .forecast ul { padding-left: 18px; }
+    .forecast li { margin: 7px 0; }
+    .forecast li span { display: block; }
+    :focus-visible { outline: 3px solid #145da0; outline-offset: 2px; }
+    [hidden] { display: none !important; }
     footer { padding: 20px 0 36px; color: var(--muted); font-size: 12px; }
     @media (max-width: 1180px) { .kpis { grid-template-columns: repeat(4, 1fr); } .insertions { grid-template-columns: 1fr; } }
     @media (max-width: 760px) {
-      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid { grid-template-columns: 1fr; }
+      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast { grid-template-columns: 1fr; }
       .snapshot { text-align: left; }
       .kpis { grid-template-columns: repeat(2, 1fr); }
       .portal-stats, .mini-stats { justify-content: flex-start; }
       .modal-side { border-left: 0; border-top: 1px solid var(--line); }
     }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
   </style>
 </head>
 <body>
@@ -629,16 +759,29 @@ function renderHtml({ insertions, portals, audits, summary }) {
         <div class="kpi"><span>sem pub.</span><b>${summary.notPublished}</b></div>
         <div class="kpi"><span>evidências</span><b>${summary.auditedDays}</b></div>
       </section>
-      <nav class="filters" aria-label="Portais">
-        <button class="filter active" type="button" data-filter="all">todos</button>
-        ${portals.map((portal) => `<button class="filter" type="button" data-filter="${escapeHtml(portal.key)}">${escapeHtml(portal.key)} · ${portal.stats.total}</button>`).join("")}
-      </nav>
+      <div class="tools">
+        <label for="campaignSearch" class="visually-hidden">Buscar campanha, PI ou portal</label>
+        <input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
+        <nav class="filters" aria-label="Filtros de campanha">
+          <button class="filter active" type="button" data-state="all">todas</button>
+          <button class="filter" type="button" data-state="active">ativas</button>
+          <button class="filter" type="button" data-state="ok">completas</button>
+          <button class="filter" type="button" data-state="pending">pendentes</button>
+          <button class="filter" type="button" data-state="invalid">com erro</button>
+          <button class="filter" type="button" data-state="scheduled">agendadas</button>
+          <button class="filter" type="button" data-state="ending">encerrando</button>
+        </nav>
+      </div>
     </div>
   </header>
   <main class="wrap">
+    <section class="forecast" aria-label="Previsão dos próximos sete dias">
+      <article><h2>Próximas a entrar no ar</h2>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.")}</article>
+      <article><h2>Próximas a vencer</h2>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
+    </section>
     ${portals.map(renderPortal).join("") || '<section class="portal"><div class="portal-head"><h2>Sem inserções ativas ou agendadas</h2></div></section>'}
   </main>
-  <footer class="wrap">Fonte: AdOps API, capture-proof/status, auditoria diaria, relação AdRotate e configuração local dos portais. Snapshot: ${escapeHtml(snapshotSlug)}.</footer>
+  <footer class="wrap">Fonte: Planilha via API AdOps, Google Drive (${escapeHtml(sources?.driveInventory?.snapshotStatus || "indisponível")}, ${escapeHtml(String(sources?.driveInventory?.itemCount ?? 0))} itens), capture-proof/status, auditoria diária e AdRotate. Snapshot: ${escapeHtml(snapshotSlug)}.</footer>
   <dialog id="modal">
     <button class="modal-close" type="button" id="modalClose">fechar</button>
     <div class="modal-grid">
@@ -685,6 +828,8 @@ function renderHtml({ insertions, portals, audits, summary }) {
           ['Grupo', item.adrotateGroupId || '-']
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
+          iconLink(day?.downloadUrl, 'baixar JPEG'),
+          iconLink(item.batchDownloadUrl, 'baixar campanha em ZIP'),
           iconLink(item.portalUrl, 'portal'),
           iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'adrotate ad' : 'adrotate grupo'),
           iconLink(item.mediaUrl, 'mídia'),
@@ -695,14 +840,26 @@ function renderHtml({ insertions, portals, audits, summary }) {
     });
     close.addEventListener('click', () => modal.close());
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
+    let activeState = 'all';
+    const search = document.getElementById('campaignSearch');
+    const applyFilters = () => {
+      const needle = String(search.value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+      document.querySelectorAll('.campaign').forEach((campaign) => {
+        const stateMatches = activeState === 'all' || String(campaign.dataset.states || '').split(' ').includes(activeState);
+        const searchMatches = !needle || String(campaign.dataset.search || '').includes(needle);
+        campaign.hidden = !(stateMatches && searchMatches);
+      });
+      document.querySelectorAll('.portal').forEach((portal) => {
+        portal.hidden = !portal.querySelector('.campaign:not([hidden])');
+      });
+    };
+    search.addEventListener('input', applyFilters);
     document.querySelectorAll('.filter').forEach((button) => {
       button.addEventListener('click', () => {
         document.querySelectorAll('.filter').forEach((item) => item.classList.remove('active'));
         button.classList.add('active');
-        const filter = button.dataset.filter;
-        document.querySelectorAll('.portal').forEach((portal) => {
-          portal.hidden = filter !== 'all' && portal.id !== 'portal-' + filter;
-        });
+        activeState = button.dataset.state || 'all';
+        applyFilters();
       });
     });
   </script>
@@ -716,16 +873,22 @@ async function main() {
   await mkdir(latestDir, { recursive: true });
   await mkdir(snapshotDir, { recursive: true });
 
-  const [insertionsRaw, campaignsRaw, auditsRaw] = await Promise.all([
+  const [insertionsRaw, campaignsRaw, auditsRaw, operationsRaw] = await Promise.all([
     api(`/api/insertions?competencia=${encodeURIComponent(competencia)}&limit=500`),
     api(`/api/campaigns?competencia=${encodeURIComponent(competencia)}&limit=500`).catch(() => []),
     Promise.all(dayRange(bounds.start, monthEndForEvidence).map(async (date) => [date, await api(`/api/insertions/capture-proof/audit?date=${date}&competencia=${encodeURIComponent(competencia)}`).catch((error) => ({ error: error.message }))])),
+    api(`/api/campaign-operations/active?date=${encodeURIComponent(targetDate)}`),
   ]);
 
   const insertions = Array.isArray(insertionsRaw) ? insertionsRaw : insertionsRaw.items || [];
   const campaigns = Array.isArray(campaignsRaw) ? campaignsRaw : campaignsRaw.items || [];
   const campaignMap = new Map(campaigns.map((campaign) => [campaign.id, campaign]));
-  const eligible = insertions
+  const canonicalOperationItems = [...(operationsRaw.items || []), ...(operationsRaw.upcomingItems || [])]
+    .filter((item) => Number.isFinite(Number(item?.adops?.insertionId)))
+    .map((item) => ({ ...item, id: Number(item.adops.insertionId) }));
+  const canonicalInsertions = selectCanonicalInsertions(canonicalOperationItems, insertions);
+  if (canonicalInsertions.some((item) => item.id === 1826)) throw new Error("Gate canônico recusou a inserção duplicada #1826.");
+  const eligible = canonicalInsertions
     .filter((item) => item.competencia === competencia || !item.competencia)
     .filter((item) => !terminalStatuses.has(String(item.statusNormalizado || "").toLowerCase()))
     .filter((item) => item.periodoFim >= bounds.start && item.periodoInicio <= bounds.end)
@@ -767,19 +930,24 @@ async function main() {
     const requiredDays = requiredEnd ? dayRange(requiredStart, requiredEnd) : [];
     const evidenceDays = requiredDays.map((date) => {
       const status = statusMap.get(`${item.id}:${date}`) || { date, status: "missing" };
+      const classification = classifyEvidenceStatus(status);
       const issueText = (status.audit?.issues || status.issues || [])
         .map((issue) => issue.label || issue.code || issue)
         .filter(Boolean)
         .join(", ");
       return {
         date,
-        status: status.status || "missing",
+        status: classification,
         url: status.arquivoUrl || status.url || "",
+        downloadUrl: classification.startsWith("audited")
+          ? `${deliveryApiBase}/api/insertions/${item.id}/evidences/${date}/download?variant=web&imageMaxWidth=1600&imageQuality=72`
+          : "",
+        evidenceId: status.evidenceId || null,
         issues: status.audit?.issues || status.issues || [],
         statusDetail:
-          status.status === "audited"
+          classification.startsWith("audited")
             ? "Evidência auditada e com URL."
-            : status.status === "missing"
+            : classification === "missing"
               ? "Sem evidência auditada para este dia."
               : `Evidência não aprovada: ${issueText || status.status || "erro sem detalhe"}.`,
       };
@@ -789,7 +957,7 @@ async function main() {
     const campaign = campaignMap.get(item.campanhaId);
     const state = computeInsertionState(item, evidenceDays, targetDate);
     const missingDates = evidenceDays.filter((day) => day.status === "missing").map((day) => day.date);
-    const invalidDates = evidenceDays.filter((day) => day.status !== "audited" && day.status !== "missing").map((day) => day.date);
+    const invalidDates = evidenceDays.filter((day) => !day.status.startsWith("audited") && day.status !== "missing").map((day) => day.date);
     return {
       ...item,
       campanhaName: item.campanhaName || campaign?.name || `Campanha ${item.campanhaId || "-"}`,
@@ -802,13 +970,18 @@ async function main() {
       state,
       requiredDays,
       evidenceDays,
-      auditedDays: evidenceDays.filter((day) => day.status === "audited" && day.url).length,
+      auditedDays: evidenceDays.filter((day) => day.status.startsWith("audited") && day.url).length,
       missingDates,
       invalidDates,
       statusDetail: evidenceDetails({ ...item, state, missingDates, invalidDates }),
       modalId: `ins-${item.id}`,
     };
   });
+
+  const exportLinks = await materializeCampaignExports(enriched);
+  for (const item of enriched) {
+    item.batchDownloadUrl = exportLinks.get(`${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`) || "";
+  }
 
   const summary = {
     total: enriched.length,
@@ -819,28 +992,56 @@ async function main() {
     invalid: enriched.filter((item) => item.state === "invalid").length,
     notPublished: enriched.filter((item) => item.state === "not_published").length,
     auditedDays: enriched.reduce((sum, item) => sum + item.auditedDays, 0),
+    missingDates: enriched.reduce((sum, item) => sum + item.missingDates.length, 0),
+    invalidDates: enriched.reduce((sum, item) => sum + item.invalidDates.length, 0),
     value: enriched.reduce((sum, item) => sum + Number(item.valorLiquido || 0), 0),
   };
+  const forecast = buildSevenDayForecast(enriched, targetDate);
   const portals = buildPortalGroups(enriched);
   const audits = Object.fromEntries(auditsRaw);
-  const html = renderHtml({ insertions: enriched, portals, audits, summary });
+  const sources = {
+    sheet: operationsRaw.sheet || null,
+    driveInventory: operationsRaw.driveInventory || null,
+    campaignOperationsGeneratedAt: operationsRaw.generatedAt || null,
+  };
+  const html = renderHtml({ insertions: enriched, portals, audits, summary, forecast, sources });
   const data = {
     generatedAt: generatedAt.toISOString(),
     targetDate,
     targetMonth,
     competencia,
     publicUrl,
+    sources,
     summary,
+    forecast,
     audits,
     insertions: enriched,
   };
+  const reportManifest = buildMonthlyReportManifest({
+    slug,
+    title: `Evidências AdOps · ${competencia}`,
+    generatedAt: generatedAt.toISOString(),
+  });
+  reportManifest.sources = sources;
+  const latestAssets = path.join(latestDir, "assets");
+  const snapshotAssets = path.join(snapshotDir, "assets");
+  await Promise.all([mkdir(latestAssets, { recursive: true }), mkdir(snapshotAssets, { recursive: true })]);
 
   await writeFile(outputPath, html, "utf8");
   await writeFile(snapshotPath, html, "utf8");
   await writeFile(path.join(latestDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
   await writeFile(path.join(snapshotDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
+  await writeFile(path.join(latestDir, "report.json"), JSON.stringify(reportManifest, null, 2), "utf8");
+  await writeFile(path.join(snapshotDir, "report.json"), JSON.stringify(reportManifest, null, 2), "utf8");
+  await Promise.all([
+    writeFile(path.join(latestAssets, "favicon.svg"), reportMarkSvg, "utf8"),
+    writeFile(path.join(snapshotAssets, "favicon.svg"), reportMarkSvg, "utf8"),
+  ]);
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
+    if (!isMonthlyReportPublishable({ missing: summary.missingDates, invalid: summary.invalidDates })) {
+      throw new Error(`Publicação bloqueada: missing=${summary.missingDates}, invalid=${summary.invalidDates}.`);
+    }
     await publishReport();
     const validation = await fetchWithTimeout(publicUrl, { redirect: "follow" }, 20000);
     if (!validation.ok) throw new Error(`URL publica falhou: HTTP ${validation.status}`);

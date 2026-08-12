@@ -4,7 +4,7 @@
   "compatibility_date": "2026-04-13",
   "workers_dev": true,
   "triggers": {
-    "crons": ["0 22 * * *"]
+    "crons": ["0 22 * * *", "15 2 * * *"]
   },
   "vars": {
     "PRIVATE_ADOPS_API_BASE_URL": "https://adops-api.codigo5.com.br"
