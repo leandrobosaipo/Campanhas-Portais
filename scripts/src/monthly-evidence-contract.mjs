@@ -73,7 +73,7 @@ export function buildCampaignExportIdempotencyKey({ piCodigo, siteSigla, compete
     competencia: String(competencia || "").trim().toUpperCase(),
     evidences: approved,
   });
-  return `monthly-evidence-${crypto.createHash("sha256").update(canonical).digest("hex")}`;
+  return `monthly-evidence-v2-${crypto.createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 export function isMonthlyReportPublishable(summary) {

@@ -53,7 +53,7 @@ test("gera report.json nao listado e chave estavel baseada nas evidencias aprova
     evidences: [{ id: 2, date: "2026-08-10" }, { id: 3, date: "2026-08-11" }],
   });
   assert.equal(left, right);
-  assert.match(left, /^monthly-evidence-[a-f0-9]{64}$/);
+  assert.match(left, /^monthly-evidence-v2-[a-f0-9]{64}$/);
 });
 
 test("bloqueia publicacao com pendencias e monta troca atomica com rollback", () => {
