@@ -86,10 +86,12 @@ test("consultas agregadas toleram a latencia observada da API sem remover timeou
   assert.equal(contract.MONTHLY_REPORT_SOURCE_TIMEOUT_MS, 120_000);
 });
 
-test("download faz probe GET quando a rota nao implementa HEAD", () => {
-  assert.equal(contract.shouldFallbackDeliveryProbe(404), true);
-  assert.equal(contract.shouldFallbackDeliveryProbe(405), true);
-  assert.equal(contract.shouldFallbackDeliveryProbe(409), false);
+test("download e validado por leitura parcial real", () => {
+  assert.deepEqual(contract.buildDeliveryProbeOptions(), {
+    method: "GET",
+    headers: { range: "bytes=0-1023" },
+    redirect: "follow",
+  });
 });
 
 test("ZIP usa a mesma API publica que possui o job de exportacao", () => {

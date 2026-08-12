@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 
 export const MONTHLY_REPORT_SOURCE_TIMEOUT_MS = 120_000;
 
-export function shouldFallbackDeliveryProbe(status) {
-  return status === 404 || status === 405;
+export function buildDeliveryProbeOptions() {
+  return { method: "GET", headers: { range: "bytes=0-1023" }, redirect: "follow" };
 }
 
 export function buildPiSiteExportDownloadUrl(baseUrl, jobId) {

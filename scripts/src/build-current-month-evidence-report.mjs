@@ -17,7 +17,7 @@ import {
   findReportsMountSource,
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
-  shouldFallbackDeliveryProbe,
+  buildDeliveryProbeOptions,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -506,10 +506,7 @@ async function materializeCampaignExports(items) {
 }
 
 async function validateDeliveryUrl(url, label) {
-  let response = await fetchWithTimeout(url, { method: "HEAD", redirect: "follow" }, 60_000);
-  if (shouldFallbackDeliveryProbe(response.status)) {
-    response = await fetchWithTimeout(url, { method: "GET", headers: { range: "bytes=0-1023" }, redirect: "follow" }, 60_000);
-  }
+  const response = await fetchWithTimeout(url, buildDeliveryProbeOptions(), 120_000);
   if (!response.ok) throw new Error(`${label} indisponível: HTTP ${response.status}.`);
 }
 
