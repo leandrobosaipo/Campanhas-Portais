@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -23,6 +23,7 @@ import {
   shouldRetryDeliveryStatus,
   takeDeliverySamples,
   resolveReportPortainerUrl,
+  resolveReportsPublishMount,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -298,6 +299,22 @@ async function execInContainer(containerId, command) {
 }
 
 async function publishReport() {
+  const directMount = resolveReportsPublishMount(process.env);
+  if (directMount) {
+    const publishToken = Date.now();
+    const stagingDir = path.join(directMount, `${slug}.staging-${publishToken}`);
+    const destinationDir = path.join(directMount, slug);
+    const backupDir = path.join(directMount, `${slug}.backup-${publishToken}`);
+    await cp(latestDir, stagingDir, { recursive: true });
+    if (existsSync(destinationDir)) await rename(destinationDir, backupDir);
+    try {
+      await rename(stagingDir, destinationDir);
+    } catch (error) {
+      if (existsSync(backupDir) && !existsSync(destinationDir)) await rename(backupDir, destinationDir);
+      throw error;
+    }
+    return;
+  }
   const sites = await getContainer("sites-index");
   if (!sites) throw new Error("Container sites-index nao encontrado.");
   const inspect = await portainer("GET", `/api/endpoints/3/docker/containers/${sites.Id}/json`);

@@ -124,6 +124,11 @@ test("publicacao pode usar rota interna do Portainer", () => {
   assert.equal(contract.resolveReportPortainerUrl({ ADOPS_REPORT_PORTAINER_URL: "http://portainer:9000", PORTAINER_URL: "https://public.example" }), "http://portainer:9000");
 });
 
+test("publicacao prefere bind dedicado de relatorios", () => {
+  assert.equal(contract.resolveReportsPublishMount({ ADOPS_REPORTS_PUBLISH_MOUNT: "/sites-reports" }), "/sites-reports");
+  assert.equal(contract.resolveReportsPublishMount({}), "");
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },
