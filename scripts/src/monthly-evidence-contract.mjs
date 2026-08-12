@@ -58,6 +58,38 @@ function addIsoDays(value, amount) {
   return date.toISOString().slice(0, 10);
 }
 
+function normalizeFilterValue(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+}
+
+export function buildPortalFilterOptions(portals) {
+  const unique = new Map();
+  for (const portal of portals || []) {
+    const value = String(portal?.key || "").trim().toUpperCase();
+    if (!value || unique.has(value)) continue;
+    unique.set(value, String(portal?.label || value).trim());
+  }
+  return [
+    { value: "ALL", label: "Todos os portais" },
+    ...Array.from(unique, ([value, label]) => ({ value, label })).sort((left, right) => left.label.localeCompare(right.label, "pt-BR")),
+  ];
+}
+
+export function campaignMatchesFilters(campaign, filters) {
+  const selectedPortal = String(filters?.portal || "ALL").trim().toUpperCase();
+  const portalMatches = selectedPortal === "ALL" || String(campaign?.portal || "").trim().toUpperCase() === selectedPortal;
+  const state = String(filters?.state || "all").trim().toLowerCase();
+  const stateMatches = state === "all" || String(campaign?.states || "").split(/\s+/).includes(state);
+  const needle = normalizeFilterValue(filters?.search);
+  const searchMatches = !needle || normalizeFilterValue(campaign?.search).includes(needle);
+  return portalMatches && stateMatches && searchMatches;
+}
+
 export function selectCanonicalInsertions(activeInsertions, monthInsertions) {
   const canonicalIds = new Set((activeInsertions || []).map((item) => Number(item.id)).filter(Number.isFinite));
   return (monthInsertions || []).filter((item) => canonicalIds.has(Number(item.id)));

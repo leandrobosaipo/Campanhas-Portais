@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" };
 import {
   buildAtomicPublishCommand,
+  buildPortalFilterOptions,
   buildCampaignExportIdempotencyKey,
   buildMonthlyPublicationGate,
   buildPiSiteExportDownloadUrl,
@@ -640,7 +641,7 @@ function renderInsertion(item) {
   </article>`;
 }
 
-function renderCampaign(campaign) {
+function renderCampaign(campaign, portalKey) {
   const ok = campaign.items.filter((item) => item.state === "ok").length;
   const pending = campaign.items.filter((item) => item.state === "pending").length;
   const scheduled = campaign.items.filter((item) => item.state === "scheduled").length;
@@ -658,7 +659,7 @@ function renderCampaign(campaign) {
   ].filter(Boolean)))).join(" ");
   const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
-  return `<section class="campaign" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
+  return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
     <div class="campaign-head">
       <div>
         <h3>${escapeHtml(campaign.name)}</h3>
@@ -680,7 +681,7 @@ function renderCampaign(campaign) {
 }
 
 function renderPortal(portal) {
-  return `<section class="portal" id="portal-${escapeHtml(portal.key)}">
+  return `<section class="portal" id="portal-${escapeHtml(portal.key)}" data-portal="${escapeHtml(portal.key)}">
     <div class="portal-head">
       <div class="brand">
         ${portal.logo ? `<img src="${escapeHtml(portal.logo)}" alt="${escapeHtml(portal.label)}" loading="lazy">` : `<span>${escapeHtml(portal.key)}</span>`}
@@ -695,7 +696,7 @@ function renderPortal(portal) {
         <span><b>${portal.stats.not_published}</b> sem pub.</span>
       </div>
     </div>
-    ${portal.campaigns.map(renderCampaign).join("")}
+    ${portal.campaigns.map((campaign) => renderCampaign(campaign, portal.key)).join("")}
   </section>`;
 }
 
@@ -706,6 +707,7 @@ function renderForecast(items, dateField, emptyText) {
 
 function renderHtml({ insertions, portals, audits, summary, forecast, sources }) {
   const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, item]));
+  const portalOptions = buildPortalFilterOptions(portals);
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -745,10 +747,12 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .kpi span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 800; }
     .kpi b { display: block; margin-top: 5px; font-size: clamp(18px, 2vw, 28px); line-height: 1; }
     .tools { display: grid; gap: 10px; padding-bottom: 14px; }
-    .search { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
+    .tool-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 320px); gap: 8px; }
+    .search, .portal-filter { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
     .filters { display: flex; gap: 8px; overflow: auto; }
     .filter { min-height: 44px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 4px; padding: 8px 11px; font-weight: 800; font-size: 12px; cursor: pointer; white-space: nowrap; }
     .filter.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+    .empty-results { margin: 0 0 22px; padding: 22px; border: 1px dashed var(--line); border-radius: 8px; background: var(--panel); text-align: center; }
     main { padding: 18px 0 42px; }
     .portal { margin: 0 0 22px; border: 1px solid var(--line); background: color-mix(in oklch, var(--panel) 78%, var(--paper)); border-radius: 8px; overflow: clip; }
     .portal-head { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -821,7 +825,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     footer { padding: 20px 0 36px; color: var(--muted); font-size: 12px; }
     @media (max-width: 1180px) { .kpis { grid-template-columns: repeat(4, 1fr); } .insertions { grid-template-columns: 1fr; } }
     @media (max-width: 760px) {
-      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast { grid-template-columns: 1fr; }
+      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast, .tool-row { grid-template-columns: 1fr; }
       .snapshot { text-align: left; }
       .kpis { grid-template-columns: repeat(2, 1fr); }
       .portal-stats, .mini-stats { justify-content: flex-start; }
@@ -854,8 +858,18 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
         <div class="kpi"><span>evidências</span><b>${summary.auditedDays}</b></div>
       </section>
       <div class="tools">
-        <label for="campaignSearch" class="visually-hidden">Buscar campanha, PI ou portal</label>
-        <input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
+        <div class="tool-row">
+          <div>
+            <label for="campaignSearch" class="visually-hidden">Buscar campanha, PI ou portal</label>
+            <input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
+          </div>
+          <div>
+            <label for="portalFilter" class="visually-hidden">Filtrar por portal</label>
+            <select class="portal-filter" id="portalFilter">
+              ${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
+            </select>
+          </div>
+        </div>
         <nav class="filters" aria-label="Filtros de campanha">
           <button class="filter active" type="button" data-state="all">todas</button>
           <button class="filter" type="button" data-state="active">ativas</button>
@@ -874,6 +888,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       <article><h2>Próximas a vencer</h2>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
     </section>
     ${portals.map(renderPortal).join("") || '<section class="portal"><div class="portal-head"><h2>Sem inserções ativas ou agendadas</h2></div></section>'}
+    <p class="empty-results" id="emptyResults" role="status" hidden>Nenhuma campanha encontrada.</p>
   </main>
   <footer class="wrap">Fonte: Planilha via API AdOps, Google Drive (${escapeHtml(sources?.driveInventory?.snapshotStatus || "indisponível")}, ${escapeHtml(String(sources?.driveInventory?.itemCount ?? 0))} itens), capture-proof/status, auditoria diária e AdRotate. Snapshot: ${escapeHtml(snapshotSlug)}.</footer>
   <dialog id="modal" aria-labelledby="modalTitle">
@@ -938,18 +953,24 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
     let activeState = 'all';
     const search = document.getElementById('campaignSearch');
+    const portalFilter = document.getElementById('portalFilter');
+    const emptyResults = document.getElementById('emptyResults');
     const applyFilters = () => {
       const needle = String(search.value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+      const selectedPortal = portalFilter.value || 'ALL';
       document.querySelectorAll('.campaign').forEach((campaign) => {
+        const portalMatches = selectedPortal === 'ALL' || campaign.dataset.portal === selectedPortal;
         const stateMatches = activeState === 'all' || String(campaign.dataset.states || '').split(' ').includes(activeState);
         const searchMatches = !needle || String(campaign.dataset.search || '').includes(needle);
-        campaign.hidden = !(stateMatches && searchMatches);
+        campaign.hidden = !(portalMatches && stateMatches && searchMatches);
       });
       document.querySelectorAll('.portal').forEach((portal) => {
         portal.hidden = !portal.querySelector('.campaign:not([hidden])');
       });
+      emptyResults.hidden = Boolean(document.querySelector('.campaign:not([hidden])'));
     };
     search.addEventListener('input', applyFilters);
+    portalFilter.addEventListener('change', applyFilters);
     document.querySelectorAll('.filter').forEach((button) => {
       button.addEventListener('click', () => {
         document.querySelectorAll('.filter').forEach((item) => item.classList.remove('active'));

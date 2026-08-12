@@ -31,6 +31,23 @@ test("calcula entradas e vencimentos nos sete dias seguintes", () => {
   assert.equal(forecast.windowEnd, "2026-08-18");
 });
 
+test("gera opcoes unicas de portal e combina portal com busca e estado", () => {
+  const portals = contract.buildPortalFilterOptions([
+    { key: "PPMT", label: "Portal Primeira Página" },
+    { key: "OMT", label: "O Mato-grossense" },
+    { key: "PPMT", label: "Portal Primeira Página" },
+  ]);
+
+  assert.deepEqual(portals, [
+    { value: "ALL", label: "Todos os portais" },
+    { value: "OMT", label: "O Mato-grossense" },
+    { value: "PPMT", label: "Portal Primeira Página" },
+  ]);
+  assert.equal(contract.campaignMatchesFilters({ portal: "PPMT", search: "CRIME AMBIENTAL 17048", states: "active ok" }, { portal: "PPMT", search: "17048", state: "ok" }), true);
+  assert.equal(contract.campaignMatchesFilters({ portal: "PPMT", search: "CRIME AMBIENTAL 17048", states: "active ok" }, { portal: "OMT", search: "17048", state: "ok" }), false);
+  assert.equal(contract.campaignMatchesFilters({ portal: "PPMT", search: "CRIME AMBIENTAL 17048", states: "active ok" }, { portal: "ALL", search: "DENGUE", state: "all" }), false);
+});
+
 test("gera report.json nao listado e chave estavel baseada nas evidencias aprovadas", () => {
   const report = contract.buildMonthlyReportManifest({
     slug: "adops-evidencias-agosto-2026",
