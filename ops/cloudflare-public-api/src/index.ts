@@ -2095,14 +2095,18 @@ export default {
       if (path === "/api/ops/jobs/print-batch") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
-        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
         const body = await readBody(request);
+        const siteId = readOptionalNumber(body.siteId);
+        const competencia = typeof body.competencia === "string" && body.competencia.trim() ? body.competencia.trim() : null;
+        const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
         const captureAt = typeof body.captureAt === "string" ? body.captureAt : null;
+        if (!siteId && !competencia) return badRequest("Informe siteId ou competencia para limitar o lote.");
+        if (body.date != null && !date) return badRequest("date deve estar no formato YYYY-MM-DD.");
         if (captureAt && !isCaptureAtInDailyWindow(captureAt)) return badCaptureAtWindow();
         const jobId = await createOpsJob(env, "print-batch", {
-          competencia: typeof body.competencia === "string" ? body.competencia : null,
-          siteId: typeof body.siteId === "number" ? body.siteId : null,
-          date: typeof body.date === "string" ? body.date : null,
+          competencia,
+          siteId,
+          date,
           captureAt,
           source: "cloudflare-protected-api",
         }, "ops-api");
@@ -2129,7 +2133,6 @@ export default {
       if (path === "/api/ops/jobs/print-backfill") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
-        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
         const body = await readBody(request);
         const insertionId = readOptionalNumber(body.insertionId);
         const campaignId = readOptionalNumber(body.campaignId);
@@ -2164,7 +2167,6 @@ export default {
       if (path === "/api/ops/jobs/print-single") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
-        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
         const body = await readBody(request);
         const insertionId = typeof body.insertionId === "number" ? body.insertionId : null;
         if (!insertionId) return badRequest("Informe insertionId para gerar o print individual.");
@@ -2888,7 +2890,6 @@ export default {
     }
 
     if (path === "/api/ops/jobs") {
-      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       const limit = Math.min(parseIntParam(url.searchParams.get("limit")) ?? 20, 100);
       const statuses = (url.searchParams.get("status") ?? "")
         .split(",")
@@ -2910,22 +2911,23 @@ export default {
     }
 
     if (path === "/api/ops/queue/overview") {
-      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       return jsonNoStore(await getQueueOverview(env));
     }
 
     const opsJobProgressMatch = path.match(/^\/api\/ops\/jobs\/([^/]+)\/progress$/);
     if (opsJobProgressMatch) {
-      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       const job = await getOpsJob(env, opsJobProgressMatch[1]);
-      return job ? jsonNoStore(computeJobProgress(job)) : notFound("Job not found");
+      if (job) return jsonNoStore(computeJobProgress(job));
+      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+      return notFound("Job not found");
     }
 
     const opsJobMatch = path.match(/^\/api\/ops\/jobs\/([^/]+)$/);
     if (opsJobMatch) {
-      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       const job = await getOpsJob(env, opsJobMatch[1]);
-      return job ? jsonNoStore(job) : notFound("Job not found");
+      if (job) return jsonNoStore(job);
+      if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+      return notFound("Job not found");
     }
     const opsJobLogMatch = path.match(/^\/api\/ops\/jobs\/([^/]+)\/log$/);
     if (opsJobLogMatch) {

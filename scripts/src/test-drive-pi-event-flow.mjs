@@ -128,18 +128,25 @@ await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
   return { ok: true };
 });
 
-await check("worker-encaminha-fila-de-prints-para-api-canonica", async () => {
+await check("worker-mantem-fila-de-prints-no-d1-consumido-pelos-runners", async () => {
   const source = read(workerSourcePath);
   for (const route of ["print-batch", "print-backfill", "print-single"]) {
     const marker = `if (path === "/api/ops/jobs/${route}")`;
     const start = source.indexOf(marker);
     assert(start >= 0, `Worker sem rota ${route}`);
-    const block = source.slice(start, start + 420);
+    const nextRoute = source.indexOf('\n      if (path === "/api/ops/jobs/', start + marker.length);
+    const block = source.slice(start, nextRoute >= 0 ? nextRoute : start + 1800);
     assertIncludes(block, [
       "requireOpsAuth(request, env)",
-      "privateApiEnabled(env)",
-      "proxyToPrivateApi(request, env, url, { noStore: true })",
-    ], `Proxy canônico ${route}`);
+      "createOpsJob(env",
+    ], `Fila D1 ${route}`);
+    assert(!block.includes("proxyToPrivateApi"), `${route} não pode gravar no PostgreSQL quando o runner consulta D1`);
+    if (route === "print-batch") {
+      assertIncludes(block, [
+        "Informe siteId ou competencia para limitar o lote.",
+        "date deve estar no formato YYYY-MM-DD.",
+      ], "Validação do print-batch");
+    }
   }
   assertIncludes(source, [
     'if (path === "/api/ops/jobs")',
@@ -149,6 +156,23 @@ await check("worker-encaminha-fila-de-prints-para-api-canonica", async () => {
     'request.headers.get("authorization")',
     'headers.set("authorization", authorization)',
   ], "Consultas da fila canônica");
+
+  for (const [marker, endMarker] of [
+    ['if (path === "/api/ops/jobs")', 'if (path === "/api/ops/queue/overview")'],
+    ['if (path === "/api/ops/queue/overview")', "const opsJobProgressMatch"],
+  ]) {
+    const start = source.indexOf(marker);
+    const nextBlock = source.indexOf(endMarker, start + marker.length);
+    const block = source.slice(start, nextBlock >= 0 ? nextBlock : start + 1200);
+    assert(!block.includes("proxyToPrivateApi"), `${marker} deve listar a fila D1 consumida pelos runners`);
+  }
+
+  for (const marker of ["const opsJobProgressMatch", "const opsJobMatch"]) {
+    const start = source.indexOf(marker);
+    const nextBlock = source.indexOf("\n    const ", start + marker.length);
+    const block = source.slice(start, nextBlock >= 0 ? nextBlock : start + 900);
+    assert(block.indexOf("getOpsJob(env") < block.indexOf("proxyToPrivateApi"), `${marker} deve consultar D1 antes do fallback privado`);
+  }
   return { ok: true };
 });
 
