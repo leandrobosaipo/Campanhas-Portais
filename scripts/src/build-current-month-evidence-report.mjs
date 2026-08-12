@@ -10,6 +10,7 @@ import {
   buildAtomicPublishCommand,
   buildCampaignExportIdempotencyKey,
   buildMonthlyPublicationGate,
+  buildPiSiteExportDownloadUrl,
   buildMonthlyReportManifest,
   buildSevenDayForecast,
   classifyEvidenceStatus,
@@ -499,7 +500,7 @@ async function materializeCampaignExports(items) {
       job = await api(`/api/pi-site-exports/jobs/${encodeURIComponent(created.jobId)}`);
     }
     if (job.status !== "completed") throw new Error(`Timeout na exportação ${group.piCodigo}/${group.siteSigla}.`);
-    results.set(group.key, `${deliveryApiBase}/api/pi-site-exports/jobs/${encodeURIComponent(created.jobId)}/download`);
+    results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
   }
   return results;
 }

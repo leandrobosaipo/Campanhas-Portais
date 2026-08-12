@@ -92,6 +92,13 @@ test("download faz probe GET quando a rota nao implementa HEAD", () => {
   assert.equal(contract.shouldFallbackDeliveryProbe(409), false);
 });
 
+test("ZIP usa a mesma API publica que possui o job de exportacao", () => {
+  assert.equal(
+    contract.buildPiSiteExportDownloadUrl("https://worker.example/api/", "job id"),
+    "https://worker.example/api/pi-site-exports/jobs/job%20id/download",
+  );
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

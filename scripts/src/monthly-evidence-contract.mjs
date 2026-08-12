@@ -6,6 +6,11 @@ export function shouldFallbackDeliveryProbe(status) {
   return status === 404 || status === 405;
 }
 
+export function buildPiSiteExportDownloadUrl(baseUrl, jobId) {
+  const base = String(baseUrl || "").replace(/\/$/, "").replace(/\/api$/, "");
+  return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
+}
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);
