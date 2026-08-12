@@ -1272,6 +1272,9 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
     totalInsertions: insertions.length,
     insertionIds: insertions.map((item) => item.id),
     operationalInsertionIds: operational.map((item) => item.insertion.id),
+    evidenceInsertionIds: descriptors
+      .filter((item) => item.operational && item.evidenceCount > 0)
+      .map((item) => item.insertion.id),
     label: `PI ${resolvedPi} · ${resolvedSiteSigla} · ${pluralizeInsertion(insertions.length)}`,
     downloadUrl: exportable.length
       ? `/api/pi-site-exports?piCodigo=${encodeURIComponent(resolvedPi)}&siteSigla=${encodeURIComponent(resolvedSiteSigla)}&download=1`

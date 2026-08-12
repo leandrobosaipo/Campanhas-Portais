@@ -14,5 +14,9 @@ assert(
   runner.includes("descriptor?.exportableInsertionIds"),
   "pi-site-export deve excluir inserções sem artefatos auditados antes de gerar o ZIP",
 );
+assert(
+  runner.includes('mode === "full"') && runner.includes("descriptor?.evidenceInsertionIds"),
+  "prints-only e PDF devem usar somente inserções que possuem evidências",
+);
 
 console.log(JSON.stringify({ ok: true, generalRunnerOwnsPrintSingle: false, dedicatedRunnerOwnsPrintSingle: true, dedicatedRunnerProvidesExportFailover: true }));
