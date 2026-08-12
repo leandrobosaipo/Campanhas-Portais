@@ -17,6 +17,7 @@ test("materializador completo exige token e jobs publicos sao encaminhados ao Wo
   assert.match(routes, /proxyCampaignEvidenceWorkerRequest/);
   assert.doesNotMatch(routes, /createLocalCampaignEvidenceExportJob/);
   assert.match(app, /req\.path\.startsWith\("\/internal\/"\)/);
+  assert.match(app, /publicAsyncCampaignExportPost/);
   assert.match(app, /internal_api_token_not_configured/);
   assert.match(worker, /path\.startsWith\("\/api\/internal\/"\)/);
   assert.match(worker, /privateApiGetJson\(env, "\/api\/internal\/campaign-evidence-exports"/);
