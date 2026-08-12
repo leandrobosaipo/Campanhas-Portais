@@ -283,6 +283,13 @@ services:
       OPS_JOB_KINDS: print-single,pi-site-export
       RUNNER_ID: runner-print-single
       ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION: "1"
+      DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:-}
+      DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:-}
+      DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
+      DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
+      ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
+      ADOPS_EXPORT_BUCKET: ${ADOPS_EXPORT_BUCKET:-cod5}
+      ADOPS_EXPORT_BASE_PATH: ${ADOPS_EXPORT_BASE_PATH:-adops-exports}
     volumes:
       - adops_app_source:/app
       - adops_runner_state:/var/lib/adops
