@@ -1111,6 +1111,27 @@ export const ExportPiSitePackageVariant = {
 
 export type ExportPiSitePackage200One = { [key: string]: unknown };
 
+export type CreateCampaignEvidenceExportJobBody = {
+  piCodigo: string;
+  competencia: string;
+  mode?: "prints-only";
+  variant?: "web";
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreateCampaignEvidenceExportJob202 = { [key: string]: unknown };
+
+export type GetCampaignEvidenceExportJob200 = { [key: string]: unknown };
+
 export type DownloadInsertionEvidenceParams = {
   variant?: DownloadInsertionEvidenceVariant;
   imageMaxWidth?: DownloadInsertionEvidenceImageMaxWidth;

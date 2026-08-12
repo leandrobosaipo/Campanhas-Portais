@@ -828,6 +828,101 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /campaign-evidence-exports/jobs:
+    post:
+      operationId: createCampaignEvidenceExportJob
+      tags: [evidences]
+      summary: Queue the complete audited JPEG package for a campaign across every portal
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 160
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [piCodigo, competencia]
+              properties:
+                piCodigo:
+                  type: string
+                competencia:
+                  type: string
+                mode:
+                  type: string
+                  const: prints-only
+                  default: prints-only
+                variant:
+                  type: string
+                  const: web
+                  default: web
+                imageMaxWidth:
+                  type: integer
+                  minimum: 800
+                  maximum: 2560
+                  default: 1600
+                imageQuality:
+                  type: integer
+                  minimum: 45
+                  maximum: 90
+                  default: 72
+      responses:
+        "202":
+          description: Campaign evidence export queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "409":
+          description: Campaign identity is ambiguous or evidence coverage is incomplete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /campaign-evidence-exports/jobs/{jobId}:
+    get:
+      operationId: getCampaignEvidenceExportJob
+      tags: [evidences]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaign evidence export status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+
+  /campaign-evidence-exports/jobs/{jobId}/download:
+    get:
+      operationId: downloadCampaignEvidenceExport
+      tags: [evidences]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the immutable campaign ZIP
+        "409":
+          description: Export is not completed
         "404":
           description: PI/site not found
           content:

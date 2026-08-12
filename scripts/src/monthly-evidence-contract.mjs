@@ -52,6 +52,11 @@ export function buildPiSiteExportDownloadUrl(baseUrl, jobId) {
   return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
 }
 
+export function buildCampaignEvidenceExportDownloadUrl(baseUrl, jobId) {
+  const base = String(baseUrl || "").replace(/\/$/, "").replace(/\/api$/, "");
+  return `${base}/api/campaign-evidence-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
+}
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);

@@ -965,7 +965,7 @@ export const CreateEvidenceBody = zod.object({
 });
 
 /**
- * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized progressive JPEG copies; canonical evidence files and audit URLs are not changed.
  * @summary Export insertion evidence package
  */
 export const ExportInsertionEvidencesParams = zod.object({
@@ -1010,6 +1010,64 @@ export const ExportPiSitePackageResponse = zod.record(
   zod.string(),
   zod.unknown(),
 );
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const createCampaignEvidenceExportJobHeaderIdempotencyKeyMin = 8;
+export const createCampaignEvidenceExportJobHeaderIdempotencyKeyMax = 160;
+
+export const CreateCampaignEvidenceExportJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createCampaignEvidenceExportJobHeaderIdempotencyKeyMin)
+    .max(createCampaignEvidenceExportJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createCampaignEvidenceExportJobBodyModeDefault = `prints-only`;
+export const createCampaignEvidenceExportJobBodyVariantDefault = `web`;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthDefault = 1600;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthMin = 800;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthMax = 2560;
+
+export const createCampaignEvidenceExportJobBodyImageQualityDefault = 72;
+export const createCampaignEvidenceExportJobBodyImageQualityMin = 45;
+export const createCampaignEvidenceExportJobBodyImageQualityMax = 90;
+
+export const CreateCampaignEvidenceExportJobBody = zod.object({
+  piCodigo: zod.string(),
+  competencia: zod.string(),
+  mode: zod
+    .literal("prints-only")
+    .default(createCampaignEvidenceExportJobBodyModeDefault),
+  variant: zod
+    .literal("web")
+    .default(createCampaignEvidenceExportJobBodyVariantDefault),
+  imageMaxWidth: zod
+    .number()
+    .min(createCampaignEvidenceExportJobBodyImageMaxWidthMin)
+    .max(createCampaignEvidenceExportJobBodyImageMaxWidthMax)
+    .default(createCampaignEvidenceExportJobBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createCampaignEvidenceExportJobBodyImageQualityMin)
+    .max(createCampaignEvidenceExportJobBodyImageQualityMax)
+    .default(createCampaignEvidenceExportJobBodyImageQualityDefault),
+});
+
+export const GetCampaignEvidenceExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const GetCampaignEvidenceExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+export const DownloadCampaignEvidenceExportParams = zod.object({
+  jobId: zod.coerce.string(),
+});
 
 /**
  * @summary Download one approved canonical evidence as a progressive web JPEG

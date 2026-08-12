@@ -29,6 +29,8 @@ import type {
   CompetenciaBreakdown,
   CreateAgencyBody,
   CreateCampaignBody,
+  CreateCampaignEvidenceExportJob202,
+  CreateCampaignEvidenceExportJobBody,
   CreateClientBody,
   CreateEvidenceBody,
   CreateInsertionBody,
@@ -43,6 +45,7 @@ import type {
   ExportPiSitePackageParams,
   GetActiveCampaignOperations200,
   GetActiveCampaignOperationsParams,
+  GetCampaignEvidenceExportJob200,
   GetCaptureProofStatusParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
@@ -2594,7 +2597,7 @@ export const useCreateEvidence = <
 };
 
 /**
- * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized progressive JPEG copies; canonical evidence files and audit URLs are not changed.
  * @summary Export insertion evidence package
  */
 export const getExportInsertionEvidencesUrl = (
@@ -2806,6 +2809,273 @@ export function useExportPiSitePackage<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getExportPiSitePackageQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const getCreateCampaignEvidenceExportJobUrl = () => {
+  return `/api/campaign-evidence-exports/jobs`;
+};
+
+export const createCampaignEvidenceExportJob = async (
+  createCampaignEvidenceExportJobBody: CreateCampaignEvidenceExportJobBody,
+  options?: RequestInit,
+): Promise<CreateCampaignEvidenceExportJob202> => {
+  return customFetch<CreateCampaignEvidenceExportJob202>(
+    getCreateCampaignEvidenceExportJobUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(createCampaignEvidenceExportJobBody),
+    },
+  );
+};
+
+export const getCreateCampaignEvidenceExportJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignEvidenceExportJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignEvidenceExportJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignEvidenceExportJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>
+>;
+export type CreateCampaignEvidenceExportJobMutationBody =
+  BodyType<CreateCampaignEvidenceExportJobBody>;
+export type CreateCampaignEvidenceExportJobMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const useCreateCampaignEvidenceExportJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignEvidenceExportJobMutationOptions(options),
+  );
+};
+
+export const getGetCampaignEvidenceExportJobUrl = (jobId: string) => {
+  return `/api/campaign-evidence-exports/jobs/${jobId}`;
+};
+
+export const getCampaignEvidenceExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<GetCampaignEvidenceExportJob200> => {
+  return customFetch<GetCampaignEvidenceExportJob200>(
+    getGetCampaignEvidenceExportJobUrl(jobId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCampaignEvidenceExportJobQueryKey = (jobId: string) => {
+  return [`/api/campaign-evidence-exports/jobs/${jobId}`] as const;
+};
+
+export const getGetCampaignEvidenceExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCampaignEvidenceExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>
+  > = ({ signal }) =>
+    getCampaignEvidenceExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCampaignEvidenceExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>
+>;
+export type GetCampaignEvidenceExportJobQueryError = ErrorType<void>;
+
+export function useGetCampaignEvidenceExportJob<
+  TData = Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCampaignEvidenceExportJobQueryOptions(
+    jobId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getDownloadCampaignEvidenceExportUrl = (jobId: string) => {
+  return `/api/campaign-evidence-exports/jobs/${jobId}/download`;
+};
+
+export const downloadCampaignEvidenceExport = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getDownloadCampaignEvidenceExportUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadCampaignEvidenceExportQueryKey = (jobId: string) => {
+  return [`/api/campaign-evidence-exports/jobs/${jobId}/download`] as const;
+};
+
+export const getDownloadCampaignEvidenceExportQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getDownloadCampaignEvidenceExportQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>
+  > = ({ signal }) =>
+    downloadCampaignEvidenceExport(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadCampaignEvidenceExportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>
+>;
+export type DownloadCampaignEvidenceExportQueryError =
+  ErrorType<void | ErrorResponse>;
+
+export function useDownloadCampaignEvidenceExport<
+  TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadCampaignEvidenceExportQueryOptions(
+    jobId,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

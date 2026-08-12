@@ -118,6 +118,13 @@ test("ZIP usa a mesma API publica que possui o job de exportacao", () => {
   );
 });
 
+test("download completo usa o job agregado por campanha", () => {
+  assert.equal(
+    contract.buildCampaignEvidenceExportDownloadUrl("https://worker.example/api/", "campaign job"),
+    "https://worker.example/api/campaign-evidence-exports/jobs/campaign%20job/download",
+  );
+});
+
 test("validador ZIP nao depende do binario unzip", () => {
   assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /zipfile\.ZipFile/);
   assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /SHA256SUMS\.txt/);

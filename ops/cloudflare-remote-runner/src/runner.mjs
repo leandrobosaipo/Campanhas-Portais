@@ -84,7 +84,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,evidence-monthly-report,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-evidence-export,evidence-monthly-report,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -5404,6 +5404,68 @@ async function executePiSiteExport(job) {
   };
 }
 
+async function executeCampaignEvidenceExport(job) {
+  const payload = job?.payload || {};
+  const piCodigo = normalizePiDigits(payload.piCodigo);
+  const competencia = String(payload.competencia || "").trim().toUpperCase();
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
+
+  const descriptorPath = `/api/campaign-evidence-exports?piCodigo=${encodeURIComponent(piCodigo)}&competencia=${encodeURIComponent(competencia)}`;
+  let descriptor = await privateApiGet(descriptorPath);
+  if (!Array.isArray(descriptor?.insertionIds) || descriptor.insertionIds.length === 0) {
+    throw new Error(`Nenhuma inserção canônica publicada encontrada para PI ${piCodigo} em ${competencia}.`);
+  }
+  await progressJob(job.id, { stage: "reauditando evidências da campanha", piCodigo, competencia, insertionIds: descriptor.insertionIds });
+  for (const insertionId of descriptor.insertionIds) {
+    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+    await ensureInsertionCaptureCoverage(insertion);
+  }
+  descriptor = await privateApiGet(descriptorPath);
+  if (descriptor?.readiness?.ready !== true) {
+    throw new Error(`Pacote completo bloqueado: ${JSON.stringify(descriptor?.readiness || {})}`);
+  }
+
+  await progressJob(job.id, { stage: "materializando ZIP completo da campanha", piCodigo, competencia, insertionIds: descriptor.insertionIds });
+  const params = new URLSearchParams({
+    piCodigo,
+    competencia,
+    download: "1",
+    imageMaxWidth: String(imageMaxWidth),
+    imageQuality: String(imageQuality),
+  });
+  const artifact = await privateApiDownload(`/api/campaign-evidence-exports?${params.toString()}`);
+  const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
+  const artifactObjectKey = [
+    ADOPS_EXPORT_BASE_PATH,
+    "campanhas",
+    slugifyPathPart(piCodigo),
+    slugifyPathPart(competencia),
+    slugifyPathPart(job.id),
+    artifactFileName,
+  ].join("/");
+  await uploadBufferToSpaces({ buffer: artifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: artifactObjectKey, contentType: "application/zip" });
+  const downloadUrl = `${spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET)}/${artifactObjectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+  return {
+    stage: "completed",
+    piCodigo,
+    competencia,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    insertionIds: descriptor.insertionIds,
+    siteSiglas: descriptor.siteSiglas,
+    evidenceCount: descriptor.evidenceCount,
+    downloadUrl,
+    artifactBytes: artifact.buffer.length,
+    artifactContentType: "application/zip",
+    artifactFileName,
+    artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+  };
+}
+
 async function handleJob(job) {
   const payload = job?.payload || {};
   if (!job?.kind) {
@@ -5444,6 +5506,9 @@ async function handleJob(job) {
   }
   if (job.kind === "pi-site-export") {
     return executePiSiteExport(job);
+  }
+  if (job.kind === "campaign-evidence-export") {
+    return executeCampaignEvidenceExport(job);
   }
   if (job.kind === "evidence-monthly-report") {
     return executeEvidenceMonthlyReport(job);

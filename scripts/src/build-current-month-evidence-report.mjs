@@ -10,6 +10,7 @@ import {
   buildAtomicPublishCommand,
   buildPortalFilterOptions,
   buildCampaignExportIdempotencyKey,
+  buildCampaignEvidenceExportDownloadUrl,
   buildMonthlyPublicationGate,
   buildPiSiteExportDownloadUrl,
   buildMonthlyReportManifest,
@@ -544,6 +545,48 @@ async function materializeCampaignExports(items) {
   return results;
 }
 
+async function materializeCompleteCampaignExports(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const piCodigo = String(item.piCodigo || "").replace(/\D/g, "");
+    if (!piCodigo || !item.competencia) continue;
+    const key = `${piCodigo}:${normalize(item.competencia)}`;
+    const group = groups.get(key) || { key, piCodigo, competencia: item.competencia, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+  const results = new Map();
+  for (const group of groups.values()) {
+    const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
+    const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
+    if (!required || evidenceDays.length !== required || process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") continue;
+    const created = await api("/api/campaign-evidence-exports/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        piCodigo: group.piCodigo,
+        competencia: group.competencia,
+        mode: "prints-only",
+        variant: "web",
+        imageMaxWidth: 1600,
+        imageQuality: 72,
+        requestedBy: "evidence-monthly-report",
+        source: "monthly-report",
+      }),
+      timeoutMs: 120_000,
+    });
+    const deadline = Date.now() + 30 * 60_000;
+    let job = created;
+    while (job.status !== "completed" && Date.now() < deadline) {
+      if (job.status === "failed") throw new Error(`Exportação completa da PI ${group.piCodigo} falhou.`);
+      await new Promise((resolve) => setTimeout(resolve, 8_000));
+      job = await api(`/api/campaign-evidence-exports/jobs/${encodeURIComponent(created.jobId)}`);
+    }
+    if (job.status !== "completed") throw new Error(`Timeout na exportação completa da PI ${group.piCodigo}.`);
+    results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
+  }
+  return results;
+}
+
 async function validateDeliveryUrl(url, label) {
   const response = await fetchDeliveryWithRetry(url, buildDeliveryProbeOptions(), 120_000);
   if (!response.ok) throw new Error(`${label} indisponível: HTTP ${response.status}.`);
@@ -659,12 +702,14 @@ function renderCampaign(campaign, portalKey) {
   ].filter(Boolean)))).join(" ");
   const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
+  const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
   return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
     <div class="campaign-head">
       <div>
         <h3>${escapeHtml(campaign.name)}</h3>
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
-        ${batchDownloadUrl ? linkButton(batchDownloadUrl, "baixar campanha em ZIP", "image") : ""}
+        ${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "baixar todos os prints", "image") : ""}
+        ${batchDownloadUrl ? linkButton(batchDownloadUrl, "ZIP deste portal", "image") : ""}
       </div>
       <div class="mini-stats">
         <b>${campaign.items.length}</b><span>ins.</span>
@@ -940,7 +985,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
           iconLink(day?.downloadUrl, 'baixar JPEG'),
-          iconLink(item.batchDownloadUrl, 'baixar campanha em ZIP'),
+          iconLink(item.completeCampaignDownloadUrl, 'baixar todos os prints'),
+          iconLink(item.batchDownloadUrl, 'ZIP deste portal'),
           iconLink(item.portalUrl, 'portal'),
           iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'adrotate ad' : 'adrotate grupo'),
           iconLink(item.mediaUrl, 'mídia'),
@@ -1096,8 +1142,11 @@ async function main() {
   });
 
   const exportLinks = await materializeCampaignExports(enriched);
+  const completeExportLinks = await materializeCompleteCampaignExports(enriched);
   for (const item of enriched) {
     item.batchDownloadUrl = exportLinks.get(`${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`) || "";
+    const completeKey = `${String(item.piCodigo || "").replace(/\D/g, "")}:${normalize(item.competencia)}`;
+    item.completeCampaignDownloadUrl = completeExportLinks.get(completeKey) || "";
   }
 
   const summary = {

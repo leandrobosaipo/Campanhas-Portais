@@ -7,9 +7,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "evidence-monthly-report" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "campaign-evidence-export" | "evidence-monthly-report" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "evidence-monthly-report", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "campaign-evidence-export", "evidence-monthly-report", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -597,6 +597,18 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha no pacote PI/site",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "campaign-evidence-export": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    queue_received: "Fila recebida",
+    running: "Gerando ZIP completo da campanha",
+    preparing: "Conferindo evidências",
+    compiling: "Montando ZIP por portal e formato",
+    upload_started: "Publicando pacote",
+    completed: "Pacote completo concluído",
+    failed: "Falha no pacote completo da campanha",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
   "evidence-monthly-report": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -919,6 +931,19 @@ async function proxyToPrivateApi(request: Request, env: Env, url: URL, options: 
   });
 }
 
+async function privateApiGetJson(env: Env, pathname: string, search: URLSearchParams) {
+  const base = env.PRIVATE_ADOPS_API_BASE_URL?.trim();
+  if (!base) return { response: json({ error: "private_api_unavailable" }, { status: 503 }), payload: null };
+  const target = `${base.replace(/\/$/, "")}${pathname}?${search.toString()}`;
+  const response = await fetch(target, {
+    method: "GET",
+    headers: { "x-adops-api-token": env.PRIVATE_ADOPS_API_TOKEN?.trim() ?? "" },
+  });
+  const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok) return { response: jsonNoStore(payload ?? { error: "private_api_error" }, { status: response.status }), payload: null };
+  return { response: null, payload };
+}
+
 function parseIntParam(value: string | null) {
   if (!value) return null;
   const parsed = Number.parseInt(value, 10);
@@ -939,7 +964,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "evidence-monthly-report" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -1452,6 +1477,41 @@ function piSiteExportJobFromOpsJob(job: ReturnType<typeof describeJob>) {
     analyticsPiStatus: execution.analyticsPiStatus ?? null,
     analyticsFullMonthStatus: execution.analyticsFullMonthStatus ?? null,
     downloadUrl: typeof execution.downloadUrl === "string" ? execution.downloadUrl : null,
+    error: job.error ?? null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    result: job.result,
+  };
+}
+
+async function getCampaignEvidenceExportJob(env: Env, id: string) {
+  const item = await env.adops_ops
+    .prepare(`SELECT * FROM ops_jobs WHERE id = ? AND kind = 'campaign-evidence-export' LIMIT 1`)
+    .bind(id)
+    .first<OpsJobRecord>();
+  return item ? describeJob(item) : null;
+}
+
+function campaignEvidenceExportJobFromOpsJob(job: ReturnType<typeof describeJob>) {
+  const payload = (job.payload ?? {}) as Record<string, unknown>;
+  const result = (job.result ?? {}) as Record<string, unknown>;
+  const execution = ((result.execution ?? result) || {}) as Record<string, unknown>;
+  return {
+    id: job.id,
+    jobId: job.id,
+    kind: "campaign-evidence-export",
+    status: job.status,
+    stage: typeof execution.stage === "string" ? execution.stage : null,
+    piCodigo: typeof payload.piCodigo === "string" ? payload.piCodigo : null,
+    competencia: typeof payload.competencia === "string" ? payload.competencia : null,
+    mode: "prints-only",
+    variant: "web",
+    insertionIds: Array.isArray(execution.insertionIds) ? execution.insertionIds : [],
+    siteSiglas: Array.isArray(execution.siteSiglas) ? execution.siteSiglas : [],
+    evidenceCount: typeof execution.evidenceCount === "number" ? execution.evidenceCount : null,
+    downloadUrl: typeof execution.downloadUrl === "string" ? execution.downloadUrl : null,
+    artifactBytes: typeof execution.artifactBytes === "number" ? execution.artifactBytes : null,
+    artifactSha256: typeof execution.artifactSha256 === "string" ? execution.artifactSha256 : null,
     error: job.error ?? null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -1991,7 +2051,7 @@ export default {
         );
       }
 
-      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
+      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         if (privateApiEnabled(env)) {
@@ -2450,6 +2510,53 @@ export default {
         }, { status: created.duplicate ? 200 : 202 });
       }
 
+      if (path === "/api/campaign-evidence-exports/jobs") {
+        const body = await readBody(request);
+        const piCodigo = String(body.piCodigo || "").replace(/\D/g, "");
+        const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
+        if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
+        if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");
+        if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
+        const descriptorResult = await privateApiGetJson(env, "/api/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
+        if (descriptorResult.response) return descriptorResult.response;
+        const descriptor = descriptorResult.payload!;
+        const readiness = descriptor.readiness as Record<string, unknown> | undefined;
+        if (readiness?.ready !== true) {
+          return jsonNoStore({ error: "campaign_evidence_incomplete", details: "Há evidências ausentes, inválidas ou inacessíveis.", ...descriptor }, { status: 409 });
+        }
+        const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(body.imageMaxWidth || "1600"), 10) || 1600));
+        const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(body.imageQuality || "72"), 10) || 72));
+        const evidenceFingerprint = Array.isArray(descriptor.evidences) ? descriptor.evidences : [];
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ piCodigo, competencia, evidences: evidenceFingerprint })));
+        const idempotencyKey = `campaign-evidence-v1-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+        const created = await createIdempotentOpsJob(env, "campaign-evidence-export", {
+          piCodigo,
+          competencia,
+          mode: "prints-only",
+          variant: "web",
+          imageMaxWidth,
+          imageQuality,
+          requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
+          source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
+        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey);
+        return jsonNoStore({
+          ok: true,
+          jobId: created.jobId,
+          kind: "campaign-evidence-export",
+          status: created.status,
+          duplicate: created.duplicate,
+          piCodigo,
+          competencia,
+          mode: "prints-only",
+          variant: "web",
+          imageMaxWidth,
+          imageQuality,
+          insertionIds: descriptor.insertionIds,
+          siteSiglas: descriptor.siteSiglas,
+          evidenceCount: descriptor.evidenceCount,
+        }, { status: created.duplicate ? 200 : 202 });
+      }
+
       if (path === "/api/insertions/capture-proof/backfill-overdue/jobs") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
@@ -2644,6 +2751,7 @@ export default {
       path !== "/api/healthz" &&
       !analyticsRoute &&
       !/^\/api\/pi-site-exports\/jobs\/[^/]+(?:\/download)?$/.test(path) &&
+      !/^\/api\/campaign-evidence-exports\/jobs\/[^/]+(?:\/download)?$/.test(path) &&
       !/^\/api\/insertions\/capture-proof\/backfill-overdue\/jobs\/[^/]+$/.test(path) &&
       privateApiEnabled(env)
     ) {
@@ -2744,6 +2852,24 @@ export default {
           details: "O pacote PI/site ainda não terminou de ser montado.",
           job: payload,
         }, { status: 409 });
+      }
+      return Response.redirect(payload.downloadUrl, 302);
+    }
+
+    const campaignEvidenceJobMatch = path.match(/^\/api\/campaign-evidence-exports\/jobs\/([^/]+)$/);
+    if (campaignEvidenceJobMatch) {
+      const job = await getCampaignEvidenceExportJob(env, campaignEvidenceJobMatch[1]);
+      if (!job) return notFound("Campaign evidence export job not found");
+      return jsonNoStore(campaignEvidenceExportJobFromOpsJob(job));
+    }
+
+    const campaignEvidenceDownloadMatch = path.match(/^\/api\/campaign-evidence-exports\/jobs\/([^/]+)\/download$/);
+    if (campaignEvidenceDownloadMatch) {
+      const job = await getCampaignEvidenceExportJob(env, campaignEvidenceDownloadMatch[1]);
+      if (!job) return notFound("Campaign evidence export job not found");
+      const payload = campaignEvidenceExportJobFromOpsJob(job);
+      if (payload.status !== "completed" || !payload.downloadUrl) {
+        return jsonNoStore({ error: "export_not_ready", details: "O pacote completo da campanha ainda não terminou.", job: payload }, { status: 409 });
       }
       return Response.redirect(payload.downloadUrl, 302);
     }
