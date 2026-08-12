@@ -92,6 +92,10 @@ for (const source of [sheetSync, currentSheetCampaigns]) {
   assert(source.includes("isSocialOnlyFormato"));
   assert(source.includes("INSTAGRAM|STORIES?|REELS?|SOCIAL|BONIFICACAO"));
 }
+assert(
+  sheetSync.includes('"LATERAL 02 — SIDEBAR — 300X250": "LATERAL 02"'),
+  "sync da planilha deve reconciliar o alias detalhado de LATERAL 02 sem recriar inserções",
+);
 for (const source of [publicApi, privateApi]) {
   assert(source.includes("/api/ops/jobs/drive-pi-publish") || source.includes("/ops/jobs/drive-pi-publish"));
   assert(source.includes("strictInsertionScope"));
