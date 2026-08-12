@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 
 export const MONTHLY_REPORT_SOURCE_TIMEOUT_MS = 120_000;
 
+export function shouldFallbackDeliveryProbe(status) {
+  return status === 404 || status === 405;
+}
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);
