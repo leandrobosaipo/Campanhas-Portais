@@ -24,6 +24,10 @@ assert(
   "prints-only e PDF devem usar somente inserções que possuem evidências",
 );
 assert(
+  runner.includes('if (mode !== "prints-only") {') && runner.includes('stage: "garantindo documentos operacionais"'),
+  "prints-only não deve esperar documentos ou Analytics opcionais",
+);
+assert(
   runner.includes('await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"]')
     && runner.includes('await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"]'),
   "job mensal deve usar o corepack disponível no runtime para executar pnpm",
