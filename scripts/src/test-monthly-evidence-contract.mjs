@@ -120,6 +120,10 @@ test("publicacao Portainer tolera a latencia observada sem remover timeout", () 
   assert.equal(contract.MONTHLY_REPORT_PORTAINER_TIMEOUT_MS, 60_000);
 });
 
+test("publicacao pode usar rota interna do Portainer", () => {
+  assert.equal(contract.resolveReportPortainerUrl({ ADOPS_REPORT_PORTAINER_URL: "http://portainer:9000", PORTAINER_URL: "https://public.example" }), "http://portainer:9000");
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

@@ -117,6 +117,7 @@ services:
       CAMPANHAS_PORTAIS_ROOT: /app
       ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
       PORTAINER_URL: ${PORTAINER_URL:-}
+      ADOPS_REPORT_PORTAINER_URL: http://portainer:9000
       PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-3}
       ADOPS_PERRENGUE_ADROTATE_EXEC_MODE: ${ADOPS_PERRENGUE_ADROTATE_EXEC_MODE:-portainer}
@@ -172,6 +173,7 @@ services:
       - adops_ssh:/root/.ssh:ro
     networks:
       - adops_internal
+      - portainer_bridge
 
   adops-drive-pi-monitor:
     image: mcr.microsoft.com/playwright:v1.59.1-noble
@@ -338,3 +340,6 @@ networks:
     name: adops_internal
   adops_public:
     name: adops_public
+  portainer_bridge:
+    external: true
+    name: bridge

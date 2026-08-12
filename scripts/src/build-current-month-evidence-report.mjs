@@ -22,6 +22,7 @@ import {
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
   takeDeliverySamples,
+  resolveReportPortainerUrl,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -244,8 +245,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
 
 async function portainer(method, apiPath, body, rawBody, rawHeaders = {}) {
   const env = { ...parseEnvFile(portainerEnvFile), ...process.env };
-  if (!env.PORTAINER_URL || !env.PORTAINER_API_KEY) throw new Error("PORTAINER_URL ou PORTAINER_API_KEY ausente.");
-  const url = `${env.PORTAINER_URL.replace(/\/$/, "")}${apiPath}`;
+  const portainerUrl = resolveReportPortainerUrl(env);
+  if (!portainerUrl || !env.PORTAINER_API_KEY) throw new Error("PORTAINER_URL ou PORTAINER_API_KEY ausente.");
+  const url = `${portainerUrl}${apiPath}`;
   let response;
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
