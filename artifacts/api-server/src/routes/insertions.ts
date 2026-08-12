@@ -2968,7 +2968,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   }
 
   const insertions = await listPiSiteInsertions(descriptor.piCodigo, descriptor.siteSigla);
-  const exportableInsertionIds = new Set(descriptor.exportableInsertionIds);
+  const selectedInsertionIds = exportOptions.mode === "full" ? descriptor.exportableInsertionIds : descriptor.evidenceInsertionIds;
+  const exportableInsertionIds = new Set(selectedInsertionIds);
   const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
 
