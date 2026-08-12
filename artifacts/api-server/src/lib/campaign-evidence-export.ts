@@ -31,8 +31,6 @@ export function selectCampaignEvidenceInsertions<T extends {
     normalizePi(item.piCodigo) === identity.piCodigo
     && normalizeCompetencia(item.competencia) === identity.competencia
     && String(item.statusNormalizado || "").trim().toLowerCase() !== "cancelado"
-    && item.bannerPublicadoNoSite === true
-    && Boolean(String(item.mediaUrl || "").trim())
   ));
 }
 
@@ -42,13 +40,18 @@ export type CampaignEvidenceReadinessItem = {
   evidenceDates: string[];
   invalidDates: string[];
   inaccessibleDates: string[];
+  published?: boolean;
+  hasMedia?: boolean;
 };
 
 export function validateCampaignEvidenceReadiness(items: CampaignEvidenceReadinessItem[]) {
   const missingDates: Array<{ insertionId: number; date: string }> = [];
   const invalidDates: Array<{ insertionId: number; date: string }> = [];
   const inaccessibleDates: Array<{ insertionId: number; date: string }> = [];
+  const operationalBlockers: Array<{ insertionId: number; reason: string }> = [];
   for (const item of items || []) {
+    if (item.published === false) operationalBlockers.push({ insertionId: item.insertionId, reason: "not_published" });
+    if (item.hasMedia === false) operationalBlockers.push({ insertionId: item.insertionId, reason: "missing_media" });
     const evidenceDates = new Set(item.evidenceDates || []);
     for (const date of item.requiredDates || []) {
       if (!evidenceDates.has(date)) missingDates.push({ insertionId: item.insertionId, date });
@@ -57,16 +60,19 @@ export function validateCampaignEvidenceReadiness(items: CampaignEvidenceReadine
     inaccessibleDates.push(...(item.inaccessibleDates || []).map((date) => ({ insertionId: item.insertionId, date })));
   }
   return {
-    ready: missingDates.length === 0 && invalidDates.length === 0 && inaccessibleDates.length === 0,
+    ready: missingDates.length === 0 && invalidDates.length === 0 && inaccessibleDates.length === 0 && operationalBlockers.length === 0,
     missingDates,
     invalidDates,
     inaccessibleDates,
+    operationalBlockers,
   };
 }
 
 export function buildCampaignEvidenceExportIdempotencyKey(input: {
   piCodigo: string;
   competencia: string;
+  imageMaxWidth: number;
+  imageQuality: number;
   evidences: Array<{ insertionId: number; evidenceId: number; portal: string; date: string }>;
 }) {
   const identity = parseCampaignEvidenceIdentity(input);
@@ -81,6 +87,8 @@ export function buildCampaignEvidenceExportIdempotencyKey(input: {
     || left.insertionId - right.insertionId
     || left.evidenceId - right.evidenceId
   ));
-  const digest = crypto.createHash("sha256").update(JSON.stringify({ ...identity, evidences })).digest("hex");
+  const imageMaxWidth = Number(input.imageMaxWidth);
+  const imageQuality = Number(input.imageQuality);
+  const digest = crypto.createHash("sha256").update(JSON.stringify({ ...identity, imageMaxWidth, imageQuality, variant: "web", mode: "prints-only", evidences })).digest("hex");
   return `campaign-evidence-v1-${digest}`;
 }

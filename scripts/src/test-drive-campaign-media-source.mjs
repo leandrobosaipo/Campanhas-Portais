@@ -14,8 +14,9 @@ assert.equal(build.status, 0, build.stderr || build.stdout);
 const source = await import(pathToFileURL(outputPath));
 after(() => rm(buildDir, { recursive: true, force: true }));
 
-test("snapshot atual vence cache legado mesmo quando o modo de ambiente esta ausente", () => {
-  assert.equal(source.selectDriveInventorySource({ snapshotItems: 451, refreshDrive: false, directCredentials: false }), "snapshot");
-  assert.equal(source.selectDriveInventorySource({ snapshotItems: 0, refreshDrive: true, directCredentials: true }), "live");
-  assert.equal(source.selectDriveInventorySource({ snapshotItems: 0, refreshDrive: false, directCredentials: false }), "cache");
+test("somente snapshot fresco vence cache legado", () => {
+  assert.equal(source.selectDriveInventorySource({ snapshotItems: 451, snapshotFresh: true, refreshDrive: false, directCredentials: false }), "snapshot");
+  assert.equal(source.selectDriveInventorySource({ snapshotItems: 451, snapshotFresh: false, refreshDrive: true, directCredentials: true }), "live");
+  assert.equal(source.selectDriveInventorySource({ snapshotItems: 451, snapshotFresh: false, refreshDrive: false, directCredentials: false }), "cache");
+  assert.equal(source.selectDriveInventorySource({ snapshotItems: 0, snapshotFresh: false, refreshDrive: true, directCredentials: true }), "live");
 });

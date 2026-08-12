@@ -26,6 +26,7 @@ export * from "./clientBreakdown";
 export * from "./competenciaBreakdown";
 export * from "./createAgencyBody";
 export * from "./createCampaignBody";
+export * from "./createCampaignEvidenceExportJob200";
 export * from "./createCampaignEvidenceExportJob202";
 export * from "./createCampaignEvidenceExportJobBody";
 export * from "./createClientBody";

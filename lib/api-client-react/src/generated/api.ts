@@ -29,6 +29,7 @@ import type {
   CompetenciaBreakdown,
   CreateAgencyBody,
   CreateCampaignBody,
+  CreateCampaignEvidenceExportJob200,
   CreateCampaignEvidenceExportJob202,
   CreateCampaignEvidenceExportJobBody,
   CreateClientBody,
@@ -2827,16 +2828,17 @@ export const getCreateCampaignEvidenceExportJobUrl = () => {
 export const createCampaignEvidenceExportJob = async (
   createCampaignEvidenceExportJobBody: CreateCampaignEvidenceExportJobBody,
   options?: RequestInit,
-): Promise<CreateCampaignEvidenceExportJob202> => {
-  return customFetch<CreateCampaignEvidenceExportJob202>(
-    getCreateCampaignEvidenceExportJobUrl(),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(createCampaignEvidenceExportJobBody),
-    },
-  );
+): Promise<
+  CreateCampaignEvidenceExportJob200 | CreateCampaignEvidenceExportJob202
+> => {
+  return customFetch<
+    CreateCampaignEvidenceExportJob200 | CreateCampaignEvidenceExportJob202
+  >(getCreateCampaignEvidenceExportJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCampaignEvidenceExportJobBody),
+  });
 };
 
 export const getCreateCampaignEvidenceExportJobMutationOptions = <
@@ -3018,7 +3020,7 @@ export const getDownloadCampaignEvidenceExportQueryKey = (jobId: string) => {
 
 export const getDownloadCampaignEvidenceExportQueryOptions = <
   TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
-  TError = ErrorType<void | ErrorResponse>,
+  TError = ErrorType<void>,
 >(
   jobId: string,
   options?: {
@@ -3055,12 +3057,11 @@ export const getDownloadCampaignEvidenceExportQueryOptions = <
 export type DownloadCampaignEvidenceExportQueryResult = NonNullable<
   Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>
 >;
-export type DownloadCampaignEvidenceExportQueryError =
-  ErrorType<void | ErrorResponse>;
+export type DownloadCampaignEvidenceExportQueryError = ErrorType<void>;
 
 export function useDownloadCampaignEvidenceExport<
   TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
-  TError = ErrorType<void | ErrorResponse>,
+  TError = ErrorType<void>,
 >(
   jobId: string,
   options?: {

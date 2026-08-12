@@ -873,6 +873,13 @@ paths:
                   maximum: 90
                   default: 72
       responses:
+        "200":
+          description: Existing idempotent campaign evidence export returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         "202":
           description: Campaign evidence export queued
           content:
@@ -924,17 +931,7 @@ paths:
         "409":
           description: Export is not completed
         "404":
-          description: PI/site not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: One or more source images could not be prepared
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          description: Campaign evidence export job not found
 
   /insertions/{id}/evidences/{date}/download:
     get:

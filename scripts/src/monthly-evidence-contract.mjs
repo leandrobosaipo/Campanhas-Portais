@@ -11,6 +11,11 @@ with zipfile.ZipFile(archive) as package:
     checksum_names = [name for name in names if name == 'SHA256SUMS.txt' or name.endswith('/SHA256SUMS.txt')]
     if not images or len(checksum_names) != 1:
         raise SystemExit('missing images or SHA256SUMS.txt')
+    if len(sys.argv) > 2 and sys.argv[2] == 'complete':
+        if checksum_names != ['SHA256SUMS.txt']:
+            raise SystemExit('complete ZIP checksum must be at root')
+        if any(len(pathlib.PurePosixPath(name).parts) < 3 for name in images):
+            raise SystemExit('complete ZIP image must be organized by portal/format/date')
     if any(not name.lower().endswith(('.jpg', '.jpeg')) and name not in checksum_names for name in names):
         raise SystemExit('unexpected file in ZIP')
     if package.testzip() is not None:

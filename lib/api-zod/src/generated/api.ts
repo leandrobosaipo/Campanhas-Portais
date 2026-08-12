@@ -1056,6 +1056,11 @@ export const CreateCampaignEvidenceExportJobBody = zod.object({
     .default(createCampaignEvidenceExportJobBodyImageQualityDefault),
 });
 
+export const CreateCampaignEvidenceExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
 export const GetCampaignEvidenceExportJobParams = zod.object({
   jobId: zod.coerce.string(),
 });

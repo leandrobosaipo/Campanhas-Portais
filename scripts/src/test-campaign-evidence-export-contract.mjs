@@ -25,19 +25,19 @@ test("normaliza a identidade por PI e competencia sem aceitar campanha sem PI", 
   assert.throws(() => contract.parseCampaignEvidenceIdentity({ piCodigo: "PI - TCE", competencia: "AGOSTO/2026" }), /PI canônica/);
 });
 
-test("seleciona apenas insercoes publicadas da PI e competencia canonicas", () => {
+test("preserva insercoes canonicas sem omitir blockers de publicacao ou midia", () => {
   const selected = contract.selectCampaignEvidenceInsertions([
     { id: 1826, piCodigo: "17048", competencia: "AGOSTO/2026", statusNormalizado: "rascunho", bannerPublicadoNoSite: false, mediaUrl: null },
     { id: 1831, piCodigo: "PI 17048 - GOV", competencia: "AGOSTO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/banner.jpg" },
     { id: 1900, piCodigo: "17048", competencia: "JULHO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/old.jpg" },
   ], { piCodigo: "17048", competencia: "AGOSTO/2026" });
-  assert.deepEqual(selected.map((item) => item.id), [1831]);
+  assert.deepEqual(selected.map((item) => item.id), [1826, 1831]);
 });
 
 test("bloqueia pacote parcial, invalido ou com evidencia inacessivel", () => {
   assert.deepEqual(contract.validateCampaignEvidenceReadiness([
     { insertionId: 1831, requiredDates: ["2026-08-11", "2026-08-12"], evidenceDates: ["2026-08-11"], invalidDates: [], inaccessibleDates: [] },
-  ]), { ready: false, missingDates: [{ insertionId: 1831, date: "2026-08-12" }], invalidDates: [], inaccessibleDates: [] });
+  ]), { ready: false, missingDates: [{ insertionId: 1831, date: "2026-08-12" }], invalidDates: [], inaccessibleDates: [], operationalBlockers: [] });
   assert.equal(contract.validateCampaignEvidenceReadiness([
     { insertionId: 1831, requiredDates: ["2026-08-12"], evidenceDates: ["2026-08-12"], invalidDates: [], inaccessibleDates: [] },
   ]).ready, true);
@@ -47,6 +47,8 @@ test("chave idempotente e estavel para evidencias aprovadas em varios portais", 
   const left = contract.buildCampaignEvidenceExportIdempotencyKey({
     piCodigo: "17048",
     competencia: "AGOSTO/2026",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
     evidences: [
       { insertionId: 2, evidenceId: 20, portal: "OMT", date: "2026-08-12" },
       { insertionId: 1, evidenceId: 10, portal: "PPMT", date: "2026-08-11" },
@@ -55,6 +57,8 @@ test("chave idempotente e estavel para evidencias aprovadas em varios portais", 
   const right = contract.buildCampaignEvidenceExportIdempotencyKey({
     piCodigo: "PI 17048",
     competencia: "agosto/2026",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
     evidences: [
       { insertionId: 1, evidenceId: 10, portal: "ppmt", date: "2026-08-11" },
       { insertionId: 2, evidenceId: 20, portal: "omt", date: "2026-08-12" },
@@ -62,4 +66,14 @@ test("chave idempotente e estavel para evidencias aprovadas em varios portais", 
   });
   assert.equal(left, right);
   assert.match(left, /^campaign-evidence-v1-[a-f0-9]{64}$/);
+  assert.notEqual(left, contract.buildCampaignEvidenceExportIdempotencyKey({
+    piCodigo: "17048",
+    competencia: "AGOSTO/2026",
+    imageMaxWidth: 1200,
+    imageQuality: 60,
+    evidences: [
+      { insertionId: 1, evidenceId: 10, portal: "PPMT", date: "2026-08-11" },
+      { insertionId: 2, evidenceId: 20, portal: "OMT", date: "2026-08-12" },
+    ],
+  }));
 });

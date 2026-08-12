@@ -1128,6 +1128,8 @@ export type CreateCampaignEvidenceExportJobBody = {
   imageQuality?: number;
 };
 
+export type CreateCampaignEvidenceExportJob200 = { [key: string]: unknown };
+
 export type CreateCampaignEvidenceExportJob202 = { [key: string]: unknown };
 
 export type GetCampaignEvidenceExportJob200 = { [key: string]: unknown };

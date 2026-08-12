@@ -67,9 +67,9 @@ import {
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
+import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
 import {
-  buildCampaignEvidenceExportIdempotencyKey,
   CampaignEvidenceExportConflict,
   parseCampaignEvidenceIdentity,
   selectCampaignEvidenceInsertions,
@@ -646,64 +646,6 @@ async function getLocalPiSiteExportJob(jobId: string) {
     stage: typeof artifactResult?.stage === "string" ? artifactResult.stage : row.status,
     piCodigo: payload?.piCodigo ?? null,
     siteSigla: payload?.siteSigla ?? null,
-    mode: payload?.mode ?? null,
-    variant: payload?.variant ?? null,
-    downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
-    artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
-    artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
-    artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
-    error: row.error_text,
-    runnerId: row.runner_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    result: jobResult,
-  };
-}
-
-async function createLocalCampaignEvidenceExportJob(options: {
-  payload: Record<string, unknown>;
-  requestedBy: string;
-  idempotencyKey: string;
-}) {
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status FROM ops_jobs
-      WHERE kind = 'campaign-evidence-export'
-        AND payload_json::jsonb ->> 'idempotencyKey' = $1
-      ORDER BY created_at DESC LIMIT 1`,
-    [options.idempotencyKey],
-  );
-  if (existing.rows[0]) return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
-  const jobId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  await pool.query(
-    `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
-     VALUES ($1, 'campaign-evidence-export', 'ready_for_runner', $2, NULL, NULL, $3, NULL, $4, $5)`,
-    [jobId, JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }), options.requestedBy, now, now],
-  );
-  return { jobId, status: "ready_for_runner", duplicate: false };
-}
-
-async function getLocalCampaignEvidenceExportJob(jobId: string) {
-  const result = await pool.query<PiSiteExportOpsJobRow>(
-    "SELECT * FROM ops_jobs WHERE id = $1 AND kind = 'campaign-evidence-export' LIMIT 1",
-    [jobId],
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  const payload = parseJobJson(row.payload_json);
-  const jobResult = parseJobJson(row.result_json);
-  const execution = jobResult?.execution && typeof jobResult.execution === "object" && !Array.isArray(jobResult.execution)
-    ? jobResult.execution as Record<string, unknown>
-    : null;
-  const artifactResult = execution ?? jobResult;
-  return {
-    id: row.id,
-    jobId: row.id,
-    kind: row.kind,
-    status: row.status,
-    stage: typeof artifactResult?.stage === "string" ? artifactResult.stage : row.status,
-    piCodigo: payload?.piCodigo ?? null,
-    competencia: payload?.competencia ?? null,
     mode: payload?.mode ?? null,
     variant: payload?.variant ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
@@ -1353,9 +1295,22 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
   const identity = parseCampaignEvidenceIdentity({ piCodigo, competencia });
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
+  const candidates = selectCampaignEvidenceInsertions(enriched, identity);
+  const candidateById = new Map(candidates.map((item) => [item.id, item]));
+  const operations = await getActiveCampaignOperations({ includeEvidence: true });
+  const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
+    String(item.piCodigo ?? "").replace(/\D/g, "") === identity.piCodigo
+    && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
+  ));
+  const canonicalIds = new Set(matchingOperations.map((item) => item.adops.insertionId).filter((id): id is number => Number.isFinite(id)));
+  const requiredDatesByInsertion = new Map(operations.items
+    .filter((item) => Number.isFinite(item.adops.insertionId))
+    .map((item) => [Number(item.adops.insertionId), item.evidence.requiredDates]));
   return {
     identity,
-    insertions: selectCampaignEvidenceInsertions(enriched, identity).sort((left, right) => (
+    operations: matchingOperations,
+    requiredDatesByInsertion,
+    insertions: candidates.filter((item) => canonicalIds.has(item.id)).sort((left, right) => (
       String(left.siteSigla || "").localeCompare(String(right.siteSigla || ""))
       || String(left.periodoInicio || "").localeCompare(String(right.periodoInicio || ""))
       || left.id - right.id
@@ -1364,16 +1319,12 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
 }
 
 async function describeCampaignEvidenceExport(piCodigo: string, competencia: string) {
-  const { identity, insertions } = await listCampaignEvidenceInsertions(piCodigo, competencia);
-  if (!insertions.length) return null;
-  const today = formatIsoDate(new Date());
+  const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia);
+  if (!operations.length) return null;
   const evidenceDescriptors = [];
   for (const insertion of insertions) {
     const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
-    const requiredEnd = insertion.periodoFim && insertion.periodoFim < today ? insertion.periodoFim : today;
-    const requiredDates = insertion.periodoInicio && insertion.periodoInicio <= requiredEnd
-      ? eachIsoDay(parseDateOnly(insertion.periodoInicio)!, parseDateOnly(requiredEnd)!)
-      : [];
+    const requiredDates = requiredDatesByInsertion.get(insertion.id) ?? [];
     const statuses = await Promise.all(requiredDates.map((date) => resolveEvidenceAuditStatus(insertion, date, evidenceRows)));
     const approved = statuses.filter((status) => status.status === "ok" || status.status === "ok_best_effort");
     evidenceDescriptors.push({
@@ -1383,6 +1334,8 @@ async function describeCampaignEvidenceExport(piCodigo: string, competencia: str
       evidenceDates: approved.map((status) => status.targetDate),
       invalidDates: statuses.filter((status) => status.status === "invalid_audit").map((status) => status.targetDate),
       inaccessibleDates: statuses.filter((status) => status.status === "invalid_url").map((status) => status.targetDate),
+      published: insertion.bannerPublicadoNoSite === true,
+      hasMedia: Boolean(String(insertion.mediaUrl || "").trim()),
       evidences: approved.map((status) => ({
         insertionId: insertion.id,
         evidenceId: Number(status.evidenceId),
@@ -1392,15 +1345,21 @@ async function describeCampaignEvidenceExport(piCodigo: string, competencia: str
     });
   }
   const readiness = validateCampaignEvidenceReadiness(evidenceDescriptors);
+  const identityBlockers = operations
+    .filter((item) => item.adops.insertionId == null)
+    .map((item) => ({ siteSigla: item.siteSigla, format: item.format.normalized, reason: "canonical_insertion_missing" }));
+  if (identityBlockers.length) readiness.ready = false;
   const evidences = evidenceDescriptors.flatMap((item) => item.evidences);
   return {
     ...identity,
-    campaignName: insertions[0]?.campanhaName ?? `PI ${identity.piCodigo}`,
+    campaignName: operations[0]?.campaignName ?? insertions[0]?.campanhaName ?? `PI ${identity.piCodigo}`,
     insertionIds: insertions.map((item) => item.id),
     siteSiglas: Array.from(new Set(insertions.map((item) => item.siteSigla).filter(Boolean))).sort(),
     evidenceCount: evidences.length,
     evidences,
     readiness,
+    identityBlockers,
+    requiredDatesByInsertion: Object.fromEntries(evidenceDescriptors.map((item) => [item.insertionId, item.requiredDates])),
   };
 }
 
@@ -2919,88 +2878,7 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
   }
 });
 
-router.post("/campaign-evidence-exports/jobs", async (req, res): Promise<void> => {
-  try {
-    const identity = parseCampaignEvidenceIdentity(req.body ?? {});
-    const descriptor = await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia);
-    if (!descriptor) {
-      res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
-      return;
-    }
-    if (!descriptor.readiness.ready) {
-      res.status(409).json({ error: "Pacote bloqueado por evidências ausentes, inválidas ou inacessíveis.", ...descriptor });
-      return;
-    }
-    const payload = {
-      ...identity,
-      mode: "prints-only",
-      variant: "web",
-      imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
-      imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
-      source: typeof req.body?.source === "string" ? req.body.source : "api-server",
-    };
-    const idempotencyKey = buildCampaignEvidenceExportIdempotencyKey({
-      ...identity,
-      evidences: descriptor.evidences,
-    });
-    const created = await createLocalCampaignEvidenceExportJob({
-      payload,
-      requestedBy: typeof req.body?.requestedBy === "string" ? req.body.requestedBy : "api-server",
-      idempotencyKey,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.status(created.duplicate ? 200 : 202).json({
-      ok: true,
-      jobId: created.jobId,
-      kind: "campaign-evidence-export",
-      status: created.status,
-      duplicate: created.duplicate,
-      ...payload,
-      insertionIds: descriptor.insertionIds,
-      siteSiglas: descriptor.siteSiglas,
-      evidenceCount: descriptor.evidenceCount,
-    });
-  } catch (error) {
-    const statusCode = error instanceof CampaignEvidenceExportConflict ? error.statusCode : 500;
-    res.status(statusCode).json({
-      error: statusCode === 409 && error instanceof Error ? error.message : "Falha ao criar o pacote completo da campanha.",
-      details: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
-
-router.get("/campaign-evidence-exports/jobs/:jobId", async (req, res): Promise<void> => {
-  try {
-    const job = await getLocalCampaignEvidenceExportJob(req.params.jobId);
-    if (!job) {
-      res.status(404).json({ error: "Job de campanha não encontrado." });
-      return;
-    }
-    res.setHeader("Cache-Control", "no-store");
-    res.json(job);
-  } catch (error) {
-    res.status(500).json({ error: "Falha ao consultar o pacote da campanha.", details: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-router.get("/campaign-evidence-exports/jobs/:jobId/download", async (req, res): Promise<void> => {
-  try {
-    const job = await getLocalCampaignEvidenceExportJob(req.params.jobId);
-    if (!job) {
-      res.status(404).json({ error: "Job de campanha não encontrado." });
-      return;
-    }
-    if (job.status !== "completed" || !job.downloadUrl) {
-      res.status(409).json({ error: "Pacote da campanha ainda não está pronto.", jobId: job.jobId, status: job.status, stage: job.stage });
-      return;
-    }
-    res.redirect(job.downloadUrl);
-  } catch (error) {
-    res.status(500).json({ error: "Falha ao redirecionar o pacote da campanha.", details: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-router.get("/campaign-evidence-exports", async (req, res): Promise<void> => {
+router.get("/internal/campaign-evidence-exports", async (req, res): Promise<void> => {
   let tempDir: string | null = null;
   let zipPath: string | null = null;
   try {
@@ -3027,10 +2905,7 @@ router.get("/campaign-evidence-exports", async (req, res): Promise<void> => {
     tempDir = await mkdtemp(join(tmpdir(), `adops-campaign-evidence-${identity.piCodigo}-`));
     for (const insertion of insertions) {
       const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
-      const requiredEnd = insertion.periodoFim && insertion.periodoFim < formatIsoDate(new Date()) ? insertion.periodoFim : formatIsoDate(new Date());
-      const requiredDates = insertion.periodoInicio && insertion.periodoInicio <= requiredEnd
-        ? eachIsoDay(parseDateOnly(insertion.periodoInicio)!, parseDateOnly(requiredEnd)!)
-        : [];
+      const requiredDates = descriptor.requiredDatesByInsertion[insertion.id] ?? [];
       const statusesByDate = new Map();
       for (const date of requiredDates) statusesByDate.set(date, await resolveEvidenceAuditStatus(insertion, date, evidenceRows));
       const evidences = selectApprovedCanonicalEvidenceRows(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo), statusesByDate);

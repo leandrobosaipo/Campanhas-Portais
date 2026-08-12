@@ -2040,6 +2040,8 @@ export default {
       });
     }
 
+    if (path.startsWith("/api/internal/")) return notFound();
+
     if (["POST", "PATCH", "DELETE"].includes(request.method)) {
       if (isSettingsProxyPath(path)) {
         if (privateApiEnabled(env)) {
@@ -2517,7 +2519,7 @@ export default {
         if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
         if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");
         if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
-        const descriptorResult = await privateApiGetJson(env, "/api/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
+        const descriptorResult = await privateApiGetJson(env, "/api/internal/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
         if (descriptorResult.response) return descriptorResult.response;
         const descriptor = descriptorResult.payload!;
         const readiness = descriptor.readiness as Record<string, unknown> | undefined;
@@ -2526,8 +2528,19 @@ export default {
         }
         const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(body.imageMaxWidth || "1600"), 10) || 1600));
         const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(body.imageQuality || "72"), 10) || 72));
+        const requestedKey = request.headers.get("idempotency-key")?.trim() || "";
+        if (requestedKey && !/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) return badRequest("Idempotency-Key inválida.");
         const evidenceFingerprint = Array.isArray(descriptor.evidences) ? descriptor.evidences : [];
-        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ piCodigo, competencia, evidences: evidenceFingerprint })));
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
+          piCodigo,
+          competencia,
+          mode: "prints-only",
+          variant: "web",
+          imageMaxWidth,
+          imageQuality,
+          requestedKey: requestedKey || null,
+          evidences: evidenceFingerprint,
+        })));
         const idempotencyKey = `campaign-evidence-v1-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
         const created = await createIdempotentOpsJob(env, "campaign-evidence-export", {
           piCodigo,

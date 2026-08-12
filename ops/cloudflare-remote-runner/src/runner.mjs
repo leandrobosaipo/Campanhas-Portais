@@ -5412,7 +5412,7 @@ async function executeCampaignEvidenceExport(job) {
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
   if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
 
-  const descriptorPath = `/api/campaign-evidence-exports?piCodigo=${encodeURIComponent(piCodigo)}&competencia=${encodeURIComponent(competencia)}`;
+  const descriptorPath = `/api/internal/campaign-evidence-exports?piCodigo=${encodeURIComponent(piCodigo)}&competencia=${encodeURIComponent(competencia)}`;
   let descriptor = await privateApiGet(descriptorPath);
   if (!Array.isArray(descriptor?.insertionIds) || descriptor.insertionIds.length === 0) {
     throw new Error(`Nenhuma inserção canônica publicada encontrada para PI ${piCodigo} em ${competencia}.`);
@@ -5435,7 +5435,7 @@ async function executeCampaignEvidenceExport(job) {
     imageMaxWidth: String(imageMaxWidth),
     imageQuality: String(imageQuality),
   });
-  const artifact = await privateApiDownload(`/api/campaign-evidence-exports?${params.toString()}`);
+  const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`);
   const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
   const artifactObjectKey = [
     ADOPS_EXPORT_BASE_PATH,
