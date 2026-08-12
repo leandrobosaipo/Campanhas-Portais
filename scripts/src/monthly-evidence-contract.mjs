@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 
+export const MONTHLY_REPORT_SOURCE_TIMEOUT_MS = 120_000;
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);

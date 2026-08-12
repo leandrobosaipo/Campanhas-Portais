@@ -15,6 +15,7 @@ import {
   classifyEvidenceStatus,
   findReportsMountSource,
   isMonthlyReportPublishable,
+  MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -930,10 +931,10 @@ async function main() {
   await mkdir(snapshotDir, { recursive: true });
 
   const [insertionsRaw, campaignsRaw, auditsRaw, operationsRaw] = await Promise.all([
-    api(`/api/insertions?competencia=${encodeURIComponent(competencia)}&limit=500`),
-    api(`/api/campaigns?competencia=${encodeURIComponent(competencia)}&limit=500`).catch(() => []),
-    Promise.all(dayRange(bounds.start, monthEndForEvidence).map(async (date) => [date, await api(`/api/insertions/capture-proof/audit?date=${date}&competencia=${encodeURIComponent(competencia)}`).catch((error) => ({ error: error.message }))])),
-    api(`/api/campaign-operations/active?date=${encodeURIComponent(targetDate)}`),
+    api(`/api/insertions?competencia=${encodeURIComponent(competencia)}&limit=500`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }),
+    api(`/api/campaigns?competencia=${encodeURIComponent(competencia)}&limit=500`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }).catch(() => []),
+    Promise.all(dayRange(bounds.start, monthEndForEvidence).map(async (date) => [date, await api(`/api/insertions/capture-proof/audit?date=${date}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }).catch((error) => ({ error: error.message }))])),
+    api(`/api/campaign-operations/active?date=${encodeURIComponent(targetDate)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS }),
   ]);
 
   const insertions = Array.isArray(insertionsRaw) ? insertionsRaw : insertionsRaw.items || [];

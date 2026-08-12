@@ -82,6 +82,10 @@ test("gate ignora evidencias de insercoes ainda nao publicadas", () => {
   assert.equal(contract.isMonthlyReportPublishable(summary), false);
 });
 
+test("consultas agregadas toleram a latencia observada da API sem remover timeout", () => {
+  assert.equal(contract.MONTHLY_REPORT_SOURCE_TIMEOUT_MS, 120_000);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },
