@@ -24,6 +24,11 @@ assert(
   "prints-only e PDF devem usar somente inserções que possuem evidências",
 );
 assert(
+  runner.includes('await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"]')
+    && runner.includes('await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"]'),
+  "job mensal deve usar o corepack disponível no runtime para executar pnpm",
+);
+assert(
   insertionsRoute.includes('exportOptions.mode === "full" ? descriptor.exportableInsertionIds : descriptor.evidenceInsertionIds'),
   "endpoint de download deve manter o mesmo recorte de evidências do runner",
 );

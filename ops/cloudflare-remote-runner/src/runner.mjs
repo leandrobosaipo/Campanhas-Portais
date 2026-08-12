@@ -4455,7 +4455,7 @@ async function executeEvidenceMonthlyReport(job) {
     percentStage: 5,
     percentTotal: 5,
   });
-  await execFileAsync("pnpm", ["--filter", "@workspace/scripts", "run", "sync:planilha"], {
+  await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"], {
     cwd: PROJECT_ROOT,
     env: process.env,
     timeout: 20 * 60_000,
@@ -4468,7 +4468,7 @@ async function executeEvidenceMonthlyReport(job) {
     percentStage: 35,
     percentTotal: 15,
   });
-  await execFileAsync("pnpm", ["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
+  await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
     cwd: PROJECT_ROOT,
     env: process.env,
     timeout: 10 * 60_000,
