@@ -43,6 +43,10 @@ export function resolveReportsPublishMount(env) {
   return String(env?.ADOPS_REPORTS_PUBLISH_MOUNT || "").replace(/\/$/, "");
 }
 
+export function isJsonContentType(value) {
+  return /(^|\/)json(?:;|$)/i.test(String(value || ""));
+}
+
 export function buildPiSiteExportDownloadUrl(baseUrl, jobId) {
   const base = String(baseUrl || "").replace(/\/$/, "").replace(/\/api$/, "");
   return `${base}/api/pi-site-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;

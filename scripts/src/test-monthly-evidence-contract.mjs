@@ -129,6 +129,11 @@ test("publicacao prefere bind dedicado de relatorios", () => {
   assert.equal(contract.resolveReportsPublishMount({}), "");
 });
 
+test("catalogo HTML e JSON podem ser validados sem parse incorreto", () => {
+  assert.equal(contract.isJsonContentType("application/json; charset=utf-8"), true);
+  assert.equal(contract.isJsonContentType("text/html; charset=utf-8"), false);
+});
+
 test("publica no bind real de /app/reports e nao em subpasta presumida de /app", () => {
   const source = contract.findReportsMountSource([
     { Type: "bind", Source: "/srv/sites-index/app", Destination: "/app" },

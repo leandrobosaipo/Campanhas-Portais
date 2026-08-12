@@ -24,6 +24,7 @@ import {
   takeDeliverySamples,
   resolveReportPortainerUrl,
   resolveReportsPublishMount,
+  isJsonContentType,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
 
@@ -1152,9 +1153,14 @@ async function main() {
       throw new Error("Readback público não corresponde ao manifest recém-publicado.");
     }
     if (catalogValidation.ok) {
-      const catalog = await catalogValidation.json();
-      const entries = Array.isArray(catalog) ? catalog : Array.isArray(catalog?.items) ? catalog.items : Array.isArray(catalog?.sites) ? catalog.sites : [];
-      if (entries.some((item) => String(item?.slug || item?.path || item?.url || "").includes(slug))) {
+      const catalogText = await catalogValidation.text();
+      if (isJsonContentType(catalogValidation.headers.get("content-type"))) {
+        const catalog = JSON.parse(catalogText);
+        const entries = Array.isArray(catalog) ? catalog : Array.isArray(catalog?.items) ? catalog.items : Array.isArray(catalog?.sites) ? catalog.sites : [];
+        if (entries.some((item) => String(item?.slug || item?.path || item?.url || "").includes(slug))) {
+          throw new Error("Relatório unlisted apareceu no catálogo público.");
+        }
+      } else if (catalogText.includes(slug)) {
         throw new Error("Relatório unlisted apareceu no catálogo público.");
       }
     }
