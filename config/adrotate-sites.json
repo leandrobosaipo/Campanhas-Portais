@@ -98,7 +98,8 @@
           "HOME 1",
           "MEGABANNER HOME 1",
           "MEGABANNER HOME1",
-          "MEGABANNER HOME 01"
+          "MEGABANNER HOME 01",
+          "HOME 01 — 728x90"
         ],
         "page": "home",
         "slotSelector": ".g.g-2",
@@ -107,6 +108,8 @@
         "proofStyle": "viewport_only",
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "slotScrollViewportOffsetRatio": 0.5,
           "finalViewportTargetOffsetRatio": 0.5,
           "viewportTrimBottomPx": 160
@@ -161,6 +164,33 @@
           "finalPngSlotMinContentStddev": 4,
           "requireStableFrame": false,
           "requireLegibleFrame": true
+        }
+      },
+      {
+        "groupId": 7,
+        "aliases": [
+          "BANNER LATERAL SEGUNDA DOBRA",
+          "LATERAL 02",
+          "LATERAL SEGUNDA DOBRA",
+          "SEGUNDA DOBRA SIDEBAR",
+          "LATERAL 02 — SIDEBAR — 300x250"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-7",
+        "contextSelector": ".g.g-7",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 120,
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "preferBestLegibleFrame": true,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
         }
       },
       {
