@@ -72,6 +72,7 @@ import { mediaNamesCompatible } from "../lib/media-consistency";
 import {
   buildMonthlyEvidenceSource,
   CampaignEvidenceExportConflict,
+  normalizeCampaignPi,
   parseCampaignEvidenceIdentity,
   selectCampaignEvidenceInsertions,
   validateCampaignEvidenceReadiness,
@@ -644,6 +645,24 @@ async function createLocalPiSiteExportJob(options: {
     [options.idempotencyKey],
   );
   if (existing.rows[0]) {
+    if (existing.rows[0].status === "failed") {
+      const now = new Date().toISOString();
+      const retried = await pool.query(
+        `UPDATE ops_jobs
+            SET status = 'ready_for_runner', payload_json = $1, result_json = $2,
+                error_text = NULL, runner_id = NULL, updated_at = $3
+          WHERE id = $4 AND status = 'failed'`,
+        [
+          JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }),
+          JSON.stringify({ stage: "ready_for_runner", retryOf: existing.rows[0].id, retriedAt: now }),
+          now,
+          existing.rows[0].id,
+        ],
+      );
+      if ((retried.rowCount ?? 0) > 0) {
+        return { jobId: existing.rows[0].id, status: "ready_for_runner", duplicate: false };
+      }
+    }
     return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
   }
 
@@ -1237,7 +1256,7 @@ function normalizeTextKey(value: string | null | undefined) {
 }
 
 function normalizePiDigitsKey(value: string | null | undefined) {
-  const digits = String(value ?? "").replace(/\D/g, "");
+  const digits = normalizeCampaignPi(value);
   return digits || null;
 }
 

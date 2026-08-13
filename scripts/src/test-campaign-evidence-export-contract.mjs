@@ -18,8 +18,13 @@ const contract = await import(pathToFileURL(outputPath));
 after(() => rm(buildDir, { recursive: true, force: true }));
 
 test("normaliza a identidade por PI e competencia sem aceitar campanha sem PI", () => {
+  assert.equal(contract.normalizeCampaignPi("PI 009750- PREF ROO"), "9750");
   assert.deepEqual(contract.parseCampaignEvidenceIdentity({ piCodigo: "PI 17.048 - GOV", competencia: "agosto/2026" }), {
     piCodigo: "17048",
+    competencia: "AGOSTO/2026",
+  });
+  assert.deepEqual(contract.parseCampaignEvidenceIdentity({ piCodigo: "PI 009750- PREF ROO", competencia: "AGOSTO/2026" }), {
+    piCodigo: "9750",
     competencia: "AGOSTO/2026",
   });
   assert.throws(() => contract.parseCampaignEvidenceIdentity({ piCodigo: "PI - TCE", competencia: "AGOSTO/2026" }), /PI canônica/);
@@ -30,8 +35,9 @@ test("preserva insercoes canonicas sem omitir blockers de publicacao ou midia", 
     { id: 1826, piCodigo: "17048", competencia: "AGOSTO/2026", statusNormalizado: "rascunho", bannerPublicadoNoSite: false, mediaUrl: null },
     { id: 1831, piCodigo: "PI 17048 - GOV", competencia: "AGOSTO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/banner.jpg" },
     { id: 1900, piCodigo: "17048", competencia: "JULHO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/old.jpg" },
+    { id: 1901, piCodigo: "PI 017048- GOV", competencia: "AGOSTO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/labelled.jpg" },
   ], { piCodigo: "17048", competencia: "AGOSTO/2026" });
-  assert.deepEqual(selected.map((item) => item.id), [1826, 1831]);
+  assert.deepEqual(selected.map((item) => item.id), [1826, 1831, 1901]);
 });
 
 test("bloqueia pacote parcial, invalido ou com evidencia inacessivel", () => {

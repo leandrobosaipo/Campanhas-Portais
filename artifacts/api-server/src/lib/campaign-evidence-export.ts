@@ -4,8 +4,8 @@ export class CampaignEvidenceExportConflict extends Error {
   readonly statusCode = 409;
 }
 
-function normalizePi(value: unknown) {
-  return String(value ?? "").replace(/\D/g, "");
+export function normalizeCampaignPi(value: unknown) {
+  return String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
 }
 
 function normalizeCompetencia(value: unknown) {
@@ -13,7 +13,7 @@ function normalizeCompetencia(value: unknown) {
 }
 
 export function parseCampaignEvidenceIdentity(input: { piCodigo?: unknown; competencia?: unknown }) {
-  const piCodigo = normalizePi(input?.piCodigo);
+  const piCodigo = normalizeCampaignPi(input?.piCodigo);
   const competencia = normalizeCompetencia(input?.competencia);
   if (!piCodigo) throw new CampaignEvidenceExportConflict("A campanha precisa de PI canônica para gerar o pacote completo.");
   if (!competencia) throw new CampaignEvidenceExportConflict("A competência é obrigatória para isolar o pacote da campanha.");
@@ -28,7 +28,7 @@ export function selectCampaignEvidenceInsertions<T extends {
   mediaUrl?: unknown;
 }>(insertions: T[], identity: { piCodigo: string; competencia: string }) {
   return (insertions || []).filter((item) => (
-    normalizePi(item.piCodigo) === identity.piCodigo
+    normalizeCampaignPi(item.piCodigo) === identity.piCodigo
     && normalizeCompetencia(item.competencia) === identity.competencia
     && String(item.statusNormalizado || "").trim().toLowerCase() !== "cancelado"
   ));
@@ -246,7 +246,7 @@ export function parseCampaignEvidenceBatch(input: {
 }) {
   const competencia = normalizeCompetencia(input.competencia);
   if (!competencia) throw new CampaignEvidenceExportConflict("A competência é obrigatória para gerar o lote de campanhas.");
-  const piCodes = Array.from(new Set((input.campaigns ?? []).map((item) => normalizePi(item.piCodigo)).filter(Boolean)));
+  const piCodes = Array.from(new Set((input.campaigns ?? []).map((item) => normalizeCampaignPi(item.piCodigo)).filter(Boolean)));
   if (!piCodes.length) throw new CampaignEvidenceExportConflict("Informe ao menos uma campanha com PI canônica.");
   if (piCodes.length > 100) throw new CampaignEvidenceExportConflict("O lote aceita no máximo 100 campanhas.");
   return {

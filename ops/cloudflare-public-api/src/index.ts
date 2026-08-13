@@ -1206,8 +1206,8 @@ async function createIdempotentOpsJob(
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
     if (retryFailed && existing.status === "failed") {
       const retried = await env.adops_ops.prepare(
-        `UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
-      ).bind(JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id).run();
+        `UPDATE ops_jobs SET status = 'ready_for_runner', payload_json = ?, result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
+      ).bind(JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id).run();
       if ((retried.meta?.changes ?? 0) > 0) {
         return { jobId: existing.id, status: "ready_for_runner" as JobStatus, duplicate: false };
       }
@@ -2668,7 +2668,7 @@ export default {
           imageQuality,
           requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
           source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
-        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey);
+        }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey, true);
         return jsonNoStore({
           ok: true,
           jobId: created.jobId,
