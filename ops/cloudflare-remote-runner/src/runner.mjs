@@ -2726,14 +2726,18 @@ function buildPerrengueRebuildTriggerReason({ insertionId, operation, operationI
 }
 
 function evaluatePerrengueRebuildHealth(health, expectedReason) {
-  const last = health?.last && typeof health.last === "object" ? health.last : null;
-  const matched = Boolean(last && String(last?.trigger?.reason || "") === String(expectedReason || ""));
-  const status = matched ? String(last?.status || "").toLowerCase() || null : null;
+  const candidates = [
+    health?.last && typeof health.last === "object" ? health.last : null,
+    ...(Array.isArray(health?.recentRuns) ? health.recentRuns : []),
+  ].filter(Boolean);
+  const match = candidates.find((item) => String(item?.trigger?.reason || "") === String(expectedReason || "")) || null;
+  const matched = Boolean(match);
+  const status = matched ? String(match?.status || "").toLowerCase() || null : null;
   const terminalFailure = new Set(["failed", "error", "cancelled", "canceled"]);
   return {
     matched,
     completed: matched && status === "ok",
-    failed: matched && !health?.running && !health?.queued && terminalFailure.has(status),
+    failed: matched && terminalFailure.has(status),
     status,
   };
 }
@@ -2765,12 +2769,12 @@ $read_health = static function () use ($url) {
   $body = json_decode((string) wp_remote_retrieve_body($response), true);
   if (!is_array($body)) return ['available' => false];
   $last = isset($body['last']) && is_array($body['last']) ? $body['last'] : [];
-  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
+  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'recentRuns' => isset($body['recentRuns']) && is_array($body['recentRuns']) ? $body['recentRuns'] : [], 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
 };
 $insertion_id = (int) ($input['insertionId'] ?? 0);
 $trigger_reason = (string) ($input['triggerReason'] ?? '');
 if ($trigger_reason === '') throw new RuntimeException('Trigger único do rebuild ausente.');
-$payload = ['reason' => $trigger_reason, 'status' => 'publish', 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
+$payload = ['reason' => $trigger_reason, 'status' => 'publish', 'priority' => true, 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
 $response = wp_remote_post($url, ['timeout' => 10, 'blocking' => true, 'headers' => ['content-type' => 'application/json', 'x-cod5-webhook-secret' => $secret], 'body' => wp_json_encode($payload)]);
 if (is_wp_error($response)) throw new RuntimeException($response->get_error_message());
 $code = (int) wp_remote_retrieve_response_code($response);
@@ -2779,13 +2783,17 @@ $deadline = time() + ${timeoutSeconds};
 while (time() < $deadline) {
   usleep(${pollMicroseconds});
   $health = $read_health();
-  $last = isset($health['last']) && is_array($health['last']) ? $health['last'] : [];
-  $last_trigger = isset($last['trigger']) && is_array($last['trigger']) ? $last['trigger'] : [];
-  $matched = (string) ($last_trigger['reason'] ?? '') === $trigger_reason;
-  $last_status = strtolower((string) ($last['status'] ?? ''));
+  $candidates = array_merge([isset($health['last']) && is_array($health['last']) ? $health['last'] : []], isset($health['recentRuns']) && is_array($health['recentRuns']) ? $health['recentRuns'] : []);
+  $matched_run = null;
+  foreach ($candidates as $candidate) {
+    $candidate_trigger = isset($candidate['trigger']) && is_array($candidate['trigger']) ? $candidate['trigger'] : [];
+    if ((string) ($candidate_trigger['reason'] ?? '') === $trigger_reason) { $matched_run = $candidate; break; }
+  }
+  $matched = is_array($matched_run);
+  $last_status = $matched ? strtolower((string) ($matched_run['status'] ?? '')) : '';
   if ($matched && $last_status === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'triggerReason' => $trigger_reason, 'health' => $health]) . PHP_EOL; exit(0); }
   $terminal_failure = in_array($last_status, ['failed', 'error', 'cancelled', 'canceled'], true);
-  if ($matched && empty($health['running']) && empty($health['queued']) && $terminal_failure) throw new RuntimeException('Rebuild ' . $trigger_reason . ' terminou com status ' . $last_status);
+  if ($matched && $terminal_failure) throw new RuntimeException('Rebuild ' . $trigger_reason . ' terminou com status ' . $last_status);
 }
 throw new RuntimeException('Timeout aguardando rebuild headless concluir para ' . $trigger_reason . '.');
 `;

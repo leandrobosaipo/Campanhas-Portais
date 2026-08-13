@@ -122,6 +122,12 @@ assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
   queued: true,
   last: { status: "queued", trigger: { reason: publishReason } },
 }, publishReason), { matched: true, completed: false, failed: false, status: "queued" });
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: true,
+  queued: true,
+  last: { status: "running", trigger: { reason: "editorial-next" } },
+  recentRuns: [{ status: "ok", trigger: { reason: publishReason } }],
+}, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
 
 const dir = await mkdtemp(path.join(tmpdir(), "adops-operational-gif-"));
 try {
