@@ -1222,7 +1222,7 @@ async function createCampaignEvidenceExportJob(
   body: Record<string, unknown>,
   requestedKey = "",
 ) {
-  const piCodigo = String(body.piCodigo || "").replace(/\D/g, "");
+  const piCodigo = String(body.piCodigo || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
   if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
   if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");

@@ -30,6 +30,12 @@ test("normaliza a identidade por PI e competencia sem aceitar campanha sem PI", 
   assert.throws(() => contract.parseCampaignEvidenceIdentity({ piCodigo: "PI - TCE", competencia: "AGOSTO/2026" }), /PI canônica/);
 });
 
+test("normalização canônica trata zeros à esquerda igual em planilha, operação e lote", () => {
+  for (const value of ["9750", "009750", "PI 009750- PREF ROO"]) {
+    assert.equal(contract.normalizeCampaignPi(value), "9750");
+  }
+});
+
 test("preserva insercoes canonicas sem omitir blockers de publicacao ou midia", () => {
   const selected = contract.selectCampaignEvidenceInsertions([
     { id: 1826, piCodigo: "17048", competencia: "AGOSTO/2026", statusNormalizado: "rascunho", bannerPublicadoNoSite: false, mediaUrl: null },

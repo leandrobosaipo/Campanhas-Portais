@@ -1350,7 +1350,7 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
   const candidateById = new Map(candidates.map((item) => [item.id, item]));
   const operations = await getActiveCampaignOperations({ includeEvidence });
   const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
-    String(item.piCodigo ?? "").replace(/\D/g, "") === identity.piCodigo
+    normalizeCampaignPi(item.piCodigo) === identity.piCodigo
     && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
   ));
   const canonicalIds = new Set(matchingOperations.map((item) => item.adops.insertionId).filter((id): id is number => Number.isFinite(id)));
