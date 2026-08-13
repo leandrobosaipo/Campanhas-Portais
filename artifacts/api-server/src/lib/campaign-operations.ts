@@ -115,6 +115,7 @@ export type CampaignOperationItem = {
     bannerPublicadoNoSite: boolean | null;
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
+    operationalMatchCount: number;
   };
   evidence: {
     status: "approved" | "missing" | "invalid" | "missing_or_not_applicable";
@@ -615,6 +616,7 @@ export async function getActiveCampaignOperations(options: {
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
+        operationalMatchCount: compatible.length,
       },
       evidence,
       requiredActions: unique(requiredActions),

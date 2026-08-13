@@ -74,10 +74,16 @@ export const CreateDrivePiReconcileJobResponse = zod.object({
 });
 
 /**
- * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
  */
+
 export const CreateCampaignPublicationReconcileJobBody = zod.object({
   targetDate: zod.coerce.date().optional(),
+  insertionId: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe("Restrict reconciliation to one existing canonical insertion."),
 });
 
 export const CreateCampaignPublicationReconcileJobResponse = zod.object({
@@ -156,10 +162,51 @@ export const GetPendingCampaignOperationsQueryParams = zod.object({
   date: zod.date().optional(),
 });
 
-export const GetPendingCampaignOperationsResponse = zod.record(
-  zod.string(),
-  zod.unknown(),
-);
+export const getPendingCampaignOperationsResponseItemsItemOperationalIdentityFingerprintRegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const GetPendingCampaignOperationsResponse = zod.object({
+  date: zod.coerce.date(),
+  generatedAt: zod.coerce.date(),
+  summary: zod.record(zod.string(), zod.unknown()),
+  items: zod.array(
+    zod.object({
+      identityMode: zod
+        .union([
+          zod.literal("authoritative_pi"),
+          zod.literal("operational_identity"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      commercialIdentityStatus: zod.enum([
+        "confirmed",
+        "awaiting_authoritative_pi",
+      ]),
+      publicationStatus: zod.enum([
+        "awaiting_authoritative_pi",
+        "ready_for_preflight",
+        "ready_for_publication",
+        "published",
+        "failed_retryable",
+      ]),
+      resolutionStatus: zod.string(),
+      resolutionReason: zod.string().optional(),
+      resumeAction: zod.string().optional(),
+      lastCheckedAt: zod.coerce.date().optional(),
+      nextCheckAt: zod.coerce.date().nullish(),
+      operationalIdentity: zod.object({
+        gates: zod.record(zod.string(), zod.boolean()),
+        fingerprint: zod
+          .string()
+          .regex(
+            getPendingCampaignOperationsResponseItemsItemOperationalIdentityFingerprintRegExp,
+          ),
+        source: zod.record(zod.string(), zod.unknown()),
+      }),
+    }),
+  ),
+  upcomingItems: zod.array(zod.unknown()).optional(),
+});
 
 /**
  * @summary Aggregate canonical insertions and audited daily evidence for the monthly report

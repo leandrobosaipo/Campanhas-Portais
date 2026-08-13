@@ -3,12 +3,12 @@
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
 > Última validação: 2026-08-13
-> Release-base: 47e0dab
+> Release-base: c71350e; política sem PDF validada no commit que contém este documento
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
 
-O AdOps está em produção. A API, o painel, os runners, o monitor do Drive, o relatório mensal e os downloads de evidências operam na release 47e0dab.
+O AdOps está em produção. A versão exata deve ser confirmada no release readback; `c71350e` é a base desta política operacional.
 
 Isto substitui a afirmação histórica de que produção estava “em preparação”. Histórico de implantação continua disponível no Git, mas não descreve o runtime atual.
 
@@ -33,13 +33,13 @@ Esses números são uma fotografia datada. A fonte mensal agregada e o relatóri
 
 ## Pendência operacional conhecida
 
-RADAR/PERRENGUE, inserção `#1944`, está em `awaiting_authoritative_pi` até existir PI/PDF autoritativa. O Drive contém mídia candidata e documento de destino, mas campanha homônima não pode ser associada à PI 17190 por inferência.
+RADAR/PERRENGUE, inserção `#1944`, pode usar identidade operacional única para veiculação sem PDF, preservando `commercialIdentityStatus=awaiting_authoritative_pi`. O Drive contém mídia candidata e documento de destino. A publicação depende do preflight vivo e nunca associa a campanha à PI 17190. Faturamento e ZIP por PI aguardam a fonte autoritativa.
 
-Enquanto o bloqueio existir:
+Enquanto a PI/PDF continuar ausente:
 
 - não criar campanha ou inserção duplicada;
-- não publicar anúncio;
-- não gerar evidência como se a campanha estivesse ativa;
+- publicar apenas se o preflight operacional único passar; falha em qualquer gate mantém o rascunho;
+- gerar evidência somente depois de AdRotate, cache e HTML público confirmarem a veiculação;
 - manter mídia como `candidate_found` e identidade como `insufficient_data`.
 
 ## Ganhos consolidados
@@ -58,7 +58,7 @@ Enquanto o bloqueio existir:
 
 ## Próximos cuidados
 
-- recuperar a PI/PDF de `#1944` antes de publicar;
+- recuperar a PI/PDF de `#1944` para concluir identidade comercial, faturamento e ZIP por PI; a veiculação pode ser retomada antes apenas pelo preflight operacional único;
 - manter documentação e release datadas;
 - monitorar duração, cache hits, blockers e heartbeat;
 - validar sempre o consumidor real após deploy;

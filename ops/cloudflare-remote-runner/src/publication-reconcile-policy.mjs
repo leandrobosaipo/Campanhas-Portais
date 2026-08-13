@@ -13,6 +13,37 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
       continue;
     }
     if (cod5_status === "published") continue;
+    if (cod5_status === "ready_for_publication" && cod5_item?.identityMode === "operational_identity") {
+      const cod5_campaignId = Number(cod5_item?.adops?.campaignId || 0);
+      const cod5_source = cod5_item?.operationalIdentity?.source;
+      const cod5_fingerprint = cod5_string(cod5_item?.operationalIdentity?.fingerprint);
+      const cod5_media = Array.isArray(cod5_source?.media) ? cod5_source.media : [];
+      const cod5_documents = Array.isArray(cod5_source?.destinationDocuments) ? cod5_source.destinationDocuments : [];
+      if (!Number.isInteger(cod5_campaignId) || cod5_campaignId <= 0 || !cod5_fingerprint || cod5_media.length !== 1 || cod5_documents.length !== 1) {
+        cod5_blockers.push({ insertionId: cod5_insertionId, code: "operational_preflight_source_incomplete", reason: "Identidade operacional não contém uma única mídia, destino e fingerprint." });
+        continue;
+      }
+      cod5_actions.push({
+        type: "operational_media_publish",
+        insertionId: cod5_insertionId,
+        payload: {
+          identityMode: "operational_identity",
+          expectedCampaignId: cod5_campaignId,
+          expectedInsertionId: cod5_insertionId,
+          expectedSiteSigla: cod5_string(cod5_item?.siteSigla),
+          expectedFormat: cod5_string(cod5_item?.format?.normalized || cod5_item?.format?.sheet),
+          expectedPeriodStart: cod5_string(cod5_item?.period?.start),
+          expectedPeriodEnd: cod5_string(cod5_item?.period?.end),
+          sheetSource: cod5_item?.sheetSource ?? null,
+          folderId: cod5_string(cod5_source?.folderId),
+          folderPath: cod5_string(cod5_source?.folderPath),
+          media: cod5_media[0],
+          destinationDocument: cod5_documents[0],
+          fingerprint: cod5_fingerprint,
+        },
+      });
+      continue;
+    }
     if (cod5_status === "awaiting_authoritative_pi") {
       cod5_blockers.push({
         insertionId: cod5_insertionId,

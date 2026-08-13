@@ -43,6 +43,8 @@ export type DriveCampaignFile = {
   path: string;
   webViewLink: string | null;
   modifiedTime: string | null;
+  size: string | null;
+  md5Checksum: string | null;
   kind: "image" | "video" | "pdf" | "text" | "folder" | "other";
 };
 
@@ -139,6 +141,8 @@ function normalizeDriveItem(item: DriveRawItem): DriveCampaignFile {
     path: item.path ?? `/${item.name}`,
     webViewLink: item.webViewLink ?? null,
     modifiedTime: item.modifiedTime ?? null,
+    size: item.size ?? null,
+    md5Checksum: item.md5Checksum ?? null,
     kind: classify(item),
   };
 }

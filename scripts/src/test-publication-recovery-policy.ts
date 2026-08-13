@@ -16,11 +16,19 @@ function pendingItem(overrides: Record<string, unknown> = {}) {
       canonicalPi: null,
     },
     drive: {
+      status: "matched",
+      folderId: "folder-radar-perrengue",
+      folderPath: "/PERRENGUE/AGOSTO/PI - TCE - RADAR",
       mediaStatus: "candidate_found",
       documentStatus: "missing",
       mediaMatchesFormat: true,
+      mediaFiles: [{ id: "gif-radar", name: "670x90 tce.gif", mimeType: "image/gif", modifiedTime: "2026-08-12T00:34:08.000Z", size: "65191", md5Checksum: "0123456789abcdef0123456789abcdef" }],
+      textFiles: [{ id: "doc-radar", name: "Documento sem título", mimeType: "application/vnd.google-apps.document", modifiedTime: "2026-08-12T00:35:15.232Z" }],
+      inventoryScanId: "scan-1",
     },
     adops: {
+      status: "matched",
+      operationalMatchCount: 1,
       campaignId: 989,
       insertionId: 1944,
       mediaUrl: null,
@@ -34,7 +42,7 @@ function pendingItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test("campanha com mídia candidata e sem PI/PDF aguarda identidade autoritativa", () => {
+test("identidade operacional única libera publicação sem liberar identidade comercial", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
     generatedAt: "2026-08-13T16:30:00.000Z",
@@ -43,11 +51,19 @@ test("campanha com mídia candidata e sem PI/PDF aguarda identidade autoritativa
     upcomingItems: [],
   });
 
-  assert.equal(view.items[0]?.resolutionStatus, "awaiting_authoritative_pi");
-  assert.equal(view.items[0]?.resolutionReason, "Aguardando PI/PDF autoritativa antes de publicar a inserção existente.");
+  assert.equal(view.items[0]?.identityMode, "operational_identity");
+  assert.equal(view.items[0]?.commercialIdentityStatus, "awaiting_authoritative_pi");
+  assert.equal(view.items[0]?.publicationStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.operationalIdentity.gates.sheetUnique, true);
+  assert.equal(view.items[0]?.operationalIdentity.gates.mediaUnique, true);
+  assert.equal(view.items[0]?.operationalIdentity.gates.destinationCandidateUnique, true);
+  assert.equal(view.items[0]?.operationalIdentity.gates.approvedOperationalTarget, true);
+  assert.match(view.items[0]?.operationalIdentity.fingerprint, /^[a-f0-9]{64}$/);
+  assert.equal(view.items[0]?.operationalIdentity.source.media[0].md5Checksum, "0123456789abcdef0123456789abcdef");
   assert.equal(view.items[0]?.lastCheckedAt, "2026-08-13T16:30:00.000Z");
   assert.match(String(view.items[0]?.nextCheckAt), /^2026-08-14T/);
-  assert.equal(view.items[0]?.resumeAction, "await_authoritative_pi_pdf");
+  assert.equal(view.items[0]?.resumeAction, "run_operational_preflight_and_publish");
   assert.equal(view.items[0]?.adops.insertionId, 1944);
 });
 
@@ -70,15 +86,25 @@ test("campanha publicada continua publicada quando falta somente evidência", ()
   assert.equal(view.items[0]?.resumeAction, "generate_evidence");
 });
 
-test("PI numérica sem PDF autoritativo não libera o preflight", () => {
+test("identidade operacional ambígua não libera publicação", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
     generatedAt: "2026-08-13T16:30:00.000Z",
     summary: { needsPublication: 1, needsEvidence: 1 },
     items: [pendingItem({
-      piCodigo: "17191",
-      sourceIdentity: { decision: "confirmed", reason: "Número localizado somente em fonte auxiliar.", canonicalPi: "17191" },
-      drive: { mediaStatus: "candidate_found", documentStatus: "missing", mediaMatchesFormat: true },
+      drive: {
+        status: "matched",
+        folderId: "folder-radar-perrengue",
+        folderPath: "/PERRENGUE/AGOSTO/PI - TCE - RADAR",
+        mediaStatus: "candidate_found",
+        documentStatus: "missing",
+        mediaMatchesFormat: true,
+        mediaFiles: [
+          { id: "gif-a", name: "670x90-a.gif", mimeType: "image/gif" },
+          { id: "gif-b", name: "670x90-b.gif", mimeType: "image/gif" },
+        ],
+        textFiles: [{ id: "doc-radar", name: "Destino" }],
+      },
     })],
     upcomingItems: [],
   });
@@ -87,16 +113,26 @@ test("PI numérica sem PDF autoritativo não libera o preflight", () => {
   assert.equal(view.items[0]?.resumeAction, "retry_reconcile");
 });
 
-test("mídia canônica sem PDF autoritativo não libera a publicação", () => {
+test("exceção operacional sem PDF fica restrita à campanha 989 e inserção 1944", () => {
+  const view = buildPendingPublicationView({
+    date: "2026-08-13",
+    generatedAt: "2026-08-13T16:30:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [pendingItem({ adops: { status: "matched", operationalMatchCount: 1, campaignId: 990, insertionId: 1945, mediaUrl: null, bannerPublicadoNoSite: false } })],
+    upcomingItems: [],
+  });
+  assert.equal(view.items[0]?.publicationStatus, "failed_retryable");
+  assert.equal(view.items[0]?.operationalIdentity.gates.approvedOperationalTarget, false);
+});
+
+test("PI de outro portal não é aceita como identidade comercial ou operacional", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
     generatedAt: "2026-08-13T16:30:00.000Z",
     summary: { needsPublication: 1, needsEvidence: 1 },
     items: [pendingItem({
-      piCodigo: "17191",
-      sourceIdentity: { decision: "confirmed", reason: "Número localizado somente em fonte auxiliar.", canonicalPi: "17191" },
-      drive: { mediaStatus: "candidate_found", documentStatus: "missing", mediaMatchesFormat: true },
-      adops: { campaignId: 989, insertionId: 1944, mediaUrl: "https://cdn.example/radar.gif", bannerPublicadoNoSite: false, statusNormalizado: "rascunho" },
+      piCodigo: "17190",
+      sourceIdentity: { decision: "needs_confirmation", reason: "PI pertence a outro portal.", canonicalPi: null },
     })],
     upcomingItems: [],
   });
@@ -120,6 +156,8 @@ test("PDF cujo nome confirma a PI libera a publicação da inserção existente"
   });
 
   assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.identityMode, "authoritative_pi");
+  assert.equal(view.items[0]?.commercialIdentityStatus, "confirmed");
   assert.equal(view.items[0]?.resumeAction, "publish_existing_insertion");
 });
 

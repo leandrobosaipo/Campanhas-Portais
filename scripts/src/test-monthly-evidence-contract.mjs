@@ -141,6 +141,14 @@ test("download completo usa o job agregado por campanha", () => {
   );
 });
 
+test("relatório não solicita ZIP comercial quando a PI ainda não é canônica", () => {
+  assert.equal(contract.canonicalCommercialPi("PI - TCE"), null);
+  assert.equal(contract.canonicalCommercialPi(""), null);
+  assert.equal(contract.canonicalCommercialPi("PI 017190"), "17190");
+  assert.equal(contract.canonicalCommercialPi("PI 88998- PREF PVA"), "88998");
+  assert.equal(contract.canonicalCommercialPi("RADAR 17190"), null);
+});
+
 test("validador ZIP nao depende do binario unzip", () => {
   assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /zipfile\.ZipFile/);
   assert.match(contract.EVIDENCE_ZIP_VALIDATION_PYTHON, /SHA256SUMS\.txt/);

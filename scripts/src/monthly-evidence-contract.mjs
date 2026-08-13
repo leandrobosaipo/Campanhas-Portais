@@ -46,6 +46,11 @@ export function takeDeliverySamples(values) {
   return Array.from(new Set(values || [])).filter(Boolean).slice(0, 3);
 }
 
+export function canonicalCommercialPi(value) {
+  const match = String(value || "").trim().match(/^(?:PI\s*[-:]?\s*)?(\d+)(?:\s*[-–—:]\s*[^\d].*)?$/i);
+  return match ? match[1].replace(/^0+(?=\d)/, "") : null;
+}
+
 export function resolveReportPortainerUrl(env) {
   return String(env?.ADOPS_REPORT_PORTAINER_URL || env?.PORTAINER_URL || "").replace(/\/$/, "");
 }

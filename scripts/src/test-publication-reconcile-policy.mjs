@@ -5,8 +5,11 @@ import { planCampaignPublicationReconciliation } from "../../ops/cloudflare-remo
 
 function item(overrides = {}) {
   return {
-    resolutionStatus: "awaiting_authoritative_pi",
-    resolutionReason: "Aguardando PI/PDF autoritativa antes de publicar a inserção existente.",
+    resolutionStatus: "ready_for_publication",
+    publicationStatus: "ready_for_publication",
+    identityMode: "operational_identity",
+    commercialIdentityStatus: "awaiting_authoritative_pi",
+    resolutionReason: "Identidade operacional única; publicação depende do preflight vivo.",
     siteSigla: "PERRENGUE",
     piCodigo: "PI - TCE",
     campaignName: "RADAR",
@@ -18,22 +21,36 @@ function item(overrides = {}) {
       documentStatus: "missing",
       inventoryScanId: "scan-1",
     },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 19 },
+    operationalIdentity: {
+      fingerprint: "a".repeat(64),
+      source: {
+        folderId: "folder-radar-perrengue",
+        folderPath: "/PERRENGUE/AGOSTO/PI - TCE - RADAR",
+        media: [{ id: "gif-radar", name: "670x90 tce.gif", mimeType: "image/gif" }],
+        destinationDocuments: [{ id: "doc-radar", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+    },
     adops: { campaignId: 989, insertionId: 1944, mediaUrl: null, bannerPublicadoNoSite: false },
     requiredActions: ["publish_on_site", "generate_evidence"],
     ...overrides,
   };
 }
 
-test("reconciliador não publica rascunho sem PI/PDF", () => {
+test("reconciliador cria preflight operacional para rascunho sem PI/PDF", () => {
   const plan = planCampaignPublicationReconciliation([item()], "2026-08-13T21:30:00.000Z");
-  assert.equal(plan.actions.length, 0);
-  assert.equal(plan.blockers[0]?.insertionId, 1944);
-  assert.equal(plan.blockers[0]?.code, "awaiting_authoritative_pi");
+  assert.equal(plan.blockers.length, 0);
+  assert.equal(plan.actions[0]?.type, "operational_media_publish");
+  assert.equal(plan.actions[0]?.payload.expectedCampaignId, 989);
+  assert.equal(plan.actions[0]?.payload.expectedInsertionId, 1944);
+  assert.equal(plan.actions[0]?.payload.expectedPiCodigo, undefined);
 });
 
 test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", () => {
   const plan = planCampaignPublicationReconciliation([item({
     resolutionStatus: "ready_for_preflight",
+    publicationStatus: "ready_for_preflight",
+    identityMode: "authoritative_pi",
     piCodigo: "17420",
     sourceIdentity: { decision: "confirmed", canonicalPi: "17420" },
     drive: {
@@ -58,6 +75,8 @@ test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", (
 test("reconciliador publica mídia canônica já validada sem recriar campanha", () => {
   const plan = planCampaignPublicationReconciliation([item({
     resolutionStatus: "ready_for_publication",
+    publicationStatus: "ready_for_publication",
+    identityMode: "authoritative_pi",
     piCodigo: "17420",
     sourceIdentity: { decision: "confirmed", canonicalPi: "17420" },
     adops: { campaignId: 989, insertionId: 1944, mediaUrl: "https://cdn.perrenguematogrosso.com/radar.gif", bannerPublicadoNoSite: false },

@@ -8,4 +8,9 @@
 
 export type CreateCampaignPublicationReconcileJobBody = {
   targetDate?: Date;
+  /**
+   * Restrict reconciliation to one existing canonical insertion.
+   * @minimum 1
+   */
+  insertionId?: number;
 };

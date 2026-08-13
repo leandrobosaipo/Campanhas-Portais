@@ -2351,9 +2351,12 @@ export default {
         const targetDate = typeof body.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.targetDate)
           ? body.targetDate
           : dateInTimeZone(new Date(), DAILY_PRINT_TIME_ZONE);
-        const idempotencyKey = `campaign-publication-reconcile:${targetDate}`;
+        const insertionId = body.insertionId === undefined ? null : Number(body.insertionId);
+        if (insertionId !== null && (!Number.isInteger(insertionId) || insertionId <= 0)) return badRequest("insertionId deve ser inteiro positivo quando informado.");
+        const idempotencyKey = `campaign-publication-reconcile:${targetDate}:${insertionId || "all"}`;
         const created = await createIdempotentOpsJob(env, "campaign-publication-reconcile", {
           targetDate,
+          insertionId,
           source: "cloudflare-protected-api",
         }, "ops-api", idempotencyKey, true);
         return jsonNoStore({ ok: true, kind: "campaign-publication-reconcile", ...created }, { status: created.duplicate ? 200 : 202 });

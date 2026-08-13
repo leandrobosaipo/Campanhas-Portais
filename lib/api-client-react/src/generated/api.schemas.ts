@@ -1013,6 +1013,11 @@ export interface CompetenciaBreakdown {
 
 export type CreateCampaignPublicationReconcileJobBody = {
   targetDate?: string;
+  /**
+   * Restrict reconciliation to one existing canonical insertion.
+   * @minimum 1
+   */
+  insertionId?: number;
 };
 
 export type ListOpsJobsParams = {
@@ -1044,7 +1049,77 @@ export type GetPendingCampaignOperationsParams = {
   date?: string;
 };
 
-export type GetPendingCampaignOperations200 = { [key: string]: unknown };
+export type GetPendingCampaignOperations200Summary = { [key: string]: unknown };
+
+/**
+ * @nullable
+ */
+export type GetPendingCampaignOperations200ItemsItemIdentityMode =
+  | (typeof GetPendingCampaignOperations200ItemsItemIdentityMode)[keyof typeof GetPendingCampaignOperations200ItemsItemIdentityMode]
+  | null;
+
+export const GetPendingCampaignOperations200ItemsItemIdentityMode = {
+  authoritative_pi: "authoritative_pi",
+  operational_identity: "operational_identity",
+} as const;
+
+export type GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus =
+  (typeof GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus)[keyof typeof GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus];
+
+export const GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus =
+  {
+    confirmed: "confirmed",
+    awaiting_authoritative_pi: "awaiting_authoritative_pi",
+  } as const;
+
+export type GetPendingCampaignOperations200ItemsItemPublicationStatus =
+  (typeof GetPendingCampaignOperations200ItemsItemPublicationStatus)[keyof typeof GetPendingCampaignOperations200ItemsItemPublicationStatus];
+
+export const GetPendingCampaignOperations200ItemsItemPublicationStatus = {
+  awaiting_authoritative_pi: "awaiting_authoritative_pi",
+  ready_for_preflight: "ready_for_preflight",
+  ready_for_publication: "ready_for_publication",
+  published: "published",
+  failed_retryable: "failed_retryable",
+} as const;
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentityGates = {
+  [key: string]: boolean;
+};
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentitySource =
+  { [key: string]: unknown };
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentity = {
+  gates: GetPendingCampaignOperations200ItemsItemOperationalIdentityGates;
+  /** @pattern ^[a-f0-9]{64}$ */
+  fingerprint: string;
+  source: GetPendingCampaignOperations200ItemsItemOperationalIdentitySource;
+};
+
+export type GetPendingCampaignOperations200ItemsItem = {
+  /** @nullable */
+  identityMode?: GetPendingCampaignOperations200ItemsItemIdentityMode;
+  commercialIdentityStatus: GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus;
+  publicationStatus: GetPendingCampaignOperations200ItemsItemPublicationStatus;
+  resolutionStatus: string;
+  resolutionReason?: string;
+  resumeAction?: string;
+  lastCheckedAt?: string;
+  /** @nullable */
+  nextCheckAt?: string | null;
+  operationalIdentity: GetPendingCampaignOperations200ItemsItemOperationalIdentity;
+  [key: string]: unknown;
+};
+
+export type GetPendingCampaignOperations200 = {
+  date: string;
+  generatedAt: string;
+  summary: GetPendingCampaignOperations200Summary;
+  items: GetPendingCampaignOperations200ItemsItem[];
+  upcomingItems?: unknown[];
+  [key: string]: unknown;
+};
 
 export type GetMonthlyEvidenceSourceParams = {
   date?: string;

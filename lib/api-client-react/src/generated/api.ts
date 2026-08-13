@@ -336,7 +336,7 @@ export const useCreateDrivePiReconcileJob = <
 };
 
 /**
- * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
  */
 export const getCreateCampaignPublicationReconcileJobUrl = () => {
   return `/api/ops/jobs/campaign-publication-reconcile`;
@@ -404,7 +404,7 @@ export type CreateCampaignPublicationReconcileJobMutationError =
   ErrorType<ErrorResponse>;
 
 /**
- * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
  */
 export const useCreateCampaignPublicationReconcileJob = <
   TError = ErrorType<ErrorResponse>,

@@ -3,7 +3,7 @@
 > Estado: vigente
 > Público: equipe operacional e agentes
 > Última validação: 2026-08-13
-> Release-base: 47e0dab
+> Release-base: c71350e; política sem PDF validada no commit que contém este documento
 > Fonte autoritativa: OpenAPI vivo e runtime público
 
 ## Finalidade
@@ -49,7 +49,7 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/campaign-operations/pending-publication?date
 | Campanha completa | `POST /api/campaign-evidence-exports/jobs` | `GET /api/campaign-evidence-exports/jobs/{id}` | `/download` | PI canônica e fingerprint válido |
 | Lote mensal | `POST /api/campaign-evidence-exports/jobs/batch` | jobs individuais | cache ou ZIP novo | no máximo três exportações simultâneas |
 | Relatório mensal | job `evidence-monthly-report` | `/progress` | leitura pública | staging inteiro precisa passar |
-| Retomar publicação | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | campanha existente ou blocker rastreável | exige PI/PDF, mídia e alvo canônico |
+| Retomar publicação | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | campanha existente ou blocker rastreável | aceita `insertionId`; exige identidade autoritativa ou operacional única |
 
 Para qualquer criação de job:
 
@@ -62,7 +62,7 @@ Para qualquer criação de job:
 
 Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
 
-O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome: `awaiting_authoritative_pi` só evolui quando o PDF confirma PI, cliente, agência, portal, formato, período e destino. A aplicação é limitada à campanha e inserção já cadastradas.
+O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos e o runner confirma novamente mídia, destino, portal, período e formato. Nesse segundo modo, envia `pi_code=null` ao AdRotate, mantém faturamento e ZIP por PI bloqueados e limita a mutação à campanha/inserção já cadastradas.
 
 ## Matriz de evidência
 

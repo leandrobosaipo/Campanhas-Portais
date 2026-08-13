@@ -9,6 +9,11 @@ export type SiteFormatMapping = {
   contextSelector?: string;
   scrollMode?: "top" | "slot";
   proofStyle?: "viewport_only" | "viewport_with_slot_inset";
+  operationalMediaProfile?: {
+    width: number;
+    height: number;
+    formats: string[];
+  };
   auditOverrides?: Partial<SiteAuditConfig>;
 };
 

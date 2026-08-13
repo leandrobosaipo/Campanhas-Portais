@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-12
-> Release: 47e0dab
+> Última validação: 2026-08-13
+> Release-base: c71350e; política sem PDF validada no commit que contém este documento
 > Fonte autoritativa: runtime público, OpenAPI e runbooks deste repositório
 
 ## Objetivo
@@ -95,7 +95,7 @@ curl -fsSL https://adops-api.codigo5.com.br/api/ops/runtime-readiness
 curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/pending-publication?date=YYYY-MM-DD'
 ```
 
-Na leitura de pendências, use `resolutionStatus` para decidir a próxima ação. `awaiting_authoritative_pi` é um bloqueio rastreável, não autorização para inferir PI; `ready_for_preflight` exige PDF e mídia candidata; `ready_for_publication` exige mídia canônica. A retomada automática roda às 17h30 de Cuiabá e após eventos do Drive.
+Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` permanece como alias compatível. `identityMode=authoritative_pi` confirma também a identidade comercial. `identityMode=operational_identity` pode deixar `publicationStatus=ready_for_publication` sem inventar PI, mas somente quando todos os gates operacionais são únicos e o preflight vivo passa. `commercialIdentityStatus=awaiting_authoritative_pi` continua bloqueando faturamento e ZIP por PI. A retomada automática roda às 17h30 de Cuiabá e após eventos do Drive.
 
 Antes de alterar captura:
 

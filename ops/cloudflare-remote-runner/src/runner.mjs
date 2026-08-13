@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -753,7 +755,7 @@ function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName }) {
   const month = periodoInicio.slice(0, 7);
   const extension = path.extname(String(sourceName || "")).toLowerCase() || ".bin";
   const filename = [
-    slugifyPathPart(fields?.piCodigo || "pi"),
+    slugifyPathPart(fields?.piCodigo || fields?.operationalIdentityKey || "operational"),
     slugifyPathPart(fields?.campaignName || "campanha"),
     slugifyPathPart(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"),
   ].join("-") + extension;
@@ -1406,7 +1408,7 @@ async function listDrivePiPackageItems(folderId, basePath = "") {
     try {
       payload = await googleDriveRequest("files", {
         q: `'${folderId}' in parents and trashed = false`,
-        fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size)",
+        fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size,md5Checksum)",
         pageSize: 1000,
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
@@ -1428,6 +1430,7 @@ async function listDrivePiPackageItems(folderId, basePath = "") {
     modifiedTime: file.modifiedTime || null,
     webViewLink: file.webViewLink || null,
     size: file.size || null,
+    md5Checksum: file.md5Checksum || null,
   }));
 }
 
@@ -1459,7 +1462,7 @@ async function downloadDriveFileToArchive(file) {
   const archiveName = isGoogleDocument && !/\.txt$/i.test(String(file.name || "")) ? `${file.name || file.driveFileId}.txt` : file.name;
   const filePath = path.join(dir, `${sha256.slice(0, 12)}-${safeFileName(archiveName)}`);
   await writeFile(filePath, bytes);
-  return { filePath, sha256, bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
+  return { filePath, sha256, md5: crypto.createHash("md5").update(bytes).digest("hex"), bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
 }
 
 function trimUrlPunctuation(value) {
@@ -1468,6 +1471,129 @@ function trimUrlPunctuation(value) {
 
 function extractUrlsFromText(text) {
   return Array.from(new Set((String(text || "").match(/https?:\/\/[^\s<>"']+/gi) || []).map(trimUrlPunctuation)));
+}
+
+function resolveOperationalDestination(observations) {
+  const urls = Array.from(new Set((Array.isArray(observations) ? observations : [])
+    .flatMap((item) => extractUrlsFromText(item?.text))
+    .filter((value) => {
+      try {
+        const parsed = new URL(value);
+        return parsed.protocol === "https:"
+          && !parsed.username
+          && !parsed.password
+          && !isReservedDestinationHost(parsed.hostname)
+          && !/(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname);
+      } catch {
+        return false;
+      }
+    })));
+  if (urls.length !== 1) {
+    const hasHttp = (Array.isArray(observations) ? observations : []).some((item) => /http:\/\//i.test(String(item?.text || "")));
+    if (!urls.length && hasHttp) throw new Error("Destino operacional deve usar HTTPS.");
+    throw new Error(`Documento de destino deve conter exatamente um URL HTTPS válido; encontrados ${urls.length}.`);
+  }
+  return urls[0];
+}
+
+function isReservedDestinationHost(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (!net.isIP(host)) return false;
+  if (host === "::1" || host === "::" || /^fe[89ab]/i.test(host) || /^fc|^fd/i.test(host)) return true;
+  if (host.startsWith("::ffff:")) return isReservedDestinationHost(host.slice(7));
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4) return false;
+  return octets[0] === 0 || octets[0] === 10 || octets[0] === 127 || octets[0] >= 224
+    || (octets[0] === 169 && octets[1] === 254)
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168)
+    || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127)
+    || (octets[0] === 198 && (octets[1] === 18 || octets[1] === 19));
+}
+
+async function assertPublicOperationalDestination(value) {
+  const parsed = new URL(value);
+  const addresses = await dnsLookup(parsed.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isReservedDestinationHost(item.address))) {
+    throw new Error("Destino HTTPS não resolve exclusivamente para endereços públicos.");
+  }
+  return value;
+}
+
+function normalizeOperationalValue(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function validateOperationalPublicationContract(payload, { insertion, campaign, site }) {
+  const campaignId = readPositiveInteger(insertion?.campanhaId ?? insertion?.campaignId);
+  const checks = [
+    [Number(insertion?.id) === Number(payload?.expectedInsertionId), "inserção"],
+    [campaignId === Number(payload?.expectedCampaignId) && Number(campaign?.id) === Number(payload?.expectedCampaignId), "campanha"],
+    [normalizeOperationalValue(site?.sigla) === normalizeOperationalValue(payload?.expectedSiteSigla), "portal"],
+    [normalizeOperationalValue(insertion?.localFormatoNormalizado ?? insertion?.localFormato) === normalizeOperationalValue(payload?.expectedFormat), "formato"],
+    [String(insertion?.periodoInicio || "") === String(payload?.expectedPeriodStart || ""), "início"],
+    [String(insertion?.periodoFim || "") === String(payload?.expectedPeriodEnd || ""), "fim"],
+  ];
+  const failed = checks.find(([ok]) => !ok);
+  if (failed) throw new Error(`Preflight operacional divergiu em ${failed[1]}; nenhuma mutação foi aplicada.`);
+  const commercialPi = firstNonEmptyString(campaign?.piCodigo, insertion?.piCodigo);
+  if (/^\s*(?:PI\s*[-:]?\s*)?\d+\s*$/i.test(String(commercialPi || ""))) {
+    throw new Error("Identidade operacional não pode publicar com PI numérica ainda não confirmada por PDF.");
+  }
+  return { ok: true, preserveCommercialPi: commercialPi };
+}
+
+function validateOperationalDriveItem(expected, actual, label) {
+  const expectedId = firstNonEmptyString(expected?.id, expected?.driveFileId);
+  const actualId = firstNonEmptyString(actual?.id, actual?.driveFileId);
+  if (!expectedId || expectedId !== actualId) throw new Error(`${label} operacional não corresponde mais ao ID aprovado.`);
+  for (const key of ["name", "mimeType", "modifiedTime", "size", "md5Checksum"]) {
+    const expectedValue = expected?.[key] == null ? null : String(expected[key]).trim();
+    const actualValue = actual?.[key] == null ? null : String(actual[key]).trim();
+    if (expectedValue && expectedValue !== actualValue) throw new Error(`${label} operacional mudou em ${key}; nenhuma mutação foi aplicada.`);
+  }
+  return true;
+}
+
+async function inspectOperationalImage(filePath, expected) {
+  const script = `
+import json, sys
+from PIL import Image
+p=sys.argv[1]
+with Image.open(p) as im:
+    im.verify()
+with Image.open(p) as im:
+    frames=getattr(im, "n_frames", 1)
+    im.seek(0)
+    rgb=im.convert("RGB")
+    extrema=rgb.getextrema()
+    non_uniform=any(lo != hi for lo, hi in extrema)
+    print(json.dumps({"format": im.format, "width": im.width, "height": im.height, "frames": frames, "nonUniform": non_uniform}))
+`;
+  let metadata;
+  try {
+    const { stdout } = await execFileAsync("python3", ["-c", script, filePath], { timeout: 30000, maxBuffer: 1024 * 1024 });
+    metadata = JSON.parse(stdout);
+  } catch (error) {
+    if (!/No module named ['\"]PIL['\"]/.test(String(error?.stderr || error?.message || ""))) throw error;
+    const { stdout } = await execFileAsync("identify", ["-format", "%m %w %h %n %[entropy]", `${filePath}[0]`], { timeout: 30000, maxBuffer: 1024 * 1024 });
+    const [format, width, height, frames, entropy] = stdout.trim().split(/\s+/);
+    metadata = { format, width: Number(width), height: Number(height), frames: Number(frames), nonUniform: Number(entropy) > 0 };
+  }
+  if (String(metadata.format || "").toUpperCase() !== String(expected?.format || "").toUpperCase()) throw new Error("Formato binário da mídia diverge do esperado.");
+  if (Number(metadata.width) !== Number(expected?.width) || Number(metadata.height) !== Number(expected?.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+  if (!metadata.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  return metadata;
+}
+
+async function loadOperationalMediaProfile(siteSigla, localFormat) {
+  const config = JSON.parse(await readFile(path.join(PROJECT_ROOT, "config/adrotate-sites.json"), "utf8"));
+  const siteConfig = config?.[String(siteSigla || "").toUpperCase()];
+  const normalizedFormat = normalizeOperationalValue(localFormat);
+  const matches = (siteConfig?.formatMappings || []).filter((mapping) => (mapping?.aliases || []).some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
+  if (matches.length !== 1 || !matches[0]?.operationalMediaProfile) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
+  return { groupId: Number(matches[0].groupId), ...matches[0].operationalMediaProfile };
 }
 
 function extractMediaLinksFromText(text) {
@@ -2415,6 +2541,7 @@ $apply = getenv('ADOPS_APPLY') === '1';
 if (!$payload_path || !is_readable($payload_path)) {
   throw new RuntimeException('Payload JSON ausente ou ilegivel.');
 }
+
 require_once rtrim($wp_path, '/') . '/wp-load.php';
 require_once WP_CONTENT_DIR . '/plugins/adrotate/adrotate-adops.php';
 if (!function_exists('adrotate_adops_publish_payload')) {
@@ -2445,6 +2572,81 @@ echo wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_U
     endpointId: ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID,
     wpPath: ADOPS_PERRENGUE_CONTAINER_WP_PATH,
   };
+}
+
+function buildPerrenguePhpCommand(runnerPhp, input, mode) {
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  return [
+    `tmp_runner="$(mktemp /tmp/adops-${mode}.XXXXXX.php)"`,
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ADOPS_ROLLBACK_INPUT=${shellEscape(input)} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+}
+
+function buildPerrengueAdrotateSnapshotPhp() {
+  return `<?php
+$wp_path=getenv('ADOPS_WP_PATH') ?: '/app/web/wp'; $input=json_decode(base64_decode(getenv('ADOPS_ROLLBACK_INPUT') ?: ''),true);
+require_once rtrim($wp_path,'/').'/wp-load.php'; global $wpdb;
+$at=$wpdb->prefix.'adrotate'; $st=$wpdb->prefix.'adrotate_schedule'; $lt=$wpdb->prefix.'adrotate_linkmeta';
+$iid=(int)($input['insertionId'] ?? 0); $key=sanitize_text_field($input['externalKey'] ?? '');
+$ads=$wpdb->get_results($wpdb->prepare('SELECT * FROM '.$at.' WHERE adops_insertion_id=%d OR adops_external_key=%s ORDER BY id',$iid,$key),ARRAY_A);
+$ids=array_map(fn($r)=>(int)$r['id'],$ads); $links=[]; $schedules=[];
+if ($ids) { $sqlids=implode(',',array_map('intval',$ids)); $links=$wpdb->get_results('SELECT * FROM '.$lt.' WHERE ad IN ('.$sqlids.') ORDER BY id',ARRAY_A); $sids=array_values(array_unique(array_filter(array_map(fn($r)=>(int)($r['schedule'] ?? 0),$links)))); if ($sids) $schedules=$wpdb->get_results('SELECT * FROM '.$st.' WHERE id IN ('.implode(',',array_map('intval',$sids)).') ORDER BY id',ARRAY_A); }
+echo wp_json_encode(['ads'=>$ads,'links'=>$links,'schedules'=>$schedules],JSON_UNESCAPED_SLASHES).PHP_EOL;
+`;
+}
+
+function buildPerrengueAdrotateRestorePhp() {
+  return `<?php
+$wp_path=getenv('ADOPS_WP_PATH') ?: '/app/web/wp'; $input=json_decode(base64_decode(getenv('ADOPS_ROLLBACK_INPUT') ?: ''),true);
+require_once rtrim($wp_path,'/').'/wp-load.php'; global $wpdb;
+$at=$wpdb->prefix.'adrotate'; $st=$wpdb->prefix.'adrotate_schedule'; $lt=$wpdb->prefix.'adrotate_linkmeta';
+$iid=(int)($input['insertionId'] ?? 0); $key=sanitize_text_field($input['externalKey'] ?? ''); $snap=$input['snapshot'] ?? [];
+$must=function($result,$label){ if ($result === false) throw new RuntimeException('Falha WPDB: '.$label.'; '.$GLOBALS['wpdb']->last_error); return $result; };
+foreach ([$at,$st,$lt] as $table) { $status=$wpdb->get_row($wpdb->prepare('SHOW TABLE STATUS LIKE %s',$table),ARRAY_A); if (!$status || strtoupper((string)($status['Engine'] ?? '')) !== 'INNODB') throw new RuntimeException('Rollback exige tabelas InnoDB: '.$table); }
+$must($wpdb->query('START TRANSACTION'),'start transaction');
+try { $current=$wpdb->get_results($wpdb->prepare('SELECT id FROM '.$at.' WHERE adops_insertion_id=%d OR adops_external_key=%s',$iid,$key),ARRAY_A); $ids=array_map(fn($r)=>(int)$r['id'],$current); $sids=[];
+if ($ids) { $sqlids=implode(',',array_map('intval',$ids)); $sids=$wpdb->get_col('SELECT DISTINCT schedule FROM '.$lt.' WHERE ad IN ('.$sqlids.') AND schedule>0'); $must($wpdb->query('DELETE FROM '.$lt.' WHERE ad IN ('.$sqlids.')'),'delete current links'); $must($wpdb->query('DELETE FROM '.$at.' WHERE id IN ('.$sqlids.')'),'delete current ads'); }
+foreach (($snap['schedules'] ?? []) as $row) $must($wpdb->replace($st,$row),'restore schedule'); foreach (($snap['ads'] ?? []) as $row) $must($wpdb->replace($at,$row),'restore ad'); foreach (($snap['links'] ?? []) as $row) $must($wpdb->replace($lt,$row),'restore link');
+foreach ($sids as $sid) { $sid=(int)$sid; $original=array_filter(($snap['schedules'] ?? []),fn($r)=>(int)$r['id']===$sid); if ($sid>0 && !$original && !(int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM '.$lt.' WHERE schedule=%d',$sid))) $must($wpdb->delete($st,['id'=>$sid]),'delete orphan schedule'); }
+$must($wpdb->query('COMMIT'),'commit'); echo wp_json_encode(['restored'=>true,'ads'=>count($snap['ads'] ?? [])]).PHP_EOL; } catch (Throwable $e) { $wpdb->query('ROLLBACK'); throw $e; }
+`;
+}
+
+function normalizePerrengueAdrotateSnapshot(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Snapshot AdRotate inválido.");
+  const normalized = {};
+  for (const key of ["ads", "links", "schedules"]) {
+    if (!Array.isArray(value[key])) throw new Error(`Snapshot AdRotate inválido: ${key}.`);
+    normalized[key] = value[key].map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row) || !readPositiveInteger(row.id)) throw new Error(`Snapshot AdRotate inválido: linha ${key}.`);
+      return Object.fromEntries(Object.entries(row).sort(([left], [right]) => left.localeCompare(right)));
+    }).sort((left, right) => Number(left.id) - Number(right.id));
+  }
+  return normalized;
+}
+
+async function snapshotPerrengueAdrotate({ insertionId, externalKey }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey })).toString("base64");
+  const runnerPhp = buildPerrengueAdrotateSnapshotPhp();
+  const execution = await execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, "snapshot"), 120000);
+  return normalizePerrengueAdrotateSnapshot(parseWpCliJsonObject(execution.stdout));
+}
+
+async function restorePerrengueAdrotate({ insertionId, externalKey, snapshot }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey, snapshot: expectedSnapshot })).toString("base64");
+  const runnerPhp = buildPerrengueAdrotateRestorePhp();
+  const execution = await execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, "restore"), 120000);
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.restored) throw new Error("Rollback AdRotate não confirmou restauração.");
+  const readback = await snapshotPerrengueAdrotate({ insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate divergiu no readback pós-restauração.");
+  return { ...result, readbackVerified: true };
 }
 
 async function importPerrengueMediaFromUrl({ sourceUrl, filename, mediaKey }) {
@@ -2610,7 +2812,7 @@ function destinationUrlFromObservations(value) {
   return match?.[1] ? trimUrlPunctuation(match[1]) : null;
 }
 
-function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence }) {
+function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence, identityMode }) {
   const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
   const mediaUrl = firstNonEmptyString(
     checklist?.expectedMedia?.mediaUrl,
@@ -2649,7 +2851,7 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
   return {
     insertion_id: insertion.id,
     campaign_id: campaignId,
-    pi_code: piCodigo,
+    pi_code: identityMode === "operational_identity" ? null : piCodigo,
     external_key: externalKey,
     title: buildAdrotatePublishTitle(insertion, campaign),
     group_id: groupId,
@@ -2786,6 +2988,51 @@ async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename,
     await sleep(750);
   }
   return lastResult;
+}
+
+async function validateMediaAbsentFromPublicHtml({ site, insertionId, mediaBasename }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl || !mediaBasename) throw new Error("Rollback público sem URL ou mídia para validar ausência.");
+  let last = null;
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const url = new URL(homeUrl);
+    url.searchParams.set("cod5_adops_rollback", `${insertionId}-${attempt}-${Date.now()}`);
+    const response = await fetch(url, { redirect: "follow", headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" }, signal: AbortSignal.timeout(30000) });
+    const html = await response.text();
+    last = { ok: response.ok && !html.includes(mediaBasename), url: response.url, status: response.status, attempts: attempt };
+    if (last.ok) return last;
+    await sleep(750);
+  }
+  return last;
+}
+
+async function validateRestoredAdHtml({ site, insertionId, previousAdId, previousMediaBasename, rejectedMediaBasename }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl || !previousAdId || !previousMediaBasename || !rejectedMediaBasename) throw new Error("Rollback público sem identidade estrita do anúncio anterior e rejeitado.");
+  let last = null;
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const url = new URL(homeUrl);
+    url.searchParams.set("cod5_adops_rollback", `${insertionId}-${attempt}-${Date.now()}`);
+    const response = await fetch(url, { redirect: "follow", headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" }, signal: AbortSignal.timeout(30000) });
+    const html = await response.text();
+    const strict = evaluateRestoredAdHtml(html, { previousAdId, previousMediaBasename, rejectedMediaBasename });
+    last = { ok: response.ok && strict.ok, url: response.url, status: response.status, ...strict, attempts: attempt };
+    if (last.ok) return last;
+    await sleep(750);
+  }
+  return last;
+}
+
+function evaluateRestoredAdHtml(html, { previousAdId, previousMediaBasename, rejectedMediaBasename }) {
+  const source = String(html || "");
+  const previousMediaFound = Boolean(previousMediaBasename && source.includes(previousMediaBasename));
+  const previousAdFound = Boolean(previousAdId && (source.includes(`a-${previousAdId}`) || source.includes(`data-ad-id=\"${previousAdId}\"`)));
+  const rejectedMediaAbsent = Boolean(rejectedMediaBasename) && !source.includes(rejectedMediaBasename);
+  return { ok: rejectedMediaAbsent && (previousMediaFound || previousAdFound), previousMediaFound, previousAdFound, rejectedMediaAbsent };
+}
+
+function selectCanonicalSnapshotAd(snapshot) {
+  return (Array.isArray(snapshot?.ads) ? snapshot.ads : []).slice().sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] || null;
 }
 
 async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
@@ -3603,6 +3850,7 @@ async function executeAdrotatePublishJob(payload) {
     replaceExisting,
     purgeCache,
     generateEvidence,
+    identityMode: payload?.identityMode,
   });
   const payloadJson = JSON.stringify(publishPayload);
   const wpCliCommand = [
@@ -4889,6 +5137,143 @@ async function executeDrivePiReconcile(payload) {
   };
 }
 
+async function executeOperationalMediaPublish(payload) {
+  if (payload?.identityMode !== "operational_identity") throw new Error("Preflight operacional exige identityMode=operational_identity.");
+  const insertionId = readPositiveInteger(payload?.expectedInsertionId);
+  const campaignId = readPositiveInteger(payload?.expectedCampaignId);
+  if (!insertionId || !campaignId || !payload?.fingerprint) throw new Error("Preflight operacional sem IDs canônicos ou fingerprint.");
+  if (campaignId !== 989 || insertionId !== 1944) throw new Error("Exceção operacional sem PDF está limitada à campanha 989 e inserção 1944.");
+
+  const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(payload?.targetDate || todayInCuiaba())}`);
+  const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
+  if (!liveItem || liveItem?.identityMode !== "operational_identity" || liveItem?.publicationStatus !== "ready_for_publication") {
+    throw new Error(`Inserção ${insertionId} não está mais liberada por identidade operacional única.`);
+  }
+  if (liveItem?.operationalIdentity?.fingerprint !== payload.fingerprint) throw new Error("Fingerprint operacional mudou; nenhuma mutação foi aplicada.");
+
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
+  const siteId = readPositiveInteger(insertion?.siteId ?? insertion?.site?.id);
+  const site = siteId ? await privateApiGet(`/api/sites/${siteId}`) : null;
+  validateOperationalPublicationContract(payload, { insertion, campaign, site });
+
+  const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");
+  const mediaId = firstNonEmptyString(payload?.media?.id, payload?.media?.driveFileId);
+  const documentId = firstNonEmptyString(payload?.destinationDocument?.id, payload?.destinationDocument?.driveFileId);
+  const mediaItem = folderItems.find((item) => item.driveFileId === mediaId);
+  const destinationItem = folderItems.find((item) => item.driveFileId === documentId);
+  if (!mediaItem || !destinationItem) throw new Error("Mídia ou documento exatos não pertencem mais à pasta operacional.");
+  validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
+  validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
+  const imageCandidates = folderItems.filter(isImageMediaItem);
+  const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
+  if (imageCandidates.length !== 1 || textCandidates.length !== 1) throw new Error("Pasta operacional deixou de conter uma única mídia e um único documento de destino.");
+
+  const observations = await readDriveTextObservations([destinationItem]);
+  const destinationUrl = resolveOperationalDestination(observations);
+  await assertPublicOperationalDestination(destinationUrl);
+  const materialized = await materializeMediaSource({ driveItem: mediaItem, fallbackName: mediaItem.name || "banner.gif" });
+  if (!payload?.media?.md5Checksum) throw new Error("Snapshot operacional não possui checksum autoritativo da mídia; atualize o inventário antes de publicar.");
+  if (String(materialized.md5 || "").toLowerCase() !== String(payload.media.md5Checksum).toLowerCase()) throw new Error("Checksum do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
+  if (payload?.media?.size && Number(materialized.bytes) !== Number(payload.media.size)) throw new Error("Tamanho do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
+  const mediaProfile = await loadOperationalMediaProfile(site?.sigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const allowedFormats = Array.isArray(mediaProfile.formats) ? mediaProfile.formats.map((value) => String(value).toUpperCase()) : [];
+  if (!allowedFormats.includes("GIF")) throw new Error("Perfil vigente do formato não permite GIF.");
+  const imageMetadata = await inspectOperationalImage(materialized.filePath, {
+    width: Number(mediaProfile.width),
+    height: Number(mediaProfile.height),
+    format: "GIF",
+  });
+  if (mediaProfile.groupId !== 2) throw new Error("HOME 1/Perrengue não resolveu o grupo 2 na configuração vigente.");
+
+  const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
+  const fields = { campaignName: campaign?.nome || liveItem?.campaignName || "RADAR", operationalIdentityKey: `insertion-${insertionId}` };
+  const raw = {
+    siteId,
+    siteSigla,
+    localFormato: insertion.localFormato,
+    localFormatoNormalizado: insertion.localFormatoNormalizado,
+    periodoInicio: insertion.periodoInicio,
+  };
+  const bucket = spacesBucketForSite(siteSigla);
+  const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
+  await uploadBufferToSpaces({ buffer: materialized.buffer, bucket, objectKey, contentType: materialized.mimeType || "image/gif" });
+  const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
+  const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, materialized.sha256].join(":" )).digest("hex");
+  const wordpressImport = String(siteSigla).toUpperCase() === "PERRENGUE"
+    ? await importPerrengueMediaFromUrl({ sourceUrl: stagedUrl, filename: materialized.sourceName, mediaKey })
+    : null;
+  const mediaUrl = wordpressImport?.url || stagedUrl;
+  const probe = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30000) });
+  if (!probe.ok) throw new Error(`Mídia canônica não respondeu HTTP válido: ${probe.status}.`);
+  const externalKey = `ADOPS-${String(siteSigla).toUpperCase()}-${insertionId}`;
+  const adrotateSnapshot = await snapshotPerrengueAdrotate({ insertionId, externalKey });
+  let preview;
+  let published;
+  let insertionPatched = false;
+  try {
+    await privateApiPatch(`/api/insertions/${insertionId}`, {
+      mediaUrl,
+      observacoes: [
+        insertion.observacoes,
+        `Link destino informado: ${destinationUrl}`,
+        `Mídia validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${imageMetadata.width}x${imageMetadata.height}; ${imageMetadata.frames} frame(s)).`,
+        "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial.",
+      ].filter(Boolean).join("\n"),
+    });
+    insertionPatched = true;
+
+    const publishBase = { insertionId, identityMode: "operational_identity", replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate };
+    preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
+    published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
+    if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.publicHtmlValidation?.ok !== true)) {
+      throw new Error(`Publicação operacional da inserção ${insertionId} não passou nos gates AdRotate/HTML.`);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    if (insertionPatched) {
+      await privateApiPatch(`/api/insertions/${insertionId}`, {
+        mediaUrl: insertion.mediaUrl ?? null,
+        observacoes: insertion.observacoes ?? null,
+        bannerPublicadoNoSite: insertion.bannerPublicadoNoSite === true,
+        statusNormalizado: insertion.statusNormalizado,
+      }).catch((rollbackError) => rollbackErrors.push(`insertion:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+    }
+    let adrotateRestored = false;
+    await restorePerrengueAdrotate({ insertionId, externalKey, snapshot: adrotateSnapshot })
+      .then(() => { adrotateRestored = true; })
+      .catch((rollbackError) => rollbackErrors.push(`adrotate:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+    if (adrotateRestored) {
+      const previousAd = selectCanonicalSnapshotAd(adrotateSnapshot);
+      const previousMediaBasename = firstNonEmptyString(previousAd?.adops_media_basename, mediaBasenameFromUrl(previousAd?.image));
+      await executePerrengueHeadlessRebuild({
+        insertionId,
+        adId: readPositiveInteger(previousAd?.id) || 0,
+        mediaBasename: previousMediaBasename || mediaBasenameFromUrl(mediaUrl),
+        purgeCache: true,
+      }).then(async () => {
+        const publicRollback = previousAd
+          ? await validateRestoredAdHtml({ site, insertionId, previousAdId: readPositiveInteger(previousAd.id), previousMediaBasename, rejectedMediaBasename: mediaBasenameFromUrl(mediaUrl) })
+          : await validateMediaAbsentFromPublicHtml({ site, insertionId, mediaBasename: mediaBasenameFromUrl(mediaUrl) });
+        if (publicRollback?.ok !== true) throw new Error("HTML público não confirmou o estado restaurado.");
+      }).catch((rollbackError) => rollbackErrors.push(`public-consumer:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+    }
+    const suffix = rollbackErrors.length ? ` Rollback incompleto: ${rollbackErrors.join("; ")}` : " Rollback da inserção e AdRotate confirmado; mídia órfã permanece recuperável.";
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${suffix}`);
+  }
+  return {
+    stage: "published",
+    insertionId,
+    campaignId,
+    identityMode: "operational_identity",
+    commercialIdentityStatus: "awaiting_authoritative_pi",
+    media: { sourceDriveFileId: mediaId, stagedUrl, mediaUrl, metadata: imageMetadata },
+    destinationUrl,
+    preview,
+    published,
+  };
+}
+
 async function executeCampaignPublicationReconcile(job) {
   const cod5_targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.targetDate || ""))
     ? String(job.payload.targetDate)
@@ -4901,7 +5286,12 @@ async function executeCampaignPublicationReconcile(job) {
   });
   const cod5_pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(cod5_targetDate)}`);
   const cod5_checkedAt = new Date().toISOString();
-  const cod5_plan = planCampaignPublicationReconciliation(cod5_pending?.items, cod5_checkedAt);
+  const cod5_requestedInsertionId = readPositiveInteger(job?.payload?.insertionId);
+  const cod5_items = cod5_requestedInsertionId
+    ? (cod5_pending?.items || []).filter((item) => Number(item?.adops?.insertionId) === cod5_requestedInsertionId)
+    : cod5_pending?.items;
+  if (cod5_requestedInsertionId && !cod5_items.length) throw new Error(`Inserção ${cod5_requestedInsertionId} não está na fila de publicação.`);
+  const cod5_plan = planCampaignPublicationReconciliation(cod5_items, cod5_checkedAt);
   const cod5_results = [];
   let cod5_done = 0;
   for (const cod5_action of cod5_plan.actions) {
@@ -4919,6 +5309,12 @@ async function executeCampaignPublicationReconcile(job) {
         type: cod5_action.type,
         insertionId: cod5_action.insertionId,
         result: await executeDrivePiIngest(cod5_action.event),
+      });
+    } else if (cod5_action.type === "operational_media_publish") {
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: await executeOperationalMediaPublish({ ...cod5_action.payload, targetDate: cod5_targetDate }),
       });
     } else if (cod5_action.type === "adrotate_publish") {
       cod5_results.push({
@@ -5820,18 +6216,28 @@ async function main() {
 }
 
 export {
+  buildAdrotatePublishPayload,
+  buildPerrengueAdrotateRestorePhp,
+  buildPerrengueAdrotateSnapshotPhp,
   extractSameOriginArticleCandidates,
   extractUrlsFromText,
   extractMediaLinksFromText,
+  evaluateRestoredAdHtml,
   filterSiteInsertions,
   isSocialInsertion,
   mediaKindFromUrl,
+  inspectOperationalImage,
+  normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
   resolveDrivePiClickUrl,
+  resolveOperationalDestination,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
+  selectCanonicalSnapshotAd,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
+  validateOperationalPublicationContract,
+  validateOperationalDriveItem,
 };
 
 if (process.env.ADOPS_RUNNER_TEST_MODE !== "1") {

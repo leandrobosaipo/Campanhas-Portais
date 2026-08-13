@@ -109,6 +109,11 @@
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 670,
+          "height": 90,
+          "formats": ["GIF"]
+        },
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
           "gifFrameSelection": "source_preferred",

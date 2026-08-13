@@ -3,7 +3,7 @@
 > Estado: vigente
 > Público: operação humana e agentes
 > Última validação: 2026-08-13
-> Release-base: 47e0dab
+> Release-base: c71350e; política sem PDF validada no commit que contém este documento
 > Fonte autoritativa: PI/PDF, planilha, API AdOps e portal público
 
 ## Resultado esperado
@@ -50,13 +50,14 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 | Inserção equivalente existe | Corrigir/vincular; não duplicar |
 | Anúncio correto existe no grupo | Reutilizar e vincular |
 | Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
-| PI/PDF ausente | Marcar `awaiting_authoritative_pi`; mídia candidata não vira “mídia ausente” |
+| PI/PDF ausente, identidade operacional única | Usar `identityMode=operational_identity`, manter `commercialIdentityStatus=awaiting_authoritative_pi` e liberar somente o preflight vivo de publicação |
+| PI/PDF ausente e fonte ambígua | Manter `failed_retryable`; mídia candidata não vira “mídia ausente” e nenhuma entidade é criada |
 
 Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
 
 ### Retomada automática sem duplicação
 
-O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Enquanto faltar PDF, ele conclui com blocker rastreável. Quando a fonte autoritativa chegar, só atualiza a campanha e a inserção esperadas se todos os campos coincidirem; não cria entidade por semelhança de nome.
+O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Sem PDF, ele pode publicar somente quando competência, portal, campanha, período, formato, linha, pasta, mídia e destino formam uma correspondência operacional única. O runner relê as fontes, valida o binário e o destino HTTPS antes de mutar. A PI continua pendente para faturamento e ZIP por PI. Quando o PDF chegar, o fluxo completa a campanha e a inserção existentes, sem duplicar ou trocar o portal por semelhança de nome.
 
 Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
@@ -171,7 +172,7 @@ O job `evidence-monthly-report` consulta a fonte agregada, reutiliza ZIPs por fi
 
 - `#1826`: rascunho duplicado excluído pela seleção canônica.
 - RADAR/OMT PI 17190: publicada e com ZIP validado.
-- RADAR/PERRENGUE `#1944`: GIF 670×90 e destino encontrados, mas publicação bloqueada sem PI/PDF.
+- RADAR/PERRENGUE `#1944`: caso de identidade operacional única; GIF 670×90 e destino podem liberar a veiculação após preflight, mas faturamento e ZIP por PI permanecem bloqueados até o PDF.
 - Relatório/ZIP: deadlock removido ao separar o runner mensal do pool dedicado de exportações.
 
 ## Checklist final

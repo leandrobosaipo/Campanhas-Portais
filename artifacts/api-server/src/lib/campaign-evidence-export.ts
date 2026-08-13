@@ -101,6 +101,19 @@ export function buildPendingPublicationView<T extends {
   upcomingItems?: unknown[];
 }>(input: T) {
   const nextCheckAt = new Date(Date.parse(input.generatedAt) + 24 * 60 * 60 * 1000).toISOString();
+  const operationalKey = (item: any) => JSON.stringify([
+    String(item?.sheetSource?.sheetName ?? "").trim().toUpperCase(),
+    String(item?.siteSigla ?? "").trim().toUpperCase(),
+    String(item?.campaignName ?? "").trim().toUpperCase(),
+    String(item?.period?.start ?? ""),
+    String(item?.period?.end ?? ""),
+    String(item?.format?.normalized ?? item?.format?.sheet ?? "").trim().toUpperCase(),
+  ]);
+  const operationalCounts = new Map<string, number>();
+  for (const item of input.items as any[]) {
+    const key = operationalKey(item);
+    operationalCounts.set(key, (operationalCounts.get(key) ?? 0) + 1);
+  }
   const items = input.items.filter((item) => (
     item.requiredActions?.includes("publish_on_site")
     || item.requiredActions?.includes("generate_evidence")
@@ -110,10 +123,49 @@ export function buildPendingPublicationView<T extends {
     const authoritativePiInPdf = Boolean(canonicalPi) && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? [])
       .map((value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""))
       .includes(canonicalPi);
+    const mediaFiles = Array.isArray(item.drive?.mediaFiles) ? item.drive.mediaFiles : [];
+    const textFiles = Array.isArray(item.drive?.textFiles) ? item.drive.textFiles : [];
+    const gates = {
+      sheetUnique: operationalCounts.get(operationalKey(item)) === 1,
+      insertionUnique: item.adops?.status === "matched"
+        && Number(item.adops?.campaignId || 0) > 0
+        && Number(item.adops?.insertionId || 0) > 0
+        && Number(item.adops?.operationalMatchCount ?? 1) === 1,
+      approvedOperationalTarget: Number(item.adops?.campaignId) === 989 && Number(item.adops?.insertionId) === 1944,
+      folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
+      mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
+      destinationCandidateUnique: textFiles.length === 1,
+      campaignConsistent: !(item.blockingIssues ?? []).some((issue: unknown) => /nome da campanha diverge/i.test(String(issue))),
+      portalConsistent: !item.requiredActions?.includes("review_site_divergence"),
+      periodConsistent: !item.requiredActions?.includes("review_period_divergence"),
+      formatConsistent: !item.requiredActions?.includes("review_format_divergence"),
+      sourceUnambiguous: item.sourceIdentity?.decision !== "needs_confirmation" && item.drive?.status !== "ambiguous",
+    };
+    const operationalReady = !published && !authoritativePiInPdf && Object.values(gates).every(Boolean);
+    const fingerprintInput = {
+      sheet: item.sheetSource,
+      siteSigla: item.siteSigla,
+      campaignName: item.campaignName,
+      period: item.period,
+      format: item.format,
+      campaignId: item.adops?.campaignId,
+      insertionId: item.adops?.insertionId,
+      folderId: item.drive?.folderId,
+      folderPath: item.drive?.folderPath,
+      inventoryScanId: item.drive?.inventoryScanId,
+      media: mediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+      destinationDocuments: textFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+    };
+    const operationalIdentity = {
+      gates,
+      fingerprint: crypto.createHash("sha256").update(JSON.stringify(fingerprintInput)).digest("hex"),
+      source: fingerprintInput,
+    };
     const awaitingAuthoritativePi = !published
       && item.sourceIdentity?.decision === "insufficient_data"
       && item.drive?.mediaStatus === "candidate_found"
-      && item.drive?.documentStatus === "missing";
+      && item.drive?.documentStatus === "missing"
+      && textFiles.length === 0;
     const readyForPreflight = !published
       && item.sourceIdentity?.decision === "confirmed"
       && item.drive?.mediaStatus === "candidate_found"
@@ -125,39 +177,51 @@ export function buildPendingPublicationView<T extends {
       && item.drive?.documentStatus === "candidate_found"
       && authoritativePiInPdf
       && Boolean(item.adops?.mediaUrl);
-    const resolutionStatus = published
+    const publicationStatus = published
       ? "published"
-      : awaitingAuthoritativePi
-        ? "awaiting_authoritative_pi"
+      : operationalReady
+        ? "ready_for_publication"
+        : awaitingAuthoritativePi
+          ? "awaiting_authoritative_pi"
         : readyForPreflight
           ? "ready_for_preflight"
           : readyForPublication
             ? "ready_for_publication"
             : "failed_retryable";
-    const resolutionReason = resolutionStatus === "published"
+    const identityMode = authoritativePiInPdf ? "authoritative_pi" : operationalReady ? "operational_identity" : null;
+    const commercialIdentityStatus = authoritativePiInPdf ? "confirmed" : "awaiting_authoritative_pi";
+    const resolutionReason = publicationStatus === "published"
       ? "Inserção já publicada; permanecem somente as ações operacionais listadas."
-      : resolutionStatus === "awaiting_authoritative_pi"
+      : operationalReady
+        ? "Identidade operacional única; publicação depende do preflight vivo de mídia e destino."
+      : publicationStatus === "awaiting_authoritative_pi"
         ? "Aguardando PI/PDF autoritativa antes de publicar a inserção existente."
-        : resolutionStatus === "ready_for_preflight"
+        : publicationStatus === "ready_for_preflight"
           ? "Identidade confirmada e mídia candidata pronta para validação."
-          : resolutionStatus === "ready_for_publication"
+          : publicationStatus === "ready_for_publication"
             ? "Identidade e mídia canônica confirmadas; publicação pode prosseguir."
             : item.sourceIdentity?.reason ?? "Pendência deve ser reavaliada após atualização das fontes.";
-    const resumeAction = resolutionStatus === "published"
+    const resumeAction = publicationStatus === "published"
       ? (item.requiredActions?.includes("generate_evidence") ? "generate_evidence" : "none")
-      : resolutionStatus === "awaiting_authoritative_pi"
+      : operationalReady
+        ? "run_operational_preflight_and_publish"
+      : publicationStatus === "awaiting_authoritative_pi"
         ? "await_authoritative_pi_pdf"
-        : resolutionStatus === "ready_for_preflight"
+        : publicationStatus === "ready_for_preflight"
           ? "run_drive_pi_preflight"
-          : resolutionStatus === "ready_for_publication"
+          : publicationStatus === "ready_for_publication"
             ? "publish_existing_insertion"
             : "retry_reconcile";
     return {
       ...item,
-      resolutionStatus,
+      identityMode,
+      commercialIdentityStatus,
+      publicationStatus,
+      resolutionStatus: publicationStatus,
       resolutionReason,
+      operationalIdentity,
       lastCheckedAt: input.generatedAt,
-      nextCheckAt: resolutionStatus === "published" ? null : nextCheckAt,
+      nextCheckAt: publicationStatus === "published" ? null : nextCheckAt,
       resumeAction,
     };
   });

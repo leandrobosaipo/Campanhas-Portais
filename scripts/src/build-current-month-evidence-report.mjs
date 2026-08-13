@@ -22,6 +22,7 @@ import {
   MONTHLY_REPORT_PORTAINER_TIMEOUT_MS,
   buildDeliveryProbeOptions,
   adaptAggregatedEvidenceDay,
+  canonicalCommercialPi,
   canonicalRequiredDates,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
@@ -516,9 +517,10 @@ async function materializeCampaignExports(items) {
   })();
   const groups = new Map();
   for (const item of items) {
-    if (!item.piCodigo || !item.siteSigla) continue;
-    const key = `${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`;
-    const group = groups.get(key) || { key, piCodigo: item.piCodigo, siteSigla: item.siteSigla, items: [] };
+    const canonicalPi = canonicalCommercialPi(item.piCodigo);
+    if (!canonicalPi || !item.siteSigla) continue;
+    const key = `${normalize(item.siteSigla)}:${normalize(canonicalPi)}`;
+    const group = groups.get(key) || { key, piCodigo: canonicalPi, siteSigla: item.siteSigla, items: [] };
     group.items.push(item);
     groups.set(key, group);
   }
@@ -565,7 +567,7 @@ async function materializeCampaignExports(items) {
 async function materializeCompleteCampaignExports(items) {
   const groups = new Map();
   for (const item of items) {
-    const piCodigo = String(item.piCodigo || "").replace(/\D/g, "");
+    const piCodigo = canonicalCommercialPi(item.piCodigo);
     if (!piCodigo || !item.competencia) continue;
     const key = `${piCodigo}:${normalize(item.competencia)}`;
     const group = groups.get(key) || { key, piCodigo, competencia: item.competencia, items: [] };
@@ -733,6 +735,7 @@ function renderCampaign(campaign, portalKey) {
   const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
   const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
+  const commercialExportBlocker = campaign.items.find((item) => item.commercialExportBlocker)?.commercialExportBlocker || "";
   return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
     <div class="campaign-head">
       <div>
@@ -740,6 +743,7 @@ function renderCampaign(campaign, portalKey) {
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
         ${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "baixar todos os prints", "image") : ""}
         ${batchDownloadUrl ? linkButton(batchDownloadUrl, "ZIP deste portal", "image") : ""}
+        ${commercialExportBlocker ? `<span class="note">${escapeHtml(commercialExportBlocker)}</span>` : ""}
       </div>
       <div class="mini-stats">
         <b>${campaign.items.length}</b><span>ins.</span>
@@ -1009,6 +1013,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
           ['Período', item.periodoInicio + ' a ' + item.periodoFim],
           ['Evidências', item.auditedDays + '/' + item.requiredDays.length],
           ['Status', item.statusDetail],
+          ['ZIP por PI', item.commercialExportBlocker || 'disponível após auditoria'],
           ['Pendentes', item.missingDates.length ? item.missingDates.join(', ') : '-'],
           ['Inválidas', item.invalidDates.length ? item.invalidDates.join(', ') : '-'],
           ['Grupo', item.adrotateGroupId || '-']
@@ -1151,9 +1156,11 @@ async function main() {
   ]);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
   for (const item of enriched) {
-    item.batchDownloadUrl = exportLinks.get(`${normalize(item.siteSigla)}:${normalize(item.piCodigo)}`) || "";
-    const completeKey = `${String(item.piCodigo || "").replace(/\D/g, "")}:${normalize(item.competencia)}`;
+    const canonicalPi = canonicalCommercialPi(item.piCodigo);
+    item.batchDownloadUrl = canonicalPi ? exportLinks.get(`${normalize(item.siteSigla)}:${normalize(canonicalPi)}`) || "" : "";
+    const completeKey = `${canonicalPi}:${normalize(item.competencia)}`;
     item.completeCampaignDownloadUrl = completeExportLinks.get(completeKey) || "";
+    item.commercialExportBlocker = canonicalPi ? "" : "Aguardando PI/PDF para habilitar os ZIPs por PI.";
   }
 
   const summary = {

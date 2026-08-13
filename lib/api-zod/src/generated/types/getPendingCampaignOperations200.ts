@@ -5,5 +5,14 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetPendingCampaignOperations200ItemsItem } from "./getPendingCampaignOperations200ItemsItem";
+import type { GetPendingCampaignOperations200Summary } from "./getPendingCampaignOperations200Summary";
 
-export type GetPendingCampaignOperations200 = { [key: string]: unknown };
+export type GetPendingCampaignOperations200 = {
+  date: Date;
+  generatedAt: Date;
+  summary: GetPendingCampaignOperations200Summary;
+  items: GetPendingCampaignOperations200ItemsItem[];
+  upcomingItems?: unknown[];
+  [key: string]: unknown;
+};
