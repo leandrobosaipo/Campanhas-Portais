@@ -1577,14 +1577,29 @@ with Image.open(p) as im:
     metadata = JSON.parse(stdout);
   } catch (error) {
     if (!/No module named ['\"]PIL['\"]/.test(String(error?.stderr || error?.message || ""))) throw error;
-    const { stdout } = await execFileAsync("identify", ["-format", "%m %w %h %n %[entropy]", `${filePath}[0]`], { timeout: 30000, maxBuffer: 1024 * 1024 });
-    const [format, width, height, frames, entropy] = stdout.trim().split(/\s+/);
-    metadata = { format, width: Number(width), height: Number(height), frames: Number(frames), nonUniform: Number(entropy) > 0 };
+    metadata = inspectGifBuffer(await readFile(filePath));
   }
   if (String(metadata.format || "").toUpperCase() !== String(expected?.format || "").toUpperCase()) throw new Error("Formato binário da mídia diverge do esperado.");
   if (Number(metadata.width) !== Number(expected?.width) || Number(metadata.height) !== Number(expected?.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
   if (!metadata.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
   return metadata;
+}
+
+function inspectGifBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 20 || !/^GIF8[79]a$/.test(buffer.subarray(0, 6).toString("ascii"))) throw new Error("Mídia não possui magic bytes GIF válidos.");
+  const width = buffer.readUInt16LE(6);
+  const height = buffer.readUInt16LE(8);
+  if (!width || !height || buffer[buffer.length - 1] !== 0x3b) throw new Error("GIF truncado ou com dimensões inválidas.");
+  const packed = buffer[10];
+  const colorTableSize = packed & 0x80 ? 3 * (2 ** ((packed & 0x07) + 1)) : 0;
+  const tableStart = 13;
+  if (tableStart + colorTableSize > buffer.length) throw new Error("Tabela de cores GIF truncada.");
+  const colors = new Set();
+  for (let offset = tableStart; offset + 2 < tableStart + colorTableSize; offset += 3) colors.add(buffer.subarray(offset, offset + 3).toString("hex"));
+  let frames = 0;
+  for (let offset = tableStart + colorTableSize; offset < buffer.length; offset += 1) if (buffer[offset] === 0x2c) frames += 1;
+  if (!frames) throw new Error("GIF não contém frame de imagem decodificável.");
+  return { format: "GIF", width, height, frames, nonUniform: colors.size > 1 && buffer.length > tableStart + colorTableSize + 8 };
 }
 
 async function loadOperationalMediaProfile(siteSigla, localFormat) {
@@ -6227,6 +6242,7 @@ export {
   isSocialInsertion,
   mediaKindFromUrl,
   inspectOperationalImage,
+  inspectGifBuffer,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
   resolveDrivePiClickUrl,

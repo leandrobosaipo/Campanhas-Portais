@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -93,6 +93,8 @@ try {
   assert.equal(metadata.height, 90);
   assert.equal(metadata.format, "GIF");
   await assert.rejects(() => runner.inspectOperationalImage(file, { width: 825, height: 120, format: "GIF" }), /Dimens/);
+  const nativeMetadata = runner.inspectGifBuffer(await readFile(file));
+  assert.deepEqual({ format: nativeMetadata.format, width: nativeMetadata.width, height: nativeMetadata.height }, { format: "GIF", width: 670, height: 90 });
   for (const [name, source] of [
     ["snapshot.php", runner.buildPerrengueAdrotateSnapshotPhp()],
     ["restore.php", runner.buildPerrengueAdrotateRestorePhp()],
