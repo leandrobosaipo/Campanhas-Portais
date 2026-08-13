@@ -85,6 +85,8 @@ Compare a URL no WordPress, AdRotate, AdOps e HTML público. Se o portal opera v
 
 Antes de criar anúncio, consulte a relação existente. Publique no grupo resolvido por `config/adrotate-sites.json`, limpe caches e reabra o slot público. Só marque `bannerPublicadoNoSite=true` depois da leitura pública.
 
+No Perrengue, o rebuild headless pode aguardar publicações editoriais que já estavam na fila. O reconciliador identifica cada publish e rollback com um `reason` único e só aceita o health do próprio trigger. Não trate timeout local, anúncio no banco ou HTML isolado como conclusão: confronte AdOps, AdRotate, health do rebuild e consumidor público.
+
 ## 6. Gerar a evidência do dia
 
 Antes da captura:

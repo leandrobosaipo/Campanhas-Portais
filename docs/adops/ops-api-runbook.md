@@ -92,6 +92,7 @@ Campanhas com o mesmo nome não são agrupadas sem PI canônica.
 - `409`: leia os blockers e corrija identidade/auditoria; não force o job.
 - runner sem heartbeat: consulte readiness, fila e logs antes de reenfileirar.
 - job demorado: diferencie fila, execução e travamento pelo estágio/heartbeat.
+- rebuild do Perrengue: espere o `reason` único do trigger terminar no health; jobs editoriais anteriores podem manter a fila ocupada. Publicação e rollback usam razões diferentes para impedir deduplicação indevida.
 - exportação falha: o PNG e o ZIP cacheado anterior permanecem intactos.
 - relatório falha: staging é descartado e a última versão pública continua ativa.
 

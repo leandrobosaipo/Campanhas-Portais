@@ -84,6 +84,45 @@ assert.equal(runner.evaluateRestoredAdHtml(
   { previousAdId: 12, previousMediaBasename: "old.gif", rejectedMediaBasename: "rejected.gif" },
 ).ok, true);
 
+const publishReason = runner.buildPerrengueRebuildTriggerReason({
+  insertionId: 1944,
+  operation: "publish",
+  operationId: "job-f521",
+});
+const rollbackReason = runner.buildPerrengueRebuildTriggerReason({
+  insertionId: 1944,
+  operation: "rollback",
+  operationId: "job-f521",
+});
+assert.equal(publishReason, "adops_adrotate_publish_1944_job-f521");
+assert.equal(rollbackReason, "adops_adrotate_rollback_1944_job-f521");
+assert.notEqual(publishReason, rollbackReason);
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: false,
+  queued: false,
+  last: { status: "ok", trigger: { reason: publishReason } },
+}, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: false,
+  queued: false,
+  last: { status: "ok", trigger: { reason: publishReason } },
+}, rollbackReason), { matched: false, completed: false, failed: false, status: null });
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: false,
+  queued: false,
+  last: { status: "failed", trigger: { reason: rollbackReason } },
+}, rollbackReason), { matched: true, completed: false, failed: true, status: "failed" });
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: true,
+  queued: false,
+  last: { status: "running", trigger: { reason: publishReason } },
+}, publishReason), { matched: true, completed: false, failed: false, status: "running" });
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  running: false,
+  queued: true,
+  last: { status: "queued", trigger: { reason: publishReason } },
+}, publishReason), { matched: true, completed: false, failed: false, status: "queued" });
+
 const dir = await mkdtemp(path.join(tmpdir(), "adops-operational-gif-"));
 try {
   const file = path.join(dir, "670x90.gif");

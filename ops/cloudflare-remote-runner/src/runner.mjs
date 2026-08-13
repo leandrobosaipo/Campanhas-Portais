@@ -87,7 +87,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER
 const ADOPS_PERRENGUE_CONTAINER_PHP_BIN = (process.env.ADOPS_PERRENGUE_CONTAINER_PHP_BIN || "php").trim();
 const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH || "wp").trim();
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
-const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
+const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "1200000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
 const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
@@ -2711,9 +2711,41 @@ echo wp_json_encode(['ready' => true, 'health_status' => 200]) . PHP_EOL;
   return result;
 }
 
-async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache }) {
+function buildPerrengueRebuildTriggerReason({ insertionId, operation, operationId }) {
+  const cod5_insertion_id = readPositiveInteger(insertionId);
+  if (!cod5_insertion_id) throw new Error("Trigger de rebuild exige insertionId positivo.");
+  const cod5_operation = operation === "rollback" ? "rollback" : operation === "publish" ? "publish" : null;
+  if (!cod5_operation) throw new Error("Trigger de rebuild exige operação publish ou rollback.");
+  const cod5_operation_id = String(operationId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  if (!cod5_operation_id) throw new Error("Trigger de rebuild exige operationId rastreável.");
+  return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;
+}
+
+function evaluatePerrengueRebuildHealth(health, expectedReason) {
+  const last = health?.last && typeof health.last === "object" ? health.last : null;
+  const matched = Boolean(last && String(last?.trigger?.reason || "") === String(expectedReason || ""));
+  const status = matched ? String(last?.status || "").toLowerCase() || null : null;
+  const terminalFailure = new Set(["failed", "error", "cancelled", "canceled"]);
+  return {
+    matched,
+    completed: matched && status === "ok",
+    failed: matched && !health?.running && !health?.queued && terminalFailure.has(status),
+    status,
+  };
+}
+
+async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache, operation = "publish" }) {
   const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
-  const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache })).toString("base64");
+  const triggerReason = buildPerrengueRebuildTriggerReason({
+    insertionId,
+    operation,
+    operationId: crypto.randomUUID(),
+  });
+  const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache, triggerReason })).toString("base64");
   const timeoutSeconds = Math.max(60, Math.ceil(ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS / 1000));
   const pollMicroseconds = Math.max(1000000, ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS * 1000);
   const runnerPhp = `<?php
@@ -2733,25 +2765,29 @@ $read_health = static function () use ($url) {
   $body = json_decode((string) wp_remote_retrieve_body($response), true);
   if (!is_array($body)) return ['available' => false];
   $last = isset($body['last']) && is_array($body['last']) ? $body['last'] : [];
-  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
+  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
 };
-$before = $read_health();
 $insertion_id = (int) ($input['insertionId'] ?? 0);
-$payload = ['reason' => 'adops_adrotate_publish_' . $insertion_id, 'status' => 'publish', 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
+$trigger_reason = (string) ($input['triggerReason'] ?? '');
+if ($trigger_reason === '') throw new RuntimeException('Trigger único do rebuild ausente.');
+$payload = ['reason' => $trigger_reason, 'status' => 'publish', 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
 $response = wp_remote_post($url, ['timeout' => 10, 'blocking' => true, 'headers' => ['content-type' => 'application/json', 'x-cod5-webhook-secret' => $secret], 'body' => wp_json_encode($payload)]);
 if (is_wp_error($response)) throw new RuntimeException($response->get_error_message());
 $code = (int) wp_remote_retrieve_response_code($response);
 if ($code < 200 || $code >= 300) throw new RuntimeException('Webhook rejeitou rebuild com HTTP ' . $code);
 $deadline = time() + ${timeoutSeconds};
-$seen_new_run = false;
 while (time() < $deadline) {
   usleep(${pollMicroseconds});
   $health = $read_health();
-  $seen_new_run = $seen_new_run || (!empty($health['lastStartedAt']) && $health['lastStartedAt'] !== ($before['lastStartedAt'] ?? null)) || !empty($health['running']) || !empty($health['queued']);
-  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && ($health['lastStatus'] ?? null) === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'health' => $health]) . PHP_EOL; exit(0); }
-  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && !empty($health['lastStatus']) && $health['lastStatus'] !== 'ok') throw new RuntimeException('Rebuild terminou com status ' . $health['lastStatus']);
+  $last = isset($health['last']) && is_array($health['last']) ? $health['last'] : [];
+  $last_trigger = isset($last['trigger']) && is_array($last['trigger']) ? $last['trigger'] : [];
+  $matched = (string) ($last_trigger['reason'] ?? '') === $trigger_reason;
+  $last_status = strtolower((string) ($last['status'] ?? ''));
+  if ($matched && $last_status === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'triggerReason' => $trigger_reason, 'health' => $health]) . PHP_EOL; exit(0); }
+  $terminal_failure = in_array($last_status, ['failed', 'error', 'cancelled', 'canceled'], true);
+  if ($matched && empty($health['running']) && empty($health['queued']) && $terminal_failure) throw new RuntimeException('Rebuild ' . $trigger_reason . ' terminou com status ' . $last_status);
 }
-throw new RuntimeException('Timeout aguardando rebuild headless concluir.');
+throw new RuntimeException('Timeout aguardando rebuild headless concluir para ' . $trigger_reason . '.');
 `;
   const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
   const command = [
@@ -2764,7 +2800,7 @@ throw new RuntimeException('Timeout aguardando rebuild headless concluir.');
   const execution = await execPortainerContainerCommand(container.Id, command, ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS + 30000);
   const result = parseWpCliJsonObject(execution.stdout);
   if (!result?.completed) throw new Error(`Rebuild headless não confirmou conclusão: ${safeProcessOutput(execution.stdout)}`);
-  return result;
+  return { ...result, triggerReason };
 }
 
 function todayInCuiaba() {
@@ -5243,6 +5279,7 @@ async function executeOperationalMediaPublish(payload) {
         adId: readPositiveInteger(previousAd?.id) || 0,
         mediaBasename: previousMediaBasename || mediaBasenameFromUrl(mediaUrl),
         purgeCache: true,
+        operation: "rollback",
       }).then(async () => {
         const publicRollback = previousAd
           ? await validateRestoredAdHtml({ site, insertionId, previousAdId: readPositiveInteger(previousAd.id), previousMediaBasename, rejectedMediaBasename: mediaBasenameFromUrl(mediaUrl) })
@@ -6208,6 +6245,7 @@ async function main() {
 }
 
 export {
+  buildPerrengueRebuildTriggerReason,
   buildAdrotatePublishPayload,
   buildPerrengueAdrotateRestorePhp,
   buildPerrengueAdrotateSnapshotPhp,
@@ -6215,6 +6253,7 @@ export {
   extractUrlsFromText,
   extractMediaLinksFromText,
   evaluateRestoredAdHtml,
+  evaluatePerrengueRebuildHealth,
   filterSiteInsertions,
   isSocialInsertion,
   mediaKindFromUrl,
