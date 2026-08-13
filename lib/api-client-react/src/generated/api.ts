@@ -23,6 +23,7 @@ import type {
   BulkUpdateResult,
   Campaign,
   CampaignDetail,
+  CampaignPublicationReconcileJobAccepted,
   CaptureProofStatus,
   Client,
   ClientBreakdown,
@@ -36,6 +37,7 @@ import type {
   CreateCampaignEvidenceExportJob200,
   CreateCampaignEvidenceExportJob202,
   CreateCampaignEvidenceExportJobBody,
+  CreateCampaignPublicationReconcileJobBody,
   CreateClientBody,
   CreateEvidenceBody,
   CreateInsertionBody,
@@ -331,6 +333,99 @@ export const useCreateDrivePiReconcileJob = <
   TContext
 > => {
   return useMutation(getCreateDrivePiReconcileJobMutationOptions(options));
+};
+
+/**
+ * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ */
+export const getCreateCampaignPublicationReconcileJobUrl = () => {
+  return `/api/ops/jobs/campaign-publication-reconcile`;
+};
+
+export const createCampaignPublicationReconcileJob = async (
+  createCampaignPublicationReconcileJobBody?: CreateCampaignPublicationReconcileJobBody,
+  options?: RequestInit,
+): Promise<CampaignPublicationReconcileJobAccepted> => {
+  return customFetch<CampaignPublicationReconcileJobAccepted>(
+    getCreateCampaignPublicationReconcileJobUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(createCampaignPublicationReconcileJobBody),
+    },
+  );
+};
+
+export const getCreateCampaignPublicationReconcileJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    TError,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+  TError,
+  { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignPublicationReconcileJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignPublicationReconcileJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignPublicationReconcileJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>
+>;
+export type CreateCampaignPublicationReconcileJobMutationBody =
+  BodyType<CreateCampaignPublicationReconcileJobBody>;
+export type CreateCampaignPublicationReconcileJobMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ */
+export const useCreateCampaignPublicationReconcileJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    TError,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+  TError,
+  { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignPublicationReconcileJobMutationOptions(options),
+  );
 };
 
 /**

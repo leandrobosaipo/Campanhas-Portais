@@ -82,7 +82,9 @@ export function extractDrivePiCandidates(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
   return uniqueStrings(
-    [...normalized.matchAll(/\bPI\s*[-_:]?\s*(\d{3,})\b/g)].map((match) => match[1]),
+    [...normalized.matchAll(/\bPI\s*[-_:]?\s*(\d{3,})\b/g)]
+      .map((match) => match[1]?.replace(/^0+(?=\d)/, "") ?? null)
+      .filter((candidate) => candidate != null && candidate.length >= 3),
   );
 }
 

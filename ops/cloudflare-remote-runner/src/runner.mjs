@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
+import { planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -86,7 +87,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-evidence-export,evidence-monthly-report,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -3221,7 +3222,61 @@ async function findOrCreateDrivePiCampaign(fields, payload) {
   return { campaign, created: true, dedupedBy: null };
 }
 
+async function applyDrivePiToExpectedInsertion(fields, payload) {
+  const expectedInsertionId = Number(payload?.expectedInsertionId || 0);
+  const expectedCampaignId = Number(payload?.expectedCampaignId || 0);
+  const expectedPiCodigo = normalizePiDigits(payload?.expectedPiCodigo);
+  if (!Number.isInteger(expectedInsertionId) || expectedInsertionId <= 0 || !Number.isInteger(expectedCampaignId) || expectedCampaignId <= 0 || !expectedPiCodigo) {
+    throw new Error("Retomada de campanha sem alvo canônico completo.");
+  }
+  if (normalizePiDigits(fields.piCodigo) !== expectedPiCodigo) {
+    throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
+  }
+  const [expected, campaign] = await Promise.all([
+    privateApiGet(`/api/insertions/${expectedInsertionId}`),
+    privateApiGet(`/api/campaigns/${expectedCampaignId}`),
+  ]);
+  if (Number(expected?.campanhaId || 0) !== expectedCampaignId || Number(campaign?.id || 0) !== expectedCampaignId) {
+    throw new Error("A inserção canônica não pertence à campanha esperada.");
+  }
+  if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
+    throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
+  }
+  const scoped = fields.insertions.filter((raw) => (
+    Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expected.siteId || 0)
+    && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+      === normalizeSlotKey(expected.localFormatoNormalizado || expected.localFormato)
+    && readStringRecord(raw, ["periodoInicio", "inicio"]) === expected.periodoInicio
+    && readStringRecord(raw, ["periodoFim", "fim"]) === expected.periodoFim
+  ));
+  if (scoped.length !== 1) {
+    throw new Error("O PDF não contém exatamente o portal, formato e período da inserção canônica.");
+  }
+  const raw = scoped[0];
+  const mediaUrl = readStringRecord(raw, ["mediaUrl"]);
+  if (!mediaUrl) throw new Error("A mídia validada não produziu URL canônica para a inserção esperada.");
+  const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
+  await privateApiPatch(`/api/campaigns/${expectedCampaignId}`, { piCodigo: fields.piCodigo });
+  await privateApiPatch(`/api/insertions/${expectedInsertionId}`, {
+    mediaUrl,
+    observacoes: [
+      expected.observacoes,
+      `Mídia e PI validadas pelo reconciliador: ${payload.path}`,
+      clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null,
+      readStringRecord(raw, ["mediaProcessingNote"]),
+    ].filter(Boolean).join("\n"),
+  });
+  return {
+    campaignId: expectedCampaignId,
+    campaignCreated: false,
+    campaignDedupedBy: "expected_campaign_and_insertion",
+    createdInsertions: [],
+    skippedInsertions: [{ id: expectedInsertionId, reason: "updated_expected_insertion" }],
+  };
+}
+
 async function applyDrivePiToAdOps(fields, payload) {
+  if (payload?.expectedInsertionId) return applyDrivePiToExpectedInsertion(fields, payload);
   const { campaign, created, dedupedBy } = await findOrCreateDrivePiCampaign(fields, payload);
   const campaignDetail = await privateApiGet(`/api/campaigns/${campaign.id}`);
   const existingInsertions = Array.isArray(campaignDetail?.insertions) ? campaignDetail.insertions : [];
@@ -3300,6 +3355,9 @@ function insertionScopeKey(raw) {
 }
 
 async function reconcileDrivePiStrictScope(applied, fields, payload) {
+  if (payload?.expectedInsertionId) {
+    return { skipped: true, reason: "expected_insertion_scope_preserved", cancelledInsertions: [] };
+  }
   if (payload?.strictInsertionScope !== true || !applied?.campaignId) {
     return { skipped: true, reason: "strict_insertion_scope_disabled", cancelledInsertions: [] };
   }
@@ -3938,7 +3996,9 @@ async function executeDrivePiIngest(payload) {
   // when publish=false. That mode updates AdOps/media only and must not touch
   // AdRotate, cache or evidence for an expired campaign.
   const explicitPublishFlow = /api-publish$/.test(String(payload?.source || ""));
-  const strictExplicitPublishFlow = explicitPublishFlow && payload?.strictInsertionScope === true && Array.isArray(payload?.parsedPi?.insertions);
+  const strictExplicitPublishFlow = explicitPublishFlow
+    && payload?.strictInsertionScope === true
+    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0);
   const mutationEnabled = !preflightOnly && (
     explicitPublishFlow
     || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)
@@ -4829,6 +4889,57 @@ async function executeDrivePiReconcile(payload) {
   };
 }
 
+async function executeCampaignPublicationReconcile(job) {
+  const cod5_targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.targetDate || ""))
+    ? String(job.payload.targetDate)
+    : todayInCuiaba();
+  await progressJob(job.id, {
+    stage: "consultando campanhas pendentes",
+    stageKey: "collecting",
+    targetDate: cod5_targetDate,
+    percentTotal: 10,
+  });
+  const cod5_pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(cod5_targetDate)}`);
+  const cod5_checkedAt = new Date().toISOString();
+  const cod5_plan = planCampaignPublicationReconciliation(cod5_pending?.items, cod5_checkedAt);
+  const cod5_results = [];
+  let cod5_done = 0;
+  for (const cod5_action of cod5_plan.actions) {
+    await progressJob(job.id, {
+      stage: "retomando publicações liberadas",
+      stageKey: "processing",
+      targetDate: cod5_targetDate,
+      itemsDone: cod5_done,
+      itemsTotal: cod5_plan.actions.length,
+      blockers: cod5_plan.blockers,
+      percentTotal: 20 + Math.round((cod5_done / Math.max(1, cod5_plan.actions.length)) * 70),
+    });
+    if (cod5_action.type === "drive_pi_publish") {
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: await executeDrivePiIngest(cod5_action.event),
+      });
+    } else if (cod5_action.type === "adrotate_publish") {
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: await executeAdrotatePublishJob({ ...cod5_action.payload, date: cod5_targetDate }),
+      });
+    }
+    cod5_done += 1;
+  }
+  return {
+    stage: cod5_plan.actions.length ? "completed" : "waiting_sources",
+    targetDate: cod5_targetDate,
+    checkedAt: cod5_checkedAt,
+    actionsPlanned: cod5_plan.actions.length,
+    actionsCompleted: cod5_results.length,
+    blockers: cod5_plan.blockers,
+    results: cod5_results,
+  };
+}
+
 async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
     method: "POST",
@@ -5548,6 +5659,9 @@ async function handleJob(job) {
   }
   if (job.kind === "evidence-monthly-report") {
     return executeEvidenceMonthlyReport(job);
+  }
+  if (job.kind === "campaign-publication-reconcile") {
+    return executeCampaignPublicationReconcile(job);
   }
   if (job.kind === "drive-pi-ingest") {
     try {

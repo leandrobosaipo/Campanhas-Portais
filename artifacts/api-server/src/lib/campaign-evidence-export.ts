@@ -100,10 +100,67 @@ export function buildPendingPublicationView<T extends {
   items: Array<{ requiredActions?: string[] }>;
   upcomingItems?: unknown[];
 }>(input: T) {
+  const nextCheckAt = new Date(Date.parse(input.generatedAt) + 24 * 60 * 60 * 1000).toISOString();
   const items = input.items.filter((item) => (
     item.requiredActions?.includes("publish_on_site")
     || item.requiredActions?.includes("generate_evidence")
-  ));
+  )).map((item: any) => {
+    const published = item.adops?.bannerPublicadoNoSite === true && Boolean(item.adops?.mediaUrl);
+    const canonicalPi = String(item.sourceIdentity?.canonicalPi ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    const authoritativePiInPdf = Boolean(canonicalPi) && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? [])
+      .map((value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""))
+      .includes(canonicalPi);
+    const awaitingAuthoritativePi = !published
+      && item.sourceIdentity?.decision === "insufficient_data"
+      && item.drive?.mediaStatus === "candidate_found"
+      && item.drive?.documentStatus === "missing";
+    const readyForPreflight = !published
+      && item.sourceIdentity?.decision === "confirmed"
+      && item.drive?.mediaStatus === "candidate_found"
+      && item.drive?.documentStatus === "candidate_found"
+      && authoritativePiInPdf
+      && !item.adops?.mediaUrl;
+    const readyForPublication = !published
+      && item.sourceIdentity?.decision === "confirmed"
+      && item.drive?.documentStatus === "candidate_found"
+      && authoritativePiInPdf
+      && Boolean(item.adops?.mediaUrl);
+    const resolutionStatus = published
+      ? "published"
+      : awaitingAuthoritativePi
+        ? "awaiting_authoritative_pi"
+        : readyForPreflight
+          ? "ready_for_preflight"
+          : readyForPublication
+            ? "ready_for_publication"
+            : "failed_retryable";
+    const resolutionReason = resolutionStatus === "published"
+      ? "Inserção já publicada; permanecem somente as ações operacionais listadas."
+      : resolutionStatus === "awaiting_authoritative_pi"
+        ? "Aguardando PI/PDF autoritativa antes de publicar a inserção existente."
+        : resolutionStatus === "ready_for_preflight"
+          ? "Identidade confirmada e mídia candidata pronta para validação."
+          : resolutionStatus === "ready_for_publication"
+            ? "Identidade e mídia canônica confirmadas; publicação pode prosseguir."
+            : item.sourceIdentity?.reason ?? "Pendência deve ser reavaliada após atualização das fontes.";
+    const resumeAction = resolutionStatus === "published"
+      ? (item.requiredActions?.includes("generate_evidence") ? "generate_evidence" : "none")
+      : resolutionStatus === "awaiting_authoritative_pi"
+        ? "await_authoritative_pi_pdf"
+        : resolutionStatus === "ready_for_preflight"
+          ? "run_drive_pi_preflight"
+          : resolutionStatus === "ready_for_publication"
+            ? "publish_existing_insertion"
+            : "retry_reconcile";
+    return {
+      ...item,
+      resolutionStatus,
+      resolutionReason,
+      lastCheckedAt: input.generatedAt,
+      nextCheckAt: resolutionStatus === "published" ? null : nextCheckAt,
+      resumeAction,
+    };
+  });
   return {
     date: input.date,
     generatedAt: input.generatedAt,

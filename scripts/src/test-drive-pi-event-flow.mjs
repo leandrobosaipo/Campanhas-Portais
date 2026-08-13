@@ -262,7 +262,7 @@ await check("compose-volume-isola-credencial-drive-no-monitor", async () => {
   const source = read(portainerVolumeComposePath);
   assertIncludes(source, [
     "container_name: adops-drive-pi-monitor-stack",
-    "OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh",
+    "OPS_JOB_KINDS: campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh",
     "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: /data/secrets/google-drive-service-account.json",
     "adops_drive_pi_monitor_data:/data",
     "curl -fsS http://127.0.0.1:4012/healthz",

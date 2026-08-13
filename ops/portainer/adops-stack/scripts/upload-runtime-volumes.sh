@@ -53,6 +53,17 @@ upload_to_volume() {
       }
     }')" \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/create?name=${container_name}" || true)"
+  if [[ "$code" == "000" ]]; then
+    container_id="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+      | jq -r --arg name "/$container_name" '.[] | select(.Names[]? == $name) | .Id' \
+      | head -n 1 || true)"
+    if [[ -n "$container_id" ]]; then
+      code="201"
+      jq -n --arg Id "$container_id" '{Id:$Id}' > "$body"
+      printf 'Container create timed out, but Portainer confirms volume=%s container=%s.\n' "$volume" "$container_id"
+    fi
+  fi
   if [[ ! "$code" =~ ^2 ]]; then
     printf 'Container create failed for volume=%s HTTP=%s\n' "$volume" "$code" >&2
     sed -n '1,60p' "$body" >&2

@@ -94,6 +94,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /ops/jobs/campaign-publication-reconcile:
+    post:
+      operationId: createCampaignPublicationReconcileJob
+      tags: [operations]
+      summary: Recheck blocked drafts and resume only campaigns with authoritative PI and media
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                targetDate:
+                  type: string
+                  format: date
+      responses:
+        "200":
+          description: Existing idempotent reconciliation returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignPublicationReconcileJobAccepted"
+        "202":
+          description: Reconciliation accepted by the Drive runner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignPublicationReconcileJobAccepted"
+        "401":
+          description: Operator authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /ops/jobs:
     get:
       operationId: listOpsJobs
@@ -1464,6 +1500,29 @@ components:
         - duplicate
         - apply
         - requiredFollowUp
+
+    CampaignPublicationReconcileJobAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+        kind:
+          type: string
+          const: campaign-publication-reconcile
+        status:
+          type: string
+          enum: [ready_for_runner, running, completed, failed]
+        duplicate:
+          type: boolean
+      required:
+        - ok
+        - jobId
+        - kind
+        - status
+        - duplicate
 
     OpsRuntimeTopology:
       type: object

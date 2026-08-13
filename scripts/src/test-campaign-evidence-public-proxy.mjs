@@ -40,6 +40,16 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
       res.end(JSON.stringify({ ok: true, counts: { total: 2, queued: 2 }, items: [] }));
       return;
     }
+    if (req.method === "POST" && req.url === "/api/ops/jobs/campaign-publication-reconcile") {
+      if (req.headers.authorization !== "Bearer configured-in-production") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "missing_forwarded_authorization" }));
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, kind: "campaign-publication-reconcile", jobId: "reconcile-test", status: "ready_for_runner" }));
+      return;
+    }
     res.writeHead(404).end();
   });
   const workerPort = await listen(worker);
@@ -79,6 +89,13 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
     });
     assert.equal(batch.status, 202);
     assert.equal((await batch.json()).counts.total, 2);
+    const reconcile = await fetch(`${baseUrl}/api/ops/jobs/campaign-publication-reconcile`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production" },
+      body: JSON.stringify({ targetDate: "2026-08-13" }),
+    });
+    assert.equal(reconcile.status, 202);
+    assert.equal((await reconcile.json()).jobId, "reconcile-test");
     const internal = await fetch(`${baseUrl}/api/internal/campaign-evidence-exports?piCodigo=17048&competencia=AGOSTO%2F2026`);
     assert.equal(internal.status, 401);
   } finally {

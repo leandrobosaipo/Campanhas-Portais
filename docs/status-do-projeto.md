@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
-> Última validação: 2026-08-12
-> Release: 47e0dab
+> Última validação: 2026-08-13
+> Release-base: 47e0dab
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
@@ -33,7 +33,7 @@ Esses números são uma fotografia datada. A fonte mensal agregada e o relatóri
 
 ## Pendência operacional conhecida
 
-RADAR/PERRENGUE, inserção `#1944`, continua em rascunho até existir PI/PDF autoritativa. O Drive contém mídia candidata e documento de destino, mas campanha homônima não pode ser associada à PI 17190 por inferência.
+RADAR/PERRENGUE, inserção `#1944`, está em `awaiting_authoritative_pi` até existir PI/PDF autoritativa. O Drive contém mídia candidata e documento de destino, mas campanha homônima não pode ser associada à PI 17190 por inferência.
 
 Enquanto o bloqueio existir:
 
@@ -52,6 +52,9 @@ Enquanto o bloqueio existir:
 - polling compacto e fonte mensal agregada reduziram tempo, tráfego e tokens;
 - staging e troca atômica preservam a última versão válida;
 - o deadlock relatório/exportação foi removido pelo claim dedicado.
+- jobs novos do runner nascem `ready_for_runner`; a Queue é compatibilidade para legados;
+- atualizações do Drive e o cron das 17h30 reavaliam campanhas bloqueadas sem criar duplicatas;
+- comparação numérica de PI ignora zeros à esquerda e preserva o valor original.
 
 ## Próximos cuidados
 

@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-12
-> Release: 47e0dab
+> Última validação: 2026-08-13
+> Release-base: 47e0dab
 > Fonte autoritativa: OpenAPI vivo e runtime público
 
 ## Finalidade
@@ -25,7 +25,7 @@ Mutações exigem o token operacional em variável de ambiente. Nunca copie seu 
 | Saúde da API | `GET /api/healthz` | pública | nenhuma | runtime saudável | não muta |
 | Runners e dependências | `GET /api/ops/runtime-readiness` | conforme OpenAPI | nenhuma | capacidades e heartbeat | não muta |
 | Campanhas canônicas | `GET /api/campaign-operations/active` | pública | `date` opcional | inserções ativas, sem rascunho duplicado | não muta |
-| Pendências compactas | `GET /api/campaign-operations/pending-publication` | pública | `date` | fatos da planilha, Drive, AdOps e AdRotate | identidade ambígua continua bloqueada |
+| Pendências compactas | `GET /api/campaign-operations/pending-publication` | pública | `date` | fatos e `resolutionStatus` | identidade ambígua continua bloqueada |
 | Fonte mensal | `GET /api/campaign-operations/evidence-monthly-source` | pública | competência/mês | inserções e datas canônicas agregadas | não infira datas fora da resposta |
 | Auditoria por data | `GET /api/insertions/{id}/capture-proof/status` | pública | `date` | estado, URL e checklist | leitura não aprova evidência |
 | Fila resumida | `GET /api/ops/queue/overview` | protegida | nenhuma | contagens e atividade | usar visão completa só em incidente |
@@ -49,6 +49,7 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/campaign-operations/pending-publication?date
 | Campanha completa | `POST /api/campaign-evidence-exports/jobs` | `GET /api/campaign-evidence-exports/jobs/{id}` | `/download` | PI canônica e fingerprint válido |
 | Lote mensal | `POST /api/campaign-evidence-exports/jobs/batch` | jobs individuais | cache ou ZIP novo | no máximo três exportações simultâneas |
 | Relatório mensal | job `evidence-monthly-report` | `/progress` | leitura pública | staging inteiro precisa passar |
+| Retomar publicação | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | campanha existente ou blocker rastreável | exige PI/PDF, mídia e alvo canônico |
 
 Para qualquer criação de job:
 
@@ -58,6 +59,10 @@ Para qualquer criação de job:
 - use polling progressivo em `/progress`;
 - leia o objeto completo apenas ao concluir ou diagnosticar;
 - não reenvie enquanto o mesmo job estiver ativo.
+
+Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
+
+O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome: `awaiting_authoritative_pi` só evolui quando o PDF confirma PI, cliente, agência, portal, formato, período e destino. A aplicação é limitada à campanha e inserção já cadastradas.
 
 ## Matriz de evidência
 
@@ -94,5 +99,6 @@ Campanhas com o mesmo nome não são agrupadas sem PI canônica.
 
 - Inserções canônicas vêm de `campaign-operations/active`; `#1826` não entra em backfill.
 - RADAR/OMT PI 17190 não pode absorver RADAR/PERRENGUE sem PI.
+- Zeros à esquerda são ignorados somente na comparação de PIs puramente numéricas; o valor original continua exibido.
 - Polling compacto reduz tempo, tráfego e tokens.
 - Captura é serial; apenas exportações usam concorrência três.

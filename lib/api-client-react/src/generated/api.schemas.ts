@@ -39,6 +39,24 @@ export interface OpsJobAccepted {
   requiredFollowUp: string[];
 }
 
+export type CampaignPublicationReconcileJobAcceptedStatus =
+  (typeof CampaignPublicationReconcileJobAcceptedStatus)[keyof typeof CampaignPublicationReconcileJobAcceptedStatus];
+
+export const CampaignPublicationReconcileJobAcceptedStatus = {
+  ready_for_runner: "ready_for_runner",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface CampaignPublicationReconcileJobAccepted {
+  ok: boolean;
+  jobId: string;
+  kind: "campaign-publication-reconcile";
+  status: CampaignPublicationReconcileJobAcceptedStatus;
+  duplicate: boolean;
+}
+
 export interface OpsRuntimeTopology {
   version: string;
   generatedAt: string;
@@ -992,6 +1010,10 @@ export interface CompetenciaBreakdown {
   concluidas: number;
   atrasadas: number;
 }
+
+export type CreateCampaignPublicationReconcileJobBody = {
+  targetDate?: string;
+};
 
 export type ListOpsJobsParams = {
   /**

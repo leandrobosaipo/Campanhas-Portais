@@ -18,6 +18,7 @@ type JobKind =
   | "adrotate-link"
   | "adrotate-publish"
   | "drive-pi-reconcile"
+  | "campaign-publication-reconcile"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -77,11 +78,41 @@ const OPS_JOB_KINDS: JobKind[] = [
   "adrotate-link",
   "adrotate-publish",
   "drive-pi-reconcile",
+  "campaign-publication-reconcile",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
+const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
+
+async function proxyPublicWorkerJob(req: Request, res: Response): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${req.originalUrl}`, {
+      method: req.method,
+      signal: controller.signal,
+      headers: {
+        accept: req.header("accept") || "application/json",
+        "content-type": "application/json",
+        ...(req.header("authorization") ? { authorization: req.header("authorization")! } : {}),
+      },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.setHeader("cache-control", "no-store");
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.status(503).json({
+      error: "ops_worker_unavailable",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 type RuntimeEnvCheck = {
   name: string;
@@ -447,6 +478,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     generating_evidence: "Gerando evidencia",
     completed: "Publicacao AdRotate concluida",
     failed: "Falha na publicacao AdRotate",
+  },
+  "campaign-publication-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner do Drive",
+    running: "Reavaliando campanhas bloqueadas",
+    completed: "Retomada de campanhas conferida",
+    failed: "Falha na retomada de campanhas",
   },
   "telegram-send-evidence": {
     queued: "Na fila",
@@ -1935,6 +1973,8 @@ router.get("/ops/quickstart.html", (_req, res): void => {
 </body>
 </html>`);
 });
+
+router.post("/ops/jobs/campaign-publication-reconcile", proxyPublicWorkerJob);
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
   const insertionId = typeof req.body?.insertionId === "number" ? req.body.insertionId : null;

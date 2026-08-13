@@ -180,7 +180,7 @@ services:
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_POLL_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
-      OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh
+      OPS_JOB_KINDS: campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: "true"
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}

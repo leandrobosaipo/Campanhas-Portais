@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: operação humana e agentes
-> Última validação: 2026-08-12
-> Release: 47e0dab
+> Última validação: 2026-08-13
+> Release-base: 47e0dab
 > Fonte autoritativa: PI/PDF, planilha, API AdOps e portal público
 
 ## Resultado esperado
@@ -50,9 +50,15 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 | Inserção equivalente existe | Corrigir/vincular; não duplicar |
 | Anúncio correto existe no grupo | Reutilizar e vincular |
 | Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
-| PI/PDF ausente | Manter rascunho e registrar pendência |
+| PI/PDF ausente | Marcar `awaiting_authoritative_pi`; mídia candidata não vira “mídia ausente” |
 
 Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
+
+### Retomada automática sem duplicação
+
+O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Enquanto faltar PDF, ele conclui com blocker rastreável. Quando a fonte autoritativa chegar, só atualiza a campanha e a inserção esperadas se todos os campos coincidirem; não cria entidade por semelhança de nome.
+
+Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
 ## 4. Atualizar entidades no lugar correto
 

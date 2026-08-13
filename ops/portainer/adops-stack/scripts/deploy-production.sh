@@ -62,7 +62,7 @@ PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
 PREVIOUS_IMAGE_TAG="$(env_value ADOPS_IMAGE_TAG)"
 PREVIOUS_APP_VOLUME="${PREVIOUS_APP_VOLUME:-adops_app_source}"
 PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
-PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-legacy}"
+PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-monitor}"
 PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
 
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
@@ -87,8 +87,12 @@ export ADOPS_WEB_PUBLIC_VOLUME="${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public_${AD
 # Docker's synchronous build stream exceeds Cloudflare's request timeout for
 # this Playwright image. The volume runtime is the production path already
 # validated for this stack and keeps the release traceable through its SHA.
-VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
-  bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
+if [[ "${ADOPS_SKIP_RUNTIME_UPLOAD:-false}" == "true" ]]; then
+  printf 'Skipping runtime upload because versioned volumes were already validated.\n'
+else
+  VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
+    bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
+fi
 
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 LEGACY_MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor") | .Id' | head -n 1)"
@@ -103,7 +107,7 @@ fi
 DEPLOY_ENV="$(mktemp)"
 grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-monitor}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
 chmod 600 "$DEPLOY_ENV"
 
 ROLLBACK_ENV="$(mktemp)"

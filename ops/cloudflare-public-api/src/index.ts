@@ -7,9 +7,9 @@ type InsertionItem = (typeof snapshot.insertions)[number];
 type InsertionDetail = (typeof snapshot.insertionDetails)[keyof typeof snapshot.insertionDetails];
 type CaptureStatus = (typeof snapshot.captureStatuses)[keyof typeof snapshot.captureStatuses];
 
-type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "campaign-evidence-export" | "evidence-monthly-report" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
+type JobKind = "print-batch" | "print-backfill" | "print-single" | "sync-planilha" | "analytics-report" | "pi-site-export" | "campaign-evidence-export" | "evidence-monthly-report" | "campaign-publication-reconcile" | "drive-pi-ingest" | "drive-inventory-refresh" | "drive-pi-reconcile" | "reconcile-adrotate" | "adrotate-link" | "adrotate-publish" | "telegram-send-evidence" | "runtime-readiness-probe";
 type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
-const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "campaign-evidence-export", "evidence-monthly-report", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
+const OPS_JOB_KINDS: JobKind[] = ["print-batch", "print-backfill", "print-single", "sync-planilha", "analytics-report", "pi-site-export", "campaign-evidence-export", "evidence-monthly-report", "campaign-publication-reconcile", "drive-pi-ingest", "drive-inventory-refresh", "drive-pi-reconcile", "reconcile-adrotate", "adrotate-link", "adrotate-publish", "telegram-send-evidence", "runtime-readiness-probe"];
 
 type JobProgress = {
   jobId: string;
@@ -621,6 +621,16 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     failed: "Falha na atualização do portal",
     queue_dispatch_failed: "Falha ao despachar fila",
   },
+  "campaign-publication-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando monitor do Drive",
+    running: "Reavaliando campanhas pendentes",
+    collecting: "Consultando planilha, Drive e AdOps",
+    processing: "Retomando publicações liberadas",
+    waiting_sources: "Aguardando PI/PDF autoritativa",
+    completed: "Pendências de publicação reavaliadas",
+    failed: "Falha ao reavaliar publicações",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -964,7 +974,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "campaign-publication-reconcile" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -1164,20 +1174,10 @@ async function createOpsJob(env: Env, kind: JobKind, payload: Record<string, unk
   await env.adops_ops
     .prepare(
       `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
-       VALUES (?, ?, 'queued', ?, NULL, NULL, ?, NULL, ?, ?)`,
+       VALUES (?, ?, 'ready_for_runner', ?, ?, NULL, ?, NULL, ?, ?)`,
     )
-    .bind(id, kind, JSON.stringify(payload), requestedBy, now, now)
+    .bind(id, kind, JSON.stringify(payload), JSON.stringify({ stage: "ready_for_runner", queuedAt: now }), requestedBy, now, now)
     .run();
-  try {
-    await env.adops_ops_queue.send({ jobId: id, kind });
-  } catch (error) {
-    const queueError = error instanceof Error ? error.message : String(error);
-    console.error("[ops_jobs] queue dispatch failed", { id, kind, queueError });
-    await env.adops_ops
-      .prepare(`UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, updated_at = ? WHERE id = ?`)
-      .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), id)
-      .run();
-  }
   return id;
 }
 
@@ -1194,9 +1194,9 @@ async function createIdempotentOpsJob(
   const inserted = await env.adops_ops
     .prepare(
       `INSERT OR IGNORE INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
-       VALUES (?, ?, 'queued', ?, NULL, NULL, ?, NULL, ?, ?)`,
+       VALUES (?, ?, 'ready_for_runner', ?, ?, NULL, ?, NULL, ?, ?)`,
     )
-    .bind(jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, now, now)
+    .bind(jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", queuedAt: now }), requestedBy, now, now)
     .run();
   if ((inserted.meta?.changes ?? 0) === 0) {
     const existing = await env.adops_ops
@@ -1206,29 +1206,15 @@ async function createIdempotentOpsJob(
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
     if (retryFailed && existing.status === "failed") {
       const retried = await env.adops_ops.prepare(
-        `UPDATE ops_jobs SET status = 'queued', result_json = NULL, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
-      ).bind(nowIso(), existing.id).run();
+        `UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
+      ).bind(JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id).run();
       if ((retried.meta?.changes ?? 0) > 0) {
-        try {
-          await env.adops_ops_queue.send({ jobId: existing.id, kind });
-        } catch (error) {
-          const queueError = error instanceof Error ? error.message : String(error);
-          await env.adops_ops.prepare(`UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, updated_at = ? WHERE id = ?`)
-            .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), existing.id).run();
-        }
-        return { jobId: existing.id, status: "queued" as JobStatus, duplicate: false };
+        return { jobId: existing.id, status: "ready_for_runner" as JobStatus, duplicate: false };
       }
     }
     return { jobId: existing.id, status: existing.status, duplicate: true };
   }
-  try {
-    await env.adops_ops_queue.send({ jobId, kind });
-  } catch (error) {
-    const queueError = error instanceof Error ? error.message : String(error);
-    await env.adops_ops.prepare(`UPDATE ops_jobs SET status = 'ready_for_runner', result_json = ?, updated_at = ? WHERE id = ?`)
-      .bind(JSON.stringify({ stage: "queue_dispatch_failed", queueError }), nowIso(), jobId).run();
-  }
-  return { jobId, status: "queued" as JobStatus, duplicate: false };
+  return { jobId, status: "ready_for_runner" as JobStatus, duplicate: false };
 }
 
 async function createCampaignEvidenceExportJob(
@@ -1354,7 +1340,7 @@ async function createDrivePiEventJob(env: Env, event: DrivePiEventPayload, reque
     .bind(documentId, event.eventId, event.driveFileId, event.name, event.mimeType, event.path, event.webViewLink, now, now)
     .run();
 
-  return { duplicate: false, eventId: event.eventId, jobId, status: "queued", documentId };
+  return { duplicate: false, eventId: event.eventId, jobId, status: "ready_for_runner", documentId };
 }
 
 async function updateDrivePiEventState(env: Env, body: Record<string, unknown>) {
@@ -1456,7 +1442,27 @@ async function runOpsJobWatchdog(env: Env, options: { dryRun?: boolean; limit?: 
     .all<OpsJobRecord>();
 
   const now = nowIso();
-  const stale = (results ?? []).filter((record) => getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
+  const dependencyIds = Array.from(new Set((results ?? []).map((record) => {
+    const payload = parseJsonSafe(record.payload_json) as Record<string, unknown> | null;
+    return typeof payload?.dependsOnJobId === "string" ? payload.dependsOnJobId : null;
+  }).filter((value): value is string => Boolean(value))));
+  const dependencyStatuses = new Map<string, JobStatus>();
+  for (const dependencyId of dependencyIds) {
+    const dependency = await env.adops_ops.prepare(`SELECT status FROM ops_jobs WHERE id = ? LIMIT 1`).bind(dependencyId).first<{ status: JobStatus }>();
+    if (dependency) dependencyStatuses.set(dependencyId, dependency.status);
+  }
+  const waitingForDependency = (record: OpsJobRecord) => {
+    const payload = parseJsonSafe(record.payload_json) as Record<string, unknown> | null;
+    const dependencyId = typeof payload?.dependsOnJobId === "string" ? payload.dependsOnJobId : null;
+    return dependencyId && ["queued", "ready_for_runner", "running"].includes(dependencyStatuses.get(dependencyId) ?? "");
+  };
+  const dependencyFailed = (record: OpsJobRecord) => {
+    const payload = parseJsonSafe(record.payload_json) as Record<string, unknown> | null;
+    const dependencyId = typeof payload?.dependsOnJobId === "string" ? payload.dependsOnJobId : null;
+    return dependencyId && dependencyStatuses.get(dependencyId) === "failed" ? dependencyId : null;
+  };
+  const failedDependencies = (results ?? []).map((record) => ({ record, dependencyId: dependencyFailed(record) })).filter((item) => item.dependencyId);
+  const stale = (results ?? []).filter((record) => !waitingForDependency(record) && !dependencyFailed(record) && getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
   const staleItems: WatchdogSummaryItem[] = stale.map((record) => ({
     id: record.id,
     kind: record.kind,
@@ -1466,18 +1472,48 @@ async function runOpsJobWatchdog(env: Env, options: { dryRun?: boolean; limit?: 
     runnerId: record.runner_id,
   }));
 
-  if (dryRun || !stale.length) {
+  if (dryRun || (!stale.length && !failedDependencies.length)) {
     return {
       ok: true,
       dryRun,
       checked: (results ?? []).length,
       staleCount: stale.length,
-      failedCount: 0,
+      failedCount: dryRun ? 0 : failedDependencies.length,
       stale: staleItems,
     };
   }
 
-  for (const record of stale) {
+  for (const { record, dependencyId } of failedDependencies) {
+    await updateOpsJob(env, record.id, {
+      status: "failed",
+      error: `Dependência ${dependencyId} falhou; reconciliação não executada.`,
+      result: { stage: "dependency_failed", dependencyId, failedAt: now },
+      runnerId: null,
+    });
+  }
+
+  const recoverable = stale.filter((record) => {
+    if (record.status !== "queued") return false;
+    const previous = parseJsonSafe(record.result_json) as Record<string, unknown> | null;
+    return previous?.stage !== "recovered_from_queue";
+  });
+  const failed = stale.filter((record) => !recoverable.includes(record));
+
+  for (const record of recoverable) {
+    await updateOpsJob(env, record.id, {
+      status: "ready_for_runner",
+      error: null,
+      result: {
+        stage: "recovered_from_queue",
+        recoveredAt: now,
+        previousStatus: record.status,
+        note: "Job legado promovido diretamente no D1 após atraso da Cloudflare Queue.",
+      },
+      runnerId: null,
+    });
+  }
+
+  for (const record of failed) {
     const failure = buildWatchdogFailure(record, now);
     await updateOpsJob(env, record.id, {
       status: "failed",
@@ -1492,7 +1528,8 @@ async function runOpsJobWatchdog(env: Env, options: { dryRun?: boolean; limit?: 
     dryRun,
     checked: (results ?? []).length,
     staleCount: stale.length,
-    failedCount: stale.length,
+    recoveredCount: recoverable.length,
+    failedCount: failed.length + failedDependencies.length,
     stale: staleItems,
   };
 }
@@ -1698,9 +1735,17 @@ async function getOpsJob(env: Env, id: string) {
 
 async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: string | null) {
   const placeholders = kinds?.length ? kinds.map(() => "?").join(",") : "";
+  const dependencyReady = `AND (
+    json_extract(ops_jobs.payload_json, '$.dependsOnJobId') IS NULL
+    OR EXISTS (
+      SELECT 1 FROM ops_jobs AS dependency
+       WHERE dependency.id = json_extract(ops_jobs.payload_json, '$.dependsOnJobId')
+         AND dependency.status = 'completed'
+    )
+  )`;
   const sql = kinds?.length
-    ? `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ORDER BY created_at ASC LIMIT 1`
-    : `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' ORDER BY created_at ASC LIMIT 1`;
+    ? `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ORDER BY created_at ASC LIMIT 1`
+    : `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ORDER BY created_at ASC LIMIT 1`;
   const statement = env.adops_ops.prepare(sql);
   const row = await statement.bind(...(kinds ?? [])).first<OpsJobRecord>();
   if (!row) return null;
@@ -1730,6 +1775,19 @@ function dateInTimeZone(date: Date, timeZone: string) {
   }).format(date);
 }
 
+function isCampaignPublicationReconcileCron(cron: string | null | undefined) {
+  return String(cron || "").trim() === "30 21 * * *";
+}
+
+function buildCampaignPublicationReconcileSchedule(now: Date) {
+  const targetDate = dateInTimeZone(now, DAILY_PRINT_TIME_ZONE);
+  return {
+    targetDate,
+    source: "cloudflare-cron-campaign-publication-reconcile",
+    idempotencyKey: `campaign-publication-reconcile:${targetDate}`,
+  };
+}
+
 async function findExistingDailyPrintBatchJob(env: Env, date: string) {
   const record = await env.adops_ops
     .prepare(
@@ -1737,6 +1795,7 @@ async function findExistingDailyPrintBatchJob(env: Env, date: string) {
        WHERE kind = 'print-batch'
          AND json_extract(payload_json, '$.source') = ?
          AND json_extract(payload_json, '$.date') = ?
+         AND status IN ('queued','ready_for_runner','running','completed')
        ORDER BY created_at DESC
        LIMIT 1`,
     )
@@ -1800,7 +1859,7 @@ async function scheduleDailyPrintBatch(
     skipped: false,
     jobId,
     kind: "print-batch",
-    status: "queued",
+    status: "ready_for_runner",
     date,
     captureAt: null,
     captureWindow: DAILY_PRINT_CAPTURE_WINDOW,
@@ -2194,7 +2253,7 @@ export default {
           captureAt,
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "print-batch", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "print-batch", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/daily-print-batch") {
@@ -2245,7 +2304,7 @@ export default {
           force: body.force === true,
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "print-backfill", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/print-single") {
@@ -2264,7 +2323,7 @@ export default {
           force: typeof body.force === "boolean" ? body.force : false,
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "print-single", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "print-single", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/evidence-monthly-report") {
@@ -2283,6 +2342,21 @@ export default {
           source: typeof body.source === "string" ? body.source : "cloudflare-protected-api",
         }, "ops-api", idempotencyKey);
         return jsonNoStore({ ok: true, kind: "evidence-monthly-report", ...created }, { status: created.duplicate ? 200 : 202 });
+      }
+
+      if (path === "/api/ops/jobs/campaign-publication-reconcile") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const targetDate = typeof body.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.targetDate)
+          ? body.targetDate
+          : dateInTimeZone(new Date(), DAILY_PRINT_TIME_ZONE);
+        const idempotencyKey = `campaign-publication-reconcile:${targetDate}`;
+        const created = await createIdempotentOpsJob(env, "campaign-publication-reconcile", {
+          targetDate,
+          source: "cloudflare-protected-api",
+        }, "ops-api", idempotencyKey, true);
+        return jsonNoStore({ ok: true, kind: "campaign-publication-reconcile", ...created }, { status: created.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/drive-pi-preflight" || path === "/api/ops/jobs/drive-pi-folder" || path === "/api/ops/jobs/drive-pi-publish") {
@@ -2336,7 +2410,7 @@ export default {
           mode: apply ? "apply" : "audit",
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "reconcile-adrotate", status: "queued", apply }, { status: 202 });
+        return json({ ok: true, jobId, kind: "reconcile-adrotate", status: "ready_for_runner", apply }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/adrotate-link") {
@@ -2356,7 +2430,7 @@ export default {
           mode: apply ? "apply" : "preview",
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "adrotate-link", status: "queued", apply }, { status: 202 });
+        return json({ ok: true, jobId, kind: "adrotate-link", status: "ready_for_runner", apply }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/adrotate-publish") {
@@ -2386,7 +2460,7 @@ export default {
           ok: true,
           jobId,
           kind: "adrotate-publish",
-          status: "queued",
+          status: "ready_for_runner",
           apply,
           requiredFollowUp: apply
             ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
@@ -2414,7 +2488,7 @@ export default {
           campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds : null,
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "sync-planilha", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "sync-planilha", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/drive-pi-events") {
@@ -2424,7 +2498,19 @@ export default {
         const validated = validateDrivePiEvent(body);
         if (validated.ok === false) return validated.response;
         const result = await createDrivePiEventJob(env, validated.event, "google-drive-monitor");
-        return jsonNoStore({ ok: true, kind: "drive-pi-ingest", ...result }, { status: result.duplicate ? 200 : 202 });
+        const reconcile = await createIdempotentOpsJob(env, "campaign-publication-reconcile", {
+          source: "google-drive-monitor",
+          triggerEventId: validated.event.eventId,
+          dependsOnJobId: result.jobId,
+          targetDate: todayInCuiaba(),
+        }, "google-drive-monitor", `campaign-publication-reconcile:drive:${validated.event.eventId}`, true);
+        return jsonNoStore({
+          ok: true,
+          kind: "drive-pi-ingest",
+          ...result,
+          reconcileJobId: reconcile.jobId,
+          reconcileStatus: reconcile.status,
+        }, { status: result.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/drive-inventory-refresh") {
@@ -2434,7 +2520,7 @@ export default {
           scanId: crypto.randomUUID(),
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return jsonNoStore({ ok: true, jobId, kind: "drive-inventory-refresh", status: "queued" }, { status: 202 });
+        return jsonNoStore({ ok: true, jobId, kind: "drive-inventory-refresh", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/drive-pi-reconcile") {
@@ -2460,7 +2546,7 @@ export default {
           chatId: readOptionalString(body.chatId),
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "telegram-send-evidence", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "telegram-send-evidence", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/jobs/runtime-readiness-probe") {
@@ -2472,7 +2558,7 @@ export default {
           includeChecks,
           source: "cloudflare-protected-api",
         }, "ops-api");
-        return json({ ok: true, jobId, kind: "runtime-readiness-probe", status: "queued" }, { status: 202 });
+        return json({ ok: true, jobId, kind: "runtime-readiness-probe", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/drive-pi-events/status") {
@@ -2529,7 +2615,7 @@ export default {
           notes: requirements.notes,
         };
         const jobId = await createOpsJob(env, "analytics-report", payload, payload.requestedBy);
-        return jsonNoStore({ ok: true, jobId, status: "queued", payload }, { status: 202 });
+        return jsonNoStore({ ok: true, jobId, status: "ready_for_runner", payload }, { status: 202 });
       }
 
       if (path === "/api/pi-site-exports/jobs") {
@@ -2663,7 +2749,7 @@ export default {
           return jsonNoStore({
             ok: true,
             jobId,
-            status: "queued",
+            status: "ready_for_runner",
             preview: {
               totalCandidates: preview.totalCandidates,
               totalJobs: preview.totalJobs,
@@ -2699,7 +2785,7 @@ export default {
           force: typeof body.force === "boolean" ? body.force : false,
           source: typeof body.source === "string" ? body.source : "cloudflare-pages-public",
         }, requestedBy);
-        return jsonNoStore({ ok: true, jobId, kind: "print-single", status: "queued" }, { status: 202 });
+        return jsonNoStore({ ok: true, jobId, kind: "print-single", status: "ready_for_runner" }, { status: 202 });
       }
 
       if (path === "/api/ops/runner/claim-next") {
@@ -3194,6 +3280,23 @@ export default {
         ).catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
           console.error("monthly_evidence_report_schedule_failed", { error: message });
+        }),
+      );
+      return;
+    }
+    if (isCampaignPublicationReconcileCron(controller.cron)) {
+      const payload = buildCampaignPublicationReconcileSchedule(new Date(controller.scheduledTime));
+      ctx.waitUntil(
+        createIdempotentOpsJob(
+          env,
+          "campaign-publication-reconcile",
+          payload,
+          "cloudflare-scheduled",
+          payload.idempotencyKey,
+          true,
+        ).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("campaign_publication_reconcile_schedule_failed", { error: message });
         }),
       );
       return;

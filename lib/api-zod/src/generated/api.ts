@@ -74,6 +74,21 @@ export const CreateDrivePiReconcileJobResponse = zod.object({
 });
 
 /**
+ * @summary Recheck blocked drafts and resume only campaigns with authoritative PI and media
+ */
+export const CreateCampaignPublicationReconcileJobBody = zod.object({
+  targetDate: zod.coerce.date().optional(),
+});
+
+export const CreateCampaignPublicationReconcileJobResponse = zod.object({
+  ok: zod.boolean(),
+  jobId: zod.string(),
+  kind: zod.literal("campaign-publication-reconcile"),
+  status: zod.enum(["ready_for_runner", "running", "completed", "failed"]),
+  duplicate: zod.boolean(),
+});
+
+/**
  * @summary List operational jobs in compact form
  */
 export const listOpsJobsQueryLimitDefault = 20;

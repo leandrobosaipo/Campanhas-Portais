@@ -95,6 +95,8 @@ curl -fsSL https://adops-api.codigo5.com.br/api/ops/runtime-readiness
 curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/pending-publication?date=YYYY-MM-DD'
 ```
 
+Na leitura de pendências, use `resolutionStatus` para decidir a próxima ação. `awaiting_authoritative_pi` é um bloqueio rastreável, não autorização para inferir PI; `ready_for_preflight` exige PDF e mídia candidata; `ready_for_publication` exige mídia canônica. A retomada automática roda às 17h30 de Cuiabá e após eventos do Drive.
+
 Antes de alterar captura:
 
 ```bash
