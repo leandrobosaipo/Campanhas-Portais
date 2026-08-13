@@ -183,7 +183,13 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        python3 -c 'from PIL import Image' >/dev/null 2>&1 ||
+        (apt-get update && apt-get install -y --no-install-recommends python3-pil && rm -rf /var/lib/apt/lists/*);
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
