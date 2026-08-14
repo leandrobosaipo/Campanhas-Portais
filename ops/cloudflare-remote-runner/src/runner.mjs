@@ -1422,7 +1422,7 @@ function extractExplicitPiFromPdfText(text) {
 
 function extractExplicitPisFromPdfText(text) {
   const values = [];
-  const pattern = /\bPI(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:N\s*[º°o.]?\s*)?[:#-]?\s*(\d{3,})\b/gi;
+  const pattern = /\bPI(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:(?:N[ÚU]MERO|N\s*[º°o.]?)\s*)?[:#-]?\s*(\d{3,})\b/gi;
   for (const match of String(text || "").matchAll(pattern)) {
     const normalized = normalizeExpectedPiIdentity(match[1]);
     if (normalized && !values.includes(normalized)) values.push(normalized);
