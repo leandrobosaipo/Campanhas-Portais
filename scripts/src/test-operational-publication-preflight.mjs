@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -150,6 +150,7 @@ assert.deepEqual(mergedExpectedContext.insertions, [{
   periodoInicio: "2026-08-01",
   periodoFim: "2026-08-21",
   periodoOriginal: "01/08- 21/08",
+  siteSigla: null,
 }]);
 
 const destination = runner.resolveOperationalDestination([
@@ -188,6 +189,105 @@ assert.throws(() => runner.validateOperationalPublicationContract({
   campaign: { id: 989, piCodigo: "17190" },
   site: { id: 33, sigla: "PERRENGUE" },
 }), /PI numérica/);
+
+const compositeContract = runner.validateOperationalPublicationContract({
+  identityMode: "sheet_drive_composite",
+  expectedPiCodigo: "17046",
+  expectedCampaignId: 970,
+  expectedInsertionId: 2186,
+  expectedSiteSigla: "PERRENGUE",
+  expectedFormat: "MEGABANNER TOPO — HEADER — 825X120",
+  expectedPeriodStart: "2026-08-01",
+  expectedPeriodEnd: "2026-08-22",
+}, {
+  insertion: { id: 2186, campanhaId: 970, piCodigo: "PI 17046 - GOV", localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120", periodoInicio: "2026-08-01", periodoFim: "2026-08-22" },
+  campaign: { id: 970, piCodigo: "PI 17046 - GOV" },
+  site: { sigla: "PERRENGUE" },
+});
+assert.equal(compositeContract.expectedPiCodigo, "17046");
+assert.throws(() => runner.validateOperationalPublicationContract({
+  identityMode: "sheet_drive_composite", expectedPiCodigo: "17046", expectedCampaignId: 970, expectedInsertionId: 2186,
+  expectedSiteSigla: "PERRENGUE", expectedFormat: "MEGABANNER TOPO — HEADER — 825X120", expectedPeriodStart: "2026-08-01", expectedPeriodEnd: "2026-08-22",
+}, {
+  insertion: { id: 2186, campanhaId: 970, piCodigo: "PI 99999", localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120", periodoInicio: "2026-08-01", periodoFim: "2026-08-22" },
+  campaign: { id: 970, piCodigo: "PI 17046 - GOV" }, site: { sigla: "PERRENGUE" },
+}), /PI.*diverge/i);
+
+for (const [text, expected] of [
+  ["PI 17046", "17046"],
+  ["PI: 17046", "17046"],
+  ["PI Nº 17046", "17046"],
+  ["PI - 17046", "17046"],
+  ["PI PEDIDO DE INSERÇÃO 17046", "17046"],
+]) {
+  assert.equal(runner.extractExplicitPiFromPdfText(text), expected, `deve extrair ${text}`);
+}
+assert.equal(runner.extractExplicitPiFromPdfText("PI - TCE"), null);
+assert.deepEqual(runner.extractExplicitPisFromPdfText("PI 17046 / PI: 99999"), ["17046", "99999"]);
+
+assert.equal(runner.validateCompositePdfEvidence({
+  expectedPiCodigo: "17046",
+  expectedDocument: { size: "63740", md5Checksum: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  archive: { bytes: 63740, md5: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  parsedPdf: { piCodigo: null, parseError: null },
+}), true);
+assert.throws(() => runner.validateCompositePdfEvidence({
+  expectedPiCodigo: "17046",
+  expectedDocument: { size: null, md5Checksum: null },
+  archive: { bytes: 63740, md5: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  parsedPdf: { piCodigo: null, parseError: null },
+}), /checksum.*tamanho/i);
+assert.throws(() => runner.validateCompositePdfEvidence({
+  expectedPiCodigo: "17046",
+  expectedDocument: { size: "63740", md5Checksum: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  archive: { bytes: 63740, md5: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  parsedPdf: { piCodigo: null, parseError: "pdftotext failed" },
+}), /não pôde ser lido/i);
+assert.throws(() => runner.validateCompositePdfEvidence({
+  expectedPiCodigo: "17046",
+  expectedDocument: { size: "63740", md5Checksum: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  archive: { bytes: 63740, md5: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  parsedPdf: { piCodigo: "PI: 99999", parseError: null },
+}), /diverge/i);
+assert.throws(() => runner.validateCompositePdfEvidence({
+  expectedPiCodigo: "17046",
+  expectedDocument: { size: "63740", md5Checksum: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  archive: { bytes: 63740, md5: "a22c37e0be907efabc9a20d2c0c0cedc" },
+  parsedPdf: { piCodigo: "PI 17046", explicitPiCandidates: ["17046", "99999"], parseError: null },
+}), /divergente|ambígua/i);
+
+assert.equal(runner.validateCompositePendingGuard({
+  identityMode: "sheet_drive_composite", publicationStatus: "ready_for_publication",
+  sourceIdentity: { canonicalPi: "17046" }, operationalIdentity: { fingerprint: "f".repeat(64) },
+}, { identityMode: "sheet_drive_composite", expectedPiCodigo: "17046", fingerprint: "f".repeat(64) }), true);
+assert.throws(() => runner.validateCompositePendingGuard({
+  identityMode: "sheet_drive_composite", publicationStatus: "ready_for_publication",
+  sourceIdentity: { canonicalPi: "17046" }, operationalIdentity: { fingerprint: "e".repeat(64) },
+}, { identityMode: "sheet_drive_composite", expectedPiCodigo: "17046", fingerprint: "f".repeat(64) }), /fingerprint/i);
+
+assert.equal(runner.validateAdrotatePublicationGuard({
+  expectedCampaignId: 970,
+  expectedInsertionId: 2186,
+  expectedSiteSigla: "PERRENGUE",
+  expectedFormat: "MEGABANNER TOPO — HEADER — 825X120",
+  expectedPeriodStart: "2026-08-01",
+  expectedPeriodEnd: "2026-08-22",
+  expectedMediaUrl: "https://cdn.example/17046.gif",
+  expectedPiCodigo: "17046",
+}, {
+  insertion: { id: 2186, campanhaId: 970, piCodigo: "PI 17046 - GOV", localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120", periodoInicio: "2026-08-01", periodoFim: "2026-08-22", mediaUrl: "https://cdn.example/17046.gif" },
+  campaign: { id: 970, piCodigo: "17046" }, site: { sigla: "PERRENGUE" },
+}), true);
+assert.throws(() => runner.validateAdrotatePublicationGuard({
+  expectedCampaignId: 970, expectedInsertionId: 2186, expectedSiteSigla: "PERRENGUE", expectedFormat: "MEGABANNER TOPO — HEADER — 825X120", expectedPeriodStart: "2026-08-01", expectedPeriodEnd: "2026-08-22", expectedMediaUrl: "https://cdn.example/17046.gif",
+}, {
+  insertion: { id: 2186, campanhaId: 970, localFormatoNormalizado: "HOME 1", periodoInicio: "2026-08-01", periodoFim: "2026-08-22", mediaUrl: "https://cdn.example/17046.gif" }, campaign: { id: 970 }, site: { sigla: "PERRENGUE" },
+}), /formato/i);
+assert.throws(() => runner.validateAdrotatePublicationGuard({
+  expectedCampaignId: 970, expectedInsertionId: 2186, expectedSiteSigla: "PERRENGUE", expectedFormat: "MEGABANNER TOPO — HEADER — 825X120", expectedPeriodStart: "2026-08-01", expectedPeriodEnd: "2026-08-22", expectedMediaUrl: "https://cdn.example/17046.gif", expectedPiCodigo: "17046",
+}, {
+  insertion: { id: 2186, campanhaId: 970, piCodigo: "PI 17046", localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120", periodoInicio: "2026-08-01", periodoFim: "2026-08-22", mediaUrl: "https://cdn.example/17046.gif" }, campaign: { id: 970, piCodigo: "PI 99999" }, site: { sigla: "PERRENGUE" },
+}), /PI/i);
 assert.throws(() => runner.validateOperationalPublicationContract({
   expectedCampaignId: 989,
   expectedInsertionId: 1944,
@@ -294,6 +394,12 @@ assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
   last: { status: "running", trigger: { reason: "editorial-next" } },
   recentRuns: [{ status: "ok", trigger: { reason: publishReason } }],
 }, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
+
+const runnerSource = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+assert.match(runnerSource, /insertionAfterPublish = await privateApiPatch[\s\S]*expectedUpdatedAt: payload\.publicationGuard\.expectedUpdatedAt/,
+  "PATCH de publicação deve continuar o CAS iniciado pelo preflight");
+assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublish\?\.updatedAt \|\| patchedInsertion\?\.updatedAt/,
+  "rollback deve usar a versão devolvida pelo PATCH final do publicador");
 
 const dir = await mkdtemp(path.join(tmpdir(), "adops-operational-gif-"));
 try {

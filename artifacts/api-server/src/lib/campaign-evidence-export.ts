@@ -124,6 +124,7 @@ export function buildPendingPublicationView<T extends {
       .map((value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""))
       .includes(canonicalPi);
     const mediaFiles = Array.isArray(item.drive?.mediaFiles) ? item.drive.mediaFiles : [];
+    const pdfFiles = Array.isArray(item.drive?.pdfFiles) ? item.drive.pdfFiles : [];
     const textFiles = Array.isArray(item.drive?.textFiles) ? item.drive.textFiles : [];
     const gates = {
       sheetUnique: operationalCounts.get(operationalKey(item)) === 1,
@@ -148,6 +149,26 @@ export function buildPendingPublicationView<T extends {
       && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? []).length === 0
       && !authoritativePiInPdf
       && Object.values(gates).every(Boolean);
+    const normalizeSourcePi = (value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    const sourcePis = item.sourceIdentity?.sources ?? {};
+    const compositeSourcesAgree = Boolean(canonicalPi)
+      && normalizeSourcePi(sourcePis.sheetPi) === canonicalPi
+      && normalizeSourcePi(sourcePis.adopsPi) === canonicalPi
+      && Array.isArray(sourcePis.driveFolderPiCandidates)
+      && sourcePis.driveFolderPiCandidates.length === 1
+      && normalizeSourcePi(sourcePis.driveFolderPiCandidates[0]) === canonicalPi
+      && Array.isArray(sourcePis.drivePdfPiCandidates)
+      && sourcePis.drivePdfPiCandidates.length === 1
+      && normalizeSourcePi(sourcePis.drivePdfPiCandidates[0]) === canonicalPi;
+    const compositePdfImmutable = pdfFiles.length === 1
+      && Number(pdfFiles[0]?.size || 0) > 0
+      && /^[a-f0-9]{32}$/i.test(String(pdfFiles[0]?.md5Checksum || ""));
+    const compositeReady = !published
+      && item.sourceIdentity?.decision === "confirmed"
+      && compositeSourcesAgree
+      && item.drive?.documentStatus === "candidate_found"
+      && compositePdfImmutable
+      && Object.values(gates).every(Boolean);
     const fingerprintInput = {
       sheet: item.sheetSource,
       siteSigla: item.siteSigla,
@@ -159,7 +180,9 @@ export function buildPendingPublicationView<T extends {
       folderId: item.drive?.folderId,
       folderPath: item.drive?.folderPath,
       inventoryScanId: item.drive?.inventoryScanId,
+      expectedPiCodigo: compositeReady ? canonicalPi : null,
       media: mediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+      pdfDocuments: pdfFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       destinationDocuments: textFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
     };
     const operationalIdentity = {
@@ -184,7 +207,7 @@ export function buildPendingPublicationView<T extends {
       && Boolean(item.adops?.mediaUrl);
     const publicationStatus = published
       ? "published"
-      : operationalReady
+      : operationalReady || compositeReady
         ? "ready_for_publication"
         : awaitingAuthoritativePi
           ? "awaiting_authoritative_pi"
@@ -193,10 +216,12 @@ export function buildPendingPublicationView<T extends {
           : readyForPublication
             ? "ready_for_publication"
             : "failed_retryable";
-    const identityMode = authoritativePiInPdf ? "authoritative_pi" : operationalReady ? "operational_identity" : null;
-    const commercialIdentityStatus = authoritativePiInPdf ? "confirmed" : "awaiting_authoritative_pi";
+    const identityMode = compositeReady ? "sheet_drive_composite" : authoritativePiInPdf ? "authoritative_pi" : operationalReady ? "operational_identity" : null;
+    const commercialIdentityStatus = compositeReady || authoritativePiInPdf ? "confirmed" : "awaiting_authoritative_pi";
     const resolutionReason = publicationStatus === "published"
       ? "Inserção já publicada; permanecem somente as ações operacionais listadas."
+      : compositeReady
+        ? "Planilha, AdOps e pasta única concordam; PDF, mídia e destino serão validados no preflight vivo."
       : operationalReady
         ? "Identidade operacional única; publicação depende do preflight vivo de mídia e destino."
       : publicationStatus === "awaiting_authoritative_pi"
@@ -210,6 +235,8 @@ export function buildPendingPublicationView<T extends {
             : item.sourceIdentity?.reason ?? "Pendência deve ser reavaliada após atualização das fontes.";
     const resumeAction = publicationStatus === "published"
       ? (item.requiredActions?.includes("generate_evidence") ? "generate_evidence" : "none")
+      : compositeReady
+        ? "run_composite_preflight_and_publish"
       : operationalReady
         ? "run_operational_preflight_and_publish"
       : publicationStatus === "awaiting_authoritative_pi"

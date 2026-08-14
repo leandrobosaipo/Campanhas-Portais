@@ -41,7 +41,10 @@ upload_to_volume() {
   local container_name="adops-volume-upload-${volume}-${STAMP}"
   local body code container_id
   body="$(mktemp)"
-  code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 30 \
+  # Portainer may need more than the Cloudflare default timeout while Docker
+  # materializes a fresh versioned volume. Keep the request open long enough
+  # to receive the container id; the readback below remains the fallback.
+  code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 120 \
     -X POST \
     -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/json" \

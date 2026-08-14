@@ -1305,7 +1305,8 @@ async function parseDrivePiPdfFields(archived) {
   if (!extracted) return {};
   const text = extracted.plain || "";
   const layout = extracted.layout || text;
-  const piNumber = firstMatch(text, /\bPI\s+PEDIDO DE INSERÇÃO\s+(\d{3,})/i) || firstMatch(text, /\bPI\s*(\d{3,})\b/i);
+  const explicitPiCandidates = extractExplicitPisFromPdfText(text);
+  const piNumber = explicitPiCandidates[0] || null;
   const competencia = firstMatch(text, /PERÍODO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i) || firstMatch(text, /COLOCAÇÃO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
   const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
@@ -1324,6 +1325,7 @@ async function parseDrivePiPdfFields(archived) {
     periodo: bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia),
     rawTextExcerpt: text.slice(0, 1200),
     parseError: extracted.error || null,
+    explicitPiCandidates,
   };
   const ids = await resolveDrivePiEntityIds(parsed);
   return {
@@ -1336,6 +1338,7 @@ async function parseDrivePiPdfFields(archived) {
     clickUrl: parsed.clickUrl,
     rawTextExcerpt: parsed.rawTextExcerpt,
     parseError: parsed.parseError,
+    explicitPiCandidates: parsed.explicitPiCandidates,
     insertions: ids.siteId && parsed.localFormato && parsed.periodo.periodoInicio && parsed.periodo.periodoFim
       ? [{
           siteId: ids.siteId,
@@ -1348,6 +1351,20 @@ async function parseDrivePiPdfFields(archived) {
         }]
       : [],
   };
+}
+
+function extractExplicitPiFromPdfText(text) {
+  return extractExplicitPisFromPdfText(text)[0] || null;
+}
+
+function extractExplicitPisFromPdfText(text) {
+  const values = [];
+  const pattern = /\bPI(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:N\s*[º°o.]?\s*)?[:#-]?\s*(\d{3,})\b/gi;
+  for (const match of String(text || "").matchAll(pattern)) {
+    const normalized = normalizeExpectedPiIdentity(match[1]);
+    if (normalized && !values.includes(normalized)) values.push(normalized);
+  }
+  return values;
 }
 
 function mergeFieldValue(primary, fallback) {
@@ -1584,10 +1601,78 @@ function validateOperationalPublicationContract(payload, { insertion, campaign, 
   if (failed) throw new Error(`Preflight operacional divergiu em ${failed[1]}; nenhuma mutação foi aplicada.`);
   const commercialPis = [campaign?.piCodigo, insertion?.piCodigo].filter((value) => String(value || "").trim());
   const commercialPi = firstNonEmptyString(...commercialPis);
+  if (payload?.identityMode === "sheet_drive_composite") {
+    const expectedPiCodigo = normalizeExpectedPiIdentity(payload?.expectedPiCodigo);
+    if (!expectedPiCodigo) throw new Error("Identidade composta sem PI canônica esperada.");
+    for (const value of commercialPis) {
+      if (normalizeExpectedPiIdentity(value) !== expectedPiCodigo) {
+        throw new Error("PI da campanha ou inserção diverge da identidade composta; nenhuma mutação foi aplicada.");
+      }
+    }
+    return { ok: true, preserveCommercialPi: commercialPi, expectedPiCodigo };
+  }
   if (commercialPis.some((value) => /\d{3,}/.test(String(value)))) {
     throw new Error("Identidade operacional não pode publicar com PI numérica ainda não confirmada por PDF.");
   }
   return { ok: true, preserveCommercialPi: commercialPi };
+}
+
+function validateCompositePdfEvidence({ expectedPiCodigo, expectedDocument, archive, parsedPdf }) {
+  const expectedPi = normalizeExpectedPiIdentity(expectedPiCodigo);
+  const expectedSize = Number(expectedDocument?.size || 0);
+  const expectedMd5 = String(expectedDocument?.md5Checksum || "").trim().toLowerCase();
+  if (!expectedPi || expectedSize <= 0 || !/^[a-f0-9]{32}$/.test(expectedMd5)) {
+    throw new Error("Identidade composta exige checksum e tamanho autoritativos do PDF.");
+  }
+  if (!archive || Number(archive.bytes || 0) !== expectedSize || String(archive.md5 || "").trim().toLowerCase() !== expectedMd5) {
+    throw new Error("PDF baixado diverge do checksum ou tamanho do snapshot aprovado.");
+  }
+  if (parsedPdf?.parseError) throw new Error("O PDF não pôde ser lido com segurança; nenhuma mutação foi aplicada.");
+  const explicitPis = Array.from(new Set([
+    ...(Array.isArray(parsedPdf?.explicitPiCandidates) ? parsedPdf.explicitPiCandidates : []),
+    parsedPdf?.piCodigo,
+  ].map(normalizeExpectedPiIdentity).filter(Boolean)));
+  if (explicitPis.some((value) => value !== expectedPi) || explicitPis.length > 1) {
+    throw new Error("O PDF contém PI explícita divergente ou ambígua para a identidade composta.");
+  }
+  return true;
+}
+
+function validateCompositePendingGuard(liveItem, guard) {
+  if (!liveItem || liveItem?.identityMode !== guard?.identityMode || liveItem?.publicationStatus !== "ready_for_publication") {
+    throw new Error("Identidade composta não está mais liberada para publicação.");
+  }
+  if (String(liveItem?.operationalIdentity?.fingerprint || "") !== String(guard?.fingerprint || "")) {
+    throw new Error("Fingerprint operacional mudou; nenhuma mutação foi aplicada.");
+  }
+  const expectedPi = normalizeExpectedPiIdentity(guard?.expectedPiCodigo);
+  const currentPi = normalizeExpectedPiIdentity(liveItem?.sourceIdentity?.canonicalPi);
+  if (guard?.identityMode === "sheet_drive_composite" && (!expectedPi || currentPi !== expectedPi)) {
+    throw new Error("PI canônica da identidade composta mudou; nenhuma mutação foi aplicada.");
+  }
+  return true;
+}
+
+function validateAdrotatePublicationGuard(guard, { insertion, campaign, site }) {
+  const checks = [
+    [Number(insertion?.id) === Number(guard?.expectedInsertionId), "inserção"],
+    [Number(insertion?.campanhaId ?? insertion?.campaignId) === Number(guard?.expectedCampaignId) && Number(campaign?.id) === Number(guard?.expectedCampaignId), "campanha"],
+    [normalizeOperationalValue(site?.sigla) === normalizeOperationalValue(guard?.expectedSiteSigla), "portal"],
+    [normalizeOperationalValue(insertion?.localFormatoNormalizado ?? insertion?.localFormato) === normalizeOperationalValue(guard?.expectedFormat), "formato"],
+    [String(insertion?.periodoInicio || "") === String(guard?.expectedPeriodStart || ""), "início"],
+    [String(insertion?.periodoFim || "") === String(guard?.expectedPeriodEnd || ""), "fim"],
+    [String(insertion?.mediaUrl || "") === String(guard?.expectedMediaUrl || ""), "mídia"],
+  ];
+  const failed = checks.find(([ok]) => !ok);
+  if (failed) throw new Error(`Guard de publicação divergiu em ${failed[1]}; nenhuma mutação AdRotate foi aplicada.`);
+  const expectedPi = normalizeExpectedPiIdentity(guard?.expectedPiCodigo);
+  if (expectedPi) {
+    for (const [label, value] of [["campanha", campaign?.piCodigo], ["inserção", insertion?.piCodigo]]) {
+      const currentPi = normalizeExpectedPiIdentity(value);
+      if (currentPi && currentPi !== expectedPi) throw new Error(`Guard de publicação divergiu na PI da ${label}.`);
+    }
+  }
+  return true;
 }
 
 function validateOperationalDriveItem(expected, actual, label) {
@@ -4024,6 +4109,14 @@ async function executeAdrotatePublishJob(payload) {
   const campaignId = readPositiveInteger(insertion.campanhaId ?? insertion.campaignId ?? insertion.campanha?.id ?? insertion.campaign?.id);
   const campaign = campaignId ? await privateApiGet(`/api/campaigns/${campaignId}`).catch(() => null) : null;
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? checklist.insertion?.siteSigla ?? null;
+  if (payload?.publicationGuard) {
+    validateAdrotatePublicationGuard(payload.publicationGuard, { insertion, campaign, site });
+    if (payload.publicationGuard.identityMode === "sheet_drive_composite") {
+      const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(targetDate)}`);
+      const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
+      validateCompositePendingGuard(liveItem, payload.publicationGuard);
+    }
+  }
   if (!shouldUsePerrenguePortainerAdrotate(siteSigla) && (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath)) {
     throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
   }
@@ -4150,8 +4243,12 @@ async function executeAdrotatePublishJob(payload) {
     throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}.`);
   }
 
+  let insertionAfterPublish = null;
   if (apply && wpCliPublished) {
-    await privateApiPatch(`/api/insertions/${insertionId}`, {
+    insertionAfterPublish = await privateApiPatch(`/api/insertions/${insertionId}`, {
+      ...(payload?.publicationGuard?.expectedUpdatedAt
+        ? { expectedUpdatedAt: payload.publicationGuard.expectedUpdatedAt }
+        : {}),
       bannerPublicadoNoSite: true,
       statusNormalizado: "publicado",
       observacoes: [
@@ -4161,7 +4258,7 @@ async function executeAdrotatePublishJob(payload) {
           ? "Relação pública validada após publicação."
           : "Publicação agendada/criada no WordPress; relação pública pode ficar vazia antes do início do período.",
       ].filter(Boolean).join("\n"),
-    }).catch(() => null);
+    });
   }
 
   let evidenceJob = null;
@@ -4212,6 +4309,7 @@ async function executeAdrotatePublishJob(payload) {
     relationOk: apply ? exactLiveCount > 0 : null,
     headlessRebuild,
     publicHtmlValidation,
+    insertionAfterPublish,
     evidenceJob,
     requiredFollowUp: apply
       ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
@@ -5349,17 +5447,14 @@ async function executeDrivePiReconcile(payload) {
 }
 
 async function executeOperationalMediaPublish(payload) {
-  if (payload?.identityMode !== "operational_identity") throw new Error("Preflight operacional exige identityMode=operational_identity.");
+  if (!["operational_identity", "sheet_drive_composite"].includes(payload?.identityMode)) throw new Error("Preflight operacional exige um modo de identidade suportado.");
   const insertionId = readPositiveInteger(payload?.expectedInsertionId);
   const campaignId = readPositiveInteger(payload?.expectedCampaignId);
   if (!insertionId || !campaignId || !payload?.fingerprint) throw new Error("Preflight operacional sem IDs canônicos ou fingerprint.");
 
   const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(payload?.targetDate || todayInCuiaba())}`);
   const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
-  if (!liveItem || liveItem?.identityMode !== "operational_identity" || liveItem?.publicationStatus !== "ready_for_publication") {
-    throw new Error(`Inserção ${insertionId} não está mais liberada por identidade operacional única.`);
-  }
-  if (liveItem?.operationalIdentity?.fingerprint !== payload.fingerprint) throw new Error("Fingerprint operacional mudou; nenhuma mutação foi aplicada.");
+  validateCompositePendingGuard(liveItem, payload);
 
   const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
   const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
@@ -5371,18 +5466,27 @@ async function executeOperationalMediaPublish(payload) {
   const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");
   const mediaId = firstNonEmptyString(payload?.media?.id, payload?.media?.driveFileId);
   const documentId = firstNonEmptyString(payload?.destinationDocument?.id, payload?.destinationDocument?.driveFileId);
+  const pdfId = firstNonEmptyString(payload?.pdfDocument?.id, payload?.pdfDocument?.driveFileId);
   const mediaItem = folderItems.find((item) => item.driveFileId === mediaId);
   const destinationItem = folderItems.find((item) => item.driveFileId === documentId);
-  if (!mediaItem || !destinationItem) throw new Error("Mídia ou documento exatos não pertencem mais à pasta operacional.");
+  const pdfItem = pdfId ? folderItems.find((item) => item.driveFileId === pdfId) : null;
+  if (!mediaItem || !destinationItem || (payload.identityMode === "sheet_drive_composite" && !pdfItem)) throw new Error("Mídia, PDF ou documento exatos não pertencem mais à pasta operacional.");
   validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
   validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
+  if (payload.identityMode === "sheet_drive_composite") validateOperationalDriveItem(payload.pdfDocument, pdfItem, "PDF");
   const imageCandidates = folderItems.filter(isImageMediaItem);
+  const pdfCandidates = folderItems.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
-  if (imageCandidates.length !== 1 || textCandidates.length !== 1) throw new Error("Pasta operacional deixou de conter uma única mídia e um único documento de destino.");
+  if (imageCandidates.length !== 1 || textCandidates.length !== 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, PDF e documento de destino.");
 
   const observations = await readDriveTextObservations([destinationItem]);
   const destinationUrl = resolveOperationalDestination(observations);
   await assertPublicOperationalDestination(destinationUrl);
+  if (payload.identityMode === "sheet_drive_composite") {
+    const pdfArchive = await materializeMediaSource({ driveItem: pdfItem, fallbackName: pdfItem.name || "documento.pdf" });
+    const parsedPdf = await parseDrivePiPdfFields(pdfArchive);
+    validateCompositePdfEvidence({ expectedPiCodigo: payload.expectedPiCodigo, expectedDocument: payload.pdfDocument, archive: pdfArchive, parsedPdf });
+  }
   const materialized = await materializeMediaSource({ driveItem: mediaItem, fallbackName: mediaItem.name || "banner.gif" });
   if (!payload?.media?.md5Checksum) throw new Error("Snapshot operacional não possui checksum autoritativo da mídia; atualize o inventário antes de publicar.");
   if (String(materialized.md5 || "").toLowerCase() !== String(payload.media.md5Checksum).toLowerCase()) throw new Error("Checksum do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
@@ -5417,24 +5521,48 @@ async function executeOperationalMediaPublish(payload) {
   const mediaUrl = wordpressImport?.url || stagedUrl;
   const probe = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30000) });
   if (!probe.ok) throw new Error(`Mídia canônica não respondeu HTTP válido: ${probe.status}.`);
+  const [latestInsertion, latestCampaign] = await Promise.all([
+    privateApiGet(`/api/insertions/${insertionId}`),
+    privateApiGet(`/api/campaigns/${campaignId}`),
+  ]);
+  const latestSiteId = readPositiveInteger(latestInsertion?.siteId ?? latestInsertion?.site?.id);
+  const latestSite = latestSiteId ? await privateApiGet(`/api/sites/${latestSiteId}`) : null;
+  validateOperationalPublicationContract(payload, { insertion: latestInsertion, campaign: latestCampaign, site: latestSite });
   const externalKey = `ADOPS-${String(siteSigla).toUpperCase()}-${insertionId}`;
   const adrotateSnapshot = await snapshotPerrengueAdrotate({ insertionId, externalKey });
   let preview;
   let published;
   let insertionPatched = false;
+  let patchedInsertion = null;
   try {
-    await privateApiPatch(`/api/insertions/${insertionId}`, {
+    patchedInsertion = await privateApiPatch(`/api/insertions/${insertionId}`, {
+      expectedUpdatedAt: latestInsertion.updatedAt,
       mediaUrl,
       observacoes: [
-        insertion.observacoes,
+        latestInsertion.observacoes,
         `Link destino informado: ${destinationUrl}`,
         `Mídia validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${imageMetadata.width}x${imageMetadata.height}; ${imageMetadata.frames} frame(s)).`,
-        "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial.",
+        payload.identityMode === "operational_identity"
+          ? "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial."
+          : `Identidade composta confirmada por planilha, inserção canônica e pasta Drive (PI ${payload.expectedPiCodigo}).`,
       ].filter(Boolean).join("\n"),
     });
     insertionPatched = true;
 
-    const publishBase = { insertionId, identityMode: "operational_identity", replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate };
+    const publicationGuard = {
+      expectedCampaignId: campaignId,
+      expectedInsertionId: insertionId,
+      expectedSiteSigla: siteSigla,
+      expectedFormat: payload.expectedFormat,
+      expectedPeriodStart: payload.expectedPeriodStart,
+      expectedPeriodEnd: payload.expectedPeriodEnd,
+      expectedMediaUrl: mediaUrl,
+      expectedPiCodigo: payload.expectedPiCodigo,
+      identityMode: payload.identityMode,
+      fingerprint: payload.fingerprint,
+      expectedUpdatedAt: patchedInsertion?.updatedAt,
+    };
+    const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
     preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
     published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
     if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.publicHtmlValidation?.ok !== true)) {
@@ -5444,10 +5572,11 @@ async function executeOperationalMediaPublish(payload) {
     const rollbackErrors = [];
     if (insertionPatched) {
       await privateApiPatch(`/api/insertions/${insertionId}`, {
-        mediaUrl: insertion.mediaUrl ?? null,
-        observacoes: insertion.observacoes ?? null,
-        bannerPublicadoNoSite: insertion.bannerPublicadoNoSite === true,
-        statusNormalizado: insertion.statusNormalizado,
+        expectedUpdatedAt: published?.insertionAfterPublish?.updatedAt || patchedInsertion?.updatedAt,
+        mediaUrl: latestInsertion.mediaUrl ?? null,
+        observacoes: latestInsertion.observacoes ?? null,
+        bannerPublicadoNoSite: latestInsertion.bannerPublicadoNoSite === true,
+        statusNormalizado: latestInsertion.statusNormalizado,
       }).catch((rollbackError) => rollbackErrors.push(`insertion:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
     }
     let adrotateRestored = false;
@@ -5477,8 +5606,8 @@ async function executeOperationalMediaPublish(payload) {
     stage: "published",
     insertionId,
     campaignId,
-    identityMode: "operational_identity",
-    commercialIdentityStatus: "awaiting_authoritative_pi",
+    identityMode: payload.identityMode,
+    commercialIdentityStatus: payload.identityMode === "sheet_drive_composite" ? "confirmed" : "awaiting_authoritative_pi",
     media: { sourceDriveFileId: mediaId, stagedUrl, mediaUrl, metadata: imageMetadata },
     destinationUrl,
     preview,
@@ -6458,6 +6587,11 @@ export {
   validateDrivePiPackageReadiness,
   validateExpectedDrivePiCommercialContext,
   validateExpectedDrivePiIdentity,
+  extractExplicitPiFromPdfText,
+  extractExplicitPisFromPdfText,
+  validateCompositePdfEvidence,
+  validateCompositePendingGuard,
+  validateAdrotatePublicationGuard,
   validateOperationalPublicationContract,
   validateOperationalPublicationScope,
   validateOperationalDriveItem,

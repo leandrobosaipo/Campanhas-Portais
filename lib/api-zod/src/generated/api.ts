@@ -175,6 +175,7 @@ export const GetPendingCampaignOperationsResponse = zod.object({
         .union([
           zod.literal("authoritative_pi"),
           zod.literal("operational_identity"),
+          zod.literal("sheet_drive_composite"),
           zod.literal(null),
         ])
         .nullish(),
@@ -890,6 +891,12 @@ export const UpdateInsertionParams = zod.object({
 });
 
 export const UpdateInsertionBody = zod.object({
+  expectedUpdatedAt: zod.coerce
+    .date()
+    .optional()
+    .describe(
+      "Optimistic concurrency guard; returns 409 when the insertion changed.",
+    ),
   siteId: zod.number().nullish(),
   localFormato: zod.string().nullish(),
   localFormatoNormalizado: zod.string().nullish(),
@@ -963,6 +970,12 @@ export const GetInsertionMediaConsistencyResponse = zod.object({
 export const BulkUpdateInsertionsBody = zod.object({
   ids: zod.array(zod.number()),
   updates: zod.object({
+    expectedUpdatedAt: zod.coerce
+      .date()
+      .optional()
+      .describe(
+        "Optimistic concurrency guard; returns 409 when the insertion changed.",
+      ),
     siteId: zod.number().nullish(),
     localFormato: zod.string().nullish(),
     localFormatoNormalizado: zod.string().nullish(),

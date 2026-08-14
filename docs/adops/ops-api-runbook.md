@@ -62,7 +62,7 @@ Para qualquer criação de job:
 
 Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
 
-O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos e o runner confirma novamente mídia, destino, portal, período e formato. Nesse segundo modo, envia `pi_code=null` ao AdRotate, mantém faturamento e ZIP por PI bloqueados e limita a mutação à campanha/inserção já cadastradas.
+O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos; envia `pi_code=null` ao AdRotate e mantém faturamento e ZIP por PI bloqueados. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF, banner compatível e redirect HTTPS. Nos três modos, o runner relê as fontes e limita a mutação à campanha/inserção já cadastradas.
 
 ## Matriz de evidência
 

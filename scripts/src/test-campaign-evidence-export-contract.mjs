@@ -230,6 +230,85 @@ test("encaminha PDF candidato ao preflight mesmo quando o nome não contém a PI
   assert.notEqual(result.items[0].identityMode, "operational_identity");
 });
 
+test("libera identidade composta quando planilha, AdOps e pasta única concordam com PDF, mídia e destino", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:40:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CRIME AMBIENTAL",
+      piCodigo: "PI 17046 - GOV",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-01", end: "2026-08-22" },
+      format: { normalized: "MEGABANNER TOPO — HEADER — 825X120" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 8 },
+      sourceIdentity: {
+        decision: "confirmed",
+        canonicalPi: "17046",
+        sources: { sheetPi: "17046", adopsPi: "17046", driveFolderPiCandidates: ["17046"], drivePdfPiCandidates: ["17046"] },
+      },
+      drive: {
+        status: "matched",
+        folderId: "folder-17046",
+        folderPath: "/PERRENGUE/AGOSTO/PI 17046 - CRIME AMBIENTAL",
+        inventoryScanId: "scan-composite",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "candidate_found",
+        mediaFiles: [{ id: "gif-17046", name: "825x120.gif", mimeType: "image/gif", size: "280027", md5Checksum: "a".repeat(32) }],
+        pdfFiles: [{ id: "pdf-17046", name: "PI_17046_SITE_PERRENGUE.pdf", mimeType: "application/pdf", size: "63740", md5Checksum: "b".repeat(32) }],
+        textFiles: [{ id: "redirect-17046", name: "Documento sem título", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 970, insertionId: 2186, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(result.items[0].identityMode, "sheet_drive_composite");
+  assert.equal(result.items[0].commercialIdentityStatus, "confirmed");
+  assert.equal(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].resumeAction, "run_composite_preflight_and_publish");
+  assert.equal(result.items[0].operationalIdentity.source.expectedPiCodigo, "17046");
+  assert.equal(result.items[0].operationalIdentity.source.pdfDocuments[0].id, "pdf-17046");
+});
+
+test("identidade composta bloqueia quando falta redirect ou há divergência entre PIs", () => {
+  const base = {
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:40:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    upcomingItems: [],
+  };
+  const item = {
+    campaignName: "FAKE NEWS", piCodigo: "PI 17142 - ALMT", siteSigla: "PERRENGUE",
+    period: { start: "2026-08-09", end: "2026-08-31" }, format: { normalized: "POP UP — SITEWIDE — 970X90" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 18 },
+    sourceIdentity: { decision: "confirmed", canonicalPi: "17142", sources: { sheetPi: "17142", adopsPi: "17142", driveFolderPiCandidates: ["17142"], drivePdfPiCandidates: ["17142"] } },
+    drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17142 - FAKE NEWS", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif" }], pdfFiles: [{ id: "pdf" }], textFiles: [] },
+    adops: { status: "matched", campaignId: 987, insertionId: 2193, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+  };
+  const missingRedirect = contract.buildPendingPublicationView({ ...base, items: [item] });
+  assert.notEqual(missingRedirect.items[0].publicationStatus, "ready_for_publication");
+  const divergent = contract.buildPendingPublicationView({ ...base, items: [{ ...item, sourceIdentity: { ...item.sourceIdentity, sources: { ...item.sourceIdentity.sources, sheetPi: "99999" } }, drive: { ...item.drive, textFiles: [{ id: "redirect" }] } }] });
+  assert.notEqual(divergent.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("identidade composta exige checksum e tamanho do PDF no snapshot", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: { needsPublication: 1, needsEvidence: 1 }, upcomingItems: [],
+    items: [{
+      campaignName: "CRIME AMBIENTAL", piCodigo: "17046", siteSigla: "PERRENGUE", period: { start: "2026-08-01", end: "2026-08-22" }, format: { normalized: "TOPO" }, sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 8 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "17046", sources: { sheetPi: "17046", adopsPi: "17046", driveFolderPiCandidates: ["17046"], drivePdfPiCandidates: ["17046"] } },
+      drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17046", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif" }], pdfFiles: [{ id: "pdf", size: null, md5Checksum: null }], textFiles: [{ id: "redirect" }] },
+      adops: { status: "matched", campaignId: 970, insertionId: 2186, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false }, requiredActions: ["publish_on_site"], blockingIssues: [],
+    }],
+  });
+  assert.notEqual(result.items[0].identityMode, "sheet_drive_composite");
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+});
+
 test("lote de campanhas normaliza identidade e remove duplicatas", () => {
   assert.deepEqual(contract.parseCampaignEvidenceBatch({
     competencia: "agosto/2026",

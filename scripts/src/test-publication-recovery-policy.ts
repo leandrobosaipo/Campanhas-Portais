@@ -113,7 +113,7 @@ test("identidade operacional ambígua não libera publicação", () => {
   assert.equal(view.items[0]?.resumeAction, "retry_reconcile");
 });
 
-test("exceção operacional sem PDF fica restrita à campanha 989 e inserção 1944", () => {
+test("identidade operacional sem PDF usa qualquer alvo canônico único suportado, sem IDs fixos", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
     generatedAt: "2026-08-13T16:30:00.000Z",
@@ -121,8 +121,10 @@ test("exceção operacional sem PDF fica restrita à campanha 989 e inserção 1
     items: [pendingItem({ adops: { status: "matched", operationalMatchCount: 1, campaignId: 990, insertionId: 1945, mediaUrl: null, bannerPublicadoNoSite: false } })],
     upcomingItems: [],
   });
-  assert.equal(view.items[0]?.publicationStatus, "failed_retryable");
-  assert.equal(view.items[0]?.operationalIdentity.gates.approvedOperationalTarget, false);
+  assert.equal(view.items[0]?.publicationStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.operationalIdentity.gates.approvedOperationalTarget, true);
+  assert.equal(view.items[0]?.adops.campaignId, 990);
+  assert.equal(view.items[0]?.adops.insertionId, 1945);
 });
 
 test("PI de outro portal não é aceita como identidade comercial ou operacional", () => {

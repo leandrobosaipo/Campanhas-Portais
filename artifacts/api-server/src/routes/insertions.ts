@@ -4420,7 +4420,17 @@ router.patch("/insertions/:id", async (req, res): Promise<void> => {
     statusNormalizado: merged.statusNormalizado as string,
   });
 
-  const [updated] = await db.update(insertionsTable).set(updateData).where(eq(insertionsTable.id, params.data.id)).returning();
+  const expectedUpdatedAt = parsed.data.expectedUpdatedAt instanceof Date
+    ? parsed.data.expectedUpdatedAt
+    : parsed.data.expectedUpdatedAt ? new Date(parsed.data.expectedUpdatedAt) : null;
+  const updateWhere = expectedUpdatedAt
+    ? and(eq(insertionsTable.id, params.data.id), eq(insertionsTable.updatedAt, expectedUpdatedAt))
+    : eq(insertionsTable.id, params.data.id);
+  const [updated] = await db.update(insertionsTable).set(updateData).where(updateWhere).returning();
+  if (!updated) {
+    res.status(409).json({ error: "Insertion changed", details: "A inserção foi alterada depois do preflight; releia as fontes e tente novamente." });
+    return;
+  }
   const enriched = await enrichInsertion(updated);
   res.json(enriched);
 });

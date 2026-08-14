@@ -86,6 +86,33 @@ test("reconciliador publica mídia canônica já validada sem recriar campanha",
   assert.equal(plan.actions[0]?.insertionId, 1944);
 });
 
+test("reconciliador cria preflight composto para a inserção canônica sem exigir PI no texto do PDF", () => {
+  const plan = planCampaignPublicationReconciliation([item({
+    resolutionStatus: "ready_for_publication",
+    publicationStatus: "ready_for_publication",
+    identityMode: "sheet_drive_composite",
+    piCodigo: "PI 17046 - GOV",
+    sourceIdentity: { decision: "confirmed", canonicalPi: "17046" },
+    adops: { campaignId: 970, insertionId: 2186, mediaUrl: null, bannerPublicadoNoSite: false },
+    operationalIdentity: {
+      fingerprint: "c".repeat(64),
+      source: {
+        expectedPiCodigo: "17046",
+        folderId: "folder-17046",
+        folderPath: "/PERRENGUE/AGOSTO/PI 17046 - CRIME AMBIENTAL",
+        media: [{ id: "gif-17046" }],
+        pdfDocuments: [{ id: "pdf-17046" }],
+        destinationDocuments: [{ id: "redirect-17046" }],
+      },
+    },
+  })], "2026-08-14T13:40:00.000Z");
+  assert.equal(plan.blockers.length, 0);
+  assert.equal(plan.actions[0]?.type, "operational_media_publish");
+  assert.equal(plan.actions[0]?.payload.identityMode, "sheet_drive_composite");
+  assert.equal(plan.actions[0]?.payload.expectedPiCodigo, "17046");
+  assert.equal(plan.actions[0]?.payload.pdfDocument.id, "pdf-17046");
+});
+
 test("release mantém API em modo monitor e documenta o job protegido", async () => {
   const deploy = await readFile(new URL("../../ops/portainer/adops-stack/scripts/deploy-production.sh", import.meta.url), "utf8");
   const openapi = await readFile(new URL("../../lib/api-spec/openapi.yaml", import.meta.url), "utf8");

@@ -16,4 +16,5 @@ export type GetPendingCampaignOperations200ItemsItemIdentityMode =
 export const GetPendingCampaignOperations200ItemsItemIdentityMode = {
   authoritative_pi: "authoritative_pi",
   operational_identity: "operational_identity",
+  sheet_drive_composite: "sheet_drive_composite",
 } as const;

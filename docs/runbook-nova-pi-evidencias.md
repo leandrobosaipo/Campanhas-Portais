@@ -51,6 +51,7 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 | Anúncio correto existe no grupo | Reutilizar e vincular |
 | Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
 | PI/PDF ausente, identidade operacional única | Usar `identityMode=operational_identity`, manter `commercialIdentityStatus=awaiting_authoritative_pi` e liberar somente o preflight vivo de publicação |
+| PDF presente, mas os campos comerciais estão divididos entre planilha e pasta | Usar `identityMode=sheet_drive_composite` somente quando PI, linha, campanha, inserção, portal, período, formato e pasta forem únicos; exigir um PDF, uma mídia compatível e um documento com exatamente um destino HTTPS |
 | PI/PDF ausente e fonte ambígua | Manter `failed_retryable`; mídia candidata não vira “mídia ausente” e nenhuma entidade é criada |
 
 Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
@@ -58,6 +59,8 @@ Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agênci
 ### Retomada automática sem duplicação
 
 O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Sem PDF, ele pode publicar somente quando competência, portal, campanha, período, formato, linha, pasta, mídia e destino formam uma correspondência operacional única. O runner relê as fontes, valida o binário e o destino HTTPS antes de mutar. A PI continua pendente para faturamento e ZIP por PI. Quando o PDF chegar, o fluxo completa a campanha e a inserção existentes, sem duplicar ou trocar o portal por semelhança de nome.
+
+Quando o PDF existe, mas não contém texto extraível suficiente, a planilha continua sendo a fonte canônica de portal, PI, período e formato. O modo `sheet_drive_composite` só é liberado se planilha, AdOps, pasta e nome do PDF apontarem para a mesma PI e houver exatamente um PDF, uma mídia e um redirect. O runner baixa novamente os três arquivos, compara ID, tamanho e checksum, rejeita uma PI explícita divergente no PDF e publica apenas a inserção canônica existente.
 
 Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
