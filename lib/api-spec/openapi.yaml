@@ -1230,6 +1230,10 @@ paths:
               properties:
                 competencia:
                   type: string
+                asOfDate:
+                  type: string
+                  format: date
+                  description: Optional inclusive evidence cutoff for immutable historical snapshots.
                 campaigns:
                   type: array
                   minItems: 1

@@ -1271,6 +1271,12 @@ export const createCampaignEvidenceExportBatchBodyImageQualityMax = 90;
 
 export const CreateCampaignEvidenceExportBatchBody = zod.object({
   competencia: zod.string(),
+  asOfDate: zod.coerce
+    .date()
+    .optional()
+    .describe(
+      "Optional inclusive evidence cutoff for immutable historical snapshots.",
+    ),
   campaigns: zod
     .array(
       zod.object({

@@ -9,6 +9,8 @@ import type { CreateCampaignEvidenceExportBatchBodyCampaignsItem } from "./creat
 
 export type CreateCampaignEvidenceExportBatchBody = {
   competencia: string;
+  /** Optional inclusive evidence cutoff for immutable historical snapshots. */
+  asOfDate?: Date;
   /**
    * @minItems 1
    * @maxItems 25

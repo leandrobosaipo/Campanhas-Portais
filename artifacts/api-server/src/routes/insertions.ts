@@ -1342,13 +1342,13 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
   };
 }
 
-async function listCampaignEvidenceInsertions(piCodigo: string, competencia: string, includeEvidence = true) {
+async function listCampaignEvidenceInsertions(piCodigo: string, competencia: string, includeEvidence = true, asOfDate?: string) {
   const identity = parseCampaignEvidenceIdentity({ piCodigo, competencia });
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
   const candidates = selectCampaignEvidenceInsertions(enriched, identity);
   const candidateById = new Map(candidates.map((item) => [item.id, item]));
-  const operations = await getActiveCampaignOperations({ includeEvidence });
+  const operations = await getActiveCampaignOperations({ date: asOfDate, includeEvidence });
   const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
     normalizeCampaignPi(item.piCodigo) === identity.piCodigo
     && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
@@ -1375,8 +1375,8 @@ function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, 
   return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
 }
 
-async function describeCampaignEvidenceExport(piCodigo: string, competencia: string) {
-  const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia);
+async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
+  const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia, true, asOfDate);
   if (!operations.length) return null;
   const evidenceDescriptors = [];
   for (const insertion of insertions) {
@@ -1416,6 +1416,7 @@ async function describeCampaignEvidenceExport(piCodigo: string, competencia: str
   const evidences = evidenceDescriptors.flatMap((item) => item.evidences);
   return {
     ...identity,
+    asOfDate: asOfDate ?? null,
     campaignName: operations[0]?.campaignName ?? insertions[0]?.campanhaName ?? `PI ${identity.piCodigo}`,
     insertionIds: insertions.map((item) => item.id),
     siteSiglas: Array.from(new Set(insertions.map((item) => item.siteSigla).filter(Boolean))).sort(),
@@ -3025,6 +3026,9 @@ async function handleInternalCampaignEvidenceExport(req: Request, res: Response)
   let zipPath: string | null = null;
   try {
     const identity = parseCampaignEvidenceIdentity(req.query);
+    const asOfDate = typeof req.query.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.asOfDate)
+      ? req.query.asOfDate
+      : undefined;
     const suppliedFingerprint = Array.isArray(req.body?.evidenceFingerprint)
       ? req.body.evidenceFingerprint.filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
       : [];
@@ -3054,9 +3058,9 @@ async function handleInternalCampaignEvidenceExport(req: Request, res: Response)
     const immutableDownload = wantsImmutableDownload && requestedEvidenceIds && requestedEvidenceIds.size > 0;
     const descriptor = immutableDownload
       ? null
-      : await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia);
+      : await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia, asOfDate);
     const immutableSelection = immutableDownload
-      ? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, false)
+      ? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, false, asOfDate)
       : null;
     if (immutableDownload && !immutableSelection?.operations.length) {
       res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
@@ -3076,7 +3080,7 @@ async function handleInternalCampaignEvidenceExport(req: Request, res: Response)
       res.status(409).json({ error: "Pacote bloqueado por evidências ausentes, inválidas ou inacessíveis.", ...descriptor! });
       return;
     }
-    const { insertions, operations } = immutableSelection ?? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia);
+    const { insertions, operations } = immutableSelection ?? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, true, asOfDate);
     const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
     const imageQuality = parseBoundedInteger(req.query.imageQuality, { minimum: 45, maximum: 90, fallback: 72 });
     const requestId = crypto.randomUUID();

@@ -1224,13 +1224,19 @@ async function createCampaignEvidenceExportJob(
   env: Env,
   body: Record<string, unknown>,
   requestedKey = "",
+  allowHistoricalCutoff = false,
 ) {
   const piCodigo = String(body.piCodigo || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
+  const asOfDate = typeof body.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.asOfDate) ? body.asOfDate : "";
+  if (body.asOfDate !== undefined && !allowHistoricalCutoff) return jsonNoStore({ error: "as_of_date_requires_authenticated_batch" }, { status: 403 });
+  if (body.asOfDate !== undefined && !asOfDate) return badRequest("asOfDate deve estar no formato YYYY-MM-DD.");
   if (!piCodigo) return jsonNoStore({ error: "campaign_identity_conflict", details: "A campanha precisa de PI canônica para gerar o pacote completo." }, { status: 409 });
   if (!competencia) return badRequest("Informe competencia para gerar o pacote completo da campanha.");
   if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
-  const descriptorResult = await privateApiGetJson(env, "/api/internal/campaign-evidence-exports", new URLSearchParams({ piCodigo, competencia }));
+  const descriptorParams = new URLSearchParams({ piCodigo, competencia });
+  if (asOfDate) descriptorParams.set("asOfDate", asOfDate);
+  const descriptorResult = await privateApiGetJson(env, "/api/internal/campaign-evidence-exports", descriptorParams);
   if (descriptorResult.response) return descriptorResult.response;
   const descriptor = descriptorResult.payload!;
   const readiness = descriptor.readiness as Record<string, unknown> | undefined;
@@ -1244,6 +1250,7 @@ async function createCampaignEvidenceExportJob(
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({
     piCodigo,
     competencia,
+    asOfDate: asOfDate || null,
     mode: "prints-only",
     variant: "web",
     imageMaxWidth,
@@ -1256,6 +1263,7 @@ async function createCampaignEvidenceExportJob(
   const created = await createIdempotentOpsJob(env, "campaign-evidence-export", {
     piCodigo,
     competencia,
+    asOfDate: asOfDate || null,
     mode: "prints-only",
     variant: "web",
     imageMaxWidth,
@@ -1278,6 +1286,7 @@ async function createCampaignEvidenceExportJob(
     cacheHit: created.duplicate && created.status === "completed",
     piCodigo,
     competencia,
+    asOfDate: asOfDate || null,
     mode: "prints-only",
     variant: "web",
     imageMaxWidth,
@@ -2720,7 +2729,7 @@ export default {
         const items: Array<Record<string, unknown> & { piCodigo: string; httpStatus: number }> = [];
         for (let offset = 0; offset < piCodes.length; offset += 3) {
           const chunk = await Promise.all(piCodes.slice(offset, offset + 3).map(async (piCodigo) => {
-            const response = await createCampaignEvidenceExportJob(env, { ...body, piCodigo, competencia });
+            const response = await createCampaignEvidenceExportJob(env, { ...body, piCodigo, competencia }, "", true);
             return { piCodigo, httpStatus: response.status, ...(await response.json() as Record<string, unknown>) };
           }));
           items.push(...chunk);

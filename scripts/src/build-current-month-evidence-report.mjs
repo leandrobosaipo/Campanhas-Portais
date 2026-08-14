@@ -587,6 +587,7 @@ async function materializeCompleteCampaignExports(items) {
       method: "POST",
       body: JSON.stringify({
         competencia,
+        asOfDate: targetDate,
         campaigns: readyGroups.map((group) => ({ piCodigo: group.piCodigo })),
         mode: "prints-only",
         variant: "web",

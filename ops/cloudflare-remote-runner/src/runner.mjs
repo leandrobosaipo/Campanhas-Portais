@@ -6101,6 +6101,7 @@ async function executeCampaignEvidenceExport(job) {
   const payload = job?.payload || {};
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const competencia = String(payload.competencia || "").trim().toUpperCase();
+  const asOfDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.asOfDate || "")) ? String(payload.asOfDate) : null;
   const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
   if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
@@ -6130,6 +6131,7 @@ async function executeCampaignEvidenceExport(job) {
     imageMaxWidth: String(imageMaxWidth),
     imageQuality: String(imageQuality),
   });
+  if (asOfDate) params.set("asOfDate", asOfDate);
   const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`, { evidenceFingerprint, evidenceFingerprintSignature });
   const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
   const artifactObjectKey = [
@@ -6146,6 +6148,7 @@ async function executeCampaignEvidenceExport(job) {
     stage: "completed",
     piCodigo,
     competencia,
+    asOfDate,
     mode: "prints-only",
     variant: "web",
     imageMaxWidth,

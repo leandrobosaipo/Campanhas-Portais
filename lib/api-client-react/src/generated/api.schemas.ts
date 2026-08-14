@@ -1303,6 +1303,8 @@ export type CreateCampaignEvidenceExportBatchBodyCampaignsItem = {
 
 export type CreateCampaignEvidenceExportBatchBody = {
   competencia: string;
+  /** Optional inclusive evidence cutoff for immutable historical snapshots. */
+  asOfDate?: string;
   /**
    * @minItems 1
    * @maxItems 25

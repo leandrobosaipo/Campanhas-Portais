@@ -25,9 +25,15 @@ test("materializador completo exige token e jobs publicos sao encaminhados ao Wo
   assert.match(app, /internal_api_token_not_configured/);
   assert.match(worker, /path\.startsWith\("\/api\/internal\/"\)/);
   assert.match(worker, /privateApiGetJson\(env, "\/api\/internal\/campaign-evidence-exports"/);
+  assert.match(worker, /descriptorParams\.set\("asOfDate", asOfDate\)/);
+  assert.match(worker, /as_of_date_requires_authenticated_batch/);
+  assert.match(worker, /createCampaignEvidenceExportJob\(env, \{ \.\.\.body, piCodigo, competencia \}, "", true\)/);
+  assert.match(routes, /getActiveCampaignOperations\(\{ date: asOfDate, includeEvidence \}\)/);
+  assert.match(routes, /listCampaignEvidenceInsertions\(identity\.piCodigo, identity\.competencia, false, asOfDate\)/);
   const campaignExportBody = runner.slice(runner.indexOf("async function executeCampaignEvidenceExport"), runner.indexOf("async function handleJob"));
   assert.match(campaignExportBody, /\{ evidenceFingerprint, evidenceFingerprintSignature \}/);
   assert.match(campaignExportBody, /evidenceFingerprintSignature/);
+  assert.match(campaignExportBody, /params\.set\("asOfDate", asOfDate\)/);
   assert.doesNotMatch(campaignExportBody, /evidenceIds:/);
   assert.doesNotMatch(campaignExportBody, /ensureInsertionCaptureCoverage/);
 });
