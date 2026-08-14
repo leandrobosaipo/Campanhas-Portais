@@ -2091,8 +2091,10 @@ function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true }
   return {
     ...parsed,
     piCodigo: mergeFieldValue(parsed.piCodigo, parsedFromPdf.piCodigo),
+    pdfPiCodigo: parsedFromPdf.piCodigo || null,
     campaignName: mergeFieldValue(parsed.campaignName, parsedFromPdf.campaignName),
     competencia: mergedCompetencia || inferredCompetencia,
+    pdfCompetencia: parsedFromPdf.competencia || null,
     clienteId: mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
     agenciaId: mergeFieldValue(parsed.agenciaId, parsedFromPdf.agenciaId),
     valorLiquido: mergeFieldValue(readNumberRecord(parsed.raw, ["valorLiquido"]), parsedFromPdf.valorLiquido),
@@ -2107,6 +2109,27 @@ function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true }
         ? { value: inferredCompetencia, source: "periodoInicio/periodoFim no mesmo mes" }
         : null,
     },
+  };
+}
+
+function mergeExpectedDrivePiContext(fields, { insertion, campaign }) {
+  const canonicalInsertion = {
+    siteId: readNumberRecord(insertion, ["siteId"]),
+    localFormato: readStringRecord(insertion, ["localFormato", "localFormatoNormalizado"]),
+    localFormatoNormalizado: readStringRecord(insertion, ["localFormatoNormalizado", "localFormato"]),
+    periodoInicio: readStringRecord(insertion, ["periodoInicio"]),
+    periodoFim: readStringRecord(insertion, ["periodoFim"]),
+    periodoOriginal: readStringRecord(insertion, ["periodoOriginal"]),
+  };
+  const insertions = Array.isArray(fields?.insertions) && fields.insertions.length
+    ? fields.insertions
+    : [canonicalInsertion];
+  return {
+    ...fields,
+    competencia: fields?.competencia || readStringRecord(campaign, ["competencia"]),
+    clienteId: readNumberRecord(fields, ["clienteId"]) ?? readNumberRecord(campaign, ["clienteId"]),
+    agenciaId: readNumberRecord(fields, ["agenciaId"]) ?? readNumberRecord(campaign, ["agenciaId"]),
+    insertions,
   };
 }
 
@@ -2288,7 +2311,28 @@ function buildDrivePiReviewReasons({
   return uniqueStrings(reasons);
 }
 
-function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false } = {}) {
+function hasHttpsDrivePiDestination(fields, expectedInsertion = null) {
+  const globalDestination = readUrlRecord(fields, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+  if (String(globalDestination || "").toLowerCase().startsWith("https://")) return true;
+
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const hasHttps = (item) => String(readUrlRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || "")
+    .toLowerCase()
+    .startsWith("https://");
+  if (expectedInsertion) {
+    const scoped = insertions.filter((raw) => (
+      Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expectedInsertion.siteId || 0)
+      && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+        === normalizeSlotKey(expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato)
+      && readStringRecord(raw, ["periodoInicio", "inicio"]) === expectedInsertion.periodoInicio
+      && readStringRecord(raw, ["periodoFim", "fim"]) === expectedInsertion.periodoFim
+    ));
+    return scoped.length === 1 && hasHttps(scoped[0]);
+  }
+  return insertions.length > 0 && insertions.every(hasHttps);
+}
+
+function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false, requireHttpsDestination = false, expectedInsertion = null } = {}) {
   const hasInsertionMedia = fields.insertions.some((item) => readStringRecord(item, ["mediaUrl", "media_url"]));
   const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"]));
   const issues = [];
@@ -2296,6 +2340,7 @@ function validateDrivePiPackageReadiness(packageClassification, fields, mediaPro
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
   if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
   if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
+  if (requireHttpsDestination && !hasHttpsDrivePiDestination(fields, expectedInsertion)) issues.push("missing_https_destination");
   for (const issue of mediaProcessing?.issues || []) issues.push(issue);
   return {
     ok: issues.length === 0,
@@ -3520,17 +3565,34 @@ function normalizeExpectedPiIdentity(value) {
   return normalizePiDigits(value)?.replace(/^0+(?=\d)/, "") || null;
 }
 
-function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, campaignPiCodigo, insertionPiCodigo }) {
+function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo }) {
   const expected = normalizeExpectedPiIdentity(expectedPiCodigo);
-  const fromPdf = normalizeExpectedPiIdentity(fieldsPiCodigo);
-  if (!expected || fromPdf !== expected) {
+  const merged = normalizeExpectedPiIdentity(fieldsPiCodigo);
+  const fromPdf = normalizeExpectedPiIdentity(pdfPiCodigo);
+  if (!expected || !fromPdf) {
+    throw new Error("O PDF não confirmou uma PI numérica; nenhuma mutação foi aplicada.");
+  }
+  if (fromPdf !== expected) {
     throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
+  }
+  if (merged && merged !== expected) {
+    throw new Error("A PI consolidada diverge da PI que liberou a retomada.");
   }
   for (const [label, value] of [["campanha", campaignPiCodigo], ["inserção", insertionPiCodigo]]) {
     const current = normalizeExpectedPiIdentity(value);
     if (current && current !== expected) {
       throw new Error(`A PI atual da ${label} diverge da PI esperada; nenhuma mutação foi aplicada.`);
     }
+  }
+  return true;
+}
+
+function validateExpectedDrivePiCommercialContext({ campaignCompetencia, fieldsCompetencia, pdfCompetencia }) {
+  const expected = normalizeCompetenciaKey(campaignCompetencia);
+  const consolidated = normalizeCompetenciaKey(fieldsCompetencia);
+  const fromPdf = normalizeCompetenciaKey(pdfCompetencia);
+  if (!expected || !consolidated || consolidated !== expected || (fromPdf && fromPdf !== expected)) {
+    throw new Error("A competência lida ou consolidada diverge da campanha canônica; nenhuma mutação foi aplicada.");
   }
   return true;
 }
@@ -3552,8 +3614,14 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
   validateExpectedDrivePiIdentity({
     expectedPiCodigo,
     fieldsPiCodigo: fields.piCodigo,
+    pdfPiCodigo: fields.pdfPiCodigo,
     campaignPiCodigo: campaign?.piCodigo,
     insertionPiCodigo: expected?.piCodigo,
+  });
+  validateExpectedDrivePiCommercialContext({
+    campaignCompetencia: campaign?.competencia,
+    fieldsCompetencia: fields.competencia,
+    pdfCompetencia: fields.pdfCompetencia,
   });
   if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
     throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
@@ -4281,13 +4349,27 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  let expectedInsertionContext = null;
+  if (readPositiveInteger(payload?.expectedInsertionId) && readPositiveInteger(payload?.expectedCampaignId)) {
+    const [expectedInsertion, expectedCampaign] = await Promise.all([
+      privateApiGet(`/api/insertions/${readPositiveInteger(payload.expectedInsertionId)}`),
+      privateApiGet(`/api/campaigns/${readPositiveInteger(payload.expectedCampaignId)}`),
+    ]);
+    if (Number(expectedInsertion?.campanhaId || 0) !== Number(expectedCampaign?.id || 0)) {
+      throw new Error("A inserção canônica não pertence mais à campanha esperada; nenhuma mutação foi aplicada.");
+    }
+    expectedInsertionContext = expectedInsertion;
+    fields = mergeExpectedDrivePiContext(fields, { insertion: expectedInsertion, campaign: expectedCampaign });
+  }
   const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
   fields = clickUrlResolution.fields;
   const insertionScope = (payload?.strictInsertionScope === true || payload?.publish === true)
     ? filterSiteInsertions(fields.insertions)
     : { accepted: fields.insertions, excluded: [] };
   fields = { ...fields, insertions: insertionScope.accepted };
-  const shouldResolveMedia = payload?.resolveMedia === true || payload?.publish === true;
+  const destinationReady = hasHttpsDrivePiDestination(fields, expectedInsertionContext);
+  const shouldResolveMedia = (payload?.resolveMedia === true || payload?.publish === true)
+    && (payload?.publish !== true || destinationReady);
   const videoResolution = shouldResolveMedia
     ? await resolveDrivePiVideoMedia(fields, packageContext, payload)
     : { fields, videoMediaProcessing: { skipped: true, results: [], issues: [] } };
@@ -4303,7 +4385,11 @@ async function executeDrivePiIngest(payload) {
     image: imageResolution.imageMediaProcessing,
   };
   const validation = validateDrivePiApplyFields(fields);
-  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, { requireResolvedMedia: payload?.publish === true });
+  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, {
+    requireResolvedMedia: payload?.publish === true,
+    requireHttpsDestination: payload?.publish === true,
+    expectedInsertion: expectedInsertionContext,
+  });
   const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
   const dedupe = validation.ok && packageReadiness.ok && rollout.ok
     ? await validateDrivePiDedupeSafety(fields)
@@ -6298,6 +6384,8 @@ export {
   filterSiteInsertions,
   isSocialInsertion,
   mediaKindFromUrl,
+  hasHttpsDrivePiDestination,
+  mergeExpectedDrivePiContext,
   inspectOperationalImage,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
@@ -6308,6 +6396,7 @@ export {
   selectCanonicalSnapshotAd,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
+  validateExpectedDrivePiCommercialContext,
   validateExpectedDrivePiIdentity,
   validateOperationalPublicationContract,
   validateOperationalPublicationScope,

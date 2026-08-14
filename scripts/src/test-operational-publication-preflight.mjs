@@ -24,21 +24,132 @@ assert.throws(() => runner.validateOperationalPublicationScope({
 assert.equal(runner.validateExpectedDrivePiIdentity({
   expectedPiCodigo: "57652",
   fieldsPiCodigo: "PI 57652",
+  pdfPiCodigo: "PI 057652",
   campaignPiCodigo: "PI 057652- PREF ROO",
   insertionPiCodigo: "57652",
 }), true);
 assert.throws(() => runner.validateExpectedDrivePiIdentity({
   expectedPiCodigo: "57652",
   fieldsPiCodigo: "PI 57652",
+  pdfPiCodigo: "PI 57652",
   campaignPiCodigo: "PI 99999- CORRIGIDA",
   insertionPiCodigo: "57652",
 }), /PI atual da campanha diverge/i);
 assert.throws(() => runner.validateExpectedDrivePiIdentity({
   expectedPiCodigo: "57652",
   fieldsPiCodigo: "PI 57652",
+  pdfPiCodigo: "PI 57652",
   campaignPiCodigo: "57652",
   insertionPiCodigo: "PI 99999- CORRIGIDA",
 }), /PI atual da inserção diverge/i);
+assert.throws(() => runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "57652",
+  fieldsPiCodigo: "PI 57652",
+  pdfPiCodigo: null,
+  campaignPiCodigo: "57652",
+  insertionPiCodigo: "57652",
+}), /PDF não confirmou/i);
+assert.throws(() => runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "57652",
+  fieldsPiCodigo: "PI 57652",
+  pdfPiCodigo: "PI 99999",
+  campaignPiCodigo: "57652",
+  insertionPiCodigo: "57652",
+}), /PI lida no PDF diverge/i);
+
+assert.equal(runner.validateExpectedDrivePiCommercialContext({
+  campaignCompetencia: "AGOSTO/2026",
+  fieldsCompetencia: "AGOSTO/2026",
+  pdfCompetencia: null,
+}), true);
+assert.throws(() => runner.validateExpectedDrivePiCommercialContext({
+  campaignCompetencia: "AGOSTO/2026",
+  fieldsCompetencia: "JULHO/2026",
+  pdfCompetencia: "JULHO/2026",
+}), /competência.*diverge/i);
+
+const sourceSeparated = runner.mergeDrivePiFields(
+  { piCodigo: "PI 14807", competencia: "AGOSTO/2026", insertions: [], raw: {} },
+  { piCodigo: null, competencia: null, insertions: [] },
+);
+assert.equal(sourceSeparated.piCodigo, "PI 14807");
+assert.equal(sourceSeparated.pdfPiCodigo, null);
+
+assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "https://destino.example/", insertions: [] }), true);
+assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "http://destino.example/", insertions: [] }), false);
+assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: null, insertions: [] }), false);
+const expectedDestinationInsertion = {
+  siteId: 4,
+  localFormato: "HOME 1",
+  localFormatoNormalizado: "HOME 1",
+  periodoInicio: "2026-08-01",
+  periodoFim: "2026-08-21",
+};
+const mixedDestinations = {
+  clickUrl: null,
+  insertions: [
+    { ...expectedDestinationInsertion, clickUrl: null, mediaUrl: "https://cdn.example/target.gif" },
+    { siteId: 5, localFormato: "HOME 2", periodoInicio: "2026-08-01", periodoFim: "2026-08-21", clickUrl: "https://other.example/", mediaUrl: "https://cdn.example/other.gif" },
+  ],
+};
+assert.equal(runner.hasHttpsDrivePiDestination(mixedDestinations, expectedDestinationInsertion), false);
+assert.equal(runner.hasHttpsDrivePiDestination({
+  ...mixedDestinations,
+  insertions: mixedDestinations.insertions.map((item, index) => index === 0 ? { ...item, clickUrl: "https://target.example/" } : item),
+}, expectedDestinationInsertion), true);
+assert.equal(runner.hasHttpsDrivePiDestination(mixedDestinations), false, "publicação genérica exige destino em todas as inserções");
+
+assert.equal(runner.validateDrivePiPackageReadiness(
+  { hasPdf: true, hasMedia: true },
+  { clickUrl: "https://destino.example/", insertions: [{ mediaUrl: "https://cdn.example/banner.gif" }] },
+  { issues: [] },
+  { requireResolvedMedia: true, requireHttpsDestination: true },
+).ok, true);
+assert.deepEqual(runner.validateDrivePiPackageReadiness(
+  { hasPdf: true, hasMedia: true },
+  { clickUrl: null, insertions: [{ mediaUrl: "https://cdn.example/banner.gif" }] },
+  { issues: [] },
+  { requireResolvedMedia: true, requireHttpsDestination: true },
+).issues, ["missing_https_destination"]);
+assert.deepEqual(runner.validateDrivePiPackageReadiness(
+  { hasPdf: true, hasMedia: true },
+  mixedDestinations,
+  { issues: [] },
+  { requireResolvedMedia: true, requireHttpsDestination: true, expectedInsertion: expectedDestinationInsertion },
+).issues, ["missing_https_destination"]);
+
+const mergedExpectedContext = runner.mergeExpectedDrivePiContext({
+  piCodigo: "PI 14807",
+  campaignName: "Enfrentamento ao Feminicídio",
+  competencia: null,
+  clienteId: null,
+  agenciaId: 76,
+  insertions: [],
+}, {
+  campaign: { id: 972, competencia: "AGOSTO/2026", clienteId: 11, agenciaId: 76 },
+  insertion: {
+    id: 2187,
+    campanhaId: 972,
+    siteId: 4,
+    localFormato: "Megabanner Topo — Header — 825x120",
+    localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120",
+    periodoInicio: "2026-08-01",
+    periodoFim: "2026-08-21",
+    periodoOriginal: "01/08- 21/08",
+  },
+});
+assert.equal(mergedExpectedContext.piCodigo, "PI 14807", "PI deve continuar vindo do PDF");
+assert.equal(mergedExpectedContext.competencia, "AGOSTO/2026");
+assert.equal(mergedExpectedContext.clienteId, 11);
+assert.equal(mergedExpectedContext.agenciaId, 76);
+assert.deepEqual(mergedExpectedContext.insertions, [{
+  siteId: 4,
+  localFormato: "Megabanner Topo — Header — 825x120",
+  localFormatoNormalizado: "MEGABANNER TOPO — HEADER — 825X120",
+  periodoInicio: "2026-08-01",
+  periodoFim: "2026-08-21",
+  periodoOriginal: "01/08- 21/08",
+}]);
 
 const destination = runner.resolveOperationalDestination([
   { text: "Destino: https://www.tce.mt.gov.br/" },
