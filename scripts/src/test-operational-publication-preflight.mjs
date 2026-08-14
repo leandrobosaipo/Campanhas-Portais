@@ -10,6 +10,52 @@ const execFileAsync = promisify(execFile);
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
 
+const almtPdfLabels = runner.extractPdfCommercialLabels(`PI - PEDIDO DE INSERÇÃO (INTERNET)
+ZIMMERMANN PUBLICIDADE E PROPAGANDA - CUIABA
+ZIMMERMANN PUBLICIDADE E PROPAGANDA LTDA
+CNPJ: 37.526.019/0001-86
+VEICULO: SITE ROO NOTÍCIAS
+RAZÃO SOCIAL: ROO COMUNICACAO LTDA
+CNPJ: 60.847.245/0001-80
+RAZÃO SOCIAL: MATO GROSSO ASSEMBLEIA LEGISLATIVA
+CLIENTE: ASSEMBLEIA LEGISLATIVA DO ESTADO DE MATO GROSSO - ALMT
+CNPJ: 03.929.049/0001-11`);
+assert.deepEqual(almtPdfLabels, {
+  clientName: "ASSEMBLEIA LEGISLATIVA DO ESTADO DE MATO GROSSO - ALMT",
+  clientLegalName: null,
+  clientCnpj: null,
+  agencyName: "ZIMMERMANN PUBLICIDADE E PROPAGANDA - CUIABA",
+});
+assert.deepEqual(runner.clientAliasCandidates(almtPdfLabels.clientName), ["ALMT"]);
+assert.deepEqual(runner.agencyAliasCandidates(almtPdfLabels.agencyName), ["Z3"]);
+assert.equal(runner.extractPdfCommercialLabels("PI - PEDIDO DE INSERÇÃO\nCLIENTE: ALMT").agencyName, null,
+  "agência ausente deve permanecer ausente em vez de assumir DMD");
+assert.equal(runner.extractPdfCommercialLabels("PI - PEDIDO DE INSERÇÃO\nCLIENTE: SPM COMUNICAÇÃO").agencyName, null,
+  "nome do cliente não pode ser interpretado como agência");
+assert.deepEqual(runner.extractPdfCommercialLabels(`PI - PEDIDO DE INSERÇÃO
+DMD COMUNICAÇÃO
+RAZÃO SOCIAL ACME LTDA
+CNPJ 12.345.678/0001-90
+VEÍCULO PORTAL TESTE`), {
+  clientName: null,
+  clientLegalName: "ACME LTDA",
+  clientCnpj: "12.345.678/0001-90",
+  agencyName: "DMD COMUNICAÇÃO",
+}, "formato legado sem dois-pontos continua suportado");
+assert.deepEqual(runner.extractPdfCommercialLabels(`PI - PEDIDO DE INSERÇÃO
+ZIMMERMANN PUBLICIDADE E PROPAGANDA
+CLIENTE: ALMT
+RAZÃO SOCIAL: ALMT
+CNPJ: 03.929.049/0001-11
+VEÍCULO: PORTAL TESTE
+RAZÃO SOCIAL: PORTAL LTDA
+CNPJ: 60.847.245/0001-80`), {
+  clientName: "ALMT",
+  clientLegalName: null,
+  clientCnpj: null,
+  agencyName: "ZIMMERMANN PUBLICIDADE E PROPAGANDA",
+}, "ordem posterior do veículo não pode trocar o cliente explícito");
+
 assert.equal(runner.validateOperationalPublicationScope({
   campaignId: 970,
   insertionId: 2186,

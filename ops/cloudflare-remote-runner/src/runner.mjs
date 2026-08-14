@@ -322,6 +322,7 @@ function observedSiteFolderAliases(value) {
 function clientAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
+  if (/\b(assembleia legislativa|almt)\b/.test(normalized)) candidates.push("ALMT");
   if (/\b(secom|governo|gov mt|governo do estado)\b/.test(normalized)) candidates.push("Governo do Estado");
   if (/\b(municipio de cuiaba|prefeitura de cuiaba|pref cba|cuiaba)\b/.test(normalized)) candidates.push("Prefeitura de Cuiabá");
   if (/\b(tribunal de contas|tce mt|tce)\b/.test(normalized)) candidates.push("TCE-MT");
@@ -331,6 +332,7 @@ function clientAliasCandidates(value) {
 function agencyAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
+  if (/\b(zimmermann publicidade|zimmermann|z3)\b/.test(normalized)) candidates.push("Z3");
   if (/\b(spm comunicacao|spm)\b/.test(normalized)) candidates.push("DMD");
   if (/\b(renca)\b/.test(normalized)) candidates.push("Renca");
   if (/\b(genius)\b/.test(normalized)) candidates.push("Genius");
@@ -1085,6 +1087,29 @@ function firstMatch(text, pattern) {
   return match ? String(match[1] || "").trim() : null;
 }
 
+function extractPdfCommercialLabels(text) {
+  const source = String(text || "");
+  const lines = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const clientName = firstMatch(source, /^CLIENTE\s*:?\s*(.+)$/im);
+  const firstEntityBoundary = lines.findIndex((line) => /^(?:VE[IÍ]CULO|CLIENTE|RAZÃO SOCIAL|CNPJ)\b/i.test(line));
+  const preamble = lines.slice(0, firstEntityBoundary < 0 ? lines.length : firstEntityBoundary);
+  const agencyCandidates = preamble.filter((line) => (
+    !/^(?:CLIENTE|RAZÃO SOCIAL|VE[IÍ]CULO|CAMPANHA|PRODUTO|CNPJ)\b/i.test(line)
+    && /\b(?:ZIMMERMANN|DMD|SPM COMUNICAÇÃO|SPM COMUNICACAO|RENCA|GENIUS)\b/i.test(line)
+  ));
+  const agencyIdentities = new Set(agencyCandidates.map((line) => (
+    agencyAliasCandidates(line)[0] || normalizeText(line)
+  )));
+  const legacyLegalName = clientName ? null : firstMatch(source, /^RAZÃO SOCIAL\s*:?\s*(.+)$/im);
+  const legacyCnpj = clientName ? null : firstMatch(source, /^CNPJ\s*:?\s*(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/im);
+  return {
+    clientName,
+    clientLegalName: legacyLegalName,
+    clientCnpj: legacyCnpj,
+    agencyName: agencyIdentities.size === 1 ? agencyCandidates[0] : null,
+  };
+}
+
 function monthNameToNumber(value) {
   const normalized = normalizeText(value).replace(/[^a-z]/g, "");
   const months = {
@@ -1348,14 +1373,15 @@ async function parseDrivePiPdfFields(archived) {
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
   const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
   const bboxPeriodo = parsePeriodoFromBboxText(extracted.bbox, competencia);
+  const commercialLabels = extractPdfCommercialLabels(text);
   const parsed = {
     piCodigo: piNumber ? `PI ${piNumber}` : null,
     campaignName,
     competencia,
-    clientName: firstMatch(text, /CLIENTE\s+([^\n]+)/i),
-    clientLegalName: firstMatch(text, /RAZÃO SOCIAL\s+([^\n]+)/i),
-    clientCnpj: firstMatch(text, /CNPJ\s+(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/i),
-    agencyName: firstMatch(text, /^([A-Z0-9 .&-]*DMD[^\n]+)/im) || "DMD",
+    clientName: commercialLabels.clientName,
+    clientLegalName: commercialLabels.clientLegalName,
+    clientCnpj: commercialLabels.clientCnpj,
+    agencyName: commercialLabels.agencyName,
     vehicleName: firstMatch(text, /VEÍCULO\s+([^\n]+)/i),
     valorLiquido: parseCurrencyPtBr(firstMatch(text, /LIQUIDO R\$\s+([\d.,]+)/i)),
     clickUrl: firstMatch(text, /(https:\/\/[^\s)]+)/i),
@@ -6627,11 +6653,14 @@ async function main() {
 }
 
 export {
+  agencyAliasCandidates,
   buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,
   buildAdrotatePublishPayload,
   buildPerrengueAdrotateRestorePhp,
   buildPerrengueAdrotateSnapshotPhp,
+  clientAliasCandidates,
+  extractPdfCommercialLabels,
   extractSameOriginArticleCandidates,
   extractUrlsFromText,
   extractMediaLinksFromText,
