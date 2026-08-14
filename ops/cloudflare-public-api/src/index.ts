@@ -1,5 +1,6 @@
 import { snapshot } from "../data/snapshot";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
+import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -1188,6 +1189,7 @@ async function createIdempotentOpsJob(
   requestedBy: string | null,
   idempotencyKey: string,
   retryFailed = false,
+  retryCompletedWhen: ((result: unknown) => boolean) | null = null,
 ) {
   const jobId = crypto.randomUUID();
   const now = nowIso();
@@ -1200,14 +1202,15 @@ async function createIdempotentOpsJob(
     .run();
   if ((inserted.meta?.changes ?? 0) === 0) {
     const existing = await env.adops_ops
-      .prepare(`SELECT id, status FROM ops_jobs WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1`)
+      .prepare(`SELECT id, status, result_json, updated_at FROM ops_jobs WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1`)
       .bind(kind, idempotencyKey)
-      .first<{ id: string; status: JobStatus }>();
+      .first<{ id: string; status: JobStatus; result_json: string | null; updated_at: string }>();
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
-    if (retryFailed && existing.status === "failed") {
+    const retryCompleted = existing.status === "completed" && retryCompletedWhen?.(existing.result_json) === true;
+    if ((retryFailed && existing.status === "failed") || retryCompleted) {
       const retried = await env.adops_ops.prepare(
-        `UPDATE ops_jobs SET status = 'ready_for_runner', payload_json = ?, result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = 'failed'`,
-      ).bind(JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id).run();
+        `UPDATE ops_jobs SET status = 'ready_for_runner', payload_json = ?, result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = ? AND result_json IS ? AND updated_at = ?`,
+      ).bind(JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id, existing.status, existing.result_json, existing.updated_at).run();
       if ((retried.meta?.changes ?? 0) > 0) {
         return { jobId: existing.id, status: "ready_for_runner" as JobStatus, duplicate: false };
       }
@@ -1708,7 +1711,7 @@ async function getInsertionContext(env: Env, insertionId: number): Promise<Inser
   return item ?? null;
 }
 
-async function updateOpsJob(env: Env, id: string, patch: { status?: JobStatus; result?: unknown; error?: string | null; runnerId?: string | null }) {
+async function updateOpsJob(env: Env, id: string, patch: { status?: JobStatus; result?: unknown; error?: string | null; runnerId?: string | null; expectedStatus?: JobStatus; expectedRunnerId?: string | null }) {
   const current = await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(id).first<OpsJobRecord>();
   if (!current) return null;
   const status = patch.status ?? current.status;
@@ -1716,10 +1719,21 @@ async function updateOpsJob(env: Env, id: string, patch: { status?: JobStatus; r
   const errorText = patch.error === undefined ? current.error_text : patch.error;
   const runnerId = patch.runnerId === undefined ? current.runner_id : patch.runnerId;
   const updatedAt = nowIso();
-  await env.adops_ops
-    .prepare(`UPDATE ops_jobs SET status = ?, result_json = ?, error_text = ?, runner_id = ?, updated_at = ? WHERE id = ?`)
-    .bind(status, resultJson, errorText, runnerId, updatedAt, id)
+  const conditions = ["id = ?"];
+  const conditionBindings: unknown[] = [id];
+  if (patch.expectedStatus) {
+    conditions.push("status = ?");
+    conditionBindings.push(patch.expectedStatus);
+  }
+  if (patch.expectedRunnerId !== undefined) {
+    conditions.push("runner_id IS ?");
+    conditionBindings.push(patch.expectedRunnerId);
+  }
+  const updated = await env.adops_ops
+    .prepare(`UPDATE ops_jobs SET status = ?, result_json = ?, error_text = ?, runner_id = ?, updated_at = ? WHERE ${conditions.join(" AND ")}`)
+    .bind(status, resultJson, errorText, runnerId, updatedAt, ...conditionBindings)
     .run();
+  if ((updated.meta?.changes ?? 0) !== 1) return null;
   return env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(id).first<OpsJobRecord>();
 }
 
@@ -2358,7 +2372,7 @@ export default {
           targetDate,
           insertionId,
           source: "cloudflare-protected-api",
-        }, "ops-api", idempotencyKey, true);
+        }, "ops-api", idempotencyKey, true, shouldRetryCompletedCampaignPublication);
         return jsonNoStore({ ok: true, kind: "campaign-publication-reconcile", ...created }, { status: created.duplicate ? 200 : 202 });
       }
 
@@ -2808,11 +2822,15 @@ export default {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
+        const runnerId = typeof body.runnerId === "string" && body.runnerId.trim() ? body.runnerId.trim() : null;
+        if (!runnerId) return badRequest("runnerId é obrigatório para concluir um job.");
         const updated = await updateOpsJob(env, completeMatch[1], {
           status: "completed",
           result: body.result ?? { ok: true },
           error: null,
-          runnerId: typeof body.runnerId === "string" ? body.runnerId : undefined,
+          runnerId,
+          expectedStatus: "running",
+          expectedRunnerId: runnerId,
         });
         return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
       }
@@ -2822,9 +2840,13 @@ export default {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
+        const runnerId = typeof body.runnerId === "string" && body.runnerId.trim() ? body.runnerId.trim() : null;
+        if (!runnerId) return badRequest("runnerId é obrigatório para atualizar o progresso.");
         const updated = await updateOpsJob(env, progressMatch[1], {
           result: body.result ?? null,
-          runnerId: typeof body.runnerId === "string" ? body.runnerId : undefined,
+          runnerId,
+          expectedStatus: "running",
+          expectedRunnerId: runnerId,
         });
         return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
       }
@@ -2834,11 +2856,15 @@ export default {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         const body = await readBody(request);
+        const runnerId = typeof body.runnerId === "string" && body.runnerId.trim() ? body.runnerId.trim() : null;
+        if (!runnerId) return badRequest("runnerId é obrigatório para falhar um job.");
         const updated = await updateOpsJob(env, failMatch[1], {
           status: "failed",
           result: body.result ?? null,
           error: typeof body.error === "string" ? body.error : "Runner reportou falha sem detalhe.",
-          runnerId: typeof body.runnerId === "string" ? body.runnerId : undefined,
+          runnerId,
+          expectedStatus: "running",
+          expectedRunnerId: runnerId,
         });
         return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
       }
