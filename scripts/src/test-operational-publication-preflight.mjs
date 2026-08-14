@@ -271,6 +271,46 @@ for (const [text, expected] of [
 }
 assert.equal(runner.extractExplicitPiFromPdfText("PI - TCE"), null);
 assert.deepEqual(runner.extractExplicitPisFromPdfText("PI 17046 / PI: 99999"), ["17046", "99999"]);
+assert.equal(runner.extractPdfCompetencia("VEICULAÇÃO: AGOSTO/2026"), "AGOSTO/2026");
+assert.equal(runner.extractPdfVehicleName("VEICULO: SITE ROO NOTÍCIAS"), "SITE ROO NOTÍCIAS");
+assert.equal(runner.extractPdfVehicleName("VEICULOS: SITE ROO NOTÍCIAS"), null);
+assert.equal(runner.extractPdfVehicleName("OUTRO VEICULO CADASTRADO: SITE ROO NOTÍCIAS"), null);
+const z3DayHeader = `${" ".repeat(32)}${Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, " ")).join("  ")}`;
+const z3Markers = Array.from({ length: z3DayHeader.length }, () => " ");
+for (const [index, character] of Array.from("MEGABANNER TOPO").entries()) z3Markers[index] = character;
+for (const day of [14, 15, 16, 17, 18, 19, 20]) {
+  const dayIndex = z3DayHeader.indexOf(String(day));
+  z3Markers[dayIndex] = "1";
+}
+assert.deepEqual(runner.parsePeriodoFromLayoutText(`${z3DayHeader}\n${z3Markers.join("")}`, "AGOSTO/2026"), {
+  periodoInicio: "2026-08-14",
+  periodoFim: "2026-08-20",
+  periodoOriginal: "14/08 - 20/08",
+});
+const ambiguousMarkers = [...z3Markers];
+for (const day of [14, 15, 16, 17, 18, 19, 20]) ambiguousMarkers[z3DayHeader.indexOf(String(day))] = " ";
+for (const day of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) ambiguousMarkers[z3DayHeader.indexOf(String(day))] = "1";
+assert.deepEqual(runner.parsePeriodoFromLayoutText(
+  `${z3DayHeader}\n${z3Markers.join("")}\n${ambiguousMarkers.join("")}`,
+  "AGOSTO/2026",
+), {}, "duas linhas do mesmo formato devem bloquear em vez de escolher outro período");
+assert.deepEqual(runner.parsePeriodoFromLayoutText(
+  `${z3DayHeader}\n${z3Markers.join("")}\n\n${z3DayHeader}\n${ambiguousMarkers.join("")}`,
+  "AGOSTO/2026",
+), {}, "dois calendários em páginas ou blocos diferentes devem bloquear globalmente");
+assert.deepEqual(runner.parsePeriodoFromLayoutText(
+  `${z3DayHeader} ${z3DayHeader}\n${z3Markers.join("")} ${ambiguousMarkers.join("")}`,
+  "AGOSTO/2026",
+), {}, "dois calendários lado a lado devem bloquear por dias duplicados");
+const bboxDayWords = Array.from({ length: 31 }, (_, index) => {
+  const day = index + 1;
+  const x = 100 + index * 12;
+  return `<word xMin="${x}" yMin="100" xMax="${x + 8}" yMax="110">${day}</word>`;
+}).join("");
+assert.deepEqual(runner.parsePeriodoFromBboxText(
+  `<page>${bboxDayWords}</page><page>${bboxDayWords}</page>`,
+  "AGOSTO/2026",
+), {}, "dias duplicados de páginas diferentes devem bloquear o BBox");
 
 assert.equal(runner.validateCompositePdfEvidence({
   expectedPiCodigo: "17046",

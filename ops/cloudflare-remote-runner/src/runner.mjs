@@ -1194,37 +1194,39 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
   if (!month) return {};
 
   const lines = groupWordsByLine(words);
-  const headerLine = lines.find((line) => {
+  const headerLines = lines.filter((line) => {
     const values = line.words.map((word) => word.text);
-    const days = values.filter((text) => /^\d{2}$/.test(text)).map((text) => Number(text));
+    const days = values.filter((text) => /^\d{1,2}$/.test(text)).map((text) => Number(text));
     return days.includes(1) && days.includes(15) && days.includes(31);
   });
-  if (!headerLine) return {};
+  if (headerLines.length !== 1) return {};
+  const headerLine = headerLines[0];
 
   const dayWords = headerLine.words
-    .filter((word) => /^\d{2}$/.test(word.text))
+    .filter((word) => /^\d{1,2}$/.test(word.text))
     .map((word) => ({ ...word, day: Number(word.text) }))
     .filter((word) => word.day >= 1 && word.day <= 31)
     .sort((a, b) => a.day - b.day);
-  if (dayWords.length < 28) return {};
+  const uniqueHeaderDays = new Set(dayWords.map((word) => word.day));
+  if (dayWords.length < 28 || dayWords.length > 31 || uniqueHeaderDays.size !== dayWords.length) return {};
 
   const minDayX = Math.min(...dayWords.map((word) => word.xCenter));
   const maxDayX = Math.max(...dayWords.map((word) => word.xCenter));
   const candidateRows = lines
     .filter((line) => line.yCenter > headerLine.yCenter + 15 && line.yCenter < headerLine.yCenter + 80)
     .map((line) => {
+      const rowText = line.words.map((word) => word.text).join(" ");
       const markers = line.words.filter((word) =>
         word.text === "1" &&
         word.xCenter >= minDayX - 6 &&
         word.xCenter <= maxDayX + 6
       );
-      return { line, markers };
+      return { line, markers, formatMatch: /\bMEGABANNER\s+TOPO\b/i.test(rowText) };
     })
-    .filter((row) => row.markers.length > 0)
-    .sort((a, b) => b.markers.length - a.markers.length);
+    .filter((row) => row.formatMatch && row.markers.length > 0);
 
+  if (candidateRows.length !== 1) return {};
   const row = candidateRows[0];
-  if (!row) return {};
 
   const usedDays = [];
   for (const marker of row.markers) {
@@ -1264,12 +1266,24 @@ function parsePeriodoFromLayoutText(layoutText, competencia) {
   const month = monthNameToNumber(firstMatch(competencia, /([A-ZÇÃÉÍÓÚ]+)\/\d{4}/i) || "");
   if (!month) return {};
   const lines = String(layoutText || "").split(/\r?\n/);
-  const header = lines.find((line) => /\b01\s+02\s+03\b/.test(line));
-  const insertionLine = lines.find((line) => /^\s*C\s+.*\b1\b/.test(line));
-  if (!header || !insertionLine) return {};
+  const headerIndexes = lines.map((line, index) => ({ line, index })).filter(({ line }) => {
+    const days = Array.from(line.matchAll(/\b(\d{1,2})\b/g)).map((match) => Number(match[1]));
+    const uniqueDays = new Set(days);
+    return days.includes(1) && days.includes(15) && days.includes(31)
+      && days.length >= 28 && days.length <= 31 && uniqueDays.size === days.length;
+  }).map(({ index }) => index);
+  if (headerIndexes.length !== 1) return {};
+  const headerIndex = headerIndexes[0];
+  const header = lines[headerIndex];
+  const insertionLines = headerIndex >= 0
+    ? lines.slice(headerIndex + 1, headerIndex + 7)
+      .filter((line) => (line.match(/\bMEGABANNER\s+TOPO\b/gi) || []).length === 1 && (line.match(/\b1\b/g) || []).length > 0)
+    : [];
+  if (!header || insertionLines.length !== 1) return {};
+  const insertionLine = insertionLines[0];
 
   const dayColumns = [];
-  for (const match of header.matchAll(/\b(\d{2})\b/g)) {
+  for (const match of header.matchAll(/\b(\d{1,2})\b/g)) {
     const day = Number(match[1]);
     if (day >= 1 && day <= 31) dayColumns.push({ day, index: match.index || 0 });
   }
@@ -1362,6 +1376,14 @@ async function resolveDrivePiEntityIds(parsedFromPdf) {
   };
 }
 
+function extractPdfCompetencia(text) {
+  return firstMatch(text, /(?:PERÍODO|COLOCAÇÃO|VEICULAÇÃO)\s*:?\s*([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
+}
+
+function extractPdfVehicleName(text) {
+  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i);
+}
+
 async function parseDrivePiPdfFields(archived) {
   const extracted = await extractTextFromArchivedPdf(archived);
   if (!extracted) return {};
@@ -1369,7 +1391,7 @@ async function parseDrivePiPdfFields(archived) {
   const layout = extracted.layout || text;
   const explicitPiCandidates = extractExplicitPisFromPdfText(text);
   const piNumber = explicitPiCandidates[0] || null;
-  const competencia = firstMatch(text, /PERÍODO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i) || firstMatch(text, /COLOCAÇÃO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
+  const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
   const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
   const bboxPeriodo = parsePeriodoFromBboxText(extracted.bbox, competencia);
@@ -1382,7 +1404,7 @@ async function parseDrivePiPdfFields(archived) {
     clientLegalName: commercialLabels.clientLegalName,
     clientCnpj: commercialLabels.clientCnpj,
     agencyName: commercialLabels.agencyName,
-    vehicleName: firstMatch(text, /VEÍCULO\s+([^\n]+)/i),
+    vehicleName: extractPdfVehicleName(text),
     valorLiquido: parseCurrencyPtBr(firstMatch(text, /LIQUIDO R\$\s+([\d.,]+)/i)),
     clickUrl: firstMatch(text, /(https:\/\/[^\s)]+)/i),
     periodo: bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia),
@@ -6661,6 +6683,8 @@ export {
   buildPerrengueAdrotateSnapshotPhp,
   clientAliasCandidates,
   extractPdfCommercialLabels,
+  extractPdfCompetencia,
+  extractPdfVehicleName,
   extractSameOriginArticleCandidates,
   extractUrlsFromText,
   extractMediaLinksFromText,
@@ -6674,6 +6698,8 @@ export {
   inspectOperationalImage,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
+  parsePeriodoFromBboxText,
+  parsePeriodoFromLayoutText,
   resolveDrivePiClickUrl,
   resolveOperationalDestination,
   selectDriveImageForInsertion,
