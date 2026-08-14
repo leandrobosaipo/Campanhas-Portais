@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,6 +165,33 @@ for (const source of [publicApi, privateApi]) {
 }
 assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
 assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");
+assert(adrotatePlugin.includes("function adrotate_adops_safe_maintenance_call"), "manutenção deve isolar falhas transitórias de cache");
+assert(adrotatePlugin.includes("catch (\\Throwable $error)"), "RedisException não pode invalidar uma publicação AdRotate já gravada");
+const maintenanceHarness = String.raw`
+class WP_CLI { public static $warnings = array(); public static function add_command($name, $callable) {} public static function warning($message) { self::$warnings[] = $message; } }
+class RedisException extends Exception {}
+function wp_cache_flush() { throw new RedisException('redis unavailable'); }
+$GLOBALS['evaluated'] = false; $GLOBALS['scheduled'] = false;
+function adrotate_evaluate_ads() { $GLOBALS['evaluated'] = true; }
+function adrotate_check_schedules() { $GLOBALS['scheduled'] = true; }
+require $argv[1];
+$result = adrotate_adops_run_maintenance();
+$fields = adrotate_adops_maintenance_fields(true, $result);
+echo json_encode(array('result' => $result, 'fields' => $fields, 'evaluated' => $GLOBALS['evaluated'], 'scheduled' => $GLOBALS['scheduled'], 'warnings' => WP_CLI::$warnings));
+`;
+const maintenanceResult = JSON.parse(execFileSync("php", ["-r", maintenanceHarness, path.join(root, "ops/wordpress/adrotate-adops.php")], { encoding: "utf8" }));
+assert.equal(maintenanceResult.result.ok, false);
+assert.equal(maintenanceResult.result.warnings.length, 1);
+assert.equal(maintenanceResult.fields.cache_maintenance_requested, true);
+assert.equal(maintenanceResult.fields.cache_maintenance_ok, false);
+assert.equal(maintenanceResult.fields.cache_maintenance_warnings.length, 1);
+assert.equal(maintenanceResult.evaluated, true);
+assert.equal(maintenanceResult.scheduled, true);
+assert.equal(maintenanceResult.warnings.length, 1);
+assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true } }), true);
+assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true, cache_maintenance_ok: false } }), true);
+assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true, cache_maintenance_ok: true } }), false);
+assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: false, wpCliResult: {} }), false);
 assert(perrenguePluginDeploy.includes("echo WP_CONTENT_DIR;"), "deploy PMT deve resolver o diretório de conteúdo ativo do Bedrock");
 assert(perrenguePluginDeploy.includes("legacy_target"), "deploy PMT deve remover a cópia-sombra no wp/wp-content");
 for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perrengue-sublogo.png", "data:image/svg+xml"]) {
@@ -173,6 +201,7 @@ const runnerSource = await readFile(path.join(root, "ops/cloudflare-remote-runne
 for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "buildPerrengueRebuildTriggerReason", "operationId: crypto.randomUUID()", "return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
   assert(runnerSource.includes(marker), `runner sem marcador ${marker}`);
 }
+assert(runnerSource.includes("cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true"), "cache degradado deve exigir readback positivo do HTML público");
 assert(runnerSource.includes('const explicitPublishFlow = /api-publish$/.test'), "drive-pi-publish com publish=false deve permitir atualização somente no AdOps");
 assert(!runnerSource.includes('const explicitPublishFlow = payload?.publish === true && /api-publish$/.test'), "mutação explícita não pode depender de publicar no AdRotate");
 assert(runnerSource.includes("explicitPublishFlow\n    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)"), "endpoint protegido explícito deve ser independente das flags de automação");

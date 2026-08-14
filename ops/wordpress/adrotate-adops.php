@@ -131,22 +131,30 @@ if (!function_exists('adrotate_adops_read_json_file')) {
 	}
 }
 
+if (!function_exists('adrotate_adops_safe_maintenance_call')) {
+	function adrotate_adops_safe_maintenance_call($callback) {
+		if (!is_callable($callback)) {
+			return array('callback' => (string) $callback, 'attempted' => false, 'ok' => true, 'error' => null);
+		}
+		try {
+			call_user_func($callback);
+			return array('callback' => (string) $callback, 'attempted' => true, 'ok' => true, 'error' => null);
+		} catch (\Throwable $error) {
+			$message = 'Manutenção auxiliar falhou sem invalidar a publicação: '.get_class($error).' - '.$error->getMessage();
+			if (class_exists('WP_CLI')) {
+				\WP_CLI::warning($message);
+			}
+			error_log('[adrotate-adops] '.$message);
+			return array('callback' => (string) $callback, 'attempted' => true, 'ok' => false, 'error' => $message);
+		}
+	}
+}
+
 if (!function_exists('adrotate_adops_run_maintenance')) {
 	function adrotate_adops_run_maintenance() {
-		if (function_exists('wp_cache_flush')) {
-			wp_cache_flush();
-		}
-		if (function_exists('rocket_clean_domain')) {
-			rocket_clean_domain();
-		}
-		if (function_exists('rocket_clean_minify')) {
-			rocket_clean_minify();
-		}
-		if (function_exists('w3tc_flush_all')) {
-			w3tc_flush_all();
-		}
-		if (function_exists('adrotate_finish_upgrade')) {
-			adrotate_finish_upgrade();
+		$auxiliary = array();
+		foreach (array('wp_cache_flush', 'rocket_clean_domain', 'rocket_clean_minify', 'w3tc_flush_all', 'adrotate_finish_upgrade') as $callback) {
+			$auxiliary[] = adrotate_adops_safe_maintenance_call($callback);
 		}
 		if (!function_exists('adrotate_evaluate_ads') || !function_exists('adrotate_check_schedules')) {
 			$admin_functions = WP_CONTENT_DIR . '/plugins/adrotate/adrotate-admin-functions.php';
@@ -154,12 +162,26 @@ if (!function_exists('adrotate_adops_run_maintenance')) {
 				require_once $admin_functions;
 			}
 		}
-		if (function_exists('adrotate_evaluate_ads')) {
-			adrotate_evaluate_ads();
+		if (!function_exists('adrotate_evaluate_ads') || !function_exists('adrotate_check_schedules')) {
+			throw new RuntimeException('Funções essenciais de avaliação/agendamento do AdRotate não estão disponíveis.');
 		}
-		if (function_exists('adrotate_check_schedules')) {
-			adrotate_check_schedules();
-		}
+		adrotate_evaluate_ads();
+		adrotate_check_schedules();
+		$warnings = array_values(array_filter($auxiliary, function($item) { return empty($item['ok']); }));
+		return array('ok' => count($warnings) === 0, 'auxiliary' => $auxiliary, 'warnings' => $warnings);
+	}
+}
+
+if (!function_exists('adrotate_adops_maintenance_fields')) {
+	function adrotate_adops_maintenance_fields($requested, $maintenance) {
+		$warnings = is_array($maintenance) && isset($maintenance['warnings']) && is_array($maintenance['warnings'])
+			? $maintenance['warnings']
+			: array();
+		return array(
+			'cache_maintenance_requested' => (bool) $requested,
+			'cache_maintenance_ok' => !$requested || (is_array($maintenance) && !empty($maintenance['ok'])),
+			'cache_maintenance_warnings' => $warnings,
+		);
 	}
 }
 
@@ -345,18 +367,17 @@ if (!function_exists('adrotate_adops_publish_payload')) {
 			$wpdb->insert($link_table, adrotate_adops_filter_columns($link_table, $link_data));
 		}
 
-		if (!empty($payload['purge_cache'])) {
-			adrotate_adops_run_maintenance();
-		}
+		$cache_maintenance = !empty($payload['purge_cache'])
+			? adrotate_adops_run_maintenance()
+			: array('ok' => true, 'auxiliary' => array(), 'warnings' => array());
 
-		return array(
+		return array_merge(array(
 			'ad_id' => $ad_id,
 			'group_id' => $group_id,
 			'schedule_id' => $schedule_id,
 			'created' => !$existing,
 			'updated' => (bool) $existing,
-			'cache_maintenance_requested' => !empty($payload['purge_cache']),
-		);
+		), adrotate_adops_maintenance_fields(!empty($payload['purge_cache']), $cache_maintenance));
 	}
 }
 
@@ -673,18 +694,17 @@ if (defined('WP_CLI') && WP_CLI) {
 				$wpdb->insert($link_table, adrotate_adops_filter_columns($link_table, $link_data));
 			}
 
-			if (!empty($payload['purge_cache'])) {
-				adrotate_adops_run_maintenance();
-			}
+			$cache_maintenance = !empty($payload['purge_cache'])
+				? adrotate_adops_run_maintenance()
+				: array('ok' => true, 'auxiliary' => array(), 'warnings' => array());
 
-			$result = array(
+			$result = array_merge(array(
 				'ad_id' => $ad_id,
 				'group_id' => $group_id,
 				'schedule_id' => $schedule_id,
 				'created' => !$existing,
 				'updated' => (bool) $existing,
-				'cache_maintenance_requested' => !empty($payload['purge_cache']),
-			);
+			), adrotate_adops_maintenance_fields(!empty($payload['purge_cache']), $cache_maintenance));
 			\WP_CLI::line(wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 			\WP_CLI::success('Anúncio AdRotate publicado pelo AdOps com sucesso.');
 		}

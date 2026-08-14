@@ -3367,6 +3367,13 @@ function selectCanonicalSnapshotAd(snapshot) {
   return (Array.isArray(snapshot?.ads) ? snapshot.ads : []).slice().sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] || null;
 }
 
+function isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult }) {
+  return Boolean(apply && purgeCache && (
+    wpCliResult?.cache_maintenance_requested !== true
+    || wpCliResult?.cache_maintenance_ok !== true
+  ));
+}
+
 async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
   const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
     date: targetDate,
@@ -4342,7 +4349,11 @@ async function executeAdrotatePublishJob(payload) {
       }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
     : null;
   const activeToday = todayInCuiaba() >= String(insertion.periodoInicio || "") && todayInCuiaba() <= String(insertion.periodoFim || "");
-  if (apply && wpCliPublished && activeToday && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
+  const cacheMaintenanceDegraded = isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult });
+  if (apply && wpCliPublished && activeToday && cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true) {
+    throw new Error(`Manutenção de cache falhou e o anúncio não apareceu no HTML público da inserção ${insertionId}.`);
+  }
+  if (apply && wpCliPublished && activeToday && !cacheMaintenanceDegraded && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
     throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}.`);
   }
 
@@ -4410,6 +4421,7 @@ async function executeAdrotatePublishJob(payload) {
     stderr: safeProcessOutput(stderr, 8000),
     relationAfter,
     relationOk: apply ? exactLiveCount > 0 : null,
+    cacheMaintenanceDegraded,
     headlessRebuild,
     publicHtmlValidation,
     insertionAfterPublish,
@@ -6711,6 +6723,7 @@ export {
   evaluatePerrengueRebuildHealth,
   filterSiteInsertions,
   isSocialInsertion,
+  isCacheMaintenanceDegraded,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,
   mergeExpectedDrivePiContext,
