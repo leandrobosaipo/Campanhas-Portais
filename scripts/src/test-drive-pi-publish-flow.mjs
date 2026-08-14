@@ -29,6 +29,67 @@ const permissiveMerge = runner.mergeDrivePiFields(
 );
 assert.equal(permissiveMerge.insertions.length, 1);
 
+const canonicalPerrengueInsertion = {
+  siteId: 33,
+  siteSigla: "PERRENGUE",
+  localFormato: "MEGABANNER TOPO — HEADER — 825x120",
+  localFormatoNormalizado: "Megabanner Topo — Header — 825x120",
+  periodoInicio: "2026-08-07",
+  periodoFim: "2026-08-31",
+};
+const parsedWithoutSiteId = {
+  campaignName: "QUEIMADAS CUIABA",
+  insertions: [{
+    localFormato: "MEGABANNER TOPO — HEADER — 825x120",
+    periodoInicio: "2026-08-07",
+    periodoFim: "2026-08-31",
+    clickUrl: "https://cliente.example/queimadas",
+  }],
+};
+const hydratedExpectedSite = runner.mergeExpectedDrivePiContext(parsedWithoutSiteId, {
+  insertion: canonicalPerrengueInsertion,
+  campaign: { nome: "QUEIMADAS CUIABA", competencia: "AGOSTO/2026" },
+  sourceText: "/PERRENGUE/AGOSTO/PI 14879 - Site Perrengue MT.pdf",
+});
+assert.equal(hydratedExpectedSite.insertions[0].siteId, 33, "portal canônico único deve preencher siteId ausente");
+assert.equal(
+  runner.buildDrivePiFolderIdentityText(
+    { path: "/CUIABA/PI 14879/PERRENGUE-banner.gif", mimeType: "image/gif", parentFolderId: "folder-1" },
+    {
+      folder: { name: "PI 14879", path: "/CUIABA/PI 14879" },
+      media: [{ name: "PERRENGUE-banner.gif", path: "/CUIABA/PI 14879/PERRENGUE-banner.gif" }],
+    },
+  ),
+  "/CUIABA/PI 14879",
+  "identidade do portal deve usar somente nome e caminho da pasta",
+);
+const labelledPiFolder = runner.mergeExpectedDrivePiContext(parsedWithoutSiteId, {
+  insertion: canonicalPerrengueInsertion,
+  campaign: { nome: "QUEIMADAS CUIABA", competencia: "AGOSTO/2026" },
+  sourceText: "/PERRENGUE/AGOSTO/PI 009750 PREF ROO AFL",
+});
+assert.equal(labelledPiFolder.insertions[0].siteId, 33, "rótulos da PI não podem virar aliases de portal");
+const clientNameIsNotPortal = runner.mergeExpectedDrivePiContext(parsedWithoutSiteId, {
+  insertion: { ...canonicalPerrengueInsertion, siteId: 35, siteSigla: "ROO" },
+  campaign: { nome: "QUEIMADAS CUIABA", competencia: "AGOSTO/2026" },
+  sourceText: "/CLIENTE ROO/PI 14879",
+});
+assert.equal(clientNameIsNotPortal.insertions[0].siteId, undefined, "nome do cliente não prova a pasta do portal");
+for (const unsafe of [
+  { sourceText: "/CUIABA/PI 14879.pdf" },
+  { sourceText: "/PERRENGUE/PI 14879.pdf", insertion: { ...canonicalPerrengueInsertion, periodoFim: "2026-08-30" } },
+  { sourceText: "/PERRENGUE/PI 14879.pdf", fields: { ...parsedWithoutSiteId, insertions: [{ ...parsedWithoutSiteId.insertions[0], localFormato: "HOME 1" }] } },
+  { sourceText: "/PERRENGUE/PI 14879.pdf", fields: { ...parsedWithoutSiteId, insertions: [...parsedWithoutSiteId.insertions, ...parsedWithoutSiteId.insertions] } },
+  { sourceText: "/PERRENGUE/PI 14879/OMT", fields: parsedWithoutSiteId },
+]) {
+  const result = runner.mergeExpectedDrivePiContext(unsafe.fields || parsedWithoutSiteId, {
+    insertion: unsafe.insertion || canonicalPerrengueInsertion,
+    campaign: { nome: "QUEIMADAS CUIABA", competencia: "AGOSTO/2026" },
+    sourceText: unsafe.sourceText,
+  });
+  assert.equal(result.insertions.some((item) => Number(item.siteId) === 33), false, "contexto ambíguo ou divergente não pode preencher portal");
+}
+
 const links = runner.extractUrlsFromText(`Banner: https://cdn.example.com/banner.gif\nDownload do video: https://files.example.com/vt.mp4.`);
 assert.deepEqual(links, ["https://cdn.example.com/banner.gif", "https://files.example.com/vt.mp4"]);
 assert.equal(runner.mediaKindFromUrl(links[0]), "image");

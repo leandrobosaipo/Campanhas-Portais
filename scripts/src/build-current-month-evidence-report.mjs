@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" };
 import {
   buildAtomicPublishCommand,
+  buildCampaignFilterMetadata,
   buildPortalFilterOptions,
   buildCampaignExportIdempotencyKey,
   buildCampaignEvidenceExportDownloadUrl,
@@ -424,7 +425,7 @@ function evidenceLabel(state) {
 
 function evidenceDetails(item) {
   if (item.state === "scheduled") return `Agendada para ${fullDatePt(item.periodoInicio)}. Ainda não exige evidência.`;
-  if (item.state === "not_published") return "Não conta como pendência de evidência: a inserção ainda não está marcada como publicada no site.";
+  if (item.state === "not_published") return "Fora do gate das campanhas ativas enquanto o banner não estiver publicado. Os retroativos serão exigidos depois da publicação.";
   if (item.state === "pending") return `Faltam ${item.missingDates.length} dia(s) com evidência auditada: ${item.missingDates.map(datePt).join(", ")}.`;
   if (item.state === "invalid") return `Há ${item.invalidDates.length} dia(s) com evidência inválida: ${item.invalidDates.map(datePt).join(", ")}.`;
   return "Todos os dias exigidos até a data alvo têm evidência auditada.";
@@ -677,6 +678,27 @@ function dayTitle(day, item) {
   return `${fullDatePt(day.date)}: evidência com status ${day.status}. ${day.issues?.map((issue) => issue.label || issue.code || issue).join(", ") || ""}`;
 }
 
+function publicationGuidance(operation) {
+  const actions = Array.isArray(operation?.requiredActions) ? operation.requiredActions : [];
+  const blockers = Array.isArray(operation?.blockingIssues) ? operation.blockingIssues : [];
+  const sourceReason = String(operation?.sourceIdentity?.reason || "").trim();
+  const blocker = blockers.map((issue) => issue?.message || issue?.label || issue?.code || issue).find(Boolean)
+    || sourceReason
+    || (actions.includes("confirm_source_identity") ? "A identidade da campanha ainda precisa ser confirmada." : "A publicação ainda não passou pelo preflight operacional.");
+  const action = actions.includes("confirm_source_identity")
+    ? "Confirmar a PI no documento autoritativo e executar novo preflight."
+    : actions.includes("review_site_divergence")
+      ? "Revisar o portal com a PI, a planilha e a inserção canônica."
+      : actions.includes("review_period_divergence") || actions.includes("review_format_divergence")
+        ? "Corrigir a divergência indicada e executar novo preflight."
+        : actions.includes("locate_or_upload_media")
+          ? "Confirmar mídia e destino HTTPS e executar novo preflight."
+          : actions.includes("publish_on_site")
+            ? "Executar o preflight e publicar o banner no portal."
+            : "Reconciliar a campanha antes de gerar evidências.";
+  return { blocker, action };
+}
+
 function renderThumbs(item) {
   if (!item.evidenceDays.length) {
     return `<button class="thumb-empty" type="button" data-modal-id="${escapeHtml(item.modalId)}" title="${escapeHtml(evidenceDetails(item))}">${icon(item.state === "scheduled" ? "clock" : "warn")}<span>${escapeHtml(evidenceLabel(item.state))}</span></button>`;
@@ -695,6 +717,18 @@ function renderThumbs(item) {
 function renderInsertion(item) {
   const progress = item.requiredDays.length ? Math.round((item.auditedDays / item.requiredDays.length) * 100) : 100;
   const stateForBadge = item.state === "ok" ? "ok" : item.state === "scheduled" ? "scheduled" : item.state === "not_published" ? "not_published" : "warn";
+  const retroactiveLabel = item.retroactiveMissingDates?.length === 1
+    ? "1 retroativo pendente"
+    : `${item.retroactiveMissingDates?.length || 0} retroativos pendentes`;
+  const publicationPending = item.state === "not_published"
+    ? `<div class="publication-pending" role="note">
+        <strong>Banner não publicado</strong>
+        <span>${escapeHtml(retroactiveLabel)}</span>
+        ${item.retroactiveMissingDates?.length ? `<small>Datas: ${escapeHtml(item.retroactiveMissingDates.map(fullDatePt).join(", "))}</small>` : ""}
+        ${item.publicationBlocker ? `<small><b>Motivo:</b> ${escapeHtml(item.publicationBlocker)}</small>` : ""}
+        ${item.publicationAction ? `<small><b>Próxima ação:</b> ${escapeHtml(item.publicationAction)}</small>` : ""}
+      </div>`
+    : "";
   return `<article class="insertion ${escapeHtml(item.state)}">
     <div class="insert-main">
       <div class="insert-top">
@@ -705,6 +739,7 @@ function renderInsertion(item) {
       <span>${escapeHtml(item.clienteNome || "-")} · ${escapeHtml(item.piCodigo || "sem PI")}</span>
       <small>${fullDatePt(item.periodoInicio)} → ${fullDatePt(item.periodoFim)} · ${item.auditedDays}/${item.requiredDays.length} dias</small>
       <small class="reason">${escapeHtml(evidenceDetails(item))}</small>
+      ${publicationPending}
       <div class="bar"><i style="width:${progress}%"></i></div>
       <div class="links">
         ${linkButton(item.portalUrl, "portal", "link")}
@@ -733,11 +768,12 @@ function renderCampaign(campaign, portalKey) {
     item.periodoInicio <= targetDate && item.periodoFim >= targetDate ? "active" : null,
     item.periodoFim > targetDate && item.periodoFim <= endingWindowDate ? "ending" : null,
   ].filter(Boolean)))).join(" ");
+  const filterMetadata = buildCampaignFilterMetadata(campaign, targetDate);
   const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
   const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
   const commercialExportBlocker = campaign.items.find((item) => item.commercialExportBlocker)?.commercialExportBlocker || "";
-  return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}">
+  return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}" data-publication-states="${escapeHtml(filterMetadata.publicationStates)}" data-evidence-states="${escapeHtml(filterMetadata.evidenceStates)}">
     <div class="campaign-head">
       <div>
         <h3>${escapeHtml(campaign.name)}</h3>
@@ -835,8 +871,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .filter-panel-head h2 { font-size: 18px; }
     .filter-close, .clear-filters, .modal-nav { min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 8px 12px; font: inherit; font-weight: 800; cursor: pointer; }
     .filter-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    .tool-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 320px); gap: 8px; }
-    .search, .portal-filter { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
+    .tool-row { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(150px, 240px)); gap: 8px; align-items: end; }
+    .filter-field { display: grid; gap: 4px; min-width: 0; }
+    .filter-field label { color: var(--muted); font-size: 11px; font-weight: 800; }
+    .search, .portal-filter, .publication-filter, .evidence-filter { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
     .filters { display: flex; gap: 8px; overflow: auto; }
     .filter { min-height: 44px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 4px; padding: 8px 11px; font-weight: 800; font-size: 12px; cursor: pointer; white-space: nowrap; }
     .filter.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
@@ -873,6 +911,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .insert-main strong { font-size: 14px; line-height: 1.15; }
     .insert-main span, .insert-main small { color: var(--muted); font-size: 12px; line-height: 1.25; }
     .reason { color: var(--ink) !important; background: var(--bg); border-radius: 6px; padding: 6px 7px; }
+    .publication-pending { display: grid; gap: 4px; padding: 9px; border: 1px solid color-mix(in oklch, var(--warn) 55%, var(--line)); border-radius: 6px; background: color-mix(in oklch, var(--warn) 9%, var(--panel)); }
+    .publication-pending strong { color: var(--ink); }
+    .publication-pending span { color: var(--warn); font-weight: 750; }
+    .publication-pending small { color: var(--ink); overflow-wrap: anywhere; }
     .bar { height: 6px; border-radius: 999px; background: var(--bg); overflow: hidden; }
     .bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
     .links { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -970,26 +1012,29 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       </section>
       <div class="tools desktop-tools" aria-label="Filtros do relatório">
         <div class="tool-row">
-          <div>
-            <label for="campaignSearchDesktop" class="visually-hidden">Buscar campanha, PI ou portal</label>
+          <div class="filter-field">
+            <label for="campaignSearchDesktop">Buscar campanha, PI ou portal</label>
             <input class="search" id="campaignSearchDesktop" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
           </div>
-          <div>
-            <label for="portalFilterDesktop" class="visually-hidden">Filtrar por portal</label>
+          <div class="filter-field">
+            <label for="portalFilterDesktop">Portal</label>
             <select class="portal-filter" id="portalFilterDesktop">
               ${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
             </select>
           </div>
+          <div class="filter-field">
+            <label for="publicationFilterDesktop">Publicação</label>
+            <select class="publication-filter" id="publicationFilterDesktop">
+              <option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option>
+            </select>
+          </div>
+          <div class="filter-field">
+            <label for="evidenceFilterDesktop">Evidências</label>
+            <select class="evidence-filter" id="evidenceFilterDesktop">
+              <option value="all">Todas</option><option value="complete">Completas</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option>
+            </select>
+          </div>
         </div>
-        <nav class="filters" aria-label="Filtros de campanha" data-filter-scope="desktop">
-          <button class="filter active" type="button" data-state="all">todas</button>
-          <button class="filter" type="button" data-state="active">ativas</button>
-          <button class="filter" type="button" data-state="ok">completas</button>
-          <button class="filter" type="button" data-state="pending">pendentes</button>
-          <button class="filter" type="button" data-state="invalid">com erro</button>
-          <button class="filter" type="button" data-state="scheduled">agendadas</button>
-          <button class="filter" type="button" data-state="ending">encerrando</button>
-        </nav>
       </div>
     </div>
   </header>
@@ -1001,18 +1046,11 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     <div class="filter-panel-inner">
       <div class="filter-panel-head"><h2 id="filterPanelTitle">Filtrar campanhas</h2><button class="filter-close" type="button" id="filterClose">Fechar</button></div>
       <div class="tool-row">
-        <div><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
-        <div><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
+        <div class="filter-field"><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
+        <div class="filter-field"><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
+        <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option></select></div>
+        <div class="filter-field"><label for="evidenceFilter">Evidências</label><select class="evidence-filter" id="evidenceFilter"><option value="all">Todas</option><option value="complete">Completas</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option></select></div>
       </div>
-      <nav class="filters" aria-label="Estado da campanha" data-filter-scope="mobile">
-        <button class="filter active" type="button" data-state="all">todas</button>
-        <button class="filter" type="button" data-state="active">ativas</button>
-        <button class="filter" type="button" data-state="ok">completas</button>
-        <button class="filter" type="button" data-state="pending">pendentes</button>
-        <button class="filter" type="button" data-state="invalid">com erro</button>
-        <button class="filter" type="button" data-state="scheduled">agendadas</button>
-        <button class="filter" type="button" data-state="ending">encerrando</button>
-      </nav>
       <div class="filter-actions"><button class="clear-filters" type="button" id="clearFilters">Limpar filtros</button></div>
     </div>
   </dialog>
@@ -1111,12 +1149,21 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
     modal.addEventListener('close', () => lastModalTrigger?.focus());
     const params = new URLSearchParams(window.location.search);
-    const validStates = new Set(['all', 'active', 'ok', 'pending', 'invalid', 'scheduled', 'ending']);
-    let activeState = validStates.has(params.get('state')) ? params.get('state') : 'all';
+    const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending']);
+    const validEvidenceStates = new Set(['all', 'complete', 'retroactive_missing', 'invalid']);
+    const legacyState = String(params.get('state') || '').toLowerCase();
+    const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending' })[legacyState] || 'all';
+    const legacyEvidence = ({ ok: 'complete', pending: 'retroactive_missing', invalid: 'invalid' })[legacyState] || 'all';
+    let activePublication = validPublications.has(params.get('publication')) ? params.get('publication') : legacyPublication;
+    let activeEvidence = validEvidenceStates.has(params.get('evidence')) ? params.get('evidence') : legacyEvidence;
     const search = document.getElementById('campaignSearch');
     const searchDesktop = document.getElementById('campaignSearchDesktop');
     const portalFilter = document.getElementById('portalFilter');
     const portalFilterDesktop = document.getElementById('portalFilterDesktop');
+    const publicationFilter = document.getElementById('publicationFilter');
+    const publicationFilterDesktop = document.getElementById('publicationFilterDesktop');
+    const evidenceFilter = document.getElementById('evidenceFilter');
+    const evidenceFilterDesktop = document.getElementById('evidenceFilterDesktop');
     const emptyResults = document.getElementById('emptyResults');
     const resultCount = document.getElementById('resultCount');
     const filterPanel = document.getElementById('filterPanel');
@@ -1129,12 +1176,17 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     const validPortal = Array.from(portalFilter.options).some((option) => option.value === requestedPortal) ? requestedPortal : 'ALL';
     portalFilter.value = validPortal;
     portalFilterDesktop.value = validPortal;
-    const syncFilterButtons = () => document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.state === activeState));
+    publicationFilter.value = activePublication;
+    publicationFilterDesktop.value = activePublication;
+    evidenceFilter.value = activeEvidence;
+    evidenceFilterDesktop.value = activeEvidence;
     const persistFilters = () => {
       const nextParams = new URLSearchParams(window.location.search);
       search.value ? nextParams.set('q', search.value) : nextParams.delete('q');
       portalFilter.value !== 'ALL' ? nextParams.set('portal', portalFilter.value) : nextParams.delete('portal');
-      activeState !== 'all' ? nextParams.set('state', activeState) : nextParams.delete('state');
+      activePublication !== 'all' ? nextParams.set('publication', activePublication) : nextParams.delete('publication');
+      activeEvidence !== 'all' ? nextParams.set('evidence', activeEvidence) : nextParams.delete('evidence');
+      nextParams.delete('state');
       const query = nextParams.toString();
       history.replaceState(null, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
     };
@@ -1143,9 +1195,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       const selectedPortal = portalFilter.value || 'ALL';
       document.querySelectorAll('.campaign').forEach((campaign) => {
         const portalMatches = selectedPortal === 'ALL' || campaign.dataset.portal === selectedPortal;
-        const stateMatches = activeState === 'all' || String(campaign.dataset.states || '').split(' ').includes(activeState);
+        const publicationMatches = activePublication === 'all' || String(campaign.dataset.publicationStates || '').split(' ').includes(activePublication);
+        const evidenceMatches = activeEvidence === 'all' || String(campaign.dataset.evidenceStates || '').split(' ').includes(activeEvidence);
         const searchMatches = !needle || String(campaign.dataset.search || '').includes(needle);
-        campaign.hidden = !(portalMatches && stateMatches && searchMatches);
+        campaign.hidden = !(portalMatches && publicationMatches && evidenceMatches && searchMatches);
       });
       document.querySelectorAll('.portal').forEach((portal) => {
         portal.hidden = !portal.querySelector('.campaign:not([hidden])');
@@ -1153,19 +1206,16 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       const visibleCount = document.querySelectorAll('.campaign:not([hidden])').length;
       emptyResults.hidden = visibleCount > 0;
       resultCount.textContent = visibleCount + (visibleCount === 1 ? ' campanha' : ' campanhas');
-      syncFilterButtons();
       persistFilters();
     };
     search.addEventListener('input', () => { searchDesktop.value = search.value; applyFilters(); });
     searchDesktop.addEventListener('input', () => { search.value = searchDesktop.value; applyFilters(); });
     portalFilter.addEventListener('change', () => { portalFilterDesktop.value = portalFilter.value; applyFilters(); });
     portalFilterDesktop.addEventListener('change', () => { portalFilter.value = portalFilterDesktop.value; applyFilters(); });
-    document.querySelectorAll('.filter').forEach((button) => {
-      button.addEventListener('click', () => {
-        activeState = button.dataset.state || 'all';
-        applyFilters();
-      });
-    });
+    publicationFilter.addEventListener('change', () => { activePublication = publicationFilter.value; publicationFilterDesktop.value = activePublication; applyFilters(); });
+    publicationFilterDesktop.addEventListener('change', () => { activePublication = publicationFilterDesktop.value; publicationFilter.value = activePublication; applyFilters(); });
+    evidenceFilter.addEventListener('change', () => { activeEvidence = evidenceFilter.value; evidenceFilterDesktop.value = activeEvidence; applyFilters(); });
+    evidenceFilterDesktop.addEventListener('change', () => { activeEvidence = evidenceFilterDesktop.value; evidenceFilter.value = activeEvidence; applyFilters(); });
     filterToggle.addEventListener('click', () => { filterToggle.setAttribute('aria-expanded', 'true'); filterPanel.showModal(); });
     filterClose.addEventListener('click', () => filterPanel.close());
     filterPanel.addEventListener('click', (event) => { if (event.target === filterPanel) filterPanel.close(); });
@@ -1175,10 +1225,14 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       searchDesktop.value = '';
       portalFilter.value = 'ALL';
       portalFilterDesktop.value = 'ALL';
-      activeState = 'all';
+      activePublication = 'all';
+      activeEvidence = 'all';
+      publicationFilter.value = 'all';
+      publicationFilterDesktop.value = 'all';
+      evidenceFilter.value = 'all';
+      evidenceFilterDesktop.value = 'all';
       applyFilters();
     });
-    syncFilterButtons();
     applyFilters();
   </script>
 </body>
@@ -1201,6 +1255,7 @@ async function main() {
   const canonicalOperationItems = [...(operationsRaw.items || []), ...(operationsRaw.upcomingItems || [])]
     .filter((item) => Number.isFinite(Number(item?.adops?.insertionId)))
     .map((item) => ({ ...item, id: Number(item.adops.insertionId) }));
+  const operationByInsertionId = new Map(canonicalOperationItems.map((item) => [item.id, item]));
   const canonicalInsertions = selectCanonicalInsertions(canonicalOperationItems, insertions);
   if (canonicalInsertions.some((item) => item.id === 1826)) throw new Error("Gate canônico recusou a inserção duplicada #1826.");
   const eligible = canonicalInsertions
@@ -1249,6 +1304,9 @@ async function main() {
     const state = computeInsertionState(item, evidenceDays, targetDate);
     const missingDates = evidenceDays.filter((day) => day.status === "missing").map((day) => day.date);
     const invalidDates = evidenceDays.filter((day) => !day.status.startsWith("audited") && day.status !== "missing").map((day) => day.date);
+    const retroactiveMissingDates = missingDates.filter((date) => date < targetDate);
+    const operation = operationByInsertionId.get(item.id);
+    const guidance = publicationGuidance(operation);
     return {
       ...item,
       campanhaName: item.campanhaName || campaign?.name || `Campanha ${item.campanhaId || "-"}`,
@@ -1263,7 +1321,10 @@ async function main() {
       evidenceDays,
       auditedDays: evidenceDays.filter((day) => day.status.startsWith("audited") && day.url).length,
       missingDates,
+      retroactiveMissingDates,
       invalidDates,
+      publicationBlocker: state === "not_published" ? guidance.blocker : "",
+      publicationAction: state === "not_published" ? guidance.action : "",
       statusDetail: evidenceDetails({ ...item, state, missingDates, invalidDates }),
       modalId: `ins-${item.id}`,
     };

@@ -260,6 +260,28 @@ function normalizeSiteAlias(value) {
   return null;
 }
 
+function exactSiteFolderAlias(value) {
+  const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  const aliases = new Map([
+    ["a folha livre", "AFL"], ["afolha livre", "AFL"], ["afl", "AFL"],
+    ["o matogrossense", "OMT"], ["omatogrossense", "OMT"], ["matogrossense", "OMT"], ["omt", "OMT"],
+    ["perrengue", "PERRENGUE"], ["perrengue mt", "PERRENGUE"], ["perrengue mato grosso", "PERRENGUE"],
+    ["portal norte mt", "PNMT"], ["portal norte", "PNMT"], ["norte mt", "PNMT"], ["pnmt", "PNMT"], ["nmt", "PNMT"],
+    ["portal pantanal mt", "PPMT"], ["portal pantanal", "PPMT"], ["pantanal mt", "PPMT"], ["ppmt", "PPMT"], ["pmmt", "PPMT"],
+    ["roo noticias", "ROO"], ["roo news", "ROO"], ["roo", "ROO"],
+  ]);
+  return aliases.get(normalized) || null;
+}
+
+function observedSiteFolderAliases(value) {
+  return Array.from(new Set(
+    String(value || "")
+      .split(/[\\/]+/)
+      .map(exactSiteFolderAlias)
+      .filter(Boolean),
+  ));
+}
+
 function clientAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
@@ -1379,6 +1401,19 @@ function buildDrivePiTextHints(payload, archived, packageContext) {
   ].filter(Boolean).join(" ");
 }
 
+function buildDrivePiFolderIdentityText(payload, packageContext) {
+  const folder = packageContext?.folder;
+  if (folder?.path) return String(folder.path);
+  if (folder?.name) return String(folder.name);
+  if (String(payload?.mimeType || "") === "application/vnd.google-apps.folder") {
+    return String(payload?.path || payload?.name || "");
+  }
+  const payloadPath = String(payload?.path || "").trim();
+  if (!payloadPath || !payload?.parentFolderId) return "";
+  const folderPath = path.posix.dirname(payloadPath);
+  return folderPath;
+}
+
 async function resolveDrivePiPackageFolder(payload) {
   if (!payload?.driveFileId) return null;
   const mimeType = String(payload.mimeType || "");
@@ -2112,17 +2147,33 @@ function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true }
   };
 }
 
-function mergeExpectedDrivePiContext(fields, { insertion, campaign }) {
+function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText = "" }) {
   const canonicalInsertion = {
     siteId: readNumberRecord(insertion, ["siteId"]),
+    siteSigla: readStringRecord(insertion, ["siteSigla"]),
     localFormato: readStringRecord(insertion, ["localFormato", "localFormatoNormalizado"]),
     localFormatoNormalizado: readStringRecord(insertion, ["localFormatoNormalizado", "localFormato"]),
     periodoInicio: readStringRecord(insertion, ["periodoInicio"]),
     periodoFim: readStringRecord(insertion, ["periodoFim"]),
     periodoOriginal: readStringRecord(insertion, ["periodoOriginal"]),
   };
-  const insertions = Array.isArray(fields?.insertions) && fields.insertions.length
-    ? fields.insertions
+  const parsedInsertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const sourceSiteAliases = observedSiteFolderAliases(sourceText);
+  const expectedSiteSigla = normalizeSiteAlias(canonicalInsertion.siteSigla);
+  const canHydrateUniqueSite = parsedInsertions.length === 1
+    && !readNumberRecord(parsedInsertions[0], ["siteId"])
+    && Boolean(canonicalInsertion.siteId)
+    && Boolean(expectedSiteSigla)
+    && sourceSiteAliases.length === 1
+    && sourceSiteAliases[0] === expectedSiteSigla
+    && normalizeSlotKey(readStringRecord(parsedInsertions[0], ["localFormatoNormalizado", "localFormato"]) || "")
+      === normalizeSlotKey(canonicalInsertion.localFormatoNormalizado || canonicalInsertion.localFormato)
+    && readStringRecord(parsedInsertions[0], ["periodoInicio", "inicio"]) === canonicalInsertion.periodoInicio
+    && readStringRecord(parsedInsertions[0], ["periodoFim", "fim"]) === canonicalInsertion.periodoFim;
+  const insertions = parsedInsertions.length
+    ? canHydrateUniqueSite
+      ? [{ ...parsedInsertions[0], siteId: canonicalInsertion.siteId }]
+      : parsedInsertions
     : [canonicalInsertion];
   return {
     ...fields,
@@ -4360,7 +4411,11 @@ async function executeDrivePiIngest(payload) {
       throw new Error("A inserção canônica não pertence mais à campanha esperada; nenhuma mutação foi aplicada.");
     }
     expectedInsertionContext = expectedInsertion;
-    fields = mergeExpectedDrivePiContext(fields, { insertion: expectedInsertion, campaign: expectedCampaign });
+    fields = mergeExpectedDrivePiContext(fields, {
+      insertion: expectedInsertion,
+      campaign: expectedCampaign,
+      sourceText: buildDrivePiFolderIdentityText(payload, packageContext),
+    });
   }
   const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
   fields = clickUrlResolution.fields;
@@ -6376,6 +6431,7 @@ async function main() {
 }
 
 export {
+  buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,
   buildAdrotatePublishPayload,
   buildPerrengueAdrotateRestorePhp,

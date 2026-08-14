@@ -48,6 +48,50 @@ test("gera opcoes unicas de portal e combina portal com busca e estado", () => {
   assert.equal(contract.campaignMatchesFilters({ portal: "PPMT", search: "CRIME AMBIENTAL 17048", states: "active ok" }, { portal: "ALL", search: "DENGUE", state: "all" }), false);
 });
 
+test("combina publicação e retroativos sem perder portal ou busca", () => {
+  const campaign = {
+    portal: "PERRENGUE",
+    search: "CRIME AMBIENTAL PI 17046 GOV",
+    states: "active not_published",
+    publicationStates: "not_published",
+    evidenceStates: "retroactive_missing",
+  };
+
+  assert.equal(contract.campaignMatchesFilters(campaign, {
+    portal: "PERRENGUE",
+    search: "17046",
+    publication: "not_published",
+    evidence: "retroactive_missing",
+  }), true);
+  assert.equal(contract.campaignMatchesFilters(campaign, {
+    portal: "PERRENGUE",
+    search: "17046",
+    publication: "active",
+    evidence: "retroactive_missing",
+  }), false);
+  assert.equal(contract.campaignMatchesFilters(campaign, {
+    portal: "PERRENGUE",
+    search: "17046",
+    publication: "not_published",
+    evidence: "complete",
+  }), false);
+});
+
+test("classifica evidência completa sem depender do estado de publicação", () => {
+  const metadata = contract.buildCampaignFilterMetadata({
+    items: [{
+      state: "not_published",
+      bannerPublicadoNoSite: false,
+      requiredDays: ["2026-08-01", "2026-08-02"],
+      auditedDays: 2,
+      missingDates: [],
+      invalidDates: [],
+    }],
+  }, "2026-08-14");
+  assert.match(metadata.publicationStates, /\bnot_published\b/);
+  assert.match(metadata.evidenceStates, /\bcomplete\b/);
+});
+
 test("gera report.json nao listado e chave estavel baseada nas evidencias aprovadas", () => {
   const report = contract.buildMonthlyReportManifest({
     slug: "adops-evidencias-agosto-2026",

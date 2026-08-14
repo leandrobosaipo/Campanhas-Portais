@@ -50,6 +50,27 @@ const insertion = {
   ],
 };
 
+const nonPublishedInsertion = {
+  ...insertion,
+  id: 2186,
+  modalId: "ins-2186",
+  campanhaName: "CRIME AMBIENTAL",
+  piCodigo: "PI 17046 - GOV",
+  bannerPublicadoNoSite: false,
+  state: "not_published",
+  requiredDays: ["2026-08-01", "2026-08-02"],
+  evidenceDays: [
+    { date: "2026-08-01", status: "missing", url: "", downloadUrl: "" },
+    { date: "2026-08-02", status: "missing", url: "", downloadUrl: "" },
+  ],
+  auditedDays: 0,
+  missingDates: ["2026-08-01", "2026-08-02"],
+  retroactiveMissingDates: ["2026-08-01", "2026-08-02"],
+  publicationBlocker: "O PDF não confirmou a PI numérica.",
+  publicationAction: "Enviar o PDF autoritativo e executar novo preflight.",
+  statusDetail: "Banner não publicado.",
+};
+
 const portal = {
   key: "PERRENGUE",
   label: "Perrengue Mato Grosso",
@@ -70,6 +91,17 @@ function html() {
   });
 }
 
+function nonPublishedHtml() {
+  return renderHtml({
+    insertions: [nonPublishedInsertion],
+    portals: [{ ...portal, stats: { active: 1, scheduled: 0, ok: 0, pending: 0, invalid: 0, not_published: 1, evidences: 0 }, campaigns: [{ ...portal.campaigns[0], items: [nonPublishedInsertion] }] }],
+    audits: {},
+    summary: { total: 1, active: 1, scheduled: 0, ok: 0, pending: 0, invalid: 0, notPublished: 1, auditedDays: 0 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+  });
+}
+
 test("mantém somente uma barra móvel compacta e abre filtros em dialog acessível", () => {
   const output = html();
   assert.match(output, /id="filterToggle"[^>]+aria-controls="filterPanel"[^>]+aria-expanded="false"/);
@@ -84,6 +116,27 @@ test("preserva filtros na URL e anuncia a quantidade de resultados", () => {
   assert.match(output, /history\.replaceState/);
   assert.match(output, /id="resultCount"[^>]+aria-live="polite"/);
   assert.match(output, /id="clearFilters"/);
+});
+
+test("expõe filtros independentes de publicação e evidências retroativas", () => {
+  const output = html();
+  assert.match(output, /for="publicationFilter"[^>]*>Publicação</);
+  assert.match(output, /id="publicationFilter"/);
+  assert.match(output, /value="not_published"[^>]*>Não publicadas</);
+  assert.match(output, /for="evidenceFilter"[^>]*>Evidências</);
+  assert.match(output, /id="evidenceFilter"/);
+  assert.match(output, /value="retroactive_missing"[^>]*>Retroativos pendentes</);
+  assert.match(output, /params\.get\('publication'\)/);
+  assert.match(output, /params\.get\('evidence'\)/);
+});
+
+test("explica bloqueio e retroativos no card da campanha não publicada", () => {
+  const output = nonPublishedHtml();
+  assert.match(output, /Banner não publicado/);
+  assert.match(output, /2 retroativos pendentes/);
+  assert.match(output, /01\/08\/2026, 02\/08\/2026/);
+  assert.match(output, /O PDF não confirmou a PI numérica/);
+  assert.match(output, /Enviar o PDF autoritativo e executar novo preflight/);
 });
 
 test("visualizador móvel navega por data sem IDs duplicados", () => {

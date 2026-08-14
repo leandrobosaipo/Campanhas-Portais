@@ -106,9 +106,52 @@ export function campaignMatchesFilters(campaign, filters) {
   const portalMatches = selectedPortal === "ALL" || String(campaign?.portal || "").trim().toUpperCase() === selectedPortal;
   const state = String(filters?.state || "all").trim().toLowerCase();
   const stateMatches = state === "all" || String(campaign?.states || "").split(/\s+/).includes(state);
+  const publication = String(filters?.publication || "all").trim().toLowerCase();
+  const publicationMatches = publication === "all" || String(campaign?.publicationStates || "").split(/\s+/).includes(publication);
+  const evidence = String(filters?.evidence || "all").trim().toLowerCase();
+  const evidenceMatches = evidence === "all" || String(campaign?.evidenceStates || "").split(/\s+/).includes(evidence);
   const needle = normalizeFilterValue(filters?.search);
   const searchMatches = !needle || normalizeFilterValue(campaign?.search).includes(needle);
-  return portalMatches && stateMatches && searchMatches;
+  return portalMatches && stateMatches && publicationMatches && evidenceMatches && searchMatches;
+}
+
+export function buildCampaignFilterMetadata(campaign, targetDate) {
+  const items = Array.isArray(campaign?.items) ? campaign.items : [];
+  const publicationStates = new Set();
+  const evidenceStates = new Set();
+  const endingWindowDate = addIsoDays(targetDate, 7);
+
+  for (const item of items) {
+    if (item?.state === "not_published") publicationStates.add("not_published");
+    if (item?.state === "scheduled") publicationStates.add("scheduled");
+    if (item?.bannerPublicadoNoSite === true && item?.periodoInicio <= targetDate && item?.periodoFim >= targetDate) {
+      publicationStates.add("active");
+    }
+    if (item?.bannerPublicadoNoSite === true && item?.periodoFim > targetDate && item?.periodoFim <= endingWindowDate) {
+      publicationStates.add("ending");
+    }
+    const requiredCount = Array.isArray(item?.requiredDays) ? item.requiredDays.length : 0;
+    const auditedCount = Number.isFinite(Number(item?.auditedDays))
+      ? Number(item.auditedDays)
+      : Array.isArray(item?.evidenceDays)
+        ? item.evidenceDays.filter((day) => String(day?.status || "").startsWith("audited") && day?.url).length
+        : 0;
+    if (requiredCount > 0
+      && auditedCount >= requiredCount
+      && (item?.missingDates || []).length === 0
+      && (item?.invalidDates || []).length === 0) {
+      evidenceStates.add("complete");
+    }
+    if ((item?.invalidDates || []).length > 0) evidenceStates.add("invalid");
+    if ((item?.missingDates || []).some((date) => typeof date === "string" && date < targetDate)) {
+      evidenceStates.add("retroactive_missing");
+    }
+  }
+
+  return {
+    publicationStates: Array.from(publicationStates).join(" "),
+    evidenceStates: Array.from(evidenceStates).join(" "),
+  };
 }
 
 export function selectCanonicalInsertions(activeInsertions, monthInsertions) {
