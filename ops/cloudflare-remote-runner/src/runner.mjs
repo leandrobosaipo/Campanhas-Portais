@@ -4,7 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
@@ -6949,6 +6949,7 @@ async function main() {
 
 export {
   agencyAliasCandidates,
+  assertOperationalMediaReadback,
   buildSpacesImageObjectKey,
   buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,

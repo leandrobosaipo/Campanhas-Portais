@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -684,6 +686,27 @@ try {
   assert.deepEqual(delivery.metadata.durations, delivery.source.durations);
   assert.equal(delivery.metadata.loop, delivery.source.loop);
   assert.match(delivery.filePath, /825x120-delivery\.gif$/);
+  const deliveryBytes = await readFile(delivery.filePath);
+  const deliverySha256 = crypto.createHash("sha256").update(deliveryBytes).digest("hex");
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "image/gif" });
+    response.end(deliveryBytes);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const readback = await runner.assertOperationalMediaReadback({
+      mediaUrl: `http://127.0.0.1:${address.port}/banner.gif`,
+      expectedSha256: deliverySha256,
+      expectedProfile: { width: 825, height: 120 },
+      archivePath: delivery.filePath,
+    });
+    assert.equal(readback.ok, true);
+    assert.equal(readback.sha256, deliverySha256);
+    assert.equal(readback.metadata.frames, 2);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
   await assert.rejects(() => runner.prepareOperationalDeliveryImage(supplied, {
     width: 970,
     height: 90,
