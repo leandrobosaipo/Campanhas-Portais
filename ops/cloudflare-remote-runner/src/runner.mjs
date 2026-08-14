@@ -319,12 +319,27 @@ function observedSiteFolderAliases(value) {
   ));
 }
 
+function observedCanonicalSiteAliases(value) {
+  const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  const matches = [
+    ["AFL", /\b(a folha livre|afolha livre|afl)\b/],
+    ["OMT", /\b(o matogrossense|omatogrossense|matogrossense|omt)\b/],
+    ["PERRENGUE", /\b(perrengue|perrengue mt|perrengue mato grosso)\b/],
+    ["PNMT", /\b(portal norte mt|portal norte|norte mt|pnmt|nmt)\b/],
+    ["PPMT", /\b(portal pantanal mt|portal pantanal|pantanal mt|ppmt|pmmt)\b/],
+    ["ROO", /\b(roo noticias|roo news|roo)\b/],
+  ];
+  return matches.filter(([, pattern]) => pattern.test(normalized)).map(([sigla]) => sigla);
+}
+
 function clientAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
   if (/\b(assembleia legislativa|almt)\b/.test(normalized)) candidates.push("ALMT");
   if (/\b(secom|governo|gov mt|governo do estado)\b/.test(normalized)) candidates.push("Governo do Estado");
   if (/\b(municipio de cuiaba|prefeitura de cuiaba|pref cba|cuiaba)\b/.test(normalized)) candidates.push("Prefeitura de Cuiabá");
+  if (/\b(pref mun de rondonopolis|municipio de rondonopolis|prefeitura de rondonopolis|pref roo)\b/.test(normalized)) candidates.push("Prefeitura de Rondonópolis");
   if (/\b(tribunal de contas|tce mt|tce)\b/.test(normalized)) candidates.push("TCE-MT");
   return candidates;
 }
@@ -1087,10 +1102,28 @@ function firstMatch(text, pattern) {
   return match ? String(match[1] || "").trim() : null;
 }
 
+function extractFlattenedClientVehicle(text) {
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if ((line.match(/\bVE[IÍ]CULO\b/gi) || []).length !== 1) continue;
+    const match = line.trim().match(
+      /^CLIENTE\s*:?\s+(.+?)\s+VE[IÍ]CULO\s*:?\s+((?:SITE|PORTAL)\b.+)$/i,
+    );
+    const vehicleName = String(match?.[2] || "").trim();
+    if (match && observedCanonicalSiteAliases(vehicleName).length === 1) {
+      return {
+        clientName: String(match[1] || "").trim() || null,
+        vehicleName,
+      };
+    }
+  }
+  return null;
+}
+
 function extractPdfCommercialLabels(text) {
   const source = String(text || "");
   const lines = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const clientName = firstMatch(source, /^CLIENTE\s*:?\s*(.+)$/im);
+  const flattenedLabels = extractFlattenedClientVehicle(source);
+  const clientName = flattenedLabels?.clientName || firstMatch(source, /^CLIENTE\s*:?\s*(.+)$/im);
   const firstEntityBoundary = lines.findIndex((line) => /^(?:VE[IÍ]CULO|CLIENTE|RAZÃO SOCIAL|CNPJ)\b/i.test(line));
   const preamble = lines.slice(0, firstEntityBoundary < 0 ? lines.length : firstEntityBoundary);
   const agencyCandidates = preamble.filter((line) => (
@@ -1381,7 +1414,9 @@ function extractPdfCompetencia(text) {
 }
 
 function extractPdfVehicleName(text) {
-  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i);
+  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i)
+    || extractFlattenedClientVehicle(text)?.vehicleName
+    || null;
 }
 
 function buildDrivePiPdfInsertions({ siteId, localFormato, periodo, clickUrl }) {

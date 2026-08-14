@@ -55,6 +55,47 @@ CNPJ: 60.847.245/0001-80`), {
   clientCnpj: null,
   agencyName: "ZIMMERMANN PUBLICIDADE E PROPAGANDA",
 }, "ordem posterior do veículo não pode trocar o cliente explícito");
+assert.deepEqual(runner.extractPdfCommercialLabels(`PI - PEDIDO DE INSERÇÃO
+DMD ASSOC. ASSESSORIA E PROPAGANDA LTDA
+CLIENTE PREF. MUN DE RONDONOPOLIS VEÍCULO SITE ROO NOTICIAS - CUIABÁ
+RAZÃO SOCIAL PREFEITURA MUNICIPAL DE RONDONOPOLIS PRAÇA CUIABA/MT`), {
+  clientName: "PREF. MUN DE RONDONOPOLIS",
+  clientLegalName: null,
+  clientCnpj: null,
+  agencyName: "DMD ASSOC. ASSESSORIA E PROPAGANDA LTDA",
+}, "layout PDF achatado deve encerrar CLIENTE antes do rótulo VEÍCULO");
+assert.equal(runner.extractPdfVehicleName(
+  "CLIENTE PREF. MUN DE RONDONOPOLIS VEÍCULO SITE ROO NOTICIAS - CUIABÁ",
+), "SITE ROO NOTICIAS - CUIABÁ", "layout PDF achatado deve resolver também o veículo");
+assert.deepEqual(runner.clientAliasCandidates("PREF. MUN DE RONDONOPOLIS"), ["Prefeitura de Rondonópolis"],
+  "cliente abreviado do PDF deve resolver a entidade comercial exata");
+for (const clientName of [
+  "UNIMED RONDONOPOLIS",
+  "CAMARA MUNICIPAL DE RONDONOPOLIS",
+  "ASSOCIACAO COMERCIAL DE RONDONOPOLIS",
+]) {
+  assert.deepEqual(runner.clientAliasCandidates(clientName), [],
+    "nome da cidade sem identidade de prefeitura não pode resolver cliente municipal");
+}
+for (const clientName of [
+  "COMERCIO DE VEÍCULO LTDA",
+  "SHOPPING PRAÇA CENTRAL",
+  "CAMPANHA PERÍODO INTEGRAL",
+]) {
+  const source = `PI - PEDIDO DE INSERÇÃO\nCLIENTE ${clientName}`;
+  assert.equal(runner.extractPdfCommercialLabels(source).clientName, clientName,
+    "palavra comercial sem segundo rótulo estruturado não pode truncar o cliente");
+  assert.equal(runner.extractPdfVehicleName(source), null,
+    "palavra VEÍCULO dentro do nome do cliente não pode criar portal");
+}
+for (const source of [
+  "CLIENTE ACME VEÍCULO SITE ROO VEÍCULO PORTAL O MATOGROSSENSE",
+  "CLIENTE ACME VEÍCULO SITE ROO E PORTAL O MATOGROSSENSE",
+  "CLIENTE COMERCIO DE VEÍCULO SITE PUBLICIDADE LTDA",
+]) {
+  assert.equal(runner.extractPdfVehicleName(source), null,
+    "rótulo achatado ambíguo ou sem portal canônico deve falhar fechado");
+}
 
 assert.equal(runner.validateOperationalPublicationScope({
   campaignId: 970,
