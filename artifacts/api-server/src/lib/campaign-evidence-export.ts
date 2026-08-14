@@ -176,8 +176,7 @@ export function buildPendingPublicationView<T extends {
       && item.sourceIdentity?.decision === "confirmed"
       && item.drive?.mediaStatus === "candidate_found"
       && item.drive?.documentStatus === "candidate_found"
-      && authoritativePiInPdf
-      && !item.adops?.mediaUrl;
+      && (!authoritativePiInPdf || !item.adops?.mediaUrl);
     const readyForPublication = !published
       && item.sourceIdentity?.decision === "confirmed"
       && item.drive?.documentStatus === "candidate_found"
@@ -203,7 +202,9 @@ export function buildPendingPublicationView<T extends {
       : publicationStatus === "awaiting_authoritative_pi"
         ? "Aguardando PI/PDF autoritativa antes de publicar a inserção existente."
         : publicationStatus === "ready_for_preflight"
-          ? "Identidade confirmada e mídia candidata pronta para validação."
+          ? authoritativePiInPdf
+            ? "PI candidata no nome do PDF; conteúdo e mídia aguardam validação no preflight."
+            : "PDF e mídia candidatos; o conteúdo do PDF deve confirmar a PI no preflight."
           : publicationStatus === "ready_for_publication"
             ? "Identidade e mídia canônica confirmadas; publicação pode prosseguir."
             : item.sourceIdentity?.reason ?? "Pendência deve ser reavaliada após atualização das fontes.";

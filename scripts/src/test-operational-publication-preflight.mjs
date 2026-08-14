@@ -21,6 +21,25 @@ assert.throws(() => runner.validateOperationalPublicationScope({
   siteSigla: "ROO",
 }), /portal ainda não suportado/i);
 
+assert.equal(runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "57652",
+  fieldsPiCodigo: "PI 57652",
+  campaignPiCodigo: "PI 057652- PREF ROO",
+  insertionPiCodigo: "57652",
+}), true);
+assert.throws(() => runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "57652",
+  fieldsPiCodigo: "PI 57652",
+  campaignPiCodigo: "PI 99999- CORRIGIDA",
+  insertionPiCodigo: "57652",
+}), /PI atual da campanha diverge/i);
+assert.throws(() => runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "57652",
+  fieldsPiCodigo: "PI 57652",
+  campaignPiCodigo: "57652",
+  insertionPiCodigo: "PI 99999- CORRIGIDA",
+}), /PI atual da inserção diverge/i);
+
 const destination = runner.resolveOperationalDestination([
   { text: "Destino: https://www.tce.mt.gov.br/" },
 ]);

@@ -202,6 +202,34 @@ test("não usa identidade operacional quando há candidato de PI em PDF", () => 
   assert.notEqual(result.items[0].identityMode, "operational_identity");
 });
 
+test("encaminha PDF candidato ao preflight mesmo quando o nome não contém a PI", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "FAKE NEWS",
+      piCodigo: "57652",
+      siteSigla: "ROO",
+      period: { start: "2026-08-14", end: "2026-08-31" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 33 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "57652", sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched", folderId: "folder-roo", folderPath: "/ROO NOTICIAS/AGOSTO/PI 57652 - FAKE NEWS",
+        mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found",
+        mediaFiles: [{ id: "media-roo", name: "banner-home1.gif", mimeType: "image/gif" }], textFiles: [],
+      },
+      adops: { status: "matched", campaignId: 992, insertionId: 2185, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(result.items[0].publicationStatus, "ready_for_preflight");
+  assert.equal(result.items[0].resumeAction, "run_drive_pi_preflight");
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+});
+
 test("lote de campanhas normaliza identidade e remove duplicatas", () => {
   assert.deepEqual(contract.parseCampaignEvidenceBatch({
     competencia: "agosto/2026",

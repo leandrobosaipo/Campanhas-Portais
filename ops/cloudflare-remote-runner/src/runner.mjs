@@ -3516,15 +3516,31 @@ async function findOrCreateDrivePiCampaign(fields, payload) {
   return { campaign, created: true, dedupedBy: null };
 }
 
+function normalizeExpectedPiIdentity(value) {
+  return normalizePiDigits(value)?.replace(/^0+(?=\d)/, "") || null;
+}
+
+function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, campaignPiCodigo, insertionPiCodigo }) {
+  const expected = normalizeExpectedPiIdentity(expectedPiCodigo);
+  const fromPdf = normalizeExpectedPiIdentity(fieldsPiCodigo);
+  if (!expected || fromPdf !== expected) {
+    throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
+  }
+  for (const [label, value] of [["campanha", campaignPiCodigo], ["inserção", insertionPiCodigo]]) {
+    const current = normalizeExpectedPiIdentity(value);
+    if (current && current !== expected) {
+      throw new Error(`A PI atual da ${label} diverge da PI esperada; nenhuma mutação foi aplicada.`);
+    }
+  }
+  return true;
+}
+
 async function applyDrivePiToExpectedInsertion(fields, payload) {
   const expectedInsertionId = Number(payload?.expectedInsertionId || 0);
   const expectedCampaignId = Number(payload?.expectedCampaignId || 0);
-  const expectedPiCodigo = normalizePiDigits(payload?.expectedPiCodigo);
+  const expectedPiCodigo = normalizeExpectedPiIdentity(payload?.expectedPiCodigo);
   if (!Number.isInteger(expectedInsertionId) || expectedInsertionId <= 0 || !Number.isInteger(expectedCampaignId) || expectedCampaignId <= 0 || !expectedPiCodigo) {
     throw new Error("Retomada de campanha sem alvo canônico completo.");
-  }
-  if (normalizePiDigits(fields.piCodigo) !== expectedPiCodigo) {
-    throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
   }
   const [expected, campaign] = await Promise.all([
     privateApiGet(`/api/insertions/${expectedInsertionId}`),
@@ -3533,6 +3549,12 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
   if (Number(expected?.campanhaId || 0) !== expectedCampaignId || Number(campaign?.id || 0) !== expectedCampaignId) {
     throw new Error("A inserção canônica não pertence à campanha esperada.");
   }
+  validateExpectedDrivePiIdentity({
+    expectedPiCodigo,
+    fieldsPiCodigo: fields.piCodigo,
+    campaignPiCodigo: campaign?.piCodigo,
+    insertionPiCodigo: expected?.piCodigo,
+  });
   if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
     throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
   }
@@ -6286,6 +6308,7 @@ export {
   selectCanonicalSnapshotAd,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
+  validateExpectedDrivePiIdentity,
   validateOperationalPublicationContract,
   validateOperationalPublicationScope,
   validateOperationalDriveItem,
