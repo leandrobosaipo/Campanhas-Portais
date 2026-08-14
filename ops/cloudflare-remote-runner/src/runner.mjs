@@ -1384,6 +1384,19 @@ function extractPdfVehicleName(text) {
   return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i);
 }
 
+function buildDrivePiPdfInsertions({ siteId, localFormato, periodo, clickUrl }) {
+  if (!siteId || !localFormato || !periodo?.periodoInicio || !periodo?.periodoFim) return [];
+  return [{
+    siteId,
+    localFormato: localFormato.replace(/\s*-\s*[0-9 Xx]+$/, "").trim(),
+    localFormatoNormalizado: "MEGABANNER TOPO",
+    periodoInicio: periodo.periodoInicio,
+    periodoFim: periodo.periodoFim,
+    periodoOriginal: periodo.periodoOriginal,
+    clickUrl,
+  }];
+}
+
 async function parseDrivePiPdfFields(archived) {
   const extracted = await extractTextFromArchivedPdf(archived);
   if (!extracted) return {};
@@ -1424,17 +1437,12 @@ async function parseDrivePiPdfFields(archived) {
     rawTextExcerpt: parsed.rawTextExcerpt,
     parseError: parsed.parseError,
     explicitPiCandidates: parsed.explicitPiCandidates,
-    insertions: ids.siteId && parsed.localFormato && parsed.periodo.periodoInicio && parsed.periodo.periodoFim
-      ? [{
-          siteId: ids.siteId,
-          localFormato: parsed.localFormato.replace(/\s*-\s*[0-9 Xx]+$/, "").trim(),
-          localFormatoNormalizado: "MEGABANNER TOPO",
-          periodoInicio: parsed.periodo.periodoInicio,
-          periodoFim: parsed.periodo.periodoFim,
-          periodoOriginal: parsed.periodo.periodoOriginal,
-          clickUrl: parsed.clickUrl,
-        }]
-      : [],
+    insertions: buildDrivePiPdfInsertions({
+      siteId: ids.siteId,
+      localFormato,
+      periodo: parsed.periodo,
+      clickUrl: parsed.clickUrl,
+    }),
   };
 }
 
@@ -6691,6 +6699,7 @@ export {
   buildAdrotatePublishPayload,
   buildPerrengueAdrotateRestorePhp,
   buildPerrengueAdrotateSnapshotPhp,
+  buildDrivePiPdfInsertions,
   clientAliasCandidates,
   extractPdfCommercialLabels,
   extractPdfCompetencia,
@@ -6710,6 +6719,7 @@ export {
   mergeDrivePiFields,
   parsePeriodoFromBboxText,
   parsePeriodoFromLayoutText,
+  parseDrivePiPdfFields,
   resolveDrivePiClickUrl,
   resolveOperationalDestination,
   selectDriveImageForInsertion,

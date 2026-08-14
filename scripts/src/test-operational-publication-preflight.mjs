@@ -127,6 +127,22 @@ const canonicalPdfInsertion = {
   periodoInicio: "2026-08-14",
   periodoFim: "2026-08-20",
 };
+assert.deepEqual(runner.buildDrivePiPdfInsertions({
+  siteId: canonicalPdfInsertion.siteId,
+  localFormato: "MEGABANNER TOPO",
+  periodo: {
+    periodoInicio: canonicalPdfInsertion.periodoInicio,
+    periodoFim: canonicalPdfInsertion.periodoFim,
+    periodoOriginal: "14/08 - 20/08",
+  },
+  clickUrl: null,
+}), [{
+  ...canonicalPdfInsertion,
+  localFormato: "MEGABANNER TOPO",
+  localFormatoNormalizado: "MEGABANNER TOPO",
+  periodoOriginal: "14/08 - 20/08",
+  clickUrl: null,
+}]);
 const agentInsertionWithWrongSchedule = {
   ...canonicalPdfInsertion,
   periodoInicio: "2026-08-18",
