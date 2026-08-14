@@ -826,7 +826,7 @@ function isImageMediaItem(item) {
   return /^image\//.test(mimeType) || /\.(gif|png|jpe?g|webp)$/i.test(name);
 }
 
-function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName }) {
+function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName, contentHash = null }) {
   const periodoInicio = readStringRecord(raw, ["periodoInicio", "inicio"]) || todayInCuiaba();
   const month = periodoInicio.slice(0, 7);
   const extension = path.extname(String(sourceName || "")).toLowerCase() || ".bin";
@@ -834,6 +834,7 @@ function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName }) {
     slugifyPathPart(fields?.piCodigo || fields?.operationalIdentityKey || "operational"),
     slugifyPathPart(fields?.campaignName || "campanha"),
     slugifyPathPart(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"),
+    ...(contentHash ? [slugifyPathPart(String(contentHash).slice(0, 16))] : []),
   ].join("-") + extension;
   return [ADOPS_VIDEO_MEDIA_BASE_PATH, slugifyPathPart(siteSigla || "site"), month, filename].filter(Boolean).join("/");
 }
@@ -1819,7 +1820,7 @@ function validateOperationalDriveItem(expected, actual, label) {
   return true;
 }
 
-async function inspectOperationalImage(filePath, expected) {
+async function readOperationalImageMetadata(filePath) {
   const script = `
 import json, sys
 from PIL import Image
@@ -1828,18 +1829,131 @@ with Image.open(p) as im:
     im.verify()
 with Image.open(p) as im:
     frames=getattr(im, "n_frames", 1)
+    durations=[]
+    for frame_index in range(frames):
+        im.seek(frame_index)
+        durations.append(im.info.get("duration", 0))
     im.seek(0)
     rgb=im.convert("RGB")
     extrema=rgb.getextrema()
     non_uniform=any(lo != hi for lo, hi in extrema)
-    print(json.dumps({"format": im.format, "width": im.width, "height": im.height, "frames": frames, "nonUniform": non_uniform}))
+    print(json.dumps({"format": im.format, "width": im.width, "height": im.height, "frames": frames, "durations": durations, "loop": im.info.get("loop", 0), "nonUniform": non_uniform}))
 `;
   const { stdout } = await execFileAsync("python3", ["-c", script, filePath], { timeout: 30000, maxBuffer: 1024 * 1024 });
-  const metadata = JSON.parse(stdout);
+  return JSON.parse(stdout);
+}
+
+async function inspectOperationalImage(filePath, expected) {
+  const metadata = await readOperationalImageMetadata(filePath);
   if (String(metadata.format || "").toUpperCase() !== String(expected?.format || "").toUpperCase()) throw new Error("Formato binário da mídia diverge do esperado.");
   if (Number(metadata.width) !== Number(expected?.width) || Number(metadata.height) !== Number(expected?.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
   if (!metadata.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
   return metadata;
+}
+
+async function prepareOperationalDeliveryImage(filePath, profile) {
+  const source = await readOperationalImageMetadata(filePath);
+  const expectedFormat = String(profile?.formats?.[0] || "GIF").toUpperCase();
+  if (String(source.format || "").toUpperCase() !== expectedFormat) throw new Error("Formato binário da mídia diverge do esperado.");
+  if (!source.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  if (Number(source.width) === Number(profile?.width) && Number(source.height) === Number(profile?.height)) {
+    return { transformed: false, source, metadata: source, filePath, transform: null };
+  }
+
+  const transform = profile?.deliveryTransform;
+  const exactTransform = transform?.mode === "pad-horizontal"
+    && Number(transform.sourceWidth) === Number(source.width)
+    && Number(transform.sourceHeight) === Number(source.height)
+    && Number(transform.targetWidth) === Number(profile?.width)
+    && Number(transform.targetHeight) === Number(profile?.height)
+    && Number(transform.targetWidth) > Number(transform.sourceWidth)
+    && Number(transform.targetHeight) === Number(transform.sourceHeight);
+  if (!exactTransform) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+
+  const outputPath = path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath, path.extname(filePath))}-${transform.targetWidth}x${transform.targetHeight}-delivery.gif`,
+  );
+  const script = `
+import sys
+from PIL import Image, ImageSequence
+source_path, output_path = sys.argv[1], sys.argv[2]
+target_width, target_height = int(sys.argv[3]), int(sys.argv[4])
+with Image.open(source_path) as source:
+    frames=[]
+    durations=[]
+    loop=source.info.get("loop", 0)
+    for frame in ImageSequence.Iterator(source):
+        rgba=frame.convert("RGBA")
+        if rgba.height != target_height or rgba.width >= target_width:
+            raise ValueError("invalid pad-horizontal source")
+        background=rgba.getpixel((0, 0))
+        canvas=Image.new("RGBA", (target_width, target_height), background)
+        canvas.alpha_composite(rgba, ((target_width-rgba.width)//2, 0))
+        frames.append(canvas)
+        durations.append(frame.info.get("duration", source.info.get("duration", 100)))
+    if not frames:
+        raise ValueError("empty GIF")
+    frames[0].save(output_path, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=loop, disposal=2, optimize=False)
+`;
+  await execFileAsync("python3", ["-c", script, filePath, outputPath, String(transform.targetWidth), String(transform.targetHeight)], { timeout: 30000, maxBuffer: 1024 * 1024 });
+  const metadata = await inspectOperationalImage(outputPath, {
+    width: Number(profile.width),
+    height: Number(profile.height),
+    format: expectedFormat,
+  });
+  if (Number(metadata.frames) !== Number(source.frames)) throw new Error("Transformação de entrega não preservou todos os frames do GIF.");
+  if (JSON.stringify(metadata.durations) !== JSON.stringify(source.durations) || Number(metadata.loop) !== Number(source.loop)) {
+    throw new Error("Transformação de entrega não preservou duração/loop do GIF.");
+  }
+  return { transformed: true, source, metadata, filePath: outputPath, transform };
+}
+
+async function assertOperationalMediaReadback({ mediaUrl, expectedSha256, expectedProfile, archivePath }) {
+  const url = new URL(mediaUrl);
+  url.searchParams.set("adops_sha", String(expectedSha256).slice(0, 16));
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "Cache-Control": "no-cache" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error(`Mídia canônica não respondeu HTTP válido: ${response.status}.`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const actualSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (actualSha256 !== expectedSha256) throw new Error("Readback público da mídia divergiu do SHA-256 da entrega.");
+  const readbackPath = `${archivePath}.public-readback.gif`;
+  await writeFile(readbackPath, bytes);
+  try {
+    const metadata = await inspectOperationalImage(readbackPath, {
+      width: Number(expectedProfile.width),
+      height: Number(expectedProfile.height),
+      format: "GIF",
+    });
+    return { ok: true, sha256: actualSha256, bytes: bytes.length, metadata };
+  } finally {
+    await rm(readbackPath, { force: true });
+  }
+}
+
+function normalizeOperationalMediaProfile(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  const deliveryTransform = profile.deliveryTransform && typeof profile.deliveryTransform === "object"
+    ? {
+        mode: String(profile.deliveryTransform.mode || ""),
+        sourceWidth: Number(profile.deliveryTransform.sourceWidth),
+        sourceHeight: Number(profile.deliveryTransform.sourceHeight),
+        targetWidth: Number(profile.deliveryTransform.targetWidth),
+        targetHeight: Number(profile.deliveryTransform.targetHeight),
+      }
+    : null;
+  return {
+    groupId: Number(profile.groupId),
+    width: Number(profile.width),
+    height: Number(profile.height),
+    formats: (Array.isArray(profile.formats) ? profile.formats : []).map((value) => String(value).toUpperCase()).sort(),
+    ...(deliveryTransform ? { deliveryTransform } : {}),
+  };
 }
 
 async function loadOperationalMediaProfile(siteSigla, localFormat) {
@@ -1848,7 +1962,7 @@ async function loadOperationalMediaProfile(siteSigla, localFormat) {
   const normalizedFormat = normalizeOperationalValue(localFormat);
   const matches = (siteConfig?.formatMappings || []).filter((mapping) => (mapping?.aliases || []).some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
   if (matches.length !== 1 || !matches[0]?.operationalMediaProfile) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
-  return { groupId: Number(matches[0].groupId), ...matches[0].operationalMediaProfile };
+  return normalizeOperationalMediaProfile({ groupId: Number(matches[0].groupId), ...matches[0].operationalMediaProfile });
 }
 
 function extractMediaLinksFromText(text) {
@@ -2947,7 +3061,10 @@ try { $current=$wpdb->get_results($wpdb->prepare('SELECT id FROM '.$at.' WHERE a
 if ($ids) { $sqlids=implode(',',array_map('intval',$ids)); $sids=$wpdb->get_col('SELECT DISTINCT schedule FROM '.$lt.' WHERE ad IN ('.$sqlids.') AND schedule>0'); $must($wpdb->query('DELETE FROM '.$lt.' WHERE ad IN ('.$sqlids.')'),'delete current links'); $must($wpdb->query('DELETE FROM '.$at.' WHERE id IN ('.$sqlids.')'),'delete current ads'); }
 foreach (($snap['schedules'] ?? []) as $row) $must($wpdb->replace($st,$row),'restore schedule'); foreach (($snap['ads'] ?? []) as $row) $must($wpdb->replace($at,$row),'restore ad'); foreach (($snap['links'] ?? []) as $row) $must($wpdb->replace($lt,$row),'restore link');
 foreach ($sids as $sid) { $sid=(int)$sid; $original=array_filter(($snap['schedules'] ?? []),fn($r)=>(int)$r['id']===$sid); if ($sid>0 && !$original && !(int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM '.$lt.' WHERE schedule=%d',$sid))) $must($wpdb->delete($st,['id'=>$sid]),'delete orphan schedule'); }
-$must($wpdb->query('COMMIT'),'commit'); echo wp_json_encode(['restored'=>true,'ads'=>count($snap['ads'] ?? [])]).PHP_EOL; } catch (Throwable $e) { $wpdb->query('ROLLBACK'); throw $e; }
+$must($wpdb->query('COMMIT'),'commit');
+$maintenance=null; $maintenance_error=null;
+try { if (function_exists('adrotate_adops_run_maintenance')) $maintenance=adrotate_adops_run_maintenance(); else $maintenance_error='adrotate_adops_run_maintenance indisponível'; } catch (Throwable $maintenance_exception) { $maintenance_error=$maintenance_exception->getMessage(); }
+echo wp_json_encode(['restored'=>true,'ads'=>count($snap['ads'] ?? []),'maintenance'=>$maintenance,'maintenance_error'=>$maintenance_error]).PHP_EOL; } catch (Throwable $e) { $wpdb->query('ROLLBACK'); throw $e; }
 `;
 }
 
@@ -2981,6 +3098,49 @@ async function restorePerrengueAdrotate({ insertionId, externalKey, snapshot }) 
   const result = parseWpCliJsonObject(execution.stdout);
   if (!result?.restored) throw new Error("Rollback AdRotate não confirmou restauração.");
   const readback = await snapshotPerrengueAdrotate({ insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate divergiu no readback pós-restauração.");
+  return { ...result, readbackVerified: true };
+}
+
+async function executeSiteRollbackPhp({ site, siteSigla, runnerPhp, input, mode }) {
+  if (shouldUsePerrenguePortainerAdrotate(siteSigla)) {
+    const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+    return execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, mode), 120000);
+  }
+  if (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath) throw new Error(`Portal ${siteSigla} sem transporte de rollback AdRotate.`);
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const remoteCommand = [
+    `tmp_runner="$(mktemp /tmp/adops-${mode}.XXXXXX.php)"`,
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(site.wpPath)} ADOPS_ROLLBACK_INPUT=${shellEscape(input)} ${shellEscape(site.phpBin ?? "php")} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
+  return execFileAsync("ssh", [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "UserKnownHostsFile=/tmp/adops-known-hosts",
+    ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+    "-p", String(site.sshPort),
+    `${site.sshUser}@${site.sshHost}`,
+    remoteCommand,
+  ], { maxBuffer: 2 * 1024 * 1024, timeout: 120000 });
+}
+
+async function snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey }) {
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey })).toString("base64");
+  const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateSnapshotPhp(), input, mode: "snapshot" });
+  return normalizePerrengueAdrotateSnapshot(parseWpCliJsonObject(execution.stdout));
+}
+
+async function restoreSiteAdrotate({ site, siteSigla, insertionId, externalKey, snapshot }) {
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey, snapshot: expectedSnapshot })).toString("base64");
+  const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateRestorePhp(), input, mode: "restore" });
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.restored) throw new Error("Rollback AdRotate não confirmou restauração.");
+  const readback = await snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey });
   if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate divergiu no readback pós-restauração.");
   return { ...result, readbackVerified: true };
 }
@@ -5685,13 +5845,19 @@ async function executeOperationalMediaPublish(payload) {
   if (String(materialized.md5 || "").toLowerCase() !== String(payload.media.md5Checksum).toLowerCase()) throw new Error("Checksum do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
   if (payload?.media?.size && Number(materialized.bytes) !== Number(payload.media.size)) throw new Error("Tamanho do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
   const mediaProfile = await loadOperationalMediaProfile(site?.sigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const approvedMediaProfile = normalizeOperationalMediaProfile(payload?.mediaProfile);
+  if (!approvedMediaProfile || JSON.stringify(mediaProfile) !== JSON.stringify(approvedMediaProfile)) {
+    throw new Error("Perfil de mídia/transformação mudou desde o fingerprint aprovado; nenhuma mutação foi aplicada.");
+  }
   const allowedFormats = Array.isArray(mediaProfile.formats) ? mediaProfile.formats.map((value) => String(value).toUpperCase()) : [];
   if (!allowedFormats.includes("GIF")) throw new Error("Perfil vigente do formato não permite GIF.");
-  const imageMetadata = await inspectOperationalImage(materialized.filePath, {
-    width: Number(mediaProfile.width),
-    height: Number(mediaProfile.height),
-    format: "GIF",
-  });
+  const deliveryImage = await prepareOperationalDeliveryImage(materialized.filePath, mediaProfile);
+  const imageMetadata = deliveryImage.metadata;
+  const deliveryBuffer = deliveryImage.transformed ? await readFile(deliveryImage.filePath) : materialized.buffer;
+  const deliverySha256 = crypto.createHash("sha256").update(deliveryBuffer).digest("hex");
+  const deliverySourceName = deliveryImage.transformed
+    ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${imageMetadata.width}x${imageMetadata.height}.gif`
+    : materialized.sourceName;
   if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
 
   const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
@@ -5704,16 +5870,28 @@ async function executeOperationalMediaPublish(payload) {
     periodoInicio: insertion.periodoInicio,
   };
   const bucket = spacesBucketForSite(siteSigla);
-  const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
-  await uploadBufferToSpaces({ buffer: materialized.buffer, bucket, objectKey, contentType: materialized.mimeType || "image/gif" });
+  const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: deliverySourceName, contentHash: deliverySha256 });
+  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: materialized.mimeType || "image/gif" });
   const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
-  const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, materialized.sha256].join(":" )).digest("hex");
+  const stagedReadback = await assertOperationalMediaReadback({
+    mediaUrl: stagedUrl,
+    expectedSha256: deliverySha256,
+    expectedProfile: mediaProfile,
+    archivePath: deliveryImage.filePath,
+  });
+  const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, deliverySha256].join(":" )).digest("hex");
   const wordpressImport = String(siteSigla).toUpperCase() === "PERRENGUE"
-    ? await importPerrengueMediaFromUrl({ sourceUrl: stagedUrl, filename: materialized.sourceName, mediaKey })
+    ? await importPerrengueMediaFromUrl({ sourceUrl: stagedUrl, filename: deliverySourceName, mediaKey })
     : null;
   const mediaUrl = wordpressImport?.url || stagedUrl;
-  const probe = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30000) });
-  if (!probe.ok) throw new Error(`Mídia canônica não respondeu HTTP válido: ${probe.status}.`);
+  const canonicalReadback = mediaUrl === stagedUrl
+    ? stagedReadback
+    : await assertOperationalMediaReadback({
+        mediaUrl,
+        expectedSha256: deliverySha256,
+        expectedProfile: mediaProfile,
+        archivePath: deliveryImage.filePath,
+      });
   const [latestInsertion, latestCampaign] = await Promise.all([
     privateApiGet(`/api/insertions/${insertionId}`),
     privateApiGet(`/api/campaigns/${campaignId}`),
@@ -5722,7 +5900,7 @@ async function executeOperationalMediaPublish(payload) {
   const latestSite = latestSiteId ? await privateApiGet(`/api/sites/${latestSiteId}`) : null;
   validateOperationalPublicationContract(payload, { insertion: latestInsertion, campaign: latestCampaign, site: latestSite });
   const externalKey = `ADOPS-${String(siteSigla).toUpperCase()}-${insertionId}`;
-  const adrotateSnapshot = await snapshotPerrengueAdrotate({ insertionId, externalKey });
+  const adrotateSnapshot = await snapshotSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey });
   let preview;
   let published;
   let insertionPatched = false;
@@ -5735,6 +5913,9 @@ async function executeOperationalMediaPublish(payload) {
         latestInsertion.observacoes,
         `Link destino informado: ${destinationUrl}`,
         `Mídia validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${imageMetadata.width}x${imageMetadata.height}; ${imageMetadata.frames} frame(s)).`,
+        deliveryImage.transformed
+          ? `Derivação de entrega auditável: original ${deliveryImage.source.width}x${deliveryImage.source.height} preservado; canvas ${imageMetadata.width}x${imageMetadata.height} por ${deliveryImage.transform.mode}; SHA-256 origem ${materialized.sha256}; SHA-256 entrega ${deliverySha256}.`
+          : null,
         payload.identityMode === "operational_identity"
           ? "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial."
           : `Identidade composta confirmada por planilha, inserção canônica e pasta Drive (PI ${payload.expectedPiCodigo}).`,
@@ -5773,19 +5954,22 @@ async function executeOperationalMediaPublish(payload) {
       }).catch((rollbackError) => rollbackErrors.push(`insertion:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
     }
     let adrotateRestored = false;
-    await restorePerrengueAdrotate({ insertionId, externalKey, snapshot: adrotateSnapshot })
+    await restoreSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey, snapshot: adrotateSnapshot })
       .then(() => { adrotateRestored = true; })
       .catch((rollbackError) => rollbackErrors.push(`adrotate:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
     if (adrotateRestored) {
       const previousAd = selectCanonicalSnapshotAd(adrotateSnapshot);
       const previousMediaBasename = firstNonEmptyString(previousAd?.adops_media_basename, mediaBasenameFromUrl(previousAd?.image));
-      await executePerrengueHeadlessRebuild({
-        insertionId,
-        adId: readPositiveInteger(previousAd?.id) || 0,
-        mediaBasename: previousMediaBasename || mediaBasenameFromUrl(mediaUrl),
-        purgeCache: true,
-        operation: "rollback",
-      }).then(async () => {
+      const rebuildRestoredConsumer = String(siteSigla).toUpperCase() === "PERRENGUE"
+        ? executePerrengueHeadlessRebuild({
+            insertionId,
+            adId: readPositiveInteger(previousAd?.id) || 0,
+            mediaBasename: previousMediaBasename || mediaBasenameFromUrl(mediaUrl),
+            purgeCache: true,
+            operation: "rollback",
+          })
+        : Promise.resolve({ skipped: true, reason: "wordpress_public_consumer" });
+      await rebuildRestoredConsumer.then(async () => {
         const publicRollback = previousAd
           ? await validateRestoredAdHtml({ site, insertionId, previousAdId: readPositiveInteger(previousAd.id), previousMediaBasename, rejectedMediaBasename: mediaBasenameFromUrl(mediaUrl) })
           : await validateMediaAbsentFromPublicHtml({ site, insertionId, mediaBasename: mediaBasenameFromUrl(mediaUrl) });
@@ -5801,7 +5985,18 @@ async function executeOperationalMediaPublish(payload) {
     campaignId,
     identityMode: payload.identityMode,
     commercialIdentityStatus: payload.identityMode === "sheet_drive_composite" ? "confirmed" : "awaiting_authoritative_pi",
-    media: { sourceDriveFileId: mediaId, stagedUrl, mediaUrl, metadata: imageMetadata },
+    media: {
+      sourceDriveFileId: mediaId,
+      stagedUrl,
+      mediaUrl,
+      metadata: imageMetadata,
+      transformed: deliveryImage.transformed,
+      sourceMetadata: deliveryImage.source,
+      sourceSha256: materialized.sha256,
+      deliverySha256,
+      stagedReadback,
+      canonicalReadback,
+    },
     destinationUrl,
     preview,
     published,
@@ -6754,6 +6949,7 @@ async function main() {
 
 export {
   agencyAliasCandidates,
+  buildSpacesImageObjectKey,
   buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,
   buildAdrotatePublishPayload,
@@ -6776,6 +6972,7 @@ export {
   hasHttpsDrivePiDestination,
   mergeExpectedDrivePiContext,
   inspectOperationalImage,
+  prepareOperationalDeliveryImage,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
   parsePeriodoFromBboxText,

@@ -1,14 +1,23 @@
 import crypto from "node:crypto";
 import adrotateSites from "../../../../config/adrotate-sites.json";
 
-export function isCompositePublicationTarget(siteSigla: unknown, localFormat: unknown) {
+export function resolveCompositePublicationTarget(siteSigla: unknown, localFormat: unknown) {
   const site = String(siteSigla ?? "").trim().toUpperCase();
   const format = String(localFormat ?? "").trim().toUpperCase().replace(/\s+/g, " ");
   const siteConfig = (adrotateSites as Record<string, any>)[site];
-  return (siteConfig?.formatMappings ?? []).some((mapping: any) => (
+  const matches = (siteConfig?.formatMappings ?? []).filter((mapping: any) => (
     mapping?.operationalMediaProfile
     && (mapping?.aliases ?? []).some((alias: unknown) => String(alias ?? "").trim().toUpperCase().replace(/\s+/g, " ") === format)
   ));
+  if (matches.length !== 1) return null;
+  return {
+    groupId: Number(matches[0].groupId),
+    ...JSON.parse(JSON.stringify(matches[0].operationalMediaProfile)),
+  };
+}
+
+export function isCompositePublicationTarget(siteSigla: unknown, localFormat: unknown) {
+  return Boolean(resolveCompositePublicationTarget(siteSigla, localFormat));
 }
 
 export class CampaignEvidenceExportConflict extends Error {
@@ -137,6 +146,10 @@ export function buildPendingPublicationView<T extends {
     const mediaFiles = Array.isArray(item.drive?.mediaFiles) ? item.drive.mediaFiles : [];
     const pdfFiles = Array.isArray(item.drive?.pdfFiles) ? item.drive.pdfFiles : [];
     const textFiles = Array.isArray(item.drive?.textFiles) ? item.drive.textFiles : [];
+    const operationalMediaProfile = resolveCompositePublicationTarget(
+      item.siteSigla,
+      item.format?.normalized ?? item.format?.adops ?? item.format?.sheet,
+    );
     const gates = {
       sheetUnique: operationalCounts.get(operationalKey(item)) === 1,
       insertionUnique: item.adops?.status === "matched"
@@ -196,6 +209,7 @@ export function buildPendingPublicationView<T extends {
       media: mediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       pdfDocuments: pdfFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       destinationDocuments: textFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+      operationalMediaProfile,
     };
     const operationalIdentity = {
       gates,

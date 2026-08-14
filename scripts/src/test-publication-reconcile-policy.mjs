@@ -27,6 +27,7 @@ function item(overrides = {}) {
       source: {
         folderId: "folder-radar-perrengue",
         folderPath: "/PERRENGUE/AGOSTO/PI - TCE - RADAR",
+        operationalMediaProfile: { groupId: 2, width: 670, height: 90, formats: ["GIF"] },
         media: [{ id: "gif-radar", name: "670x90 tce.gif", mimeType: "image/gif" }],
         destinationDocuments: [{ id: "doc-radar", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
       },
@@ -44,6 +45,7 @@ test("reconciliador cria preflight operacional para rascunho sem PI/PDF", () => 
   assert.equal(plan.actions[0]?.payload.expectedCampaignId, 989);
   assert.equal(plan.actions[0]?.payload.expectedInsertionId, 1944);
   assert.equal(plan.actions[0]?.payload.expectedPiCodigo, undefined);
+  assert.deepEqual(plan.actions[0]?.payload.mediaProfile, { groupId: 2, width: 670, height: 90, formats: ["GIF"] });
 });
 
 test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", () => {
@@ -100,6 +102,7 @@ test("reconciliador cria preflight composto para a inserção canônica sem exig
         expectedPiCodigo: "17046",
         folderId: "folder-17046",
         folderPath: "/PERRENGUE/AGOSTO/PI 17046 - CRIME AMBIENTAL",
+        operationalMediaProfile: { groupId: 1, width: 825, height: 120, formats: ["GIF"] },
         media: [{ id: "gif-17046" }],
         pdfDocuments: [{ id: "pdf-17046" }],
         destinationDocuments: [{ id: "redirect-17046" }],

@@ -129,9 +129,36 @@ assert.throws(() => runner.validateOperationalPublicationScope({
 }), /portal ainda não suportado/i);
 
 const operationalConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+const objectKeyA = runner.buildSpacesImageObjectKey({
+  siteSigla: "ROO",
+  fields: { operationalIdentityKey: "insertion-2310", campaignName: "PRESTAÇÃO DE CONTAS" },
+  raw: { periodoInicio: "2026-08-14", localFormato: "MEGABANNER TOPO" },
+  sourceName: "banner-825x120.gif",
+  contentHash: "a".repeat(64),
+});
+const objectKeyB = runner.buildSpacesImageObjectKey({
+  siteSigla: "ROO",
+  fields: { operationalIdentityKey: "insertion-2310", campaignName: "PRESTAÇÃO DE CONTAS" },
+  raw: { periodoInicio: "2026-08-14", localFormato: "MEGABANNER TOPO" },
+  sourceName: "banner-825x120.gif",
+  contentHash: "b".repeat(64),
+});
+assert.notEqual(objectKeyA, objectKeyB, "mídias com bytes distintos precisam de object keys distintas");
+assert.match(objectKeyA, /-aaaaaaaaaaaaaaaa\.gif$/);
 for (const siteSigla of ["ROO", "AFL"]) {
   const mapping = operationalConfig[siteSigla].formatMappings.find((item) => item.groupId === 1);
-  assert.deepEqual(mapping.operationalMediaProfile, { width: 825, height: 120, formats: ["GIF"] }, `${siteSigla} precisa do perfil binário contratado`);
+  assert.deepEqual(mapping.operationalMediaProfile, {
+    width: 825,
+    height: 120,
+    formats: ["GIF"],
+    deliveryTransform: {
+      mode: "pad-horizontal",
+      sourceWidth: 820,
+      sourceHeight: 120,
+      targetWidth: 825,
+      targetHeight: 120,
+    },
+  }, `${siteSigla} precisa do perfil binário contratado e da transformação explícita da peça recebida`);
 }
 
 assert.equal(runner.validateExpectedDrivePiIdentity({
@@ -604,7 +631,20 @@ assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublis
 const adrotateConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
 for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
-  assert.deepEqual(mapping?.operationalMediaProfile, { width, height, formats: ["GIF"] },
+  assert.deepEqual(mapping?.operationalMediaProfile, {
+    width,
+    height,
+    formats: ["GIF"],
+    ...(groupId === 1 ? {
+      deliveryTransform: {
+        mode: "pad-horizontal",
+        sourceWidth: 820,
+        sourceHeight: 120,
+        targetWidth: 825,
+        targetHeight: 120,
+      },
+    } : {}),
+  },
     `grupo ${groupId} deve ter perfil binário único para o preflight operacional`);
 }
 
@@ -617,6 +657,45 @@ try {
   assert.equal(metadata.height, 90);
   assert.equal(metadata.format, "GIF");
   await assert.rejects(() => runner.inspectOperationalImage(file, { width: 825, height: 120, format: "GIF" }), /Dimens/);
+  const supplied = path.join(dir, "supplied-820x120.gif");
+  await execFileAsync("convert", [
+    "-delay", "20", "-size", "820x120", "gradient:#0057b8-#ffffff",
+    "-delay", "30", "-size", "820x120", "gradient:#ffffff-#0057b8",
+    "-loop", "0", supplied,
+  ]);
+  const delivery = await runner.prepareOperationalDeliveryImage(supplied, {
+    width: 825,
+    height: 120,
+    formats: ["GIF"],
+    deliveryTransform: {
+      mode: "pad-horizontal",
+      sourceWidth: 820,
+      sourceHeight: 120,
+      targetWidth: 825,
+      targetHeight: 120,
+    },
+  });
+  assert.equal(delivery.transformed, true);
+  assert.equal(delivery.source.width, 820);
+  assert.equal(delivery.source.height, 120);
+  assert.equal(delivery.metadata.width, 825);
+  assert.equal(delivery.metadata.height, 120);
+  assert.equal(delivery.metadata.frames, 2);
+  assert.deepEqual(delivery.metadata.durations, delivery.source.durations);
+  assert.equal(delivery.metadata.loop, delivery.source.loop);
+  assert.match(delivery.filePath, /825x120-delivery\.gif$/);
+  await assert.rejects(() => runner.prepareOperationalDeliveryImage(supplied, {
+    width: 970,
+    height: 90,
+    formats: ["GIF"],
+    deliveryTransform: {
+      mode: "pad-horizontal",
+      sourceWidth: 820,
+      sourceHeight: 120,
+      targetWidth: 825,
+      targetHeight: 120,
+    },
+  }), /Dimens/);
   for (const [name, source] of [
     ["snapshot.php", runner.buildPerrengueAdrotateSnapshotPhp()],
     ["restore.php", runner.buildPerrengueAdrotateRestorePhp()],

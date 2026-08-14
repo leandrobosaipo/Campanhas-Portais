@@ -69,7 +69,14 @@
         "operationalMediaProfile": {
           "width": 825,
           "height": 120,
-          "formats": ["GIF"]
+          "formats": ["GIF"],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
         },
         "auditOverrides": {
           "gifFrameSelection": "source_preferred",
@@ -588,7 +595,14 @@
           "height": 120,
           "formats": [
             "GIF"
-          ]
+          ],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
         },
         "auditOverrides": {
           "animatedBannerDelayMs": 3200,
@@ -1059,7 +1073,14 @@
           "height": 120,
           "formats": [
             "GIF"
-          ]
+          ],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
         },
         "auditOverrides": {
           "preferArticleFallbackForRetro": false,

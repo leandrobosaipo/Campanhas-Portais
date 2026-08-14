@@ -20,9 +20,10 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
       const cod5_media = Array.isArray(cod5_source?.media) ? cod5_source.media : [];
       const cod5_documents = Array.isArray(cod5_source?.destinationDocuments) ? cod5_source.destinationDocuments : [];
       const cod5_pdfs = Array.isArray(cod5_source?.pdfDocuments) ? cod5_source.pdfDocuments : [];
+      const cod5_mediaProfile = cod5_source?.operationalMediaProfile;
       const cod5_composite = cod5_item?.identityMode === "sheet_drive_composite";
       const cod5_expectedPi = cod5_string(cod5_source?.expectedPiCodigo || cod5_item?.sourceIdentity?.canonicalPi);
-      if (!Number.isInteger(cod5_campaignId) || cod5_campaignId <= 0 || !cod5_fingerprint || cod5_media.length !== 1 || cod5_documents.length !== 1 || (cod5_composite && (cod5_pdfs.length !== 1 || !cod5_expectedPi))) {
+      if (!Number.isInteger(cod5_campaignId) || cod5_campaignId <= 0 || !cod5_fingerprint || !cod5_mediaProfile || cod5_media.length !== 1 || cod5_documents.length !== 1 || (cod5_composite && (cod5_pdfs.length !== 1 || !cod5_expectedPi))) {
         cod5_blockers.push({ insertionId: cod5_insertionId, code: "operational_preflight_source_incomplete", reason: "Identidade operacional não contém uma única mídia, destino e fingerprint." });
         continue;
       }
@@ -44,6 +45,7 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
           media: cod5_media[0],
           pdfDocument: cod5_composite ? cod5_pdfs[0] : undefined,
           destinationDocument: cod5_documents[0],
+          mediaProfile: cod5_mediaProfile,
           fingerprint: cod5_fingerprint,
         },
       });

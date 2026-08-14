@@ -28,6 +28,11 @@ test("gate composto deriva exatamente dos perfis de mídia vigentes", () => {
           Boolean(mapping.operationalMediaProfile),
           `${siteSigla} ${alias}`,
         );
+        assert.deepEqual(
+          contract.resolveCompositePublicationTarget(siteSigla, alias),
+          mapping.operationalMediaProfile ? { groupId: Number(mapping.groupId), ...mapping.operationalMediaProfile } : null,
+          `${siteSigla} ${alias} precisa snapshotar o perfil exato no fingerprint`,
+        );
       }
     }
   }
@@ -287,6 +292,10 @@ test("libera identidade composta quando planilha, AdOps e pasta única concordam
   assert.equal(result.items[0].resumeAction, "run_composite_preflight_and_publish");
   assert.equal(result.items[0].operationalIdentity.source.expectedPiCodigo, "17046");
   assert.equal(result.items[0].operationalIdentity.source.pdfDocuments[0].id, "pdf-17046");
+  assert.deepEqual(result.items[0].operationalIdentity.source.operationalMediaProfile, {
+    groupId: 1,
+    ...adrotateSites.PERRENGUE.formatMappings.find((mapping) => mapping.groupId === 1).operationalMediaProfile,
+  });
 });
 
 test("libera identidade composta nos portais configurados sem exigir que o PDF repita o período da planilha", () => {
@@ -327,6 +336,10 @@ test("libera identidade composta nos portais configurados sem exigir que o PDF r
     });
     assert.equal(result.items[0].identityMode, "sheet_drive_composite", siteSigla);
     assert.equal(result.items[0].publicationStatus, "ready_for_publication", siteSigla);
+    assert.deepEqual(result.items[0].operationalIdentity.source.operationalMediaProfile, {
+      groupId: 1,
+      ...adrotateSites[siteSigla].formatMappings.find((mapping) => mapping.groupId === 1).operationalMediaProfile,
+    }, siteSigla);
   }
 });
 
