@@ -4209,6 +4209,7 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
 
   const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
   const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
+  const forceCapture = req.body?.force === true || req.body?.force === "true";
   const requestedIdempotencyKey = typeof req.headers["idempotency-key"] === "string"
     ? req.headers["idempotency-key"].trim()
     : "";
@@ -4237,7 +4238,7 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
         insertionId: params.data.id,
         targetDate,
         captureAt,
-        replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate,
+        replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate || forceCapture,
         candidateOnly,
         promoteCandidate,
       }],

@@ -152,12 +152,13 @@ async function request(pathname, init = {}) {
   return payload;
 }
 
-async function privateApi(pathname, body) {
+async function privateApi(pathname, body, extraHeaders = {}) {
   const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
+      ...extraHeaders,
     },
     body: JSON.stringify(body || {}),
   });
@@ -166,6 +167,42 @@ async function privateApi(pathname, body) {
     throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
   }
   return payload;
+}
+
+async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false }) {
+  if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
+  const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
+  const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
+    date,
+    captureAt,
+    replace: replace || force,
+    force,
+  }, { "Idempotency-Key": idempotencyKey });
+  const jobId = String(accepted?.jobId || "").trim();
+  if (!jobId) throw new Error(`API não retornou jobId para captura ${insertionId}/${date}.`);
+
+  const deadline = Date.now() + 30 * 60_000;
+  while (Date.now() < deadline) {
+    const job = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/jobs/${encodeURIComponent(jobId)}`);
+    await progressJob(outerJobId, {
+      stage: "capture_async_wait",
+      captureJobId: jobId,
+      insertionId,
+      date,
+      captureStatus: job?.status ?? "unknown",
+    });
+    if (job?.status === "completed") {
+      const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
+      if (!item || item.status !== "ok") throw new Error(item?.error || `Captura assíncrona ${jobId} concluiu sem item aprovado.`);
+      return { jobId, job, item };
+    }
+    if (["failed", "cancelled"].includes(String(job?.status || ""))) {
+      const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
+      throw new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
+    }
+    await sleep(5000);
+  }
+  throw new Error(`Timeout aguardando captura assíncrona ${jobId} para ${insertionId}/${date}.`);
 }
 
 async function sendRunnerHeartbeat(force = false) {
@@ -4965,32 +5002,42 @@ async function resolveBackfillInsertionIds(payload) {
   return { mode: "legacy-filters", insertionIds: null };
 }
 
-async function executePrintBackfill(payload) {
+async function executePrintBackfill(job) {
+  const payload = job?.payload || {};
   const resolved = await resolveBackfillInsertionIds(payload);
-  if (!resolved.insertionIds) {
-    return privateApi("/api/insertions/capture-proof/backfill-overdue", {
-      competencia: payload?.competencia ?? undefined,
-      siteId: payload?.siteId ?? undefined,
-      insertionId: payload?.insertionId ?? undefined,
-    });
-  }
-
   const replaceRequested = payload?.replace === true;
   const force = payload?.force === true;
   const items = [];
   const skipped = [];
-  let totalDates = 0;
+  const captureTargets = [];
 
-  for (const insertionId of resolved.insertionIds) {
-    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
-    const dates = clampDateRange(insertion?.periodoInicio, insertion?.periodoFim, payload?.fromDate, payload?.toDate);
-    if (!dates.length) {
-      skipped.push({ insertionId, reason: "sem_periodo_valido_ou_fora_do_intervalo" });
-      continue;
+  if (resolved.insertionIds) {
+    for (const insertionId of resolved.insertionIds) {
+      const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+      const dates = clampDateRange(insertion?.periodoInicio, insertion?.periodoFim, payload?.fromDate, payload?.toDate);
+      if (!dates.length) {
+        skipped.push({ insertionId, reason: "sem_periodo_valido_ou_fora_do_intervalo" });
+        continue;
+      }
+      captureTargets.push(...dates.map((date) => ({ insertionId, date, captureAt: null })));
     }
+  } else {
+    const params = new URLSearchParams();
+    if (payload?.competencia) params.set("competencia", String(payload.competencia));
+    if (payload?.siteId) params.set("siteId", String(payload.siteId));
+    const preview = await privateApiGet(`/api/insertions/capture-proof/backfill-overdue/preview?${params.toString()}`);
+    const previewJobs = Array.isArray(preview?.jobs) ? preview.jobs : [];
+    for (const target of previewJobs) {
+      const insertionId = readPositiveInteger(target?.insertionId);
+      const date = String(target?.targetDate || "");
+      if (!insertionId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      if (payload?.fromDate && date < payload.fromDate) continue;
+      if (payload?.toDate && date > payload.toDate) continue;
+      captureTargets.push({ insertionId, date, captureAt: target?.captureAt ?? null });
+    }
+  }
 
-    for (const date of dates) {
-      totalDates += 1;
+  for (const { insertionId, date, captureAt } of captureTargets) {
       const before = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
         status: "status_error",
         error: error instanceof Error ? error.message : String(error),
@@ -5006,8 +5053,11 @@ async function executePrintBackfill(payload) {
         continue;
       }
 
-      const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
+      const capture = await enqueueAndWaitCaptureProof({
+        outerJobId: job.id,
+        insertionId,
         date,
+        captureAt,
         replace: replaceRequested || !isAuditApprovedStatus(before),
         force,
       });
@@ -5020,12 +5070,11 @@ async function executePrintBackfill(payload) {
         date,
         status: isAuditApprovedStatus(after) ? "ok" : "error",
         approved: isAuditApprovedStatus(after),
-        captureSkipped: Boolean(capture?.skipped),
-        evidenceUrl: after?.arquivoUrl ?? capture?.capture?.uploadedUrl ?? null,
+        captureSkipped: false,
+        evidenceUrl: after?.arquivoUrl ?? capture?.item?.uploadedUrl ?? null,
         checklistStatus: after?.status ?? null,
         error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
       });
-    }
   }
 
   const errors = items.filter((item) => item.status === "error");
@@ -5035,13 +5084,13 @@ async function executePrintBackfill(payload) {
     campaignId: resolved.campaignId ?? null,
     piCodigo: resolved.piCodigo ?? null,
     siteSigla: resolved.siteSigla ?? null,
-    insertionIds: resolved.insertionIds,
+    insertionIds: Array.from(new Set(captureTargets.map((target) => target.insertionId))),
     fromDate: payload?.fromDate ?? null,
     toDate: payload?.toDate ?? null,
     replace: replaceRequested,
     force,
-    totalInsertions: resolved.insertionIds.length,
-    totalDates,
+    totalInsertions: new Set(captureTargets.map((target) => target.insertionId)).size,
+    totalDates: captureTargets.length,
     generatedOrValidated: items.filter((item) => item.status === "ok" || item.status === "skipped").length,
     errors: errors.length,
     skipped,
@@ -5049,16 +5098,34 @@ async function executePrintBackfill(payload) {
   };
 }
 
-async function executePrintSingle(payload) {
+async function executePrintSingle(job) {
+  const payload = job?.payload || {};
   if (!payload?.insertionId) {
     throw new Error("print-single sem insertionId.");
   }
-  return privateApi(`/api/insertions/${payload.insertionId}/capture-proof`, {
-    date: payload?.date ?? undefined,
-    captureAt: payload?.captureAt ?? undefined,
-    replace: payload?.replace ?? undefined,
-    force: payload?.force ?? undefined,
+  const date = String(payload?.date || payload?.captureAt || todayInCuiaba()).slice(0, 10);
+  const capture = await enqueueAndWaitCaptureProof({
+    outerJobId: job.id,
+    insertionId: Number(payload.insertionId),
+    date,
+    captureAt: payload?.captureAt ?? null,
+    replace: payload?.replace === true,
+    force: payload?.force === true,
   });
+  return {
+    ok: true,
+    skipped: false,
+    date,
+    capture: {
+      status: "ok",
+      uploadedUrl: capture.item?.uploadedUrl ?? null,
+      captureLogId: capture.item?.captureLogId ?? null,
+    },
+    asyncJob: {
+      jobId: capture.jobId,
+      status: capture.job?.status ?? "completed",
+    },
+  };
 }
 
 async function executeEvidenceMonthlyReport(job) {
@@ -6365,10 +6432,10 @@ async function handleJob(job) {
     return executePrintBatch(payload);
   }
   if (job.kind === "print-backfill") {
-    return executePrintBackfill(payload);
+    return executePrintBackfill(job);
   }
   if (job.kind === "print-single") {
-    return executePrintSingle(payload);
+    return executePrintSingle(job);
   }
   if (job.kind === "telegram-send-evidence") {
     return executeTelegramSendEvidence(payload);

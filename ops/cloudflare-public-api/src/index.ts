@@ -975,7 +975,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "campaign-publication-reconcile" || kind === "drive-pi-ingest" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "campaign-publication-reconcile" || kind === "drive-pi-ingest" || kind === "adrotate-publish" || kind === "print-backfill" || kind === "print-single";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
