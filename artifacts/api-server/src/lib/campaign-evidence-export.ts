@@ -131,7 +131,7 @@ export function buildPendingPublicationView<T extends {
         && Number(item.adops?.campaignId || 0) > 0
         && Number(item.adops?.insertionId || 0) > 0
         && Number(item.adops?.operationalMatchCount ?? 1) === 1,
-      approvedOperationalTarget: Number(item.adops?.campaignId) === 989 && Number(item.adops?.insertionId) === 1944,
+      approvedOperationalTarget: String(item.siteSigla || "").trim().toUpperCase() === "PERRENGUE",
       folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
       mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
       destinationCandidateUnique: textFiles.length === 1,
@@ -141,7 +141,13 @@ export function buildPendingPublicationView<T extends {
       formatConsistent: !item.requiredActions?.includes("review_format_divergence"),
       sourceUnambiguous: item.sourceIdentity?.decision !== "needs_confirmation" && item.drive?.status !== "ambiguous",
     };
-    const operationalReady = !published && !authoritativePiInPdf && Object.values(gates).every(Boolean);
+    const operationalReady = !published
+      && item.sourceIdentity?.decision === "insufficient_data"
+      && !canonicalPi
+      && item.drive?.documentStatus === "missing"
+      && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? []).length === 0
+      && !authoritativePiInPdf
+      && Object.values(gates).every(Boolean);
     const fingerprintInput = {
       sheet: item.sheetSource,
       siteSigla: item.siteSigla,

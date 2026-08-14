@@ -1525,6 +1525,16 @@ function normalizeOperationalValue(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
+function validateOperationalPublicationScope({ campaignId, insertionId, siteSigla }) {
+  if (!readPositiveInteger(campaignId) || !readPositiveInteger(insertionId)) {
+    throw new Error("Preflight operacional sem campanha ou inserção canônica.");
+  }
+  if (normalizeOperationalValue(siteSigla) !== "PERRENGUE") {
+    throw new Error("Identidade operacional sem PDF recusada: portal ainda não suportado pelo publicador seguro.");
+  }
+  return true;
+}
+
 function validateOperationalPublicationContract(payload, { insertion, campaign, site }) {
   const campaignId = readPositiveInteger(insertion?.campanhaId ?? insertion?.campaignId);
   const checks = [
@@ -1537,8 +1547,9 @@ function validateOperationalPublicationContract(payload, { insertion, campaign, 
   ];
   const failed = checks.find(([ok]) => !ok);
   if (failed) throw new Error(`Preflight operacional divergiu em ${failed[1]}; nenhuma mutação foi aplicada.`);
-  const commercialPi = firstNonEmptyString(campaign?.piCodigo, insertion?.piCodigo);
-  if (/^\s*(?:PI\s*[-:]?\s*)?\d+\s*$/i.test(String(commercialPi || ""))) {
+  const commercialPis = [campaign?.piCodigo, insertion?.piCodigo].filter((value) => String(value || "").trim());
+  const commercialPi = firstNonEmptyString(...commercialPis);
+  if (commercialPis.some((value) => /\d{3,}/.test(String(value)))) {
     throw new Error("Identidade operacional não pode publicar com PI numérica ainda não confirmada por PDF.");
   }
   return { ok: true, preserveCommercialPi: commercialPi };
@@ -5178,7 +5189,6 @@ async function executeOperationalMediaPublish(payload) {
   const insertionId = readPositiveInteger(payload?.expectedInsertionId);
   const campaignId = readPositiveInteger(payload?.expectedCampaignId);
   if (!insertionId || !campaignId || !payload?.fingerprint) throw new Error("Preflight operacional sem IDs canônicos ou fingerprint.");
-  if (campaignId !== 989 || insertionId !== 1944) throw new Error("Exceção operacional sem PDF está limitada à campanha 989 e inserção 1944.");
 
   const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(payload?.targetDate || todayInCuiaba())}`);
   const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
@@ -5191,6 +5201,7 @@ async function executeOperationalMediaPublish(payload) {
   const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
   const siteId = readPositiveInteger(insertion?.siteId ?? insertion?.site?.id);
   const site = siteId ? await privateApiGet(`/api/sites/${siteId}`) : null;
+  validateOperationalPublicationScope({ campaignId, insertionId, siteSigla: site?.sigla });
   validateOperationalPublicationContract(payload, { insertion, campaign, site });
 
   const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");
@@ -5220,7 +5231,7 @@ async function executeOperationalMediaPublish(payload) {
     height: Number(mediaProfile.height),
     format: "GIF",
   });
-  if (mediaProfile.groupId !== 2) throw new Error("HOME 1/Perrengue não resolveu o grupo 2 na configuração vigente.");
+  if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
 
   const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
   const fields = { campaignName: campaign?.nome || liveItem?.campaignName || "RADAR", operationalIdentityKey: `insertion-${insertionId}` };
@@ -6276,6 +6287,7 @@ export {
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
   validateOperationalPublicationContract,
+  validateOperationalPublicationScope,
   validateOperationalDriveItem,
 };
 

@@ -810,11 +810,12 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     }
     * { box-sizing: border-box; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .skip-link:focus { position: fixed; z-index: 100; top: 8px; left: 8px; width: auto; height: auto; margin: 0; padding: 10px 12px; clip: auto; overflow: visible; border-radius: 4px; background: var(--ink); color: var(--panel); font-weight: 900; }
     body { margin: 0; background: var(--bg); color: var(--ink); font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0; }
     a { color: inherit; text-decoration: none; }
     svg { width: 16px; height: 16px; fill: currentColor; flex: 0 0 auto; }
     .wrap { width: min(1540px, calc(100% - 28px)); margin: 0 auto; }
-    header { position: sticky; top: 0; z-index: 20; background: color-mix(in oklch, var(--panel) 90%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(14px); }
+    header { position: static; background: color-mix(in oklch, var(--panel) 90%, transparent); border-bottom: 1px solid var(--line); }
     .topbar { min-height: 74px; display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; }
     .title { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .mark { width: 42px; height: 42px; display: grid; place-items: center; background: var(--ink); color: var(--panel); border-radius: 8px; font-weight: 900; }
@@ -826,6 +827,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .kpi span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 800; }
     .kpi b { display: block; margin-top: 5px; font-size: clamp(18px, 2vw, 28px); line-height: 1; }
     .tools { display: grid; gap: 10px; padding-bottom: 14px; }
+    .mobile-toolbar { display: none; }
+    .filter-panel { border: 0; padding: 0; background: var(--panel); color: var(--ink); }
+    .filter-panel-inner { display: grid; gap: 12px; padding: 16px; }
+    .filter-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .filter-panel-head h2 { font-size: 18px; }
+    .filter-close, .clear-filters, .modal-nav { min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 8px 12px; font: inherit; font-weight: 800; cursor: pointer; }
+    .filter-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .tool-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 320px); gap: 8px; }
     .search, .portal-filter { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); padding: 10px 12px; font: inherit; }
     .filters { display: flex; gap: 8px; overflow: auto; }
@@ -882,15 +890,20 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .modal-image { background: oklch(0.12 0.01 180); display: grid; place-items: center; min-height: 420px; }
     .modal-image img { max-width: 100%; max-height: 88vh; object-fit: contain; }
     .modal-side { padding: 14px; border-left: 1px solid var(--line); overflow: auto; }
-    .modal-side h2 { font-size: 18px; margin-bottom: 8px; }
+    .modal-side h2 { font-size: 18px; margin-bottom: 8px; padding-right: 72px; }
+    .modal-date { display: block; color: var(--muted); font-size: 12px; font-weight: 800; margin: -2px 0 8px; }
+    .modal-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+    .modal-nav:disabled { opacity: .45; cursor: not-allowed; }
+    .modal-details summary { min-height: 44px; display: flex; align-items: center; font-weight: 900; cursor: pointer; }
     .modal-side dl { display: grid; grid-template-columns: 88px 1fr; gap: 8px; font-size: 12px; }
     .modal-side dt { color: var(--muted); }
     .modal-side dd { margin: 0; overflow-wrap: anywhere; }
     .modal-days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 12px 0; }
-    .day-dot { border: 1px solid var(--line); border-radius: 6px; padding: 5px 2px; text-align: center; font-size: 10px; color: var(--muted); }
+    .day-dot { min-height: 44px; border: 1px solid var(--line); border-radius: 6px; padding: 5px 2px; text-align: center; font-size: 10px; color: var(--muted); background: var(--panel); cursor: pointer; }
     .day-dot.audited { color: var(--ok); border-color: color-mix(in oklch, var(--ok) 40%, var(--line)); }
     .day-dot.missing { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); }
     .day-dot.invalid_audit, .day-dot.failed, .day-dot.invalid_url { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, var(--line)); }
+    .day-dot.current { color: var(--panel); background: var(--steel); border-color: var(--steel); }
     .modal-close { position: absolute; min-width: 44px; min-height: 44px; top: 8px; right: 8px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; background: rgba(0,0,0,.66); color: white; padding: 8px 10px; cursor: pointer; font-weight: 900; }
     .forecast { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
     .forecast article { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
@@ -909,11 +922,29 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       .kpis { grid-template-columns: repeat(2, 1fr); }
       .portal-stats, .mini-stats { justify-content: flex-start; }
       .modal-side { border-left: 0; border-top: 1px solid var(--line); }
+      .desktop-tools { display: none; }
+      .mobile-toolbar { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px max(14px, env(safe-area-inset-right)) 6px max(14px, env(safe-area-inset-left)); background: color-mix(in oklch, var(--panel) 94%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(14px); }
+      .mobile-toolbar strong { min-width: 0; font-size: 14px; }
+      .mobile-toolbar span { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
+      .mobile-toolbar button { min-width: 88px; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--ink); color: var(--panel); font: inherit; font-weight: 900; }
+      .filter-panel { width: 100%; max-width: none; max-height: 85dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; }
+      .filter-panel::backdrop { background: rgba(8, 14, 15, .58); }
+      .filter-panel-inner { max-height: 85dvh; overflow: auto; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+      .filter-panel .tool-row { display: grid; gap: 10px; }
+      .filter-panel .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+      .filter-panel .filter { width: 100%; }
+      #modal { width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; }
+      #modal .modal-grid { max-height: 100dvh; height: 100%; grid-template-rows: minmax(38dvh, 58dvh) minmax(0, 1fr); }
+      #modal .modal-image { min-height: 0; }
+      #modal .modal-image img { max-height: 58dvh; }
+      #modal .modal-side { min-height: 0; overflow: auto; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+      .thumbs { grid-auto-columns: minmax(132px, 46%); }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
   </style>
 </head>
 <body>
+  <a class="visually-hidden skip-link" href="#mainContent">Ir para as campanhas</a>
   <header>
     <div class="wrap topbar">
       <div class="title">
@@ -936,20 +967,20 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
         <div class="kpi"><span>sem pub.</span><b>${summary.notPublished}</b></div>
         <div class="kpi"><span>evidências</span><b>${summary.auditedDays}</b></div>
       </section>
-      <div class="tools">
+      <div class="tools desktop-tools" aria-label="Filtros do relatório">
         <div class="tool-row">
           <div>
-            <label for="campaignSearch" class="visually-hidden">Buscar campanha, PI ou portal</label>
-            <input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
+            <label for="campaignSearchDesktop" class="visually-hidden">Buscar campanha, PI ou portal</label>
+            <input class="search" id="campaignSearchDesktop" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off">
           </div>
           <div>
-            <label for="portalFilter" class="visually-hidden">Filtrar por portal</label>
-            <select class="portal-filter" id="portalFilter">
+            <label for="portalFilterDesktop" class="visually-hidden">Filtrar por portal</label>
+            <select class="portal-filter" id="portalFilterDesktop">
               ${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}
             </select>
           </div>
         </div>
-        <nav class="filters" aria-label="Filtros de campanha">
+        <nav class="filters" aria-label="Filtros de campanha" data-filter-scope="desktop">
           <button class="filter active" type="button" data-state="all">todas</button>
           <button class="filter" type="button" data-state="active">ativas</button>
           <button class="filter" type="button" data-state="ok">completas</button>
@@ -961,7 +992,30 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       </div>
     </div>
   </header>
-  <main class="wrap">
+  <div class="mobile-toolbar" aria-label="Controles móveis do relatório">
+    <strong>Evidências AdOps<span id="resultCount" aria-live="polite">${summary.total} campanhas</span></strong>
+    <button type="button" id="filterToggle" aria-controls="filterPanel" aria-expanded="false">Filtros</button>
+  </div>
+  <dialog class="filter-panel" id="filterPanel" aria-labelledby="filterPanelTitle">
+    <div class="filter-panel-inner">
+      <div class="filter-panel-head"><h2 id="filterPanelTitle">Filtrar campanhas</h2><button class="filter-close" type="button" id="filterClose">Fechar</button></div>
+      <div class="tool-row">
+        <div><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
+        <div><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
+      </div>
+      <nav class="filters" aria-label="Estado da campanha" data-filter-scope="mobile">
+        <button class="filter active" type="button" data-state="all">todas</button>
+        <button class="filter" type="button" data-state="active">ativas</button>
+        <button class="filter" type="button" data-state="ok">completas</button>
+        <button class="filter" type="button" data-state="pending">pendentes</button>
+        <button class="filter" type="button" data-state="invalid">com erro</button>
+        <button class="filter" type="button" data-state="scheduled">agendadas</button>
+        <button class="filter" type="button" data-state="ending">encerrando</button>
+      </nav>
+      <div class="filter-actions"><button class="clear-filters" type="button" id="clearFilters">Limpar filtros</button></div>
+    </div>
+  </dialog>
+  <main class="wrap" id="mainContent" tabindex="-1">
     <section class="forecast" aria-label="Previsão dos próximos sete dias">
       <article><h2>Próximas a entrar no ar</h2>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.")}</article>
       <article><h2>Próximas a vencer</h2>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
@@ -976,8 +1030,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       <div class="modal-image"><img id="modalImg" alt="Evidência ampliada"></div>
       <aside class="modal-side">
         <h2 id="modalTitle">Evidência</h2>
+        <span class="modal-date" id="modalDate" aria-live="polite"></span>
+        <div class="modal-navigation"><button class="modal-nav" type="button" id="modalPrevious">Data anterior</button><button class="modal-nav" type="button" id="modalNext">Próxima data</button></div>
         <div class="modal-days" id="modalDays"></div>
-        <dl id="modalMeta"></dl>
+        <details class="modal-details" open><summary>Detalhes da evidência</summary><dl id="modalMeta"></dl></details>
         <div class="links" id="modalLinks"></div>
       </aside>
     </div>
@@ -988,22 +1044,34 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     const modal = document.getElementById('modal');
     const modalImg = document.getElementById('modalImg');
     const modalTitle = document.getElementById('modalTitle');
+    const modalDate = document.getElementById('modalDate');
     const modalDays = document.getElementById('modalDays');
     const modalMeta = document.getElementById('modalMeta');
     const modalLinks = document.getElementById('modalLinks');
     const close = document.getElementById('modalClose');
+    const previous = document.getElementById('modalPrevious');
+    const next = document.getElementById('modalNext');
+    let currentItem = null;
+    let currentDayIndex = -1;
+    let lastModalTrigger = null;
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const iconLink = (href, label) => href ? '<a class="icon-link" target="_blank" rel="noreferrer" href="' + esc(href) + '">' + esc(label) + '</a>' : '';
-    document.querySelectorAll('.thumb, .day-card, .thumb-empty').forEach((button) => {
-      button.addEventListener('click', () => {
-        const item = data[button.dataset.modalId];
-        const day = item.evidenceDays.find((entry) => entry.date === button.dataset.date) || item.evidenceDays.find((entry) => entry.url);
+    const renderModal = (item, requestedDate) => {
+        currentItem = item;
+        const requestedIndex = item.evidenceDays.findIndex((entry) => entry.date === requestedDate);
+        const firstWithUrl = item.evidenceDays.findIndex((entry) => entry.url);
+        currentDayIndex = requestedIndex >= 0 ? requestedIndex : firstWithUrl >= 0 ? firstWithUrl : 0;
+        const day = item.evidenceDays[currentDayIndex] || null;
         modalImg.src = day?.url || '';
         modalImg.alt = day?.url
           ? 'Evidência de ' + item.campanhaName + ' no portal ' + item.siteSigla + ' em ' + day.date
           : 'Sem imagem de evidência para esta data';
         modalTitle.textContent = '#' + item.id + ' · ' + item.campanhaName;
-        modalDays.innerHTML = item.evidenceDays.map((entry) => '<span class="day-dot ' + esc(entry.status) + '" title="' + esc(entry.statusDetail || entry.status) + '">' + esc(entry.date.slice(8, 10)) + '</span>').join('');
+        modalDate.textContent = day?.date ? 'Data selecionada: ' + day.date.split('-').reverse().join('/') : 'Sem data disponível';
+        previous.disabled = currentDayIndex <= 0;
+        next.disabled = currentDayIndex < 0 || currentDayIndex >= item.evidenceDays.length - 1;
+        modalDays.innerHTML = item.evidenceDays.map((entry, index) => '<button type="button" class="day-dot ' + esc(entry.status) + (index === currentDayIndex ? ' current' : '') + '" data-modal-date="' + esc(entry.date) + '" title="' + esc(entry.statusDetail || entry.status) + '" aria-label="Abrir evidência de ' + esc(entry.date) + '"' + (index === currentDayIndex ? ' aria-current="date"' : '') + '>' + esc(entry.date.slice(8, 10)) + '</button>').join('');
+        modalDays.querySelectorAll('[data-modal-date]').forEach((dayButton) => dayButton.addEventListener('click', () => renderModal(item, dayButton.dataset.modalDate)));
         modalMeta.innerHTML = [
           ['Portal', item.siteSigla],
           ['Cliente', item.clienteNome],
@@ -1027,15 +1095,48 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
           iconLink(item.mediaUrl, 'mídia'),
           iconLink('${adopsPanelBase}/insercoes/' + item.id, 'adops')
         ].join('');
+    };
+    document.querySelectorAll('.thumb, .day-card, .thumb-empty').forEach((button) => {
+      button.addEventListener('click', () => {
+        lastModalTrigger = button;
+        const item = data[button.dataset.modalId];
+        renderModal(item, button.dataset.date);
         modal.showModal();
       });
     });
+    previous.addEventListener('click', () => currentItem && currentDayIndex > 0 && renderModal(currentItem, currentItem.evidenceDays[currentDayIndex - 1].date));
+    next.addEventListener('click', () => currentItem && currentDayIndex < currentItem.evidenceDays.length - 1 && renderModal(currentItem, currentItem.evidenceDays[currentDayIndex + 1].date));
     close.addEventListener('click', () => modal.close());
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
-    let activeState = 'all';
+    modal.addEventListener('close', () => lastModalTrigger?.focus());
+    const params = new URLSearchParams(window.location.search);
+    const validStates = new Set(['all', 'active', 'ok', 'pending', 'invalid', 'scheduled', 'ending']);
+    let activeState = validStates.has(params.get('state')) ? params.get('state') : 'all';
     const search = document.getElementById('campaignSearch');
+    const searchDesktop = document.getElementById('campaignSearchDesktop');
     const portalFilter = document.getElementById('portalFilter');
+    const portalFilterDesktop = document.getElementById('portalFilterDesktop');
     const emptyResults = document.getElementById('emptyResults');
+    const resultCount = document.getElementById('resultCount');
+    const filterPanel = document.getElementById('filterPanel');
+    const filterToggle = document.getElementById('filterToggle');
+    const filterClose = document.getElementById('filterClose');
+    const clearFilters = document.getElementById('clearFilters');
+    search.value = params.get('q') || '';
+    searchDesktop.value = search.value;
+    const requestedPortal = String(params.get('portal') || 'ALL').toUpperCase();
+    const validPortal = Array.from(portalFilter.options).some((option) => option.value === requestedPortal) ? requestedPortal : 'ALL';
+    portalFilter.value = validPortal;
+    portalFilterDesktop.value = validPortal;
+    const syncFilterButtons = () => document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item.dataset.state === activeState));
+    const persistFilters = () => {
+      const nextParams = new URLSearchParams(window.location.search);
+      search.value ? nextParams.set('q', search.value) : nextParams.delete('q');
+      portalFilter.value !== 'ALL' ? nextParams.set('portal', portalFilter.value) : nextParams.delete('portal');
+      activeState !== 'all' ? nextParams.set('state', activeState) : nextParams.delete('state');
+      const query = nextParams.toString();
+      history.replaceState(null, '', window.location.pathname + (query ? '?' + query : '') + window.location.hash);
+    };
     const applyFilters = () => {
       const needle = String(search.value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
       const selectedPortal = portalFilter.value || 'ALL';
@@ -1048,18 +1149,36 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       document.querySelectorAll('.portal').forEach((portal) => {
         portal.hidden = !portal.querySelector('.campaign:not([hidden])');
       });
-      emptyResults.hidden = Boolean(document.querySelector('.campaign:not([hidden])'));
+      const visibleCount = document.querySelectorAll('.campaign:not([hidden])').length;
+      emptyResults.hidden = visibleCount > 0;
+      resultCount.textContent = visibleCount + (visibleCount === 1 ? ' campanha' : ' campanhas');
+      syncFilterButtons();
+      persistFilters();
     };
-    search.addEventListener('input', applyFilters);
-    portalFilter.addEventListener('change', applyFilters);
+    search.addEventListener('input', () => { searchDesktop.value = search.value; applyFilters(); });
+    searchDesktop.addEventListener('input', () => { search.value = searchDesktop.value; applyFilters(); });
+    portalFilter.addEventListener('change', () => { portalFilterDesktop.value = portalFilter.value; applyFilters(); });
+    portalFilterDesktop.addEventListener('change', () => { portalFilter.value = portalFilterDesktop.value; applyFilters(); });
     document.querySelectorAll('.filter').forEach((button) => {
       button.addEventListener('click', () => {
-        document.querySelectorAll('.filter').forEach((item) => item.classList.remove('active'));
-        button.classList.add('active');
         activeState = button.dataset.state || 'all';
         applyFilters();
       });
     });
+    filterToggle.addEventListener('click', () => { filterToggle.setAttribute('aria-expanded', 'true'); filterPanel.showModal(); });
+    filterClose.addEventListener('click', () => filterPanel.close());
+    filterPanel.addEventListener('click', (event) => { if (event.target === filterPanel) filterPanel.close(); });
+    filterPanel.addEventListener('close', () => { filterToggle.setAttribute('aria-expanded', 'false'); filterToggle.focus(); });
+    clearFilters.addEventListener('click', () => {
+      search.value = '';
+      searchDesktop.value = '';
+      portalFilter.value = 'ALL';
+      portalFilterDesktop.value = 'ALL';
+      activeState = 'all';
+      applyFilters();
+    });
+    syncFilterButtons();
+    applyFilters();
   </script>
 </body>
 </html>`;

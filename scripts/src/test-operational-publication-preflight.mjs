@@ -10,6 +10,17 @@ const execFileAsync = promisify(execFile);
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
 
+assert.equal(runner.validateOperationalPublicationScope({
+  campaignId: 970,
+  insertionId: 2186,
+  siteSigla: "PERRENGUE",
+}), true);
+assert.throws(() => runner.validateOperationalPublicationScope({
+  campaignId: 970,
+  insertionId: 2186,
+  siteSigla: "ROO",
+}), /portal ainda não suportado/i);
+
 const destination = runner.resolveOperationalDestination([
   { text: "Destino: https://www.tce.mt.gov.br/" },
 ]);
@@ -44,6 +55,30 @@ assert.throws(() => runner.validateOperationalPublicationContract({
 }, {
   insertion: { id: 1944, campanhaId: 989, siteId: 33, localFormatoNormalizado: "HOME 1", periodoInicio: "2026-08-12", periodoFim: "2026-08-25" },
   campaign: { id: 989, piCodigo: "17190" },
+  site: { id: 33, sigla: "PERRENGUE" },
+}), /PI numérica/);
+assert.throws(() => runner.validateOperationalPublicationContract({
+  expectedCampaignId: 989,
+  expectedInsertionId: 1944,
+  expectedSiteSigla: "PERRENGUE",
+  expectedFormat: "HOME 1",
+  expectedPeriodStart: "2026-08-12",
+  expectedPeriodEnd: "2026-08-25",
+}, {
+  insertion: { id: 1944, campanhaId: 989, piCodigo: "PI 009750- PREF ROO", siteId: 33, localFormatoNormalizado: "HOME 1", periodoInicio: "2026-08-12", periodoFim: "2026-08-25" },
+  campaign: { id: 989, piCodigo: "PI - TCE" },
+  site: { id: 33, sigla: "PERRENGUE" },
+}), /PI numérica/);
+assert.throws(() => runner.validateOperationalPublicationContract({
+  expectedCampaignId: 989,
+  expectedInsertionId: 1944,
+  expectedSiteSigla: "PERRENGUE",
+  expectedFormat: "HOME 1",
+  expectedPeriodStart: "2026-08-12",
+  expectedPeriodEnd: "2026-08-25",
+}, {
+  insertion: { id: 1944, campanhaId: 989, siteId: 33, localFormatoNormalizado: "HOME 1", periodoInicio: "2026-08-12", periodoFim: "2026-08-25" },
+  campaign: { id: 989, piCodigo: "PI 009750- PREF ROO" },
   site: { id: 33, sigla: "PERRENGUE" },
 }), /PI numérica/);
 

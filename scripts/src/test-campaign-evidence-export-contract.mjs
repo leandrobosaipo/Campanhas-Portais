@@ -105,6 +105,103 @@ test("fila compacta inclui somente operacoes com acao pendente", () => {
   assert.deepEqual(result.items.map((item) => item.adops.insertionId), [1944]);
 });
 
+test("identidade operacional única não depende de IDs hardcoded", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA OPERACIONAL",
+      piCodigo: "PI - PENDENTE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 30 },
+      sourceIdentity: { decision: "insufficient_data", canonicalPi: null, sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched",
+        folderId: "folder-unique",
+        folderPath: "/PERRENGUE/AGOSTO/PI - CAMPANHA OPERACIONAL",
+        inventoryScanId: "scan-1",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "missing",
+        mediaFiles: [{ id: "media-1", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-1", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1200, insertionId: 2200, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+
+  assert.equal(result.items[0].identityMode, "operational_identity");
+  assert.equal(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].commercialIdentityStatus, "awaiting_authoritative_pi");
+});
+
+test("não usa a exceção operacional quando existe PI comercial sem PDF autoritativo", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA COM PI ROTULADA",
+      piCodigo: "PI 009750- PREF ROO",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 31 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "9750", sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched",
+        folderId: "folder-labelled",
+        folderPath: "/PERRENGUE/AGOSTO/PI 009750 CAMPANHA",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "missing",
+        mediaFiles: [{ id: "media-2", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-2", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1201, insertionId: 2201, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("não usa identidade operacional quando há candidato de PI em PDF", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA AMBÍGUA",
+      piCodigo: "PI - PENDENTE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 32 },
+      sourceIdentity: { decision: "insufficient_data", canonicalPi: null, sources: { drivePdfPiCandidates: ["9750"] } },
+      drive: {
+        status: "matched", folderId: "folder-pdf", folderPath: "/PERRENGUE/AGOSTO/PI PENDENTE",
+        mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "missing",
+        mediaFiles: [{ id: "media-3", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-3", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1202, insertionId: 2202, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+});
+
 test("lote de campanhas normaliza identidade e remove duplicatas", () => {
   assert.deepEqual(contract.parseCampaignEvidenceBatch({
     competencia: "agosto/2026",
