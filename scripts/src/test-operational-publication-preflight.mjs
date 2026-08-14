@@ -195,6 +195,13 @@ const canonicalExpectedMerge = runner.mergeDrivePiFields(
   { preferPdfInsertions: true },
 );
 assert.deepEqual(canonicalExpectedMerge.insertions, [canonicalPdfInsertion]);
+const canonicalCommercialMerge = runner.mergeDrivePiFields(
+  { piCodigo: "91085", competencia: "AGOSTO/2026", clienteId: 189, agenciaId: 85, insertions: [], raw: {} },
+  { piCodigo: "91085", competencia: "AGOSTO/2026", clienteId: 160, agenciaId: 76, insertions: [] },
+  { preferPdfCommercialIdentity: true },
+);
+assert.equal(canonicalCommercialMerge.clienteId, 160, "fluxo canônico deve preferir cliente determinístico do PDF");
+assert.equal(canonicalCommercialMerge.agenciaId, 76, "fluxo canônico deve preferir agência determinística do PDF");
 
 const advisoryMerge = runner.mergeDrivePiFields(
   { piCodigo: "57652", competencia: "AGOSTO/2026", insertions: [agentInsertionWithWrongSchedule], raw: {} },

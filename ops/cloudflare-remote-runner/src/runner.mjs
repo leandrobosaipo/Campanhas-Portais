@@ -2331,6 +2331,7 @@ async function normalizeAgentParsedPi(agentParsedPi) {
 function mergeDrivePiFields(parsed, parsedFromPdf, {
   allowPdfInsertions = true,
   preferPdfInsertions = false,
+  preferPdfCommercialIdentity = false,
 } = {}) {
   const pdfInsertions = allowPdfInsertions ? parsedFromPdf.insertions || [] : [];
   const parsedInsertions = preferPdfInsertions && pdfInsertions.length
@@ -2347,8 +2348,12 @@ function mergeDrivePiFields(parsed, parsedFromPdf, {
     campaignName: mergeFieldValue(parsed.campaignName, parsedFromPdf.campaignName),
     competencia: mergedCompetencia || inferredCompetencia,
     pdfCompetencia: parsedFromPdf.competencia || null,
-    clienteId: mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
-    agenciaId: mergeFieldValue(parsed.agenciaId, parsedFromPdf.agenciaId),
+    clienteId: preferPdfCommercialIdentity && parsedFromPdf.clienteId
+      ? parsedFromPdf.clienteId
+      : mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
+    agenciaId: preferPdfCommercialIdentity && parsedFromPdf.agenciaId
+      ? parsedFromPdf.agenciaId
+      : mergeFieldValue(parsed.agenciaId, parsedFromPdf.agenciaId),
     valorLiquido: mergeFieldValue(readNumberRecord(parsed.raw, ["valorLiquido"]), parsedFromPdf.valorLiquido),
     clickUrl: mergeFieldValue(readUrlRecord(parsed.raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]), parsedFromPdf.clickUrl),
     insertions: parsedInsertions,
@@ -2435,6 +2440,10 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
   return mergeDrivePiFields(baseFields, parsedFromPdf, {
     allowPdfInsertions: payload?.allowPdfInsertions !== false,
     preferPdfInsertions: Boolean(
+      readPositiveInteger(payload?.expectedInsertionId)
+      && readPositiveInteger(payload?.expectedCampaignId),
+    ),
+    preferPdfCommercialIdentity: Boolean(
       readPositiveInteger(payload?.expectedInsertionId)
       && readPositiveInteger(payload?.expectedCampaignId),
     ),
