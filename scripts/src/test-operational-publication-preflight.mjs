@@ -121,6 +121,30 @@ const sourceSeparated = runner.mergeDrivePiFields(
 assert.equal(sourceSeparated.piCodigo, "PI 14807");
 assert.equal(sourceSeparated.pdfPiCodigo, null);
 
+const canonicalPdfInsertion = {
+  siteId: 35,
+  localFormato: "MEGABANNER TOPO 825X120",
+  periodoInicio: "2026-08-14",
+  periodoFim: "2026-08-20",
+};
+const agentInsertionWithWrongSchedule = {
+  ...canonicalPdfInsertion,
+  periodoInicio: "2026-08-18",
+  periodoFim: "2026-08-24",
+};
+const canonicalExpectedMerge = runner.mergeDrivePiFields(
+  { piCodigo: "57652", competencia: "AGOSTO/2026", insertions: [agentInsertionWithWrongSchedule], raw: {} },
+  { piCodigo: "57652", competencia: "AGOSTO/2026", insertions: [canonicalPdfInsertion] },
+  { preferPdfInsertions: true },
+);
+assert.deepEqual(canonicalExpectedMerge.insertions, [canonicalPdfInsertion]);
+
+const advisoryMerge = runner.mergeDrivePiFields(
+  { piCodigo: "57652", competencia: "AGOSTO/2026", insertions: [agentInsertionWithWrongSchedule], raw: {} },
+  { piCodigo: "57652", competencia: "AGOSTO/2026", insertions: [canonicalPdfInsertion] },
+);
+assert.deepEqual(advisoryMerge.insertions, [agentInsertionWithWrongSchedule]);
+
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "https://destino.example/", insertions: [] }), true);
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "http://destino.example/", insertions: [] }), false);
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: null, insertions: [] }), false);

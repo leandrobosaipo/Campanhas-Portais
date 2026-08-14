@@ -2285,12 +2285,16 @@ async function normalizeAgentParsedPi(agentParsedPi) {
   };
 }
 
-function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true } = {}) {
-  const parsedInsertions = parsed.insertions?.length
-    ? parsed.insertions
-    : allowPdfInsertions
-      ? parsedFromPdf.insertions || []
-      : [];
+function mergeDrivePiFields(parsed, parsedFromPdf, {
+  allowPdfInsertions = true,
+  preferPdfInsertions = false,
+} = {}) {
+  const pdfInsertions = allowPdfInsertions ? parsedFromPdf.insertions || [] : [];
+  const parsedInsertions = preferPdfInsertions && pdfInsertions.length
+    ? pdfInsertions
+    : parsed.insertions?.length
+      ? parsed.insertions
+      : pdfInsertions;
   const mergedCompetencia = mergeFieldValue(parsed.competencia, parsedFromPdf.competencia);
   const inferredCompetencia = mergedCompetencia ? null : inferCompetenciaFromInsertionPeriod(parsedInsertions);
   return {
@@ -2385,7 +2389,13 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
     raw: parsed,
   };
   const parsedFromPdf = await parseDrivePiPdfFields(archived);
-  return mergeDrivePiFields(baseFields, parsedFromPdf, { allowPdfInsertions: payload?.allowPdfInsertions !== false });
+  return mergeDrivePiFields(baseFields, parsedFromPdf, {
+    allowPdfInsertions: payload?.allowPdfInsertions !== false,
+    preferPdfInsertions: Boolean(
+      readPositiveInteger(payload?.expectedInsertionId)
+      && readPositiveInteger(payload?.expectedCampaignId),
+    ),
+  });
 }
 
 function validateDrivePiApplyFields(fields) {
