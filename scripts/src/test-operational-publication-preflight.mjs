@@ -400,6 +400,12 @@ assert.match(runnerSource, /insertionAfterPublish = await privateApiPatch[\s\S]*
   "PATCH de publicação deve continuar o CAS iniciado pelo preflight");
 assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublish\?\.updatedAt \|\| patchedInsertion\?\.updatedAt/,
   "rollback deve usar a versão devolvida pelo PATCH final do publicador");
+const adrotateConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
+  const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
+  assert.deepEqual(mapping?.operationalMediaProfile, { width, height, formats: ["GIF"] },
+    `grupo ${groupId} deve ter perfil binário único para o preflight operacional`);
+}
 
 const dir = await mkdtemp(path.join(tmpdir(), "adops-operational-gif-"));
 try {

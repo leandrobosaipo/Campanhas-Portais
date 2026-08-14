@@ -66,6 +66,11 @@
         "slotSelector": ".g.g-1",
         "contextSelector": "#header-ads-row",
         "scrollMode": "top",
+        "operationalMediaProfile": {
+          "width": 825,
+          "height": 120,
+          "formats": ["GIF"]
+        },
         "auditOverrides": {
           "gifFrameSelection": "source_preferred",
           "postVisualWaitMs": 2400,
@@ -254,6 +259,11 @@
         "contextSelector": "#cod5-bottom-popup-ad",
         "scrollMode": "top",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 970,
+          "height": 90,
+          "formats": ["GIF"]
+        },
         "auditOverrides": {
           "animatedBannerDelayMs": 2400,
           "postVisualWaitMs": 3000,
