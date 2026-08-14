@@ -1705,11 +1705,15 @@ function normalizeOperationalValue(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
 }
 
-function validateOperationalPublicationScope({ campaignId, insertionId, siteSigla }) {
+function validateOperationalPublicationScope({ campaignId, insertionId, siteSigla, identityMode }) {
   if (!readPositiveInteger(campaignId) || !readPositiveInteger(insertionId)) {
     throw new Error("Preflight operacional sem campanha ou inserção canônica.");
   }
-  if (normalizeOperationalValue(siteSigla) !== "PERRENGUE") {
+  const normalizedSite = normalizeOperationalValue(siteSigla);
+  const supported = identityMode === "sheet_drive_composite"
+    ? new Set(["PERRENGUE", "ROO", "AFL"]).has(normalizedSite)
+    : normalizedSite === "PERRENGUE";
+  if (!supported) {
     throw new Error("Identidade operacional sem PDF recusada: portal ainda não suportado pelo publicador seguro.");
   }
   return true;
@@ -5649,7 +5653,7 @@ async function executeOperationalMediaPublish(payload) {
   const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
   const siteId = readPositiveInteger(insertion?.siteId ?? insertion?.site?.id);
   const site = siteId ? await privateApiGet(`/api/sites/${siteId}`) : null;
-  validateOperationalPublicationScope({ campaignId, insertionId, siteSigla: site?.sigla });
+  validateOperationalPublicationScope({ campaignId, insertionId, siteSigla: site?.sigla, identityMode: payload?.identityMode });
   validateOperationalPublicationContract(payload, { insertion, campaign, site });
 
   const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -16,6 +16,22 @@ const build = spawnSync("pnpm", ["--filter", "@workspace/api-server", "exec", "e
 assert.equal(build.status, 0, build.stderr || build.stdout);
 const contract = await import(pathToFileURL(outputPath));
 after(() => rm(buildDir, { recursive: true, force: true }));
+
+const adrotateSites = JSON.parse(await readFile(path.join(repoRoot, "config/adrotate-sites.json"), "utf8"));
+
+test("gate composto deriva exatamente dos perfis de mídia vigentes", () => {
+  for (const [siteSigla, siteConfig] of Object.entries(adrotateSites)) {
+    for (const mapping of siteConfig.formatMappings ?? []) {
+      for (const alias of mapping.aliases ?? []) {
+        assert.equal(
+          contract.isCompositePublicationTarget(siteSigla, alias),
+          Boolean(mapping.operationalMediaProfile),
+          `${siteSigla} ${alias}`,
+        );
+      }
+    }
+  }
+});
 
 test("normaliza a identidade por PI e competencia sem aceitar campanha sem PI", () => {
   assert.equal(contract.normalizeCampaignPi("PI 009750- PREF ROO"), "9750");
@@ -271,6 +287,97 @@ test("libera identidade composta quando planilha, AdOps e pasta única concordam
   assert.equal(result.items[0].resumeAction, "run_composite_preflight_and_publish");
   assert.equal(result.items[0].operationalIdentity.source.expectedPiCodigo, "17046");
   assert.equal(result.items[0].operationalIdentity.source.pdfDocuments[0].id, "pdf-17046");
+});
+
+test("libera identidade composta nos portais configurados sem exigir que o PDF repita o período da planilha", () => {
+  for (const siteSigla of ["ROO", "AFL"]) {
+    const result = contract.buildPendingPublicationView({
+      date: "2026-08-14",
+      generatedAt: "2026-08-14T09:40:00.000Z",
+      summary: { needsPublication: 1, needsEvidence: 1 },
+      items: [{
+        campaignName: "PRESTAÇÃO DE CONTAS",
+        piCodigo: "PI 91085 - PREF ROO",
+        siteSigla,
+        period: { start: "2026-08-14", end: "2026-08-23" },
+        format: { normalized: "MEGABANNER TOPO" },
+        sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 6 },
+        sourceIdentity: {
+          decision: "confirmed",
+          canonicalPi: "91085",
+          sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] },
+        },
+        drive: {
+          status: "matched",
+          folderId: "folder-91085",
+          folderPath: `/${siteSigla}/AGOSTO/PI 91085 - PRESTAÇÃO DE CONTAS`,
+          inventoryScanId: "scan-composite",
+          mediaStatus: "candidate_found",
+          mediaMatchesFormat: true,
+          documentStatus: "candidate_found",
+          mediaFiles: [{ id: "gif-91085", name: "820x120.gif", mimeType: "image/gif", size: "140088", md5Checksum: "a".repeat(32) }],
+          pdfFiles: [{ id: "pdf-91085", name: "PI 91085.pdf", mimeType: "application/pdf", size: "79668", md5Checksum: "b".repeat(32) }],
+          textFiles: [{ id: "redirect-91085", name: "Documento sem título", mimeType: "application/vnd.google-apps.document" }],
+        },
+        adops: { status: "matched", campaignId: 997, insertionId: 2310, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+        requiredActions: ["publish_on_site", "generate_evidence"],
+        blockingIssues: [],
+      }],
+      upcomingItems: [],
+    });
+    assert.equal(result.items[0].identityMode, "sheet_drive_composite", siteSigla);
+    assert.equal(result.items[0].publicationStatus, "ready_for_publication", siteSigla);
+  }
+});
+
+test("não amplia a exceção sem PDF nem publica identidade composta em portal sem configuração", () => {
+  const baseItem = {
+    campaignName: "PRESTAÇÃO DE CONTAS",
+    piCodigo: "PI 91085 - PREF ROO",
+    siteSigla: "ROO",
+    period: { start: "2026-08-14", end: "2026-08-23" },
+    format: { normalized: "MEGABANNER TOPO" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 6 },
+    sourceIdentity: {
+      decision: "insufficient_data",
+      canonicalPi: null,
+      sources: { sheetPi: null, adopsPi: null, driveFolderPiCandidates: [], drivePdfPiCandidates: [] },
+    },
+    drive: {
+      status: "matched", folderId: "folder", folderPath: "/ROO/AGOSTO/CAMPANHA", inventoryScanId: "scan",
+      mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "missing",
+      mediaFiles: [{ id: "gif" }], pdfFiles: [], textFiles: [],
+    },
+    adops: { status: "matched", campaignId: 997, insertionId: 2310, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site"], blockingIssues: [],
+  };
+  const noPdfOutsidePerrengue = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, items: [baseItem], upcomingItems: [],
+  });
+  assert.notEqual(noPdfOutsidePerrengue.items[0].identityMode, "operational_identity");
+
+  const unknownSiteComposite = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, upcomingItems: [],
+    items: [{
+      ...baseItem,
+      siteSigla: "DESCONHECIDO",
+      sourceIdentity: { decision: "confirmed", canonicalPi: "91085", sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] } },
+      drive: { ...baseItem.drive, documentStatus: "candidate_found", pdfFiles: [{ id: "pdf", size: "100", md5Checksum: "b".repeat(32) }], textFiles: [{ id: "redirect" }] },
+    }],
+  });
+  assert.notEqual(unknownSiteComposite.items[0].identityMode, "sheet_drive_composite");
+
+  const unsupportedRooFormat = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, upcomingItems: [],
+    items: [{
+      ...baseItem,
+      siteSigla: "ROO",
+      format: { normalized: "HOME 1" },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "91085", sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] } },
+      drive: { ...baseItem.drive, documentStatus: "candidate_found", pdfFiles: [{ id: "pdf", size: "100", md5Checksum: "b".repeat(32) }], textFiles: [{ id: "redirect" }] },
+    }],
+  });
+  assert.notEqual(unsupportedRooFormat.items[0].identityMode, "sheet_drive_composite");
 });
 
 test("identidade composta bloqueia quando falta redirect ou há divergência entre PIs", () => {

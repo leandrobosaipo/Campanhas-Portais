@@ -1,4 +1,15 @@
 import crypto from "node:crypto";
+import adrotateSites from "../../../../config/adrotate-sites.json";
+
+export function isCompositePublicationTarget(siteSigla: unknown, localFormat: unknown) {
+  const site = String(siteSigla ?? "").trim().toUpperCase();
+  const format = String(localFormat ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  const siteConfig = (adrotateSites as Record<string, any>)[site];
+  return (siteConfig?.formatMappings ?? []).some((mapping: any) => (
+    mapping?.operationalMediaProfile
+    && (mapping?.aliases ?? []).some((alias: unknown) => String(alias ?? "").trim().toUpperCase().replace(/\s+/g, " ") === format)
+  ));
+}
 
 export class CampaignEvidenceExportConflict extends Error {
   readonly statusCode = 409;
@@ -132,7 +143,7 @@ export function buildPendingPublicationView<T extends {
         && Number(item.adops?.campaignId || 0) > 0
         && Number(item.adops?.insertionId || 0) > 0
         && Number(item.adops?.operationalMatchCount ?? 1) === 1,
-      approvedOperationalTarget: String(item.siteSigla || "").trim().toUpperCase() === "PERRENGUE",
+      approvedOperationalTarget: isCompositePublicationTarget(item.siteSigla, item.format?.normalized ?? item.format?.adops ?? item.format?.sheet),
       folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
       mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
       destinationCandidateUnique: textFiles.length === 1,
@@ -143,6 +154,7 @@ export function buildPendingPublicationView<T extends {
       sourceUnambiguous: item.sourceIdentity?.decision !== "needs_confirmation" && item.drive?.status !== "ambiguous",
     };
     const operationalReady = !published
+      && String(item.siteSigla || "").trim().toUpperCase() === "PERRENGUE"
       && item.sourceIdentity?.decision === "insufficient_data"
       && !canonicalPi
       && item.drive?.documentStatus === "missing"

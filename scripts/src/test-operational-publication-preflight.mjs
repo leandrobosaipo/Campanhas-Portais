@@ -101,12 +101,38 @@ assert.equal(runner.validateOperationalPublicationScope({
   campaignId: 970,
   insertionId: 2186,
   siteSigla: "PERRENGUE",
+  identityMode: "operational_identity",
 }), true);
 assert.throws(() => runner.validateOperationalPublicationScope({
   campaignId: 970,
   insertionId: 2186,
   siteSigla: "ROO",
+  identityMode: "operational_identity",
 }), /portal ainda não suportado/i);
+assert.equal(runner.validateOperationalPublicationScope({
+  campaignId: 997,
+  insertionId: 2310,
+  siteSigla: "ROO",
+  identityMode: "sheet_drive_composite",
+}), true);
+assert.equal(runner.validateOperationalPublicationScope({
+  campaignId: 994,
+  insertionId: 2278,
+  siteSigla: "AFL",
+  identityMode: "sheet_drive_composite",
+}), true);
+assert.throws(() => runner.validateOperationalPublicationScope({
+  campaignId: 1,
+  insertionId: 1,
+  siteSigla: "OMT",
+  identityMode: "sheet_drive_composite",
+}), /portal ainda não suportado/i);
+
+const operationalConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+for (const siteSigla of ["ROO", "AFL"]) {
+  const mapping = operationalConfig[siteSigla].formatMappings.find((item) => item.groupId === 1);
+  assert.deepEqual(mapping.operationalMediaProfile, { width: 825, height: 120, formats: ["GIF"] }, `${siteSigla} precisa do perfil binário contratado`);
+}
 
 assert.equal(runner.validateExpectedDrivePiIdentity({
   expectedPiCodigo: "57652",
