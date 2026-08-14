@@ -109,7 +109,7 @@ for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perr
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
 const runnerSource = await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8");
-for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "adops_adrotate_publish_' . $insertion_id", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
+for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "buildPerrengueRebuildTriggerReason", "operationId: crypto.randomUUID()", "return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
   assert(runnerSource.includes(marker), `runner sem marcador ${marker}`);
 }
 assert(runnerSource.includes('const explicitPublishFlow = /api-publish$/.test'), "drive-pi-publish com publish=false deve permitir atualização somente no AdOps");
