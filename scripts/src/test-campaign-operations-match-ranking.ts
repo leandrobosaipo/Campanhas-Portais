@@ -90,3 +90,38 @@ test("resolve INTERNO para a insercao canonica publicada", () => {
   const result = selectBestAdopsMatch(row("INTERNO"), [canceled, published]);
   assert.equal(result.insertion?.id, 1818);
 });
+
+test("prefere POP UP publicado em vez de duplicata detalhada em rascunho", () => {
+  const published = insertion({
+    id: 1861,
+    localFormato: "POP UP",
+    localFormatoNormalizado: "POP UP",
+    periodoInicio: "2026-08-09",
+    periodoFim: "2026-08-31",
+    statusNormalizado: "em_veiculacao",
+    bannerPublicadoNoSite: true,
+    mediaUrl: "https://cdn.example.test/970x90-almt.gif",
+  });
+  const duplicateDraft = insertion({
+    id: 2193,
+    localFormato: "POP UP — SITEWIDE — 970x90",
+    localFormatoNormalizado: "POP UP — SITEWIDE — 970x90",
+    periodoInicio: "2026-08-09",
+    periodoFim: "2026-08-31",
+    statusNormalizado: "rascunho",
+    bannerPublicadoNoSite: false,
+    mediaUrl: null,
+  });
+  const result = selectBestAdopsMatch({
+    localFormato: "POP UP — SITEWIDE — 970x90",
+    periodoInicio: "2026-08-09",
+    periodoFim: "2026-08-31",
+  }, [published, duplicateDraft]);
+  assert.equal(result.compatible.length, 2);
+  assert.equal(result.insertion?.id, 1861);
+});
+
+test("nao mistura outra variante POP UP com o SITEWIDE 970x90", () => {
+  assert.equal(isFormatCompatible("POP UP — SITEWIDE — 970x90", "POP UP MOBILE"), false);
+  assert.equal(isFormatCompatible("POP UP — SITEWIDE — 970x90", "POP UP 300x250"), false);
+});

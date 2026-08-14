@@ -50,6 +50,8 @@ export function isFormatCompatible(sheetFormat: string, adopsFormat: string | nu
   if (sheet === "TOPO" && adops.includes("TOPO")) return true;
   if (/^HOME [123]$/.test(sheet) && adops.endsWith(sheet)) return true;
   if (sheet === "INTERNO" && adops === "INTERNO DE NOTICIAS") return true;
+  const popupSitewideAliases = new Set(["POP UP", "POP UP — SITEWIDE — 970X90"]);
+  if (popupSitewideAliases.has(sheet) && popupSitewideAliases.has(adops)) return true;
   if (sheet.startsWith("LATERAL 02") && adops.startsWith("LATERAL 02")) return true;
   if (sheet === "LATERAL" && adops.includes("LATERAL")) return true;
   if (sheet === "VIDEO" && adops.includes("VIDEO")) return true;
