@@ -120,13 +120,13 @@ assert.deepEqual(runner.validateDrivePiPackageReadiness(
 
 const mergedExpectedContext = runner.mergeExpectedDrivePiContext({
   piCodigo: "PI 14807",
-  campaignName: "Enfrentamento ao Feminicídio",
+  campaignName: null,
   competencia: null,
   clienteId: null,
   agenciaId: 76,
   insertions: [],
 }, {
-  campaign: { id: 972, competencia: "AGOSTO/2026", clienteId: 11, agenciaId: 76 },
+  campaign: { id: 972, nome: "Enfrentamento ao Feminicídio", competencia: "AGOSTO/2026", clienteId: 11, agenciaId: 76 },
   insertion: {
     id: 2187,
     campanhaId: 972,
@@ -139,6 +139,7 @@ const mergedExpectedContext = runner.mergeExpectedDrivePiContext({
   },
 });
 assert.equal(mergedExpectedContext.piCodigo, "PI 14807", "PI deve continuar vindo do PDF");
+assert.equal(mergedExpectedContext.campaignName, "Enfrentamento ao Feminicídio", "nome ausente no PDF usa a campanha canônica já vinculada");
 assert.equal(mergedExpectedContext.competencia, "AGOSTO/2026");
 assert.equal(mergedExpectedContext.clienteId, 11);
 assert.equal(mergedExpectedContext.agenciaId, 76);

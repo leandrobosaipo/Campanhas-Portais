@@ -2126,6 +2126,7 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign }) {
     : [canonicalInsertion];
   return {
     ...fields,
+    campaignName: fields?.campaignName || readStringRecord(campaign, ["nome", "campaignName"]),
     competencia: fields?.competencia || readStringRecord(campaign, ["competencia"]),
     clienteId: readNumberRecord(fields, ["clienteId"]) ?? readNumberRecord(campaign, ["clienteId"]),
     agenciaId: readNumberRecord(fields, ["agenciaId"]) ?? readNumberRecord(campaign, ["agenciaId"]),

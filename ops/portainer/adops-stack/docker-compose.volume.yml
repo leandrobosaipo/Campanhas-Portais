@@ -188,12 +188,13 @@ services:
       - -lc
       - >-
         set -e;
-        if ! python3 -c 'from PIL import Image' >/dev/null 2>&1; then
+        if ! python3 -c 'from PIL import Image' >/dev/null 2>&1 || ! command -v pdftotext >/dev/null 2>&1; then
           apt-get update;
-          apt-get install -y --no-install-recommends python3-pil;
+          apt-get install -y --no-install-recommends python3-pil poppler-utils;
           rm -rf /var/lib/apt/lists/*;
         fi;
         python3 -c 'from PIL import Image';
+        command -v pdftotext >/dev/null;
         exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba

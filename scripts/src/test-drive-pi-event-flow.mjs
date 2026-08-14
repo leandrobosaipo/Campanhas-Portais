@@ -265,6 +265,8 @@ await check("compose-volume-isola-credencial-drive-no-monitor", async () => {
     "OPS_JOB_KINDS: campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh",
     "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: /data/secrets/google-drive-service-account.json",
     "adops_drive_pi_monitor_data:/data",
+    "poppler-utils",
+    "command -v pdftotext",
     "curl -fsS http://127.0.0.1:4012/healthz",
   ], "Compose volume monitor Google Drive");
   const generalRunner = source.split("  adops-runner:")[1].split("  adops-drive-pi-monitor:")[0];
