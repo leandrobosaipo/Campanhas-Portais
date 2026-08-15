@@ -656,6 +656,9 @@ const restrictedSnapshotSql = runner.buildRestrictedAdrotateSnapshotSql({
 });
 assert.match(restrictedSnapshotSql, /START TRANSACTION WITH CONSISTENT SNAPSHOT/,
   "snapshot restrito precisa ler os três datasets na mesma visão transacional");
+assert.match(restrictedSnapshotSql, /BINARY adops_external_key=UNHEX\('[0-9a-f]+'\)/,
+  "chave externa deve ser comparada em bytes, sem depender da collation do WordPress");
+assert.doesNotMatch(restrictedSnapshotSql, /CONVERT\(UNHEX/);
 assert.equal((restrictedSnapshotSql.match(/COMMIT/g) || []).length, 1);
 assert.deepEqual(runner.parseRestrictedAdrotateSnapshotOutput([
   "META\tADS\t1",

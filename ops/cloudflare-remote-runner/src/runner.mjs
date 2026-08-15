@@ -3209,7 +3209,7 @@ function buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, exte
   if (!safeInsertionId) throw new Error("Snapshot DB restrito exige insertionId positivo.");
   const safeTables = Object.fromEntries(Object.entries(tables).map(([key, table]) => [key, assertSqlIdentifier(table, "Tabela")]));
   const externalKeyHex = Buffer.from(String(externalKey || ""), "utf8").toString("hex");
-  const adPredicate = `adops_insertion_id=${safeInsertionId} OR adops_external_key=CONVERT(UNHEX('${externalKeyHex}') USING utf8mb4)`;
+  const adPredicate = `adops_insertion_id=${safeInsertionId} OR BINARY adops_external_key=UNHEX('${externalKeyHex}')`;
   const adIds = `SELECT id FROM \`${safeTables.ads}\` WHERE ${adPredicate}`;
   const scheduleIds = `SELECT DISTINCT schedule FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) AND schedule>0`;
   return [
@@ -3294,7 +3294,7 @@ async function restoreRestrictedAdrotate({ site, siteSigla, insertionId, externa
     `LOCK TABLES \`${tables.ads}\` WRITE, \`${tables.links}\` WRITE, \`${tables.schedules}\` WRITE`,
     "CREATE TEMPORARY TABLE cod5_adops_current_ads (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
     "CREATE TEMPORARY TABLE cod5_adops_current_schedules (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
-    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR adops_external_key=CONVERT(UNHEX('${externalKeyHex}') USING utf8mb4)`,
+    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR BINARY adops_external_key=UNHEX('${externalKeyHex}')`,
     `INSERT IGNORE INTO cod5_adops_current_schedules (id) SELECT schedule FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads) AND schedule>0`,
     `DELETE FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads)`,
     `DELETE FROM \`${tables.ads}\` WHERE id IN (SELECT id FROM cod5_adops_current_ads)`,
