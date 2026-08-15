@@ -22,6 +22,7 @@ import {
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   MONTHLY_REPORT_PORTAINER_TIMEOUT_MS,
   MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
+  MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
   buildDeliveryProbeOptions,
   adaptAggregatedEvidenceDay,
   canonicalCommercialPi,
@@ -598,7 +599,7 @@ async function materializeCompleteCampaignExports(items) {
         requestedBy: "evidence-monthly-report",
         source: "monthly-report",
       }),
-      timeoutMs: 120_000,
+      timeoutMs: MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
     });
   const itemByPi = new Map((batch.items || []).map((item) => [String(item.piCodigo), item]));
   await Promise.all(readyGroups.map(async (group) => {
