@@ -3091,6 +3091,52 @@ function evaluateFinalPngSlotAuditResult(payload = {}) {
   };
 }
 
+function selectBestFinalPngCreativeIdentityAudit(audits = []) {
+  const candidates = (Array.isArray(audits) ? audits : [])
+    .filter((audit) => audit && typeof audit === "object")
+    .map((audit) => ({
+      ...audit,
+      referenceFrameIndex: Number.isFinite(Number(audit.referenceFrameIndex))
+        ? Number(audit.referenceFrameIndex)
+        : null,
+    }));
+  if (!candidates.length) return null;
+
+  const best = [...candidates].sort((left, right) => {
+    if (left.ok === true && right.ok !== true) return -1;
+    if (left.ok !== true && right.ok === true) return 1;
+    return Number(right.similarityScore ?? -1) - Number(left.similarityScore ?? -1);
+  })[0];
+
+  return {
+    ...best,
+    matchedReferenceFrameIndex: best.referenceFrameIndex,
+    referenceCandidates: candidates.map((candidate) => ({
+      ok: candidate.ok === true,
+      similarityScore: Number.isFinite(Number(candidate.similarityScore))
+        ? Number(candidate.similarityScore)
+        : null,
+      referenceFrameIndex: candidate.referenceFrameIndex,
+      issues: Array.isArray(candidate.issues) ? candidate.issues : [],
+    })),
+  };
+}
+
+function buildFinalPngCreativeReferenceFrames(frameSelection = null) {
+  if (!frameSelection || typeof frameSelection !== "object") return [];
+  const strongFrames = Array.isArray(frameSelection.gifFrameCandidates)
+    ? frameSelection.gifFrameCandidates.filter((frame) => frame?.strongCandidate === true && typeof frame?.pngPath === "string")
+    : [];
+  if (strongFrames.length) return strongFrames;
+
+  const explicitFallbackAllowed = frameSelection.captureOnly === true || frameSelection.frameSelectionDowngraded === true;
+  if (!explicitFallbackAllowed || typeof frameSelection.chosenPngPath !== "string") return [];
+  return [{
+    frameIndex: frameSelection.gifChosenFrameIndex,
+    pngPath: frameSelection.chosenPngPath,
+  }];
+}
+
 function resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit) {
   if (finalViewportTargetAudit?.box) return finalViewportTargetAudit.box;
   if (Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]) {
@@ -3228,6 +3274,43 @@ print(json.dumps({
     cropSize: result.cropSize || null,
     error: result.error || null,
   };
+}
+
+function auditFinalPngCreativeIdentityAgainstFrames(finalPng, referenceFrames, slotBox, desktopFrameMetadata, options = {}) {
+  const uniqueFrames = [];
+  const seenPaths = new Set();
+  for (const frame of Array.isArray(referenceFrames) ? referenceFrames : []) {
+    const pngPath = typeof frame?.pngPath === "string" ? frame.pngPath : null;
+    if (!pngPath || seenPaths.has(pngPath)) continue;
+    seenPaths.add(pngPath);
+    uniqueFrames.push(frame);
+  }
+  const missingFrames = uniqueFrames.filter((frame) => !existsSync(frame.pngPath));
+  if (missingFrames.length) {
+    return {
+      ok: false,
+      issues: [{
+        code: "final_png_creative_reference_missing",
+        detail: `Referência(s) forte(s) ausente(s): ${missingFrames.map((frame) => frame.frameIndex ?? "unknown").join(", ")}.`,
+      }],
+      similarityScore: null,
+      matchedReferenceFrameIndex: null,
+      referenceCandidates: uniqueFrames.map((frame) => ({
+        ok: false,
+        similarityScore: null,
+        referenceFrameIndex: Number.isFinite(Number(frame.frameIndex)) ? Number(frame.frameIndex) : null,
+        missing: !existsSync(frame.pngPath),
+        issues: !existsSync(frame.pngPath)
+          ? [{ code: "final_png_creative_reference_missing" }]
+          : [],
+      })),
+    };
+  }
+  const audits = uniqueFrames.map((frame) => ({
+    ...auditFinalPngSlotPixels(finalPng, frame.pngPath, slotBox, desktopFrameMetadata, options),
+    referenceFrameIndex: Number.isFinite(Number(frame.frameIndex)) ? Number(frame.frameIndex) : null,
+  }));
+  return selectBestFinalPngCreativeIdentityAudit(audits);
 }
 
 function auditFinalPngStickyHeaderPixels(finalPng, desktopFrameMetadata, options = {}) {
@@ -7151,22 +7234,24 @@ async function main() {
       const details = finalPngSlotAudit.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
       throw new Error(`capture_audit_failed: final_png_slot_audit_failed: ${details}`);
     }
-    const finalPngCreativeIdentityAudit =
-      gifSourceAllowed && frameSelection?.chosenPngPath
-        ? auditFinalPngSlotPixels(
-            finalPng,
-            frameSelection.chosenPngPath,
-            finalPngSlotAuditBox,
-            desktopFrameMetadata,
-            {
-              finalProofStyle,
-              minSimilarity: Number(mapping.auditConfig?.finalPngCreativeMinSimilarity ?? 0.82),
-              minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
-              comparedTo: "selectedGifFrame",
-              viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
-            },
-          )
-        : null;
+    const finalPngCreativeReferenceFrames = gifSourceAllowed
+      ? buildFinalPngCreativeReferenceFrames(frameSelection)
+      : [];
+    const finalPngCreativeIdentityAudit = finalPngCreativeReferenceFrames.length
+      ? auditFinalPngCreativeIdentityAgainstFrames(
+          finalPng,
+          finalPngCreativeReferenceFrames,
+          finalPngSlotAuditBox,
+          desktopFrameMetadata,
+          {
+            finalProofStyle,
+            minSimilarity: Number(mapping.auditConfig?.finalPngCreativeMinSimilarity ?? 0.82),
+            minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
+            comparedTo: "approvedGifFrames",
+            viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
+          },
+        )
+      : null;
     if (finalPngCreativeIdentityAudit && !finalPngCreativeIdentityAudit.ok) {
       const details = finalPngCreativeIdentityAudit.issues
         .map((item) => `${item.code}: ${item.detail}`)
@@ -7779,8 +7864,11 @@ if (require.main === module) {
     normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
+    selectBestFinalPngCreativeIdentityAudit,
+    buildFinalPngCreativeReferenceFrames,
     resolveFinalPngSlotAuditBox,
     auditFinalPngSlotPixels,
+    auditFinalPngCreativeIdentityAgainstFrames,
     auditVisibleMediaPixels,
     captureStrictReadinessCandidate,
     normalizeStrictReadinessConfig,
