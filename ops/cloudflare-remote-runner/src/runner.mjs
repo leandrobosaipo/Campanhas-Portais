@@ -3102,6 +3102,216 @@ async function restorePerrengueAdrotate({ insertionId, externalKey, snapshot }) 
   return { ...result, readbackVerified: true };
 }
 
+function isRestrictedKvm8GatewaySite(site) {
+  return String(site?.sshUser || "") === "cod5adops" && String(site?.sshHost || "") === "93.127.210.71";
+}
+
+function assertSqlIdentifier(value, label) {
+  const identifier = String(value || "");
+  if (!/^[A-Za-z0-9_]+$/.test(identifier)) throw new Error(`${label} SQL inválido.`);
+  return identifier;
+}
+
+async function executeRestrictedWpDbQuery({ site, siteSigla, sql, skipColumnNames = true }) {
+  if (!isRestrictedKvm8GatewaySite(site)) throw new Error(`Portal ${siteSigla} não usa o gateway DB restrito.`);
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const remoteCommand = [
+    shellEscape(site.phpBin ?? "php"),
+    shellEscape(site.wpCliPath ?? "/home/cod5adops/wp-cli.phar"),
+    "--allow-root",
+    `--path=${shellEscape(site.wpPath)}`,
+    "db",
+    "query",
+    shellEscape(sql),
+    "--batch",
+    ...(skipColumnNames ? ["--skip-column-names"] : []),
+  ].join(" ");
+  if (remoteCommand.length > 95000) throw new Error("Query de rollback excede o limite seguro do gateway restrito.");
+  return execFileAsync("ssh", [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "UserKnownHostsFile=/tmp/adops-known-hosts",
+    ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+    "-p", String(site.sshPort),
+    `${site.sshUser}@${site.sshHost}`,
+    remoteCommand,
+  ], { maxBuffer: 4 * 1024 * 1024, timeout: 120000 });
+}
+
+function parseRestrictedDbRows(stdout, columns) {
+  const safeColumns = columns.map((column) => assertSqlIdentifier(column, "Coluna"));
+  const lines = String(stdout || "").split(/\r?\n/).filter((line) => line.length > 0);
+  return lines.map((line) => {
+    const values = line.split("\t");
+    if (values.length !== safeColumns.length) throw new Error("Snapshot DB restrito retornou quantidade inesperada de colunas.");
+    return Object.fromEntries(safeColumns.map((column, index) => [
+      column,
+      values[index] === "~" ? null : Buffer.from(values[index], "base64").toString("utf8"),
+    ]));
+  });
+}
+
+async function restrictedTableColumns({ site, siteSigla, table }) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql: `SHOW COLUMNS FROM \`${safeTable}\`` });
+  const columns = String(result.stdout || "").split(/\r?\n/).filter(Boolean).map((line) => line.split("\t")[0]);
+  if (!columns.length) throw new Error(`Tabela ${safeTable} não retornou colunas.`);
+  return columns.map((column) => assertSqlIdentifier(column, "Coluna"));
+}
+
+async function restrictedSelectRows({ site, siteSigla, table, columns, whereSql }) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  const projection = restrictedProjectionSql(columns);
+  const sql = `SELECT CONCAT_WS('\\t',${projection}) FROM \`${safeTable}\` WHERE ${whereSql}`;
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql });
+  return parseRestrictedDbRows(result.stdout, columns);
+}
+
+function restrictedProjectionSql(columns) {
+  return columns.map((column) => `IF(\`${assertSqlIdentifier(column, "Coluna")}\` IS NULL,'~',REPLACE(REPLACE(TO_BASE64(CAST(\`${column}\` AS BINARY)),'\\n',''),'\\r',''))`).join(",");
+}
+
+function parseRestrictedAdrotateBaseTable(stdout) {
+  const matches = String(stdout || "").split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => /^[A-Za-z0-9_]+_adrotate$/.test(value));
+  if (matches.length !== 1) throw new Error(`Portal restrito precisa de uma única tabela base AdRotate; encontradas ${matches.length}.`);
+  return assertSqlIdentifier(matches[0], "Tabela AdRotate");
+}
+
+async function resolveRestrictedAdrotateTables({ site, siteSigla }) {
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql: "SHOW TABLES LIKE '%adrotate'" });
+  const ads = parseRestrictedAdrotateBaseTable(result.stdout);
+  const prefix = ads.slice(0, -"adrotate".length);
+  return {
+    ads,
+    links: assertSqlIdentifier(`${prefix}adrotate_linkmeta`, "Tabela linkmeta"),
+    schedules: assertSqlIdentifier(`${prefix}adrotate_schedule`, "Tabela schedule"),
+  };
+}
+
+async function validateRestrictedAdrotateEngines({ site, siteSigla, tables }) {
+  const names = Object.values(tables).map((table) => `'${assertSqlIdentifier(table, "Tabela")}'`).join(",");
+  const result = await executeRestrictedWpDbQuery({
+    site,
+    siteSigla,
+    sql: `SELECT table_name,engine FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN (${names}) ORDER BY table_name`,
+  });
+  const rows = String(result.stdout || "").split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
+  if (rows.length !== 3 || rows.some((row) => row.length < 2 || String(row[1]).toUpperCase() !== "INNODB")) {
+    throw new Error("Rollback restrito exige exatamente as três tabelas AdRotate em InnoDB.");
+  }
+  return true;
+}
+
+function buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, externalKey }) {
+  const safeInsertionId = readPositiveInteger(insertionId);
+  if (!safeInsertionId) throw new Error("Snapshot DB restrito exige insertionId positivo.");
+  const safeTables = Object.fromEntries(Object.entries(tables).map(([key, table]) => [key, assertSqlIdentifier(table, "Tabela")]));
+  const externalKeyHex = Buffer.from(String(externalKey || ""), "utf8").toString("hex");
+  const adPredicate = `adops_insertion_id=${safeInsertionId} OR adops_external_key=CONVERT(UNHEX('${externalKeyHex}') USING utf8mb4)`;
+  const adIds = `SELECT id FROM \`${safeTables.ads}\` WHERE ${adPredicate}`;
+  const scheduleIds = `SELECT DISTINCT schedule FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) AND schedule>0`;
+  return [
+    "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    "START TRANSACTION WITH CONSISTENT SNAPSHOT",
+    `SELECT 'META','ADS',COUNT(*) FROM \`${safeTables.ads}\` WHERE ${adPredicate}`,
+    `SELECT 'ADS',${restrictedProjectionSql(columns.ads)} FROM \`${safeTables.ads}\` WHERE ${adPredicate} ORDER BY id`,
+    `SELECT 'META','LINKS',COUNT(*) FROM \`${safeTables.links}\` WHERE ad IN (${adIds})`,
+    `SELECT 'LINKS',${restrictedProjectionSql(columns.links)} FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) ORDER BY id`,
+    `SELECT 'META','SCHEDULES',COUNT(*) FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds})`,
+    `SELECT 'SCHEDULES',${restrictedProjectionSql(columns.schedules)} FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds}) ORDER BY id`,
+    "COMMIT",
+  ].join(";");
+}
+
+function parseRestrictedAdrotateSnapshotOutput(stdout, columns) {
+  const datasets = { ADS: [], LINKS: [], SCHEDULES: [] };
+  const expectedCounts = {};
+  for (const line of String(stdout || "").split(/\r?\n/).filter(Boolean)) {
+    const [dataset, ...values] = line.split("\t");
+    if (dataset === "META") {
+      const [target, rawCount] = values;
+      if (values.length !== 2 || !Object.hasOwn(datasets, target) || Object.hasOwn(expectedCounts, target) || !/^\d+$/.test(rawCount || "")) {
+        throw new Error("Snapshot DB restrito retornou metadados inválidos ou duplicados.");
+      }
+      expectedCounts[target] = Number(rawCount);
+      continue;
+    }
+    if (!Object.hasOwn(datasets, dataset)) throw new Error(`Snapshot DB restrito retornou dataset inesperado: ${dataset}.`);
+    const safeColumns = columns[dataset.toLowerCase()];
+    if (!Array.isArray(safeColumns) || values.length !== safeColumns.length) {
+      throw new Error(`Snapshot DB restrito retornou colunas inválidas para ${dataset}.`);
+    }
+    datasets[dataset].push(Object.fromEntries(safeColumns.map((column, index) => [
+      assertSqlIdentifier(column, "Coluna"),
+      values[index] === "~" ? null : Buffer.from(values[index], "base64").toString("utf8"),
+    ])));
+  }
+  for (const dataset of Object.keys(datasets)) {
+    if (!Object.hasOwn(expectedCounts, dataset) || datasets[dataset].length !== expectedCounts[dataset]) {
+      throw new Error(`Snapshot DB restrito incompleto para ${dataset}.`);
+    }
+  }
+  return normalizePerrengueAdrotateSnapshot({
+    ads: datasets.ADS,
+    links: datasets.LINKS,
+    schedules: datasets.SCHEDULES,
+  });
+}
+
+async function snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey }) {
+  const tables = await resolveRestrictedAdrotateTables({ site, siteSigla });
+  await validateRestrictedAdrotateEngines({ site, siteSigla, tables });
+  const columns = {
+    ads: await restrictedTableColumns({ site, siteSigla, table: tables.ads }),
+    links: await restrictedTableColumns({ site, siteSigla, table: tables.links }),
+    schedules: await restrictedTableColumns({ site, siteSigla, table: tables.schedules }),
+  };
+  const sql = buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, externalKey });
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql });
+  return parseRestrictedAdrotateSnapshotOutput(result.stdout, columns);
+}
+
+function restrictedReplaceSql(table, rows) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  return rows.map((row) => {
+    const columns = Object.keys(row).map((column) => assertSqlIdentifier(column, "Coluna"));
+    const values = columns.map((column) => row[column] == null
+      ? "NULL"
+      : `FROM_BASE64('${Buffer.from(String(row[column]), "utf8").toString("base64")}')`);
+    return `REPLACE INTO \`${safeTable}\` (${columns.map((column) => `\`${column}\``).join(",")}) VALUES (${values.join(",")})`;
+  }).join(";");
+}
+
+async function restoreRestrictedAdrotate({ site, siteSigla, insertionId, externalKey, snapshot }) {
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const tables = await resolveRestrictedAdrotateTables({ site, siteSigla });
+  await validateRestrictedAdrotateEngines({ site, siteSigla, tables });
+  const externalKeyHex = Buffer.from(String(externalKey || ""), "utf8").toString("hex");
+  const statements = [
+    "SET autocommit=0",
+    `LOCK TABLES \`${tables.ads}\` WRITE, \`${tables.links}\` WRITE, \`${tables.schedules}\` WRITE`,
+    "CREATE TEMPORARY TABLE cod5_adops_current_ads (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
+    "CREATE TEMPORARY TABLE cod5_adops_current_schedules (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
+    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR adops_external_key=CONVERT(UNHEX('${externalKeyHex}') USING utf8mb4)`,
+    `INSERT IGNORE INTO cod5_adops_current_schedules (id) SELECT schedule FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads) AND schedule>0`,
+    `DELETE FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads)`,
+    `DELETE FROM \`${tables.ads}\` WHERE id IN (SELECT id FROM cod5_adops_current_ads)`,
+  ];
+  for (const [table, rows] of [[tables.schedules, expectedSnapshot.schedules], [tables.ads, expectedSnapshot.ads], [tables.links, expectedSnapshot.links]]) {
+    const replaceSql = restrictedReplaceSql(table, rows);
+    if (replaceSql) statements.push(replaceSql);
+  }
+  const expectedScheduleIds = expectedSnapshot.schedules.map((row) => readPositiveInteger(row.id)).filter(Boolean);
+  statements.push(`DELETE FROM \`${tables.schedules}\` WHERE id IN (SELECT id FROM cod5_adops_current_schedules)${expectedScheduleIds.length ? ` AND id NOT IN (${expectedScheduleIds.join(",")})` : ""} AND id NOT IN (SELECT schedule FROM \`${tables.links}\` WHERE schedule>0)`);
+  statements.push("COMMIT", "UNLOCK TABLES", "SET autocommit=1");
+  await executeRestrictedWpDbQuery({ site, siteSigla, sql: statements.join(";") });
+  const readback = await snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate restrito divergiu no readback pós-restauração.");
+  return { restored: true, readbackVerified: true, transport: "restricted_wp_db_query" };
+}
+
 async function executeSiteRollbackPhp({ site, siteSigla, runnerPhp, input, mode }) {
   if (shouldUsePerrenguePortainerAdrotate(siteSigla)) {
     const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
@@ -3129,12 +3339,14 @@ async function executeSiteRollbackPhp({ site, siteSigla, runnerPhp, input, mode 
 }
 
 async function snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey }) {
+  if (isRestrictedKvm8GatewaySite(site)) return snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey });
   const input = Buffer.from(JSON.stringify({ insertionId, externalKey })).toString("base64");
   const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateSnapshotPhp(), input, mode: "snapshot" });
   return normalizePerrengueAdrotateSnapshot(parseWpCliJsonObject(execution.stdout));
 }
 
 async function restoreSiteAdrotate({ site, siteSigla, insertionId, externalKey, snapshot }) {
+  if (isRestrictedKvm8GatewaySite(site)) return restoreRestrictedAdrotate({ site, siteSigla, insertionId, externalKey, snapshot });
   const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
   const input = Buffer.from(JSON.stringify({ insertionId, externalKey, snapshot: expectedSnapshot })).toString("base64");
   const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateRestorePhp(), input, mode: "restore" });
@@ -6951,6 +7163,7 @@ export {
   agencyAliasCandidates,
   assertOperationalMediaReadback,
   buildSpacesImageObjectKey,
+  buildRestrictedAdrotateSnapshotSql,
   buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,
   buildAdrotatePublishPayload,
@@ -6973,7 +7186,12 @@ export {
   hasHttpsDrivePiDestination,
   mergeExpectedDrivePiContext,
   inspectOperationalImage,
+  isRestrictedKvm8GatewaySite,
+  parseRestrictedDbRows,
+  parseRestrictedAdrotateBaseTable,
+  parseRestrictedAdrotateSnapshotOutput,
   prepareOperationalDeliveryImage,
+  restrictedReplaceSql,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
   parsePeriodoFromBboxText,

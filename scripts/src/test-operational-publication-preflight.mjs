@@ -12,6 +12,26 @@ const execFileAsync = promisify(execFile);
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
 
+assert.equal(runner.isRestrictedKvm8GatewaySite({ sshUser: "cod5adops", sshHost: "93.127.210.71" }), true);
+assert.equal(runner.isRestrictedKvm8GatewaySite({ sshUser: "root", sshHost: "93.127.210.71" }), false);
+const restrictedSnapshotRow = runner.parseRestrictedDbRows([
+  Buffer.from("2310").toString("base64"),
+  Buffer.from('<a href="https://example.com/?a=1&b=2">linha 1\nlinha 2\tfinal</a>').toString("base64"),
+  "~",
+].join("\t") + "\n", ["id", "bannercode", "nullable"]);
+assert.deepEqual(restrictedSnapshotRow, [{
+  id: "2310",
+  bannercode: '<a href="https://example.com/?a=1&b=2">linha 1\nlinha 2\tfinal</a>',
+  nullable: null,
+}]);
+const restrictedRestoreSql = runner.restrictedReplaceSql("wp_adrotate", restrictedSnapshotRow);
+assert.match(restrictedRestoreSql, /^REPLACE INTO `wp_adrotate`/);
+assert.match(restrictedRestoreSql, /FROM_BASE64\('/);
+assert.doesNotMatch(restrictedRestoreSql, /linha 1|example\.com/);
+assert.equal(runner.parseRestrictedAdrotateBaseTable("wpve_adrotate\n"), "wpve_adrotate");
+assert.throws(() => runner.parseRestrictedAdrotateBaseTable(""), /uma única tabela/i);
+assert.throws(() => runner.parseRestrictedAdrotateBaseTable("wp_adrotate\nwpve_adrotate\n"), /encontradas 2/i);
+
 const almtPdfLabels = runner.extractPdfCommercialLabels(`PI - PEDIDO DE INSERÇÃO (INTERNET)
 ZIMMERMANN PUBLICIDADE E PROPAGANDA - CUIABA
 ZIMMERMANN PUBLICIDADE E PROPAGANDA LTDA
@@ -626,6 +646,50 @@ assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
 }, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
 
 const runnerSource = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+assert.match(runnerSource, /validateRestrictedAdrotateEngines[\s\S]*INNODB/, "rollback restrito precisa bloquear tabelas não transacionais");
+assert.match(runnerSource, /LOCK TABLES[\s\S]*CREATE TEMPORARY TABLE cod5_adops_current_ads[\s\S]*DELETE FROM/, "rollback restrito precisa resolver e bloquear IDs na mesma sessão");
+const restrictedSnapshotSql = runner.buildRestrictedAdrotateSnapshotSql({
+  tables: { ads: "wpve_adrotate", links: "wpve_adrotate_linkmeta", schedules: "wpve_adrotate_schedule" },
+  columns: { ads: ["id", "title"], links: ["id", "ad", "schedule"], schedules: ["id", "name"] },
+  insertionId: 2310,
+  externalKey: "ADOPS-ROO-2310",
+});
+assert.match(restrictedSnapshotSql, /START TRANSACTION WITH CONSISTENT SNAPSHOT/,
+  "snapshot restrito precisa ler os três datasets na mesma visão transacional");
+assert.equal((restrictedSnapshotSql.match(/COMMIT/g) || []).length, 1);
+assert.deepEqual(runner.parseRestrictedAdrotateSnapshotOutput([
+  "META\tADS\t1",
+  `ADS\t${Buffer.from("7").toString("base64")}\t${Buffer.from("banner\nseguro").toString("base64")}`,
+  "META\tLINKS\t1",
+  `LINKS\t${Buffer.from("8").toString("base64")}\t${Buffer.from("7").toString("base64")}\t${Buffer.from("9").toString("base64")}`,
+  "META\tSCHEDULES\t1",
+  `SCHEDULES\t${Buffer.from("9").toString("base64")}\t~`,
+].join("\n"), {
+  ads: ["id", "title"],
+  links: ["id", "ad", "schedule"],
+  schedules: ["id", "name"],
+}), {
+  ads: [{ id: "7", title: "banner\nseguro" }],
+  links: [{ id: "8", ad: "7", schedule: "9" }],
+  schedules: [{ id: "9", name: null }],
+});
+assert.throws(() => runner.parseRestrictedAdrotateSnapshotOutput("", {
+  ads: ["id"], links: ["id"], schedules: ["id"],
+}), /incompleto para ADS/);
+assert.deepEqual(runner.parseRestrictedAdrotateSnapshotOutput([
+  "META\tADS\t0",
+  "META\tLINKS\t0",
+  "META\tSCHEDULES\t0",
+].join("\n"), {
+  ads: ["id"], links: ["id"], schedules: ["id"],
+}), { ads: [], links: [], schedules: [] });
+assert.throws(() => runner.parseRestrictedAdrotateSnapshotOutput([
+  "META\tADS\t1",
+  "META\tLINKS\t0",
+  "META\tSCHEDULES\t0",
+].join("\n"), {
+  ads: ["id"], links: ["id"], schedules: ["id"],
+}), /incompleto para ADS/);
 assert.match(runnerSource, /insertionAfterPublish = await privateApiPatch[\s\S]*expectedUpdatedAt: payload\.publicationGuard\.expectedUpdatedAt/,
   "PATCH de publicação deve continuar o CAS iniciado pelo preflight");
 assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublish\?\.updatedAt \|\| patchedInsertion\?\.updatedAt/,
