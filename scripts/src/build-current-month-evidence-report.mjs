@@ -21,6 +21,7 @@ import {
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
   MONTHLY_REPORT_PORTAINER_TIMEOUT_MS,
+  MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
   buildDeliveryProbeOptions,
   adaptAggregatedEvidenceDay,
   canonicalCommercialPi,
@@ -555,7 +556,7 @@ async function materializeCampaignExports(items) {
         source: "monthly-report",
       }),
       headers: { "idempotency-key": idempotencyKey },
-      timeoutMs: 60_000,
+      timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
     });
     if (created.status !== "completed") {
       await waitForCompactJob(created.jobId, `exportação ${group.piCodigo}/${group.siteSigla}`, 20 * 60_000);

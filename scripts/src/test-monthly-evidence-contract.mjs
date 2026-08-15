@@ -210,6 +210,7 @@ test("readback amostra tres downloads por contrato", () => {
 
 test("publicacao Portainer tolera a latencia observada sem remover timeout", () => {
   assert.equal(contract.MONTHLY_REPORT_PORTAINER_TIMEOUT_MS, 60_000);
+  assert.equal(contract.MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS, 180_000);
 });
 
 test("publicacao pode usar rota interna do Portainer", () => {
