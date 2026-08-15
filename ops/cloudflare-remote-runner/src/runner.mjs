@@ -3178,9 +3178,20 @@ function parseRestrictedDbRows(stdout, columns) {
     if (values.length !== safeColumns.length) throw new Error("Snapshot DB restrito retornou quantidade inesperada de colunas.");
     return Object.fromEntries(safeColumns.map((column, index) => [
       column,
-      values[index] === "~" ? null : Buffer.from(values[index], "base64").toString("utf8"),
+      values[index] === "~" ? null : decodeRestrictedHexUtf8(values[index]),
     ]));
   });
+}
+
+function decodeRestrictedHexUtf8(value) {
+  const hex = String(value ?? "");
+  if (!/^(?:[0-9a-fA-F]{2})*$/.test(hex)) throw new Error("Snapshot DB restrito retornou HEX inválido.");
+  const bytes = Buffer.from(hex, "hex");
+  const decoded = bytes.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(bytes)) {
+    throw new Error("Snapshot DB restrito contém bytes não UTF-8; rollback foi bloqueado.");
+  }
+  return decoded;
 }
 
 async function restrictedTableColumns({ site, siteSigla, table }) {
@@ -3200,7 +3211,12 @@ async function restrictedSelectRows({ site, siteSigla, table, columns, whereSql 
 }
 
 function restrictedProjectionSql(columns) {
-  return columns.map((column) => `IF(\`${assertSqlIdentifier(column, "Coluna")}\` IS NULL,'~',REPLACE(REPLACE(TO_BASE64(CAST(\`${column}\` AS BINARY)),'\\n',''),'\\r',''))`).join(",");
+  return columns.map((column) => `IF(\`${assertSqlIdentifier(column, "Coluna")}\` IS NULL,${restrictedBinaryLiteral("~")},HEX(CAST(\`${column}\` AS BINARY)))`).join(",");
+}
+
+function restrictedBinaryLiteral(value) {
+  const hex = Buffer.from(String(value ?? ""), "utf8").toString("hex");
+  return hex ? `0x${hex}` : "LEFT(0x00,0)";
 }
 
 function parseRestrictedAdrotateBaseTable(stdout) {
@@ -3240,19 +3256,19 @@ function buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, exte
   const safeInsertionId = readPositiveInteger(insertionId);
   if (!safeInsertionId) throw new Error("Snapshot DB restrito exige insertionId positivo.");
   const safeTables = Object.fromEntries(Object.entries(tables).map(([key, table]) => [key, assertSqlIdentifier(table, "Tabela")]));
-  const externalKeyHex = Buffer.from(String(externalKey || ""), "utf8").toString("hex");
-  const adPredicate = `adops_insertion_id=${safeInsertionId} OR BINARY adops_external_key=UNHEX('${externalKeyHex}')`;
+  const externalKeyLiteral = restrictedBinaryLiteral(externalKey);
+  const adPredicate = `adops_insertion_id=${safeInsertionId} OR BINARY adops_external_key=${externalKeyLiteral}`;
   const adIds = `SELECT id FROM \`${safeTables.ads}\` WHERE ${adPredicate}`;
   const scheduleIds = `SELECT DISTINCT schedule FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) AND schedule>0`;
   return [
     "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
     "START TRANSACTION WITH CONSISTENT SNAPSHOT",
-    `SELECT 'META','ADS',COUNT(*) FROM \`${safeTables.ads}\` WHERE ${adPredicate}`,
-    `SELECT 'ADS',${restrictedProjectionSql(columns.ads)} FROM \`${safeTables.ads}\` WHERE ${adPredicate} ORDER BY id`,
-    `SELECT 'META','LINKS',COUNT(*) FROM \`${safeTables.links}\` WHERE ad IN (${adIds})`,
-    `SELECT 'LINKS',${restrictedProjectionSql(columns.links)} FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) ORDER BY id`,
-    `SELECT 'META','SCHEDULES',COUNT(*) FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds})`,
-    `SELECT 'SCHEDULES',${restrictedProjectionSql(columns.schedules)} FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds}) ORDER BY id`,
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("ADS")},COUNT(*) FROM \`${safeTables.ads}\` WHERE ${adPredicate}`,
+    `SELECT ${restrictedBinaryLiteral("ADS")},${restrictedProjectionSql(columns.ads)} FROM \`${safeTables.ads}\` WHERE ${adPredicate} ORDER BY id`,
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("LINKS")},COUNT(*) FROM \`${safeTables.links}\` WHERE ad IN (${adIds})`,
+    `SELECT ${restrictedBinaryLiteral("LINKS")},${restrictedProjectionSql(columns.links)} FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) ORDER BY id`,
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("SCHEDULES")},COUNT(*) FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds})`,
+    `SELECT ${restrictedBinaryLiteral("SCHEDULES")},${restrictedProjectionSql(columns.schedules)} FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds}) ORDER BY id`,
     "COMMIT",
   ].join(";");
 }
@@ -3277,12 +3293,13 @@ function parseRestrictedAdrotateSnapshotOutput(stdout, columns) {
     }
     datasets[dataset].push(Object.fromEntries(safeColumns.map((column, index) => [
       assertSqlIdentifier(column, "Coluna"),
-      values[index] === "~" ? null : Buffer.from(values[index], "base64").toString("utf8"),
+      values[index] === "~" ? null : decodeRestrictedHexUtf8(values[index]),
     ])));
   }
   for (const dataset of Object.keys(datasets)) {
     if (!Object.hasOwn(expectedCounts, dataset) || datasets[dataset].length !== expectedCounts[dataset]) {
-      throw new Error(`Snapshot DB restrito incompleto para ${dataset}.`);
+      const expected = Object.hasOwn(expectedCounts, dataset) ? expectedCounts[dataset] : "missing";
+      throw new Error(`Snapshot DB restrito incompleto para ${dataset}: esperado=${expected} recebido=${datasets[dataset].length}.`);
     }
   }
   return normalizePerrengueAdrotateSnapshot({
@@ -3290,6 +3307,15 @@ function parseRestrictedAdrotateSnapshotOutput(stdout, columns) {
     links: datasets.LINKS,
     schedules: datasets.SCHEDULES,
   });
+}
+
+function summarizeRestrictedSnapshotOutput(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return "empty";
+  return lines.map((line) => {
+    const [dataset, target, count] = line.split("\t");
+    return dataset === "META" ? `META:${target}:${count}` : String(dataset || "unknown").slice(0, 24);
+  }).join(",").slice(0, 500);
 }
 
 async function snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey }) {
@@ -3302,7 +3328,11 @@ async function snapshotRestrictedAdrotate({ site, siteSigla, insertionId, extern
   };
   const sql = buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, externalKey });
   const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql });
-  return parseRestrictedAdrotateSnapshotOutput(result.stdout, columns);
+  try {
+    return parseRestrictedAdrotateSnapshotOutput(result.stdout, columns);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)} saída=${summarizeRestrictedSnapshotOutput(result.stdout)}`);
+  }
 }
 
 function restrictedReplaceSql(table, rows) {
@@ -3311,7 +3341,7 @@ function restrictedReplaceSql(table, rows) {
     const columns = Object.keys(row).map((column) => assertSqlIdentifier(column, "Coluna"));
     const values = columns.map((column) => row[column] == null
       ? "NULL"
-      : `FROM_BASE64('${Buffer.from(String(row[column]), "utf8").toString("base64")}')`);
+      : `FROM_BASE64(${restrictedBinaryLiteral(Buffer.from(String(row[column]), "utf8").toString("base64"))})`);
     return `REPLACE INTO \`${safeTable}\` (${columns.map((column) => `\`${column}\``).join(",")}) VALUES (${values.join(",")})`;
   }).join(";");
 }
@@ -3320,13 +3350,13 @@ async function restoreRestrictedAdrotate({ site, siteSigla, insertionId, externa
   const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
   const tables = await resolveRestrictedAdrotateTables({ site, siteSigla });
   await validateRestrictedAdrotateEngines({ site, siteSigla, tables });
-  const externalKeyHex = Buffer.from(String(externalKey || ""), "utf8").toString("hex");
+  const externalKeyLiteral = restrictedBinaryLiteral(externalKey);
   const statements = [
     "SET autocommit=0",
     `LOCK TABLES \`${tables.ads}\` WRITE, \`${tables.links}\` WRITE, \`${tables.schedules}\` WRITE`,
     "CREATE TEMPORARY TABLE cod5_adops_current_ads (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
     "CREATE TEMPORARY TABLE cod5_adops_current_schedules (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
-    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR BINARY adops_external_key=UNHEX('${externalKeyHex}')`,
+    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR BINARY adops_external_key=${externalKeyLiteral}`,
     `INSERT IGNORE INTO cod5_adops_current_schedules (id) SELECT schedule FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads) AND schedule>0`,
     `DELETE FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads)`,
     `DELETE FROM \`${tables.ads}\` WHERE id IN (SELECT id FROM cod5_adops_current_ads)`,

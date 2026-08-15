@@ -15,8 +15,8 @@ const runner = await import("../../ops/cloudflare-remote-runner/src/runner.mjs")
 assert.equal(runner.isRestrictedKvm8GatewaySite({ sshUser: "cod5adops", sshHost: "93.127.210.71" }), true);
 assert.equal(runner.isRestrictedKvm8GatewaySite({ sshUser: "root", sshHost: "93.127.210.71" }), false);
 const restrictedSnapshotRow = runner.parseRestrictedDbRows([
-  Buffer.from("2310").toString("base64"),
-  Buffer.from('<a href="https://example.com/?a=1&b=2">linha 1\nlinha 2\tfinal</a>').toString("base64"),
+  Buffer.from("2310").toString("hex"),
+  Buffer.from('<a href="https://example.com/?a=1&b=2">linha 1\nlinha 2\tfinal</a>').toString("hex"),
   "~",
 ].join("\t") + "\n", ["id", "bannercode", "nullable"]);
 assert.deepEqual(restrictedSnapshotRow, [{
@@ -24,9 +24,13 @@ assert.deepEqual(restrictedSnapshotRow, [{
   bannercode: '<a href="https://example.com/?a=1&b=2">linha 1\nlinha 2\tfinal</a>',
   nullable: null,
 }]);
+for (const invalidHex of ["f", "gg", "ff", "e7"]) {
+  assert.throws(() => runner.parseRestrictedDbRows(`${invalidHex}\n`, ["id"]), /HEX inválido|não UTF-8/);
+}
 const restrictedRestoreSql = runner.restrictedReplaceSql("wp_adrotate", restrictedSnapshotRow);
 assert.match(restrictedRestoreSql, /^REPLACE INTO `wp_adrotate`/);
-assert.match(restrictedRestoreSql, /FROM_BASE64\('/);
+assert.match(restrictedRestoreSql, /FROM_BASE64\(0x[0-9a-f]+\)/);
+assert.doesNotMatch(restrictedRestoreSql, /'/);
 assert.doesNotMatch(restrictedRestoreSql, /linha 1|example\.com/);
 assert.equal(runner.parseRestrictedAdrotateBaseTable("wpve_adrotate\n"), "wpve_adrotate");
 assert.throws(() => runner.parseRestrictedAdrotateBaseTable(""), /uma única tabela/i);
@@ -666,17 +670,23 @@ const restrictedSnapshotSql = runner.buildRestrictedAdrotateSnapshotSql({
 });
 assert.match(restrictedSnapshotSql, /START TRANSACTION WITH CONSISTENT SNAPSHOT/,
   "snapshot restrito precisa ler os três datasets na mesma visão transacional");
-assert.match(restrictedSnapshotSql, /BINARY adops_external_key=UNHEX\('[0-9a-f]+'\)/,
+assert.match(restrictedSnapshotSql, /BINARY adops_external_key=0x[0-9a-f]+/,
   "chave externa deve ser comparada em bytes, sem depender da collation do WordPress");
 assert.doesNotMatch(restrictedSnapshotSql, /CONVERT\(UNHEX/);
+assert.match(restrictedSnapshotSql, /HEX\(CAST\(/,
+  "snapshot deve usar HEX sem quebra de linha nem função REPLACE interpretada como mutação pelo WP-CLI");
+assert.doesNotMatch(restrictedSnapshotSql, /REPLACE|TO_BASE64/);
+assert.doesNotMatch(restrictedSnapshotSql, /'\\[nr]'/);
+assert.doesNotMatch(restrictedSnapshotSql, /'/,
+  "snapshot restrito deve atravessar o gateway sem literais SQL entre aspas");
 assert.equal((restrictedSnapshotSql.match(/COMMIT/g) || []).length, 1);
 assert.deepEqual(runner.parseRestrictedAdrotateSnapshotOutput([
   "META\tADS\t1",
-  `ADS\t${Buffer.from("7").toString("base64")}\t${Buffer.from("banner\nseguro").toString("base64")}`,
+  `ADS\t${Buffer.from("7").toString("hex")}\t${Buffer.from("banner\nseguro").toString("hex")}`,
   "META\tLINKS\t1",
-  `LINKS\t${Buffer.from("8").toString("base64")}\t${Buffer.from("7").toString("base64")}\t${Buffer.from("9").toString("base64")}`,
+  `LINKS\t${Buffer.from("8").toString("hex")}\t${Buffer.from("7").toString("hex")}\t${Buffer.from("9").toString("hex")}`,
   "META\tSCHEDULES\t1",
-  `SCHEDULES\t${Buffer.from("9").toString("base64")}\t~`,
+  `SCHEDULES\t${Buffer.from("9").toString("hex")}\t~`,
 ].join("\n"), {
   ads: ["id", "title"],
   links: ["id", "ad", "schedule"],
