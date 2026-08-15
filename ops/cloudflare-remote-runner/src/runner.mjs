@@ -1620,19 +1620,41 @@ async function downloadDriveFileToArchive(file) {
     return null;
   }
   if (Number(file.size || 0) > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
-  const accessToken = await getGoogleDriveAccessToken();
   const isGoogleDocument = file.mimeType === "application/vnd.google-apps.document";
   const downloadUrl = isGoogleDocument
     ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}/export?mimeType=${encodeURIComponent("text/plain")}`
     : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}?alt=media`;
-  const response = await fetch(downloadUrl, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Falha ao baixar arquivo do Drive: ${response.status}`);
+  let response = null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+    let retryAfterMs = 0;
+    try {
+      const accessToken = await getGoogleDriveAccessToken();
+      response = await fetch(downloadUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(ADOPS_DRIVE_REQUEST_TIMEOUT_MS),
+      });
+      if (response.ok) break;
+      const payload = await response.json().catch(() => null);
+      const failure = classifyGoogleDriveDownloadFailure(response.status, payload);
+      const error = new Error(`Falha ao baixar ${safeFileName(file.name || file.driveFileId)} do Drive: ${response.status} ${failure.reason}`);
+      error.retryable = failure.retryable;
+      if (!failure.retryable) throw error;
+      lastError = error;
+      const retryAfterSeconds = Number.parseFloat(response.headers.get("retry-after") || "0");
+      retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.retryable === false) throw lastError;
+      if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) throw lastError;
+    }
+    if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) break;
+    const exponentialMs = ADOPS_DRIVE_RETRY_BASE_MS * (2 ** (attempt - 1));
+    const delayMs = Math.min(ADOPS_DRIVE_RETRY_MAX_MS, Math.max(retryAfterMs, exponentialMs));
+    console.warn(`[runner] Download Google Drive temporariamente indisponível; retry ${attempt}/${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS} em ${delayMs}ms`);
+    await sleep(delayMs);
   }
+  if (!response?.ok) throw lastError || new Error("Download Google Drive indisponível após retries.");
   const declaredLength = Number(response.headers.get("content-length") || 0);
   if (declaredLength > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const bytes = Buffer.from(await response.arrayBuffer());
@@ -1644,6 +1666,15 @@ async function downloadDriveFileToArchive(file) {
   const filePath = path.join(dir, `${sha256.slice(0, 12)}-${safeFileName(archiveName)}`);
   await writeFile(filePath, bytes);
   return { filePath, sha256, md5: crypto.createHash("md5").update(bytes).digest("hex"), bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
+}
+
+function classifyGoogleDriveDownloadFailure(status, payload) {
+  const reason = String(payload?.error?.errors?.[0]?.reason || payload?.error?.message || `HTTP ${status}`).slice(0, 240);
+  const quotaLimited = Number(status) === 403 && /quota|rate.?limit|userratelimitexceeded|downloadquotaexceeded/i.test(reason);
+  return {
+    reason,
+    retryable: Number(status) === 429 || Number(status) >= 500 || quotaLimited,
+  };
 }
 
 function trimUrlPunctuation(value) {
@@ -7166,6 +7197,7 @@ export {
   buildRestrictedAdrotateSnapshotSql,
   buildDrivePiFolderIdentityText,
   buildPerrengueRebuildTriggerReason,
+  classifyGoogleDriveDownloadFailure,
   buildAdrotatePublishPayload,
   buildPerrengueAdrotateRestorePhp,
   buildPerrengueAdrotateSnapshotPhp,

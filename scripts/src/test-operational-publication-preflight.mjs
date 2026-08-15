@@ -646,6 +646,14 @@ assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
 }, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
 
 const runnerSource = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+assert.deepEqual(runner.classifyGoogleDriveDownloadFailure(403, {
+  error: { errors: [{ reason: "userRateLimitExceeded" }] },
+}), { reason: "userRateLimitExceeded", retryable: true });
+assert.deepEqual(runner.classifyGoogleDriveDownloadFailure(403, {
+  error: { errors: [{ reason: "insufficientFilePermissions" }] },
+}), { reason: "insufficientFilePermissions", retryable: false });
+assert.equal(runner.classifyGoogleDriveDownloadFailure(429, null).retryable, true);
+assert.equal(runner.classifyGoogleDriveDownloadFailure(503, null).retryable, true);
 assert.match(runnerSource, /validateRestrictedAdrotateEngines[\s\S]*INNODB/, "rollback restrito precisa bloquear tabelas não transacionais");
 assert.match(runnerSource, /LOCK TABLES[\s\S]*CREATE TEMPORARY TABLE cod5_adops_current_ads[\s\S]*DELETE FROM/, "rollback restrito precisa resolver e bloquear IDs na mesma sessão");
 const restrictedSnapshotSql = runner.buildRestrictedAdrotateSnapshotSql({
