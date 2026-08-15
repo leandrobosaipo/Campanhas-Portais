@@ -3155,6 +3155,7 @@ async function executeRestrictedWpDbQuery({ site, siteSigla, sql, skipColumnName
     "query",
     shellEscape(sql),
     "--batch",
+    "--quiet",
     ...(skipColumnNames ? ["--skip-column-names"] : []),
   ].join(" ");
   if (remoteCommand.length > 95000) throw new Error("Query de rollback excede o limite seguro do gateway restrito.");

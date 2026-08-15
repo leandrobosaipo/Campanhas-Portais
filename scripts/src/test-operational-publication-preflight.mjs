@@ -655,6 +655,8 @@ assert.deepEqual(runner.classifyGoogleDriveDownloadFailure(403, {
 assert.equal(runner.classifyGoogleDriveDownloadFailure(429, null).retryable, true);
 assert.equal(runner.classifyGoogleDriveDownloadFailure(503, null).retryable, true);
 assert.match(runnerSource, /validateRestrictedAdrotateEngines[\s\S]*INNODB/, "rollback restrito precisa bloquear tabelas não transacionais");
+assert.match(runnerSource, /query[\s\S]*shellEscape\(sql\)[\s\S]*--quiet[\s\S]*--skip-column-names/,
+  "wp db query restrito deve suprimir mensagens informativas sem afrouxar o parser");
 assert.match(runnerSource, /LOCK TABLES[\s\S]*CREATE TEMPORARY TABLE cod5_adops_current_ads[\s\S]*DELETE FROM/, "rollback restrito precisa resolver e bloquear IDs na mesma sessão");
 const restrictedSnapshotSql = runner.buildRestrictedAdrotateSnapshotSql({
   tables: { ads: "wpve_adrotate", links: "wpve_adrotate_linkmeta", schedules: "wpve_adrotate_schedule" },
