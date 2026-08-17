@@ -12,6 +12,15 @@ source "$SCRIPT_DIR/lib-portainer.sh"
 
 load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
+
+portainer_start_container() {
+  local container_id="$1"
+  curl -sS --connect-timeout 10 --max-time 30 \
+    -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    -X POST \
+    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start"
+}
+
 DISCOVERED_ENV=""
 DEPLOY_ENV=""
 ROLLBACK_ENV=""
@@ -29,7 +38,7 @@ cleanup() {
     NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
       | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Status' | head -n 1 || true)"
     if [[ "$NEW_MONITOR_HEALTH" != *"(healthy)"* ]]; then
-      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
+      portainer_start_container "$LEGACY_MONITOR_ID" >/dev/null || true
     fi
   fi
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
@@ -143,7 +152,7 @@ for attempt in $(seq 1 120); do
     CONTAINER_ID="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .Id' 2>/dev/null | head -n 1)"
     CONTAINER_STATE="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .State' 2>/dev/null | head -n 1)"
     if [[ -n "$CONTAINER_ID" && "$CONTAINER_STATE" != "running" ]]; then
-      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${CONTAINER_ID}/start" >/dev/null 2>&1 || true
+      portainer_start_container "$CONTAINER_ID" >/dev/null 2>&1 || true
     fi
   done
   RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-runner" and .State == "running") | .Id' 2>/dev/null | head -n 1)"

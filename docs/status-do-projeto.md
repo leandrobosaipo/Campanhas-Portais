@@ -3,18 +3,18 @@
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
 > Última validação: 2026-08-17
-> Release antes desta correção: b00779340442
+> Release validada: 72c1cb9fbc8df38ef032de310b3e9b40f9029c3d
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
 
-O AdOps está em produção. A versão exata deve ser confirmada no release readback; `c71350e` é a base desta política operacional.
+O AdOps está em produção na release `72c1cb9fbc8df38ef032de310b3e9b40f9029c3d`, confirmada pelo release readback, health público e pelos três runners.
 
 Isto substitui a afirmação histórica de que produção estava “em preparação”. Histórico de implantação continua disponível no Git, mas não descreve o runtime atual.
 
 ## Estado por capacidade
 
-| Capacidade | Estado em 2026-08-12 | Evidência autoritativa |
+| Capacidade | Estado em 2026-08-17 | Evidência autoritativa |
 |---|---|---|
 | API e painel | ativo | health público e release readback |
 | Banco operacional | ativo | API Node/PostgreSQL |
@@ -22,7 +22,7 @@ Isto substitui a afirmação histórica de que produção estava “em preparaç
 | Prints e exportações | ativo | runner dedicado e jobs concluídos |
 | Inventário do Drive | ativo | monitor e snapshot atual |
 | Relatório mensal | ativo | página não listada e downloads |
-| Worker público | ativo | deployment anterior `4b059f5a-0857-4e00-9cbc-585e808c83ba`; revalidar após deploy |
+| Worker público | ativo | deployment `d436a6f9-1622-4ed2-979c-1b0eceb674cc` e três crons ativos |
 | Telegram | sob demanda | somente quando solicitado |
 
 ## Relatório de agosto
@@ -35,9 +35,24 @@ Esses números são uma fotografia datada. A fonte mensal agregada e o relatóri
 
 PI 14771/OMT e PI 9750/AFL já estavam cadastradas e publicadas, respectivamente como `campaignId=969/insertionId=1841` e `campaignId=981/insertionId=1854`. As mídias públicas responderam HTTP 200 com hash igual ao arquivo do Drive. As evidências estavam aprovadas até 14/08 e faltava somente 15/08.
 
-A primeira tentativa real de 17/08 chegou ao runner D1 correto, mas falhou de forma segura porque os slots expirados `.g.g-1` do OMT e `.g.g-2` do AFL não estavam mais no HTML histórico. Nenhuma evidência foi fabricada. O capturador passou a permitir reconstrução auditada nesses dois portais somente em âncoras conhecidas, usando notícias do WordPress REST até o corte e a mídia canônica do AdOps. O resultado vivo dos prints de 15/08 deve ser revalidado após o deploy dessa correção.
+A primeira tentativa real de 17/08 chegou ao runner D1 correto, mas falhou de forma segura porque os slots expirados `.g.g-1` do OMT e `.g.g-2` do AFL não estavam mais no HTML histórico. Nenhuma evidência foi fabricada. O capturador passou a permitir reconstrução auditada nesses dois portais somente em âncoras conhecidas, usando notícias do WordPress REST até o corte e a mídia canônica do AdOps.
+
+Após o deploy, os dois dias foram recuperados pela API AdOps:
+
+- OMT, PI 14771, campanha `969`, inserção `1841`, data `15/08`: job `a5b415ed-37f4-4a9d-8b1f-33dea67372c9`, estado `audited`, checklist aprovado, zero bloqueios e URL pública acessível;
+- AFL, PI 9750, campanha `981`, inserção `1854`, data `15/08`: job `007046c0-6581-42c3-ac21-09b2d462ca6d`, estado `audited`, checklist aprovado, zero bloqueios e URL pública acessível.
+
+Os JPEGs individuais foram lidos no consumidor real com HTTP 200: OMT com 169.025 bytes e AFL com 144.808 bytes. Os PNGs canônicos permaneceram intactos.
+
+O gate do relatório revelou ainda a última data ausente da PI 009749/ROO: campanha `980`, inserção `1853`, data `15/08`. O job `aedd8714-9f3d-4c95-be23-e40a117156e3` gerou essa evidência pela API e terminou `audited`, com checklist aprovado, zero bloqueios, data/hora de 15/08 às 18:12 e URL pública HTTP 200.
 
 Elas desapareceram do relatório porque a fonte mensal reutilizava a consulta de campanhas ativas na data-alvo 16/08. Como os dois períodos terminaram em 15/08, foram excluídas. A correção faz a fonte mensal carregar qualquer linha cujo período toque agosto, preservando a fonte `active` apenas para a rotina diária.
+
+Uma tentativa manual com corte em 17/08 foi bloqueada antes da publicação porque os 17 prints do próprio dia ainda não eram exigíveis antes do cron das 18h de Cuiabá. O relatório deve usar o último dia cuja captura diária já encerrou, ou aguardar a janela normal das 22h15.
+
+O job mensal `783f85a5-d34f-4d04-8878-7c01f281f795`, com corte seguro em 16/08, concluiu e publicou atomicamente às 18:09 UTC. O consumidor público retornou HTTP 200 e passou a mostrar 25 inserções do mês, sendo 16 ativas e 9 encerradas, 199 datas auditadas, zero pendência no gate de campanhas publicadas e as três PIs 14771, 009750 e 009749 completas até 15/08. As 45 datas ainda visíveis como ausentes pertencem às quatro inserções não publicadas e permanecem informativas, sem serem confundidas com falha de campanha ativa.
+
+Os ZIPs completos de PI 14771 e PI 9750 foram baixados e verificados: respectivamente 15 e 12 JPEGs, zero PNG, um `SHA256SUMS.txt` e todos os checksums válidos.
 
 As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer redirect informado fora desse snapshot precisa ser reconsultado pelo ID exato da pasta; ausência no inventário não autoriza inventar destino.
 

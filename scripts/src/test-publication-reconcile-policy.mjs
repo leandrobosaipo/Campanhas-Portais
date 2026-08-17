@@ -120,5 +120,8 @@ test("release mantém API em modo monitor e documenta o job protegido", async ()
   const deploy = await readFile(new URL("../../ops/portainer/adops-stack/scripts/deploy-production.sh", import.meta.url), "utf8");
   const openapi = await readFile(new URL("../../lib/api-spec/openapi.yaml", import.meta.url), "utf8");
   assert.match(deploy, /\$\{DRIVE_INTEGRATION_MODE:-monitor\}/);
+  assert.match(deploy, /portainer_start_container\(\)/);
+  assert.match(deploy, /--connect-timeout 10 --max-time 30/);
+  assert.doesNotMatch(deploy, /portainer_curl -X POST "\$\{PORTAINER_API\}\/endpoints\/\$\{ENDPOINT_ID\}\/docker\/containers\/\$\{CONTAINER_ID\}\/start"/);
   assert.match(openapi, /\/ops\/jobs\/campaign-publication-reconcile:/);
 });
