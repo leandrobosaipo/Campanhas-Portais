@@ -63,6 +63,8 @@ Para qualquer criação de job:
 
 Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
 
+A API canônica `adops-api.codigo5.com.br` encaminha criação, listagem e progresso desses jobs ao Worker/D1. Não grave um job operacional somente na tabela PostgreSQL legada: os runners atuais não consomem essa fila. O teste integrado de release deve criar um job pela API canônica e confirmar que o mesmo ID aparece no `/progress` e na fila D1.
+
 ### Rotina diária
 
 1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.

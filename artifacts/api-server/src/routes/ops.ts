@@ -86,18 +86,19 @@ const OPS_JOB_KINDS: JobKind[] = [
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
 const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
 
-async function proxyPublicWorkerJob(req: Request, res: Response): Promise<void> {
+async function proxyPublicWorkerJob(req: Request, res: Response, targetPath = req.originalUrl): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const method = req.method.toUpperCase();
-    const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${req.originalUrl}`, {
+    const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${targetPath}`, {
       method: req.method,
       signal: controller.signal,
       headers: {
         accept: req.header("accept") || "application/json",
         "content-type": "application/json",
         ...(req.header("authorization") ? { authorization: req.header("authorization")! } : {}),
+        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key")! } : {}),
       },
       ...(method === "GET" || method === "HEAD" ? {} : { body: JSON.stringify(req.body ?? {}) }),
     });
@@ -114,6 +115,48 @@ async function proxyPublicWorkerJob(req: Request, res: Response): Promise<void> 
     clearTimeout(timeout);
   }
 }
+
+const D1_JOB_POST_PATHS = new Set([
+  "/ops/jobs/print-batch",
+  "/ops/jobs/print-backfill",
+  "/ops/jobs/print-single",
+  "/ops/jobs/evidence-monthly-report",
+  "/ops/jobs/campaign-publication-reconcile",
+  "/ops/jobs/drive-pi-preflight",
+  "/ops/jobs/drive-pi-folder",
+  "/ops/jobs/drive-pi-publish",
+  "/ops/jobs/reconcile-adrotate",
+  "/ops/jobs/adrotate-link",
+  "/ops/jobs/adrotate-publish",
+  "/ops/jobs/watchdog",
+  "/ops/jobs/sync-planilha",
+  "/ops/jobs/drive-inventory-refresh",
+  "/ops/jobs/drive-pi-reconcile",
+  "/ops/jobs/telegram-send-evidence",
+  "/ops/jobs/runtime-readiness-probe",
+]);
+
+router.use((req, res, next) => {
+  const method = req.method.toUpperCase();
+  if (method === "POST" && req.path === "/ops/jobs/pi-site-export") {
+    void proxyPublicWorkerJob(req, res, "/api/pi-site-exports/jobs");
+    return;
+  }
+  if (method === "POST" && (req.path === "/ops/drive-pi-events" || req.path === "/ops/drive-pi-events/status")) {
+    void proxyPublicWorkerJob(req, res);
+    return;
+  }
+  const d1Read = method === "GET" && (
+    req.path === "/ops/jobs"
+    || req.path === "/ops/queue/overview"
+    || /^\/ops\/jobs\/[^/]+(?:\/progress)?$/.test(req.path)
+  );
+  if (d1Read || (method === "POST" && D1_JOB_POST_PATHS.has(req.path))) {
+    void proxyPublicWorkerJob(req, res);
+    return;
+  }
+  next();
+});
 
 type RuntimeEnvCheck = {
   name: string;
@@ -1990,8 +2033,8 @@ router.get("/ops/quickstart.html", (_req, res): void => {
 </html>`);
 });
 
-router.post("/ops/jobs/campaign-publication-reconcile", proxyPublicWorkerJob);
-router.get("/ops/incidents", proxyPublicWorkerJob);
+router.post("/ops/jobs/campaign-publication-reconcile", (req, res) => void proxyPublicWorkerJob(req, res));
+router.get("/ops/incidents", (req, res) => void proxyPublicWorkerJob(req, res));
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
   const insertionId = typeof req.body?.insertionId === "number" ? req.body.insertionId : null;

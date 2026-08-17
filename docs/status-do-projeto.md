@@ -68,6 +68,7 @@ Enquanto a PI/PDF continuar ausente:
 
 - a rotina de 17h30 sincroniza a planilha antes de reconciliar publicação; PI 9750/AFL e PI 14771/OMT não são ausentes e não podem ser recriadas;
 - o lote diário de print não deve depender de uma resposta HTTP síncrona longa: cada captura é acompanhada por job assíncrono, e auditoria incompleta abre incidente estruturado;
+- criação e leitura de jobs pela API canônica devem convergir no D1 consumido pelos runners; a fila PostgreSQL permanece somente como legado e não comprova execução;
 - recuperar a PI/PDF de `#1944` para concluir identidade comercial, faturamento e ZIP por PI; a veiculação pode ser retomada antes apenas pelo preflight operacional único;
 - manter documentação e release datadas;
 - monitorar duração, cache hits, blockers e heartbeat;

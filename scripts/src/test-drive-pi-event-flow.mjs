@@ -176,7 +176,7 @@ await check("worker-mantem-fila-de-prints-no-d1-consumido-pelos-runners", async 
   return { ok: true };
 });
 
-await check("worker-encaminha-contratos-de-conflito-para-api-canonica", async () => {
+await check("worker-grava-reconcile-drive-diretamente-no-D1", async () => {
   const source = read(workerSourcePath);
   assertIncludes(source, [
     'if (path === "/api/ops/jobs/drive-pi-reconcile")',
@@ -185,19 +185,10 @@ await check("worker-encaminha-contratos-de-conflito-para-api-canonica", async ()
     '"drive-pi-reconcile"',
   ], "Proxy público dos contratos de conflito");
 
-  for (const marker of [
-    'if (path === "/api/ops/jobs/drive-pi-reconcile")',
-    'if (path === "/api/ops/runtime-readiness" || path === "/api/ops/runtime-topology")',
-  ]) {
-    const start = source.indexOf(marker);
-    assert(start >= 0, `Worker sem rota ${marker}`);
-    const block = source.slice(start, start + 620);
-    assertIncludes(block, [
-      "privateApiEnabled(env)",
-      "proxyToPrivateApi(request, env, url, { noStore: true })",
-      'error: "private_api_unavailable"',
-    ], `Proxy canônico ${marker}`);
-  }
+  const reconcileStart = source.indexOf('if (path === "/api/ops/jobs/drive-pi-reconcile")');
+  const reconcileBlock = source.slice(reconcileStart, reconcileStart + 3600);
+  assertIncludes(reconcileBlock, ["createIdempotentOpsJob(env, \"drive-pi-reconcile\"", "insertionId", "idempotencyKey"], "Reconcile D1");
+  assert(!reconcileBlock.includes("proxyToPrivateApi"), "drive-pi-reconcile não pode voltar à API canônica e entrar em loop");
   return { ok: true };
 });
 

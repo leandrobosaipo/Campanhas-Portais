@@ -2730,11 +2730,51 @@ export default {
       if (path === "/api/ops/jobs/drive-pi-reconcile") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
-        if (privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
+        const body = await readBody(request);
+        const insertionId = readOptionalNumber(body.insertionId);
+        const apply = body.apply === true;
+        const canonicalPi = readOptionalString(body.canonicalPi);
+        const selectedDriveFileId = readOptionalString(body.selectedDriveFileId);
+        const sourcePreflightJobId = readOptionalString(body.sourcePreflightJobId);
+        const mediaUrl = readOptionalString(body.mediaUrl);
+        const confirmationNote = readOptionalString(body.confirmationNote);
+        if (!insertionId || insertionId <= 0) return badRequest("Informe insertionId positivo.");
+        if (canonicalPi && !/\d{3,}/.test(canonicalPi)) return badRequest("canonicalPi deve conter ao menos três dígitos.");
+        if (mediaUrl) {
+          try {
+            const parsed = new URL(mediaUrl);
+            if (parsed.protocol !== "https:" || /(^|\.)drive\.google\.com$/i.test(parsed.hostname) || /(^|\.)docs\.google\.com$/i.test(parsed.hostname)) throw new Error("invalid_media_url");
+          } catch {
+            return badRequest("mediaUrl deve ser HTTPS pública e canônica. URL de visualização do Google Drive não é aceita.");
+          }
+        }
+        if (apply && !canonicalPi && !mediaUrl) return badRequest("apply=true exige canonicalPi e/ou mediaUrl explícita.");
+        if (apply && (!confirmationNote || confirmationNote.length < 8)) return badRequest("apply=true exige confirmationNote rastreável.");
+        const requestedKey = request.headers.get("idempotency-key")?.trim() || readOptionalString(body.idempotencyKey) || "";
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ insertionId, apply, canonicalPi, selectedDriveFileId, sourcePreflightJobId, mediaUrl })));
+        const generatedKey = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+        const idempotencyKey = requestedKey || generatedKey;
+        if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) return badRequest("Idempotency-Key inválida.");
+        const created = await createIdempotentOpsJob(env, "drive-pi-reconcile", {
+          insertionId,
+          apply,
+          mode: apply ? "apply" : "preview",
+          canonicalPi,
+          selectedDriveFileId,
+          sourcePreflightJobId,
+          mediaUrl,
+          confirmationNote,
+          source: "cloudflare-protected-api",
+        }, "ops-api", idempotencyKey, true);
         return jsonNoStore({
-          error: "private_api_unavailable",
-          details: "A reconciliação de fonte e mídia depende da API principal hospedada.",
-        }, { status: 503 });
+          ok: true,
+          kind: "drive-pi-reconcile",
+          apply,
+          ...created,
+          requiredFollowUp: apply
+            ? ["review_job_result", "recheck_campaign_operations", "recheck_media_consistency"]
+            : ["obtain_human_confirmation", "rerun_with_apply_true"],
+        }, { status: created.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/telegram-send-evidence") {

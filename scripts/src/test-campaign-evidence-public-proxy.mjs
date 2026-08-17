@@ -60,6 +60,36 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
       res.end(JSON.stringify({ items: [{ id: "incident-test", layer: "audit" }] }));
       return;
     }
+    if (req.method === "POST" && req.url === "/api/ops/jobs/print-backfill") {
+      if (req.headers.authorization !== "Bearer configured-in-production") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "missing_forwarded_authorization" }));
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, jobId: "d1-print-test", kind: "print-backfill", status: "ready_for_runner" }));
+      return;
+    }
+    if (req.method === "GET" && req.url === "/api/ops/jobs/d1-print-test/progress") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "d1-print-test", status: "running", progress: { stage: "capture" } }));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/ops/drive-pi-events") {
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, jobId: "drive-d1-test", status: "ready_for_runner" }));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/api/pi-site-exports/jobs") {
+      if (req.headers["idempotency-key"] !== "pi-export-retry-key") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "missing_forwarded_idempotency_key" }));
+        return;
+      }
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, jobId: "pi-export-d1-test", status: "ready_for_runner" }));
+      return;
+    }
     res.writeHead(404).end();
   });
   const workerPort = await listen(worker);
@@ -94,7 +124,7 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
     assert.equal(unauthorizedBatch.status, 401);
     const batch = await fetch(`${baseUrl}/api/campaign-evidence-exports/jobs/batch`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production" },
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production", "idempotency-key": "pi-export-retry-key" },
       body: JSON.stringify({ competencia: "AGOSTO/2026", campaigns: [{ piCodigo: "17048" }, { piCodigo: "17190" }] }),
     });
     assert.equal(batch.status, 202);
@@ -113,6 +143,28 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
     });
     assert.equal(incidents.status, 200);
     assert.equal((await incidents.json()).items[0].id, "incident-test");
+    const printBackfill = await fetch(`${baseUrl}/api/ops/jobs/print-backfill`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production" },
+      body: JSON.stringify({ insertionId: 1841, fromDate: "2026-08-15", toDate: "2026-08-15" }),
+    });
+    assert.equal(printBackfill.status, 202);
+    assert.equal((await printBackfill.json()).jobId, "d1-print-test");
+    const progress = await fetch(`${baseUrl}/api/ops/jobs/d1-print-test/progress`);
+    assert.equal(progress.status, 200);
+    assert.equal((await progress.json()).progress.stage, "capture");
+    const driveEvent = await fetch(`${baseUrl}/api/ops/drive-pi-events`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production" },
+      body: JSON.stringify({ eventId: "event-test" }),
+    });
+    assert.equal((await driveEvent.json()).jobId, "drive-d1-test");
+    const piExport = await fetch(`${baseUrl}/api/ops/jobs/pi-site-export`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer configured-in-production", "idempotency-key": "pi-export-retry-key" },
+      body: JSON.stringify({ piCodigo: "14771", siteSigla: "OMT" }),
+    });
+    assert.equal((await piExport.json()).jobId, "pi-export-d1-test");
     const internal = await fetch(`${baseUrl}/api/internal/campaign-evidence-exports?piCodigo=17048&competencia=AGOSTO%2F2026`);
     assert.equal(internal.status, 401);
   } finally {
