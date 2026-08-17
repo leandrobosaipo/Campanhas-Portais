@@ -99,6 +99,8 @@ Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` perma
 
 A rotina diária começa às 17h30 de Cuiabá com a sincronização da planilha e só depois reconcilia Drive, AdOps e publicação. Às 18h captura somente o dia corrente. Às 22h15 publica o relatório mensal completo. PI 9750/AFL e PI 14771/OMT já são as inserções canônicas `#1854` e `#1841`; nunca devem ser recriadas.
 
+Retroativo de campanha encerrada nunca reativa o anúncio. Se o AdRotate não renderizar mais o slot, OMT e AFL podem usar a reconstrução auditada do capturador: notícias vêm da API WordPress até a data pedida, o banner vem da `mediaUrl` do AdOps e nada é gravado no portal. Qualquer divergência impede a evidência.
+
 Uma campanha encerrada não aparece em `campaign-operations/active` depois do fim. Isso é correto para a captura diária, mas não para o relatório. Para auditoria mensal, use sempre a fonte mensal e procure também por PI, portal, campaign ID ou insertion ID.
 
 Antes de alterar captura:

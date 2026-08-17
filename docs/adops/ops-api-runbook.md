@@ -52,6 +52,8 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/campaign-operations/pending-publication?date
 | Relatório mensal | job `evidence-monthly-report` | `/progress` | leitura pública | staging inteiro precisa passar |
 | Retomar publicação | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | campanha existente ou blocker rastreável | aceita `insertionId`; exige identidade autoritativa ou operacional única |
 
+Para retroativos encerrados, `sourceMode=audited_reconstruction` indica que o runner remontou a página somente na sessão de captura. Em OMT e AFL, as notícias vêm da API WordPress com corte na data pedida e o banner vem da `mediaUrl` canônica do AdOps. Isso não reativa a campanha nem altera o portal. Checklist, data visível, identidade criativa e URL acessível continuam obrigatórios.
+
 Para qualquer criação de job:
 
 - use `Authorization: Bearer` vindo do ambiente quando o contrato exigir;

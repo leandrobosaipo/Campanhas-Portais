@@ -35,6 +35,8 @@ Esses números são uma fotografia datada. A fonte mensal agregada e o relatóri
 
 PI 14771/OMT e PI 9750/AFL já estavam cadastradas e publicadas, respectivamente como `campaignId=969/insertionId=1841` e `campaignId=981/insertionId=1854`. As mídias públicas responderam HTTP 200 com hash igual ao arquivo do Drive. As evidências estavam aprovadas até 14/08 e faltava somente 15/08.
 
+A primeira tentativa real de 17/08 chegou ao runner D1 correto, mas falhou de forma segura porque os slots expirados `.g.g-1` do OMT e `.g.g-2` do AFL não estavam mais no HTML histórico. Nenhuma evidência foi fabricada. O capturador passou a permitir reconstrução auditada nesses dois portais somente em âncoras conhecidas, usando notícias do WordPress REST até o corte e a mídia canônica do AdOps. O resultado vivo dos prints de 15/08 deve ser revalidado após o deploy dessa correção.
+
 Elas desapareceram do relatório porque a fonte mensal reutilizava a consulta de campanhas ativas na data-alvo 16/08. Como os dois períodos terminaram em 15/08, foram excluídas. A correção faz a fonte mensal carregar qualquer linha cujo período toque agosto, preservando a fonte `active` apenas para a rotina diária.
 
 As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer redirect informado fora desse snapshot precisa ser reconsultado pelo ID exato da pasta; ausência no inventário não autoriza inventar destino.

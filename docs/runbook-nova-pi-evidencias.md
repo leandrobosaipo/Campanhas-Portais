@@ -126,6 +126,8 @@ Use `print-backfill` somente após publicação real. Datas críticas rodam em s
 
 Reconstrução histórica só é aceita quando a auditoria confirma que a prova representa o slot, mídia, data e contexto esperados. Caso contrário, registre blocker por portal, formato e data.
 
+Quando um anúncio encerrado não aparece mais no HTML do AdRotate, o capturador pode usar a reconstrução auditada explicitamente habilitada no runner. Para OMT e AFL, ela consulta o WordPress REST com corte na data pedida, reescreve somente os cards de notícia visíveis e recria o slot apenas em uma âncora conhecida do tema. A mídia vem da `mediaUrl` canônica da inserção. Esse fallback não altera WordPress, AdRotate ou cache público. Falhe sem gerar evidência se a âncora não for única, houver menos de três notícias históricas, aparecer conteúdo posterior ao corte ou a identidade visual do banner divergir.
+
 ## 8. GIF e prova visual
 
 O GIF original permanece publicado. A captura pode congelar um frame apenas no DOM de prova. Confirme:
