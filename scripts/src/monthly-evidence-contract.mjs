@@ -129,6 +129,7 @@ export function buildCampaignFilterMetadata(campaign, targetDate) {
     if (item?.bannerPublicadoNoSite === true && item?.periodoInicio <= targetDate && item?.periodoFim >= targetDate) {
       publicationStates.add("active");
     }
+    if (item?.periodoFim < targetDate) publicationStates.add("ended");
     if (item?.bannerPublicadoNoSite === true && item?.periodoFim > targetDate && item?.periodoFim <= endingWindowDate) {
       publicationStates.add("ending");
     }

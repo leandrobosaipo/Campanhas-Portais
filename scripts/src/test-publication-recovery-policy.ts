@@ -86,6 +86,29 @@ test("campanha publicada continua publicada quando falta somente evidência", ()
   assert.equal(view.items[0]?.resumeAction, "generate_evidence");
 });
 
+test("HTML público confirmado evita republicação quando o booleano do AdOps está defasado", () => {
+  const view = buildPendingPublicationView({
+    date: "2026-08-13",
+    generatedAt: "2026-08-13T16:30:00.000Z",
+    summary: { needsPublication: 0, needsEvidence: 1 },
+    items: [pendingItem({
+      adops: {
+        campaignId: 989,
+        insertionId: 1944,
+        mediaUrl: "https://cdn.example/banner.gif",
+        bannerPublicadoNoSite: false,
+        publicConfirmation: "confirmed",
+        statusNormalizado: "rascunho",
+      },
+      requiredActions: ["generate_evidence"],
+    })],
+    upcomingItems: [],
+  });
+
+  assert.equal(view.items[0]?.publicationStatus, "published");
+  assert.equal(view.items[0]?.resumeAction, "generate_evidence");
+});
+
 test("identidade operacional ambígua não libera publicação", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",

@@ -10,6 +10,7 @@ import path from "node:path";
 import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
 import { planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
+import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -4513,10 +4514,33 @@ async function executeSyncPlanilha(payload) {
     env: process.env,
     maxBuffer: 1024 * 1024 * 10,
   });
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.targetDate || ""))
+    ? String(payload.targetDate)
+    : todayInCuiaba();
+  const operations = await privateApiGet(`/api/campaign-operations/active?${new URLSearchParams({ date: targetDate, includeEvidence: "false" }).toString()}`);
+  const diagnostics = (Array.isArray(operations?.items) ? operations.items : []).map((item) => {
+    const insertionId = readPositiveInteger(item?.adops?.insertionId);
+    const classification = classifyDailyReconciliationOperation(item);
+    return {
+      piCodigo: item?.piCodigo ?? null,
+      siteSigla: item?.siteSigla ?? null,
+      campaignName: item?.campaignName ?? null,
+      campaignId: readPositiveInteger(item?.adops?.campaignId),
+      insertionId,
+      status: classification.status,
+      reason: classification.reason,
+    };
+  });
   return {
     mode: payload?.mode || "latest",
+    targetDate,
     stdout: safeProcessOutput(stdout),
     stderr: safeProcessOutput(stderr),
+    diagnostics: {
+      total: diagnostics.length,
+      byStatus: diagnostics.reduce((counts, item) => ({ ...counts, [item.status]: Number(counts[item.status] || 0) + 1 }), {}),
+      items: diagnostics,
+    },
   };
 }
 
@@ -5497,13 +5521,111 @@ async function executeDrivePiIngest(payload) {
   };
 }
 
-async function executePrintBatch(payload) {
-  return privateApi("/api/insertions/capture-proof/batch", {
-    competencia: payload?.competencia ?? undefined,
-    siteId: payload?.siteId ?? undefined,
-    date: payload?.date ?? undefined,
-    captureAt: payload?.captureAt ?? undefined,
+async function executePrintBatch(job) {
+  const payload = job?.payload || {};
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.date || ""))
+    ? String(payload.date)
+    : todayInCuiaba();
+  const params = new URLSearchParams({ date: targetDate, includeEvidence: "true" });
+  const competencia = typeof payload?.competencia === "string" && payload.competencia.trim() ? payload.competencia.trim().toUpperCase() : null;
+  const siteId = readPositiveInteger(payload?.siteId);
+  if (siteId) {
+    const site = await privateApiGet(`/api/sites/${siteId}`);
+    if (!site?.sigla) throw new Error(`print-batch não encontrou sigla para siteId ${siteId}.`);
+    params.set("siteSigla", String(site.sigla));
+  }
+  const operations = await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
+  const candidates = (Array.isArray(operations?.items) ? operations.items : [])
+    .filter((item) => {
+      const insertionId = readPositiveInteger(item?.adops?.insertionId);
+      if (competencia && String(item?.adops?.competencia || "").toUpperCase() !== competencia) return false;
+      const publicConfirmed = item?.adops?.publicConfirmation === "confirmed";
+      if (!insertionId || (item?.adops?.bannerPublicadoNoSite !== true && !publicConfirmed) || !item?.adops?.mediaUrl) return false;
+      const requiredDates = Array.isArray(item?.evidence?.requiredDates) ? item.evidence.requiredDates : [];
+      return requiredDates.includes(targetDate);
+    });
+  const captured = [];
+  const skipped = [];
+  let transportError = null;
+  for (const [index, item] of candidates.entries()) {
+    const insertionId = readPositiveInteger(item?.adops?.insertionId);
+    const missingDates = Array.isArray(item?.evidence?.missingDates) ? item.evidence.missingDates : [];
+    const invalidDates = Array.isArray(item?.evidence?.invalidDates) ? item.evidence.invalidDates : [];
+    if (!missingDates.includes(targetDate) && !invalidDates.includes(targetDate)) {
+      skipped.push({ insertionId, reason: "evidencia_auditada" });
+      continue;
+    }
+    await progressJob(job.id, {
+      stage: "capture_async_dispatch",
+      targetDate,
+      itemsDone: index,
+      itemsTotal: candidates.length,
+      insertionId,
+      replace: invalidDates.includes(targetDate),
+    });
+    try {
+      const capture = await enqueueAndWaitCaptureProof({
+        outerJobId: job.id,
+        insertionId,
+        date: targetDate,
+        captureAt: payload?.captureAt ?? null,
+        replace: invalidDates.includes(targetDate),
+      });
+      captured.push({ insertionId, captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
+    } catch (error) {
+      transportError = error instanceof Error ? error.message : String(error);
+      break;
+    }
+  }
+  const auditQuery = new URLSearchParams({ date: targetDate });
+  if (competencia) auditQuery.set("competencia", competencia);
+  if (readPositiveInteger(payload?.siteId)) auditQuery.set("siteId", String(payload.siteId));
+  auditQuery.set("insertionIds", candidates.map((item) => readPositiveInteger(item?.adops?.insertionId)).filter(Boolean).join(","));
+  const audit = await privateApiGet(`/api/insertions/capture-proof/audit?${auditQuery.toString()}`);
+  const outcome = classifyDailyPrintOutcome({
+    jobId: job.id,
+    childJobId: captured.at(-1)?.captureJobId ?? null,
+    expectedTotal: candidates.length,
+    audit: {
+      date: targetDate,
+      totalEligible: Number(audit?.totalEligible ?? 0),
+      ok: Number(audit?.ok ?? 0),
+      missing: Number(audit?.missing ?? 0),
+      invalid: Number(audit?.invalid ?? 0),
+      missingDates: Number(audit?.missing ?? 0) > 0 ? [targetDate] : [],
+      invalidDates: Number(audit?.invalid ?? 0) > 0 ? [targetDate] : [],
+    },
+    transportError,
   });
+  if (outcome.status === "incident_required") {
+    const incident = outcome.incident ?? {};
+    throw new Error(`daily_print_audit_incomplete:${JSON.stringify({
+      incidentLayer: incident.layer ?? "audit",
+      incidentSummary: incident.summary ?? null,
+      transportError: transportError ?? null,
+      date: targetDate,
+      expectedTotal: candidates.length,
+      totalEligible: audit?.totalEligible ?? null,
+      ok: audit?.ok ?? null,
+      missing: audit?.missing ?? null,
+      invalid: audit?.invalid ?? null,
+    })}`);
+  }
+  return {
+    stage: outcome.status === "recovered" ? "recovered_after_transport_error" : "completed",
+    targetDate,
+    mode: "async_per_insertion",
+    totalCandidates: candidates.length,
+    captured,
+    skipped,
+    audit: {
+      totalEligible: audit.totalEligible,
+      ok: audit.ok,
+      missing: audit.missing,
+      invalid: audit.invalid,
+    },
+    transportError,
+  };
 }
 
 function isAuditApprovedStatus(status) {
@@ -7024,7 +7146,7 @@ async function handleJob(job) {
     return executeSyncPlanilha(payload);
   }
   if (job.kind === "print-batch") {
-    return executePrintBatch(payload);
+    return executePrintBatch(job);
   }
   if (job.kind === "print-backfill") {
     return executePrintBackfill(job);

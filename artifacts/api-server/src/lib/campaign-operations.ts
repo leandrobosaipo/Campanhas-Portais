@@ -74,7 +74,7 @@ type MinimalInsertionRow = Pick<
   mediaUrl: string | null;
 };
 
-type MinimalCampaignRow = Pick<typeof campaignsTable.$inferSelect, "id" | "nome" | "piCodigo">;
+type MinimalCampaignRow = Pick<typeof campaignsTable.$inferSelect, "id" | "nome" | "piCodigo" | "competencia">;
 type MinimalSiteRow = Pick<typeof sitesTable.$inferSelect, "id" | "nome" | "sigla">;
 
 type MinimalEnrichedInsertion = MinimalInsertionRow & {
@@ -110,9 +110,11 @@ export type CampaignOperationItem = {
   adops: {
     status: "matched" | "missing" | "ambiguous";
     campaignId: number | null;
+    competencia: string | null;
     insertionId: number | null;
     mediaUrl: string | null;
     bannerPublicadoNoSite: boolean | null;
+    publicConfirmation: "confirmed" | "reported_only" | "not_published";
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
     operationalMatchCount: number;
@@ -159,6 +161,7 @@ export type CampaignOperationUpcomingItem = {
     insertionId: number | null;
     mediaUrl: string | null;
     bannerPublicadoNoSite: boolean | null;
+    publicConfirmation: "confirmed" | "reported_only" | "not_published";
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
   };
@@ -186,6 +189,8 @@ export type CampaignOperationsActiveResult = {
   sheet: {
     name: string;
     activeRows: number;
+    downloadedAt: string;
+    sourceSha256: string;
   };
   summary: {
     activeInSheet: number;
@@ -361,6 +366,15 @@ function liveSlotIssuesForInsertion(insertion: MinimalEnrichedInsertion | null, 
   return unique(issues);
 }
 
+function hasExactPublicSlot(insertion: MinimalEnrichedInsertion | null, liveSlots: LiveAdSlot[]) {
+  if (!insertion) return false;
+  const expectedGroupId = getAdRotateGroupId(insertion.site?.sigla ?? null, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const expectedMediaBasename = mediaBasename(insertion.mediaUrl);
+  return Boolean(expectedGroupId && expectedMediaBasename && liveSlots.some((slot) => (
+    slot.groupId === expectedGroupId && slot.mediaBasename === expectedMediaBasename
+  )));
+}
+
 async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
   const [insertionsResult, campaignsResult, sitesResult] = await Promise.all([
     db.execute(sql`
@@ -381,7 +395,7 @@ async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
       from insertions
     `),
     db.execute(sql`
-      select id, nome, pi_codigo as "piCodigo"
+      select id, nome, pi_codigo as "piCodigo", competencia
       from campaigns
     `),
     db.execute(sql`
@@ -503,11 +517,17 @@ export async function getActiveCampaignOperations(options: {
   refreshDrive?: boolean;
   siteSigla?: string | null;
   includeEvidence?: boolean;
+  sheetScope?: "daily" | "monthly";
 } = {}): Promise<CampaignOperationsActiveResult> {
   const date = options.date ?? todayInCuiaba();
   const includeEvidence = options.includeEvidence !== false;
   const [sheet, insertions] = await Promise.all([
-    loadCurrentSheetCampaigns({ date, siteSigla: options.siteSigla ?? null, includeUpcoming: true }),
+    loadCurrentSheetCampaigns({
+      date,
+      siteSigla: options.siteSigla ?? null,
+      includeUpcoming: options.sheetScope !== "monthly",
+      scope: options.sheetScope ?? "daily",
+    }),
     loadEnrichedInsertions(),
   ]);
   const liveSlotsBySite = new Map<string, LiveAdSlot[]>();
@@ -535,7 +555,9 @@ export async function getActiveCampaignOperations(options: {
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
-    const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
+    const liveSlots = await getLiveSlots(row.blockSite);
+    const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, liveSlots);
+    const exactPublicSlot = hasExactPublicSlot(insertion, liveSlots);
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
@@ -555,7 +577,7 @@ export async function getActiveCampaignOperations(options: {
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
     if (insertion && !insertion.mediaUrl) requiredActions.push("locate_or_upload_media");
-    if (!insertion || insertion.bannerPublicadoNoSite !== true) requiredActions.push("publish_on_site");
+    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) requiredActions.push("publish_on_site");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) requiredActions.push("generate_evidence");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
@@ -573,7 +595,7 @@ export async function getActiveCampaignOperations(options: {
     if (drive.status === "ambiguous") statuses.push("ambiguous_drive_match");
     if (sourceIdentity.decision === "needs_confirmation") statuses.push("source_conflict");
     if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat && !hasAdopsMedia))) statuses.push("needs_media");
-    if (!insertion || insertion.bannerPublicadoNoSite !== true) statuses.push("needs_publication");
+    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) statuses.push("needs_publication");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) statuses.push("needs_evidence");
     if (periodDivergent) statuses.push("divergent_period");
     if (formatDivergent) statuses.push("divergent_format");
@@ -611,9 +633,15 @@ export async function getActiveCampaignOperations(options: {
       adops: {
         status: insertion ? "matched" : compatible.length > 1 ? "ambiguous" : "missing",
         campaignId: insertion?.campanhaId ?? null,
+        competencia: insertion?.campaign?.competencia ?? null,
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
+        publicConfirmation: exactPublicSlot
+          ? "confirmed"
+          : insertion?.bannerPublicadoNoSite === true
+            ? "reported_only"
+            : "not_published",
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
         operationalMatchCount: compatible.length,
@@ -702,6 +730,7 @@ export async function getActiveCampaignOperations(options: {
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
+        publicConfirmation: insertion?.bannerPublicadoNoSite === true ? "reported_only" : "not_published",
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
       },
@@ -717,6 +746,8 @@ export async function getActiveCampaignOperations(options: {
     sheet: {
       name: sheet.sheetName,
       activeRows: sheet.rows.length,
+      downloadedAt: sheet.source.downloadedAt,
+      sourceSha256: sheet.source.sha256,
     },
     summary: {
       activeInSheet: items.length,

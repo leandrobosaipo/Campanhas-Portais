@@ -1,6 +1,7 @@
 import { snapshot } from "../data/snapshot";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
+import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -62,6 +63,21 @@ type OpsJobRecord = {
   error_text: string | null;
   requested_by: string | null;
   runner_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type OpsIncidentRecord = {
+  id: string;
+  fingerprint: string;
+  status: "open" | "resolved";
+  layer: string;
+  job_id: string;
+  job_kind: JobKind;
+  summary: string;
+  error_text: string | null;
+  evidence_json: string;
+  attempts: number;
   created_at: string;
   updated_at: string;
 };
@@ -322,6 +338,10 @@ function parseJsonSafe(value: string | null | undefined) {
 function sanitizeJobText(value: unknown, maxLength = 12000) {
   if (typeof value !== "string") return value;
   return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\b(authorization|cookie|set-cookie|x-api-key|x-adops-api-token)\s*:\s*[^\r\n,}]+/gi, "$1: [redacted]")
+    .replace(/([?&](?:access_)?(?:token|api[_-]?key|secret|password|authorization|cookie)=)[^&#\s]+/gi, "$1[redacted]")
+    .replace(/(["']?(?:access_)?(?:token|api[_-]?key|secret|password|authorization|cookie)["']?\s*[:=]\s*["'])[^"']+/gi, "$1[redacted]")
     .replace(/\b[A-Za-z0-9._-]+@(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ssh-user-host]")
     .replace(/\[(?:\d{1,3}\.){3}\d{1,3}\]:\d+/g, "[ssh-host-port]")
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]")
@@ -333,9 +353,24 @@ function sanitizeJobValue(value: unknown): unknown {
   if (typeof value === "string") return sanitizeJobText(value);
   if (Array.isArray(value)) return value.map((item) => sanitizeJobValue(item));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJobValue(item)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      isSensitiveJobKey(key) ? "[redacted]" : sanitizeJobValue(item),
+    ]));
   }
   return value;
+}
+
+function isSensitiveJobKey(key: string) {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return normalized.includes("authorization")
+    || normalized.endsWith("token")
+    || normalized.endsWith("apikey")
+    || normalized.endsWith("secret")
+    || normalized.endsWith("password")
+    || normalized.endsWith("passwd")
+    || normalized.endsWith("cookie")
+    || normalized === "bearer";
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -809,7 +844,7 @@ function computeJobProgress(job: ReturnType<typeof describeJob>): JobProgress {
   const startedAt = readString(candidates, ["startedAt", "started_at", "started"]) ?? (job.status === "queued" ? null : job.createdAt);
   const etaSeconds = readNumber(candidates, ["etaSeconds", "eta", "eta_seconds", "remainingSeconds", "estimatedRemainingSeconds"]);
   const runnerId = readString(candidates, ["runnerId", "runner_id"]) ?? job.runnerId ?? null;
-  const error = job.error ?? readString(candidates, ["error", "errorText", "message"]);
+  const error = typeof job.error === "string" ? job.error : readString(candidates, ["error", "errorText", "message"]);
 
   return {
     jobId: job.id,
@@ -975,7 +1010,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "campaign-publication-reconcile" || kind === "drive-pi-ingest" || kind === "adrotate-publish" || kind === "print-backfill" || kind === "print-single";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "evidence-monthly-report" || kind === "campaign-publication-reconcile" || kind === "drive-pi-ingest" || kind === "adrotate-publish" || kind === "print-batch" || kind === "print-backfill" || kind === "print-single";
   if (status === "queued") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -1496,12 +1531,9 @@ async function runOpsJobWatchdog(env: Env, options: { dryRun?: boolean; limit?: 
   }
 
   for (const { record, dependencyId } of failedDependencies) {
-    await updateOpsJob(env, record.id, {
-      status: "failed",
-      error: `Dependência ${dependencyId} falhou; reconciliação não executada.`,
-      result: { stage: "dependency_failed", dependencyId, failedAt: now },
-      runnerId: null,
-    });
+    const error = `Dependência ${dependencyId} falhou; reconciliação não executada.`;
+    const result = { stage: "dependency_failed", dependencyId, failedAt: now };
+    await failOpsJobWithIncident(env, record, error, result, record.runner_id, record.status);
   }
 
   const recoverable = stale.filter((record) => {
@@ -1527,12 +1559,7 @@ async function runOpsJobWatchdog(env: Env, options: { dryRun?: boolean; limit?: 
 
   for (const record of failed) {
     const failure = buildWatchdogFailure(record, now);
-    await updateOpsJob(env, record.id, {
-      status: "failed",
-      error: failure.error,
-      result: failure.result,
-      runnerId: record.runner_id,
-    });
+    await failOpsJobWithIncident(env, record, failure.error, failure.result, record.runner_id, record.status);
   }
 
   return {
@@ -1756,6 +1783,150 @@ async function getOpsJob(env: Env, id: string) {
   return item ? describeJob(item) : null;
 }
 
+function classifyIncidentLayer(job: OpsJobRecord, error: string) {
+  const normalized = error.toLowerCase();
+  if (normalized.includes('"incidentlayer":"api_or_runner_transport"')) return "api_or_runner_transport";
+  if (normalized.includes('"incidentlayer":"audit"')) return "audit";
+  if (normalized.includes("fetch failed") || normalized.includes("timeout") || normalized.includes("private api")) return "api_or_runner_transport";
+  if (normalized.includes("audit") || normalized.includes("eviden")) return "audit";
+  if (normalized.includes("adrotate") || normalized.includes("html p\u00fablico")) return "portal";
+  if (normalized.includes("queue") || normalized.includes("runner")) return "queue_or_runner";
+  return "job_execution";
+}
+
+function incidentFingerprint(job: OpsJobRecord, error: string) {
+  const payload = asRecord(parseJsonSafe(job.payload_json));
+  const date = typeof payload?.date === "string" ? payload.date : typeof payload?.targetDate === "string" ? payload.targetDate : "";
+  const competencia = typeof payload?.competencia === "string" ? payload.competencia : "";
+  const portal = typeof payload?.siteSigla === "string" ? payload.siteSigla : typeof payload?.siteId === "number" ? `site-${payload.siteId}` : "";
+  const insertion = typeof payload?.insertionId === "number" || typeof payload?.insertionId === "string" ? String(payload.insertionId) : "";
+  const cause = String(sanitizeJobText(error, 180) ?? "").toLowerCase().replace(/\d{3,}/g, "#").replace(/\s+/g, " ").trim();
+  return [job.kind, job.id, date || "no-date", competencia || "no-competencia", portal || "all-portals", insertion || "all-insertions", cause].join(":");
+}
+
+function describeOpsIncident(record: OpsIncidentRecord) {
+  const evidence = asRecord(parseJsonSafe(record.evidence_json)) ?? { unavailable: true };
+  return {
+    id: record.id,
+    fingerprint: record.fingerprint,
+    status: record.status,
+    layer: record.layer,
+    jobId: record.job_id,
+    jobKind: record.job_kind,
+    summary: record.summary,
+    error: sanitizeJobText(record.error_text),
+    evidence: sanitizeJobValue(evidence),
+    attempts: record.attempts,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+async function recordOpsIncident(env: Env, job: OpsJobRecord, error: string, result: unknown, forcedLayer: string | null = null) {
+  const now = nowIso();
+  const layer = forcedLayer ?? classifyIncidentLayer(job, error);
+  const fingerprint = incidentFingerprint(job, error);
+  const id = crypto.randomUUID();
+  const summary = `Falha em ${job.kind}; revisar ${layer} antes de repetir muta\u00e7\u00f5es.`;
+  const evidence = JSON.stringify({
+    jobId: job.id,
+    jobKind: job.kind,
+    runnerId: job.runner_id,
+    requestedBy: job.requested_by,
+    payload: sanitizeJobValue(parseJsonSafe(job.payload_json)),
+    result: sanitizeJobValue(result),
+    detectedAt: now,
+  });
+  await env.adops_ops.prepare(
+    `INSERT INTO ops_incidents (id, fingerprint, status, layer, job_id, job_kind, summary, error_text, evidence_json, attempts, created_at, updated_at)
+     VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, 1, ?, ?)
+     ON CONFLICT(fingerprint) DO UPDATE SET
+       status = 'open', layer = excluded.layer, job_id = excluded.job_id, job_kind = excluded.job_kind,
+       summary = excluded.summary, error_text = excluded.error_text, evidence_json = excluded.evidence_json,
+       attempts = ops_incidents.attempts + 1, updated_at = excluded.updated_at`,
+  ).bind(id, fingerprint, layer, job.id, job.kind, summary, sanitizeJobText(error), evidence, now, now).run();
+  const incident = await env.adops_ops.prepare(`SELECT * FROM ops_incidents WHERE fingerprint = ? LIMIT 1`).bind(fingerprint).first<OpsIncidentRecord>();
+  if (!incident) throw new Error("Falha ao registrar incidente operacional.");
+  return describeOpsIncident(incident);
+}
+
+async function failOpsJobWithIncident(
+  env: Env,
+  job: OpsJobRecord,
+  error: string,
+  result: unknown,
+  runnerId: string | null,
+  expectedStatus: JobStatus,
+  forcedLayer: string | null = null,
+) {
+  const now = nowIso();
+  const layer = forcedLayer ?? classifyIncidentLayer(job, error);
+  const fingerprint = incidentFingerprint(job, error);
+  const incidentId = crypto.randomUUID();
+  const summary = `Falha em ${job.kind}; revisar ${layer} antes de repetir mutações.`;
+  const sanitizedError = sanitizeJobText(error) as string;
+  const evidence = JSON.stringify({
+    jobId: job.id,
+    jobKind: job.kind,
+    runnerId,
+    requestedBy: job.requested_by,
+    payload: sanitizeJobValue(parseJsonSafe(job.payload_json)),
+    result: sanitizeJobValue(result),
+    detectedAt: now,
+  });
+  const resultJson = JSON.stringify(result ?? null);
+  const statements = [
+    env.adops_ops.prepare(
+      `UPDATE ops_jobs
+          SET status = 'failed', result_json = ?, error_text = ?, runner_id = ?, updated_at = ?
+        WHERE id = ? AND status = ? AND runner_id IS ?`,
+    ).bind(resultJson, sanitizedError, runnerId, now, job.id, expectedStatus, runnerId),
+    env.adops_ops.prepare(
+      `INSERT INTO ops_incidents (id, fingerprint, status, layer, job_id, job_kind, summary, error_text, evidence_json, attempts, created_at, updated_at)
+       SELECT ?, ?, 'open', ?, ?, ?, ?, ?, ?, 1, ?, ?
+         FROM ops_jobs
+        WHERE id = ? AND status = 'failed' AND updated_at = ? AND runner_id IS ?
+       ON CONFLICT(fingerprint) DO UPDATE SET
+         status = 'open', layer = excluded.layer, job_id = excluded.job_id, job_kind = excluded.job_kind,
+         summary = excluded.summary, error_text = excluded.error_text, evidence_json = excluded.evidence_json,
+         attempts = ops_incidents.attempts + 1, updated_at = excluded.updated_at`,
+    ).bind(incidentId, fingerprint, layer, job.id, job.kind, summary, sanitizedError, evidence, now, now, job.id, now, runnerId),
+  ];
+  const [jobWrite, incidentWrite] = await env.adops_ops.batch(statements);
+  if ((jobWrite.meta?.changes ?? 0) !== 1 || (incidentWrite.meta?.changes ?? 0) !== 1) return null;
+  const [updatedJob, incident] = await Promise.all([
+    env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(job.id).first<OpsJobRecord>(),
+    env.adops_ops.prepare(`SELECT * FROM ops_incidents WHERE fingerprint = ? LIMIT 1`).bind(fingerprint).first<OpsIncidentRecord>(),
+  ]);
+  if (!updatedJob || !incident) throw new Error("Falha ao confirmar transição terminal e incidente operacional.");
+  return { job: updatedJob, incident: describeOpsIncident(incident) };
+}
+
+function recordSchedulingIncident(env: Env, kind: JobKind, targetDate: string, error: string) {
+  const now = nowIso();
+  const job: OpsJobRecord = {
+    id: `schedule:${kind}:${targetDate}`,
+    kind,
+    status: "failed",
+    payload_json: JSON.stringify({ targetDate, source: "cloudflare-scheduled" }),
+    result_json: JSON.stringify({ stage: "schedule_failed", targetDate, failedAt: now }),
+    error_text: error,
+    requested_by: "cloudflare-scheduled",
+    runner_id: null,
+    created_at: now,
+    updated_at: now,
+  };
+  return recordOpsIncident(env, job, error, { stage: "schedule_failed", targetDate, failedAt: now }, "scheduling");
+}
+
+async function listOpsIncidents(env: Env, limit = 50) {
+  const { results } = await env.adops_ops
+    .prepare(`SELECT * FROM ops_incidents ORDER BY updated_at DESC LIMIT ?`)
+    .bind(Math.min(Math.max(limit, 1), 100))
+    .all<OpsIncidentRecord>();
+  return (results ?? []).map(describeOpsIncident);
+}
+
 async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: string | null) {
   const placeholders = kinds?.length ? kinds.map(() => "?").join(",") : "";
   const dependencyReady = `AND (
@@ -1796,6 +1967,13 @@ function dateInTimeZone(date: Date, timeZone: string) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+}
+
+function competenciaForDate(date: string) {
+  const match = date.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) throw new Error(`Data inválida para competência: ${date}`);
+  const months = ["", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+  return `${months[Number(match[2])]}/${match[1]}`;
 }
 
 function isCampaignPublicationReconcileCron(cron: string | null | undefined) {
@@ -1853,7 +2031,7 @@ async function scheduleDailyPrintBatch(
   }
 
   const payload = {
-    competencia: null,
+    competencia: competenciaForDate(date),
     siteId: null,
     date,
     captureAt: null,
@@ -2867,15 +3045,18 @@ export default {
         const body = await readBody(request);
         const runnerId = typeof body.runnerId === "string" && body.runnerId.trim() ? body.runnerId.trim() : null;
         if (!runnerId) return badRequest("runnerId é obrigatório para falhar um job.");
-        const updated = await updateOpsJob(env, failMatch[1], {
-          status: "failed",
-          result: body.result ?? null,
-          error: typeof body.error === "string" ? body.error : "Runner reportou falha sem detalhe.",
+        const current = await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(failMatch[1]).first<OpsJobRecord>();
+        if (!current || current.status !== "running" || current.runner_id !== runnerId) return notFound("Job not found");
+        const failed = await failOpsJobWithIncident(
+          env,
+          current,
+          typeof body.error === "string" ? body.error : "Runner reportou falha sem detalhe.",
+          body.result ?? null,
           runnerId,
-          expectedStatus: "running",
-          expectedRunnerId: runnerId,
-        });
-        return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
+          "running",
+        );
+        if (!failed) return notFound("Job not found");
+        return json({ ok: true, job: describeJob(failed.job), incident: failed.incident });
       }
 
       if (
@@ -3092,6 +3273,13 @@ export default {
           olderThanMinutes,
         }),
       });
+    }
+
+    if (path === "/api/ops/incidents") {
+      const auth = requireOpsAuth(request, env);
+      if (!auth.ok) return auth.response;
+      const limit = Math.min(parseIntParam(url.searchParams.get("limit")) ?? 50, 100);
+      return jsonNoStore({ items: await listOpsIncidents(env, limit) });
     }
 
     if (path === "/api/ops/queue/overview") {
@@ -3323,18 +3511,36 @@ export default {
       return;
     }
     if (isCampaignPublicationReconcileCron(controller.cron)) {
-      const payload = buildCampaignPublicationReconcileSchedule(new Date(controller.scheduledTime));
+      const targetDate = dateInTimeZone(new Date(controller.scheduledTime), DAILY_PRINT_TIME_ZONE);
+      let schedulingKind: JobKind = "sync-planilha";
       ctx.waitUntil(
-        createIdempotentOpsJob(
-          env,
-          "campaign-publication-reconcile",
-          payload,
-          "cloudflare-scheduled",
-          payload.idempotencyKey,
-          true,
-        ).catch((error) => {
+        (async () => {
+          const sync = await createIdempotentOpsJob(
+            env,
+            "sync-planilha",
+            {
+              targetDate,
+              source: "cloudflare-cron-daily-reconciliation",
+            },
+            "cloudflare-scheduled",
+            `daily-sheet-sync:${targetDate}`,
+            true,
+          );
+          const plan = buildDailyReconciliationJobs(targetDate, sync.jobId);
+          schedulingKind = plan.reconcile.kind;
+          await createIdempotentOpsJob(
+            env,
+            plan.reconcile.kind,
+            plan.reconcile.payload,
+            "cloudflare-scheduled",
+            plan.reconcile.payload.idempotencyKey,
+            true,
+          );
+        })().catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
-          console.error("campaign_publication_reconcile_schedule_failed", { error: message });
+          console.error("daily_reconciliation_schedule_failed", { error: message });
+          return recordSchedulingIncident(env, schedulingKind, targetDate, message)
+            .catch((incidentError) => console.error("daily_reconciliation_schedule_incident_failed", { error: incidentError instanceof Error ? incidentError.message : String(incidentError) }));
         }),
       );
       return;

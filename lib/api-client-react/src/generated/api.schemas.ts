@@ -29,6 +29,45 @@ export interface DrivePiReconcileBody {
   idempotencyKey?: string | null;
 }
 
+export type OpsIncidentStatus =
+  (typeof OpsIncidentStatus)[keyof typeof OpsIncidentStatus];
+
+export const OpsIncidentStatus = {
+  open: "open",
+  resolved: "resolved",
+} as const;
+
+export type OpsIncidentLayer =
+  (typeof OpsIncidentLayer)[keyof typeof OpsIncidentLayer];
+
+export const OpsIncidentLayer = {
+  scheduling: "scheduling",
+  queue_or_runner: "queue_or_runner",
+  api_or_runner_transport: "api_or_runner_transport",
+  audit: "audit",
+  portal: "portal",
+  job_execution: "job_execution",
+} as const;
+
+export type OpsIncidentEvidence = { [key: string]: unknown };
+
+export interface OpsIncident {
+  id: string;
+  fingerprint: string;
+  status: OpsIncidentStatus;
+  layer: OpsIncidentLayer;
+  jobId: string;
+  jobKind: string;
+  summary: string;
+  /** @nullable */
+  error?: string | null;
+  evidence: OpsIncidentEvidence;
+  /** @minimum 1 */
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OpsJobAccepted {
   ok: boolean;
   jobId: string;
@@ -1034,6 +1073,18 @@ export type ListOpsJobsParams = {
 
 export type ListOpsJobs200 = { [key: string]: unknown };
 
+export type ListOpsIncidentsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type ListOpsIncidents200 = {
+  items: OpsIncident[];
+};
+
 export type GetOpsJob200 = { [key: string]: unknown };
 
 export type GetOpsJobProgress200 = { [key: string]: unknown };
@@ -1129,7 +1180,18 @@ export type GetMonthlyEvidenceSourceParams = {
   competencia?: string;
 };
 
-export type GetMonthlyEvidenceSource200 = { [key: string]: unknown };
+export type GetMonthlyEvidenceSource200Source = {
+  sheetName: string;
+  downloadedAt: string;
+  /** @pattern ^[a-f0-9]{64}$ */
+  sha256: string;
+  competencia: string;
+};
+
+export type GetMonthlyEvidenceSource200 = {
+  source?: GetMonthlyEvidenceSource200Source;
+  [key: string]: unknown;
+};
 
 export type ListCampaignsParams = {
   /**

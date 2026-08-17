@@ -26,9 +26,10 @@ Mutações exigem o token operacional em variável de ambiente. Nunca copie seu 
 | Runners e dependências | `GET /api/ops/runtime-readiness` | conforme OpenAPI | nenhuma | capacidades e heartbeat | não muta |
 | Campanhas canônicas | `GET /api/campaign-operations/active` | pública | `date` opcional | inserções ativas, sem rascunho duplicado | não muta |
 | Pendências compactas | `GET /api/campaign-operations/pending-publication` | pública | `date` | fatos e `resolutionStatus` | identidade ambígua continua bloqueada |
-| Fonte mensal | `GET /api/campaign-operations/evidence-monthly-source` | pública | competência/mês | inserções e datas canônicas agregadas | não infira datas fora da resposta |
+| Fonte mensal | `GET /api/campaign-operations/evidence-monthly-source` | pública | `date` + competência correspondente | todas as inserções canônicas cujo período toca o mês, inclusive encerradas | rejeita competência divergente; não infira datas fora da resposta |
 | Auditoria por data | `GET /api/insertions/{id}/capture-proof/status` | pública | `date` | estado, URL e checklist | leitura não aprova evidência |
 | Fila resumida | `GET /api/ops/queue/overview` | protegida | nenhuma | contagens e atividade | usar visão completa só em incidente |
+| Incidentes operacionais | `GET /api/ops/incidents` | protegida | nenhuma | causa, job, camada e evidências sanitizadas | não contém tokens ou logs brutos |
 
 Exemplo seguro:
 
@@ -62,6 +63,17 @@ Para qualquer criação de job:
 
 Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
 
+### Rotina diária
+
+1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.
+2. **18h00 Cuiabá:** `print-batch` consulta as inserções canônicas, cria capturas assíncronas por inserção e acompanha somente o progresso. Não mantém uma requisição HTTP aberta durante todo o lote.
+3. **Após o lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o Worker registra incidente idempotente com camada provável, job, versão, duração, dados de auditoria e próxima ação.
+4. **22h15 Cuiabá:** o relatório consulta a fonte mensal, não a fonte diária. Campanhas encerradas continuam visíveis e suas datas continuam auditáveis.
+
+O Worker grava a transição terminal do job e o incidente em um único `D1Database.batch`. Se o incidente falhar, a transição também é revertida. O fingerprint inclui job, tipo, data-alvo, competência, portal/inserção e causa normalizada; payload e resultado são redigidos recursivamente antes de entrar no incidente.
+
+Incidente não autoriza alteração ou deploy automático de código. Ele fornece dados reproduzíveis para revisão, teste, documentação, release e validação do consumidor real. Capturas idempotentes podem ser retomadas de forma serial; uma falha persistente exige revisão técnica.
+
 O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos; envia `pi_code=null` ao AdRotate e mantém faturamento e ZIP por PI bloqueados. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF, banner compatível e redirect HTTPS. Nos três modos, o runner relê as fontes e limita a mutação à campanha/inserção já cadastradas.
 
 ## Matriz de evidência
@@ -88,9 +100,18 @@ Campanhas com o mesmo nome não são agrupadas sem PI canônica.
 
 ## Incidentes e rollback
 
+Antes de publicar uma release que use incidentes, faça backup/export do D1 e aplique as migrações remotas antes do `wrangler deploy`:
+
+```bash
+wrangler d1 migrations apply adops-ops --remote --config ops/cloudflare-public-api/wrangler.jsonc
+```
+
+Na release que introduz incidentes, confirme que `0004_ops_incidents.sql` aparece como aplicada. Depois do deploy, consulte `GET /api/ops/incidents?limit=1` com autenticação operacional. `404` ou erro de tabela bloqueia a ativação do Worker; volte ao deployment anterior e não deixe jobs novos entrarem no fluxo.
+
 - `401`: confirme presença da variável, escopo do endpoint e proxy; nunca imprima o token.
 - `409`: leia os blockers e corrija identidade/auditoria; não force o job.
 - runner sem heartbeat: consulte readiness, fila e logs antes de reenfileirar.
+- incidente aberto: consulte `GET /api/ops/incidents`, leia a camada e o job vinculado; primeiro corrija a fonte, depois execute teste real e encerre somente com auditoria aprovada.
 - job demorado: diferencie fila, execução e travamento pelo estágio/heartbeat.
 - rebuild do Perrengue: espere o `reason` único do trigger terminar no health; jobs editoriais anteriores podem manter a fila ocupada. Publicação e rollback usam razões diferentes para impedir deduplicação indevida.
 - exportação falha: o PNG e o ZIP cacheado anterior permanecem intactos.

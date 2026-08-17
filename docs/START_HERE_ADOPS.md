@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-13
-> Release-base: c71350e; política sem PDF validada no commit que contém este documento
+> Última validação: 2026-08-17
+> Release-base anterior em produção: b00779340442; confirmar o SHA da correção mensal no readback
 > Fonte autoritativa: runtime público, OpenAPI e runbooks deste repositório
 
 ## Objetivo
@@ -77,7 +77,7 @@ Relatório: `https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/`
 ## Regras que nunca podem ser puladas
 
 - Consulte planilha, Drive e API AdOps antes de criar ou publicar.
-- Use apenas inserções canônicas retornadas por `campaign-operations/active`.
+- Use `campaign-operations/active` para o dia e `campaign-operations/evidence-monthly-source` para o mês. A fonte mensal inclui campanhas encerradas.
 - Reutilize campanha, inserção ou anúncio compatível antes de criar outro.
 - URL existente ou HTTP 200 não comprovam auditoria.
 - Aceite somente evidência auditada, acessível e sem bloqueios.
@@ -95,7 +95,11 @@ curl -fsSL https://adops-api.codigo5.com.br/api/ops/runtime-readiness
 curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/pending-publication?date=YYYY-MM-DD'
 ```
 
-Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` permanece como alias compatível. `identityMode=authoritative_pi` confirma também a identidade comercial. `identityMode=operational_identity` pode deixar `publicationStatus=ready_for_publication` sem inventar PI, mas somente quando todos os gates operacionais são únicos e o preflight vivo passa. `commercialIdentityStatus=awaiting_authoritative_pi` continua bloqueando faturamento e ZIP por PI. A retomada automática roda às 17h30 de Cuiabá e após eventos do Drive.
+Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` permanece como alias compatível. `identityMode=authoritative_pi` confirma também a identidade comercial. `identityMode=operational_identity` pode deixar `publicationStatus=ready_for_publication` sem inventar PI, mas somente quando todos os gates operacionais são únicos e o preflight vivo passa. `commercialIdentityStatus=awaiting_authoritative_pi` continua bloqueando faturamento e ZIP por PI.
+
+A rotina diária começa às 17h30 de Cuiabá com a sincronização da planilha e só depois reconcilia Drive, AdOps e publicação. Às 18h captura somente o dia corrente. Às 22h15 publica o relatório mensal completo. PI 9750/AFL e PI 14771/OMT já são as inserções canônicas `#1854` e `#1841`; nunca devem ser recriadas.
+
+Uma campanha encerrada não aparece em `campaign-operations/active` depois do fim. Isso é correto para a captura diária, mas não para o relatório. Para auditoria mensal, use sempre a fonte mensal e procure também por PI, portal, campaign ID ou insertion ID.
 
 Antes de alterar captura:
 

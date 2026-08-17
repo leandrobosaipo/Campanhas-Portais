@@ -113,6 +113,47 @@ export const ListOpsJobsQueryParams = zod.object({
 export const ListOpsJobsResponse = zod.record(zod.string(), zod.unknown());
 
 /**
+ * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+export const listOpsIncidentsQueryLimitDefault = 50;
+export const listOpsIncidentsQueryLimitMax = 100;
+
+export const ListOpsIncidentsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listOpsIncidentsQueryLimitMax)
+    .default(listOpsIncidentsQueryLimitDefault),
+});
+
+export const ListOpsIncidentsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      fingerprint: zod.string(),
+      status: zod.enum(["open", "resolved"]),
+      layer: zod.enum([
+        "scheduling",
+        "queue_or_runner",
+        "api_or_runner_transport",
+        "audit",
+        "portal",
+        "job_execution",
+      ]),
+      jobId: zod.string(),
+      jobKind: zod.string(),
+      summary: zod.string(),
+      error: zod.string().nullish(),
+      evidence: zod.record(zod.string(), zod.unknown()),
+      attempts: zod.number().min(1),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
  * @summary Read the complete operational job for final inspection or diagnosis
  */
 export const GetOpsJobParams = zod.object({
@@ -217,10 +258,22 @@ export const GetMonthlyEvidenceSourceQueryParams = zod.object({
   competencia: zod.coerce.string().optional(),
 });
 
-export const GetMonthlyEvidenceSourceResponse = zod.record(
-  zod.string(),
-  zod.unknown(),
+export const getMonthlyEvidenceSourceResponseSourceSha256RegExp = new RegExp(
+  "^[a-f0-9]{64}$",
 );
+
+export const GetMonthlyEvidenceSourceResponse = zod.object({
+  source: zod
+    .object({
+      sheetName: zod.string(),
+      downloadedAt: zod.coerce.date(),
+      sha256: zod
+        .string()
+        .regex(getMonthlyEvidenceSourceResponseSourceSha256RegExp),
+      competencia: zod.string(),
+    })
+    .optional(),
+});
 
 /**
  * @summary List all sites

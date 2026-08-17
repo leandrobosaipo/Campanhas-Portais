@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-12
-> Release: 47e0dab
+> Última validação: 2026-08-17
+> Release anterior: b00779340442; confirmar a correção mensal pelo readback
 > Fonte autoritativa: job `evidence-monthly-report`, fonte mensal agregada e relatório público
 
 ## Finalidade
@@ -58,6 +58,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 ## Gates de publicação
 
 - somente inserções canônicas da fonte agregada;
+- todas as linhas da competência cujo período toca o mês, inclusive campanhas encerradas antes da data-alvo;
 - todas as datas obrigatórias presentes na resposta canônica;
 - evidências `audited` ou `audited_best_effort`, acessíveis e sem blockers;
 - ZIPs completos ou cache hits com fingerprint vigente;
@@ -70,13 +71,14 @@ Se qualquer gate falhar, o staging é rejeitado.
 
 ## Recursos do relatório
 
-- busca por campanha, PI e portal;
+- busca por campanha, PI, portal, campaign ID e insertion ID;
 - filtro dedicado de portal combinado com estados;
 - calendário das datas contratadas;
 - JPEG individual;
 - ZIP por PI + portal;
 - ZIP completo por campanha;
 - entradas e vencimentos em sete dias;
+- filtro de publicação “Encerradas”, independente do estado das evidências;
 - layout mobile e navegação por teclado.
 
 ## Cache e desempenho
@@ -114,3 +116,5 @@ Não copie um `index.html` isolado sobre dados de outra versão.
 - Recuperar o job completo em todo polling é desperdício; `/progress` é a visão padrão.
 - O deadlock entre relatório e exportação desapareceu ao separar o runner mensal do claim dedicado.
 - Falha de staging nunca pode apagar a última entrega válida.
+- `campaign-operations/active` é uma visão diária e exclui corretamente períodos encerrados. O relatório mensal deve usar exclusivamente `campaign-operations/evidence-monthly-source`.
+- `competencia` e `date` precisam pertencer ao mesmo mês; divergência é erro de contrato, não fallback silencioso.

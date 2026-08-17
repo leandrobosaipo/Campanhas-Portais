@@ -5,5 +5,9 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetMonthlyEvidenceSource200Source } from "./getMonthlyEvidenceSource200Source";
 
-export type GetMonthlyEvidenceSource200 = { [key: string]: unknown };
+export type GetMonthlyEvidenceSource200 = {
+  source?: GetMonthlyEvidenceSource200Source;
+  [key: string]: unknown;
+};

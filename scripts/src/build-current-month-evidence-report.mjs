@@ -88,8 +88,7 @@ const reportMarkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 
 let apiRequestCount = 0;
 let apiResponseBytes = 0;
 
-const activeStatuses = new Set(["em_veiculacao", "ativa", "publicada", "aguardando_publicacao", "print_gerado"]);
-const terminalStatuses = new Set(["cancelado", "concluido", "finalizado", "finalizada"]);
+const terminalStatuses = new Set(["cancelado", "cancelada"]);
 
 function parseEnvFile(filePath) {
   if (!existsSync(filePath)) return {};
@@ -452,10 +451,12 @@ function buildPortalGroups(items) {
       logo: siteLogoUrl(item),
       homeUrl: sitesConfig[portalKey]?.homeUrl || "",
       campaigns: new Map(),
-      stats: { total: 0, active: 0, scheduled: 0, ok: 0, pending: 0, invalid: 0, not_published: 0, evidences: 0 },
+      stats: { total: 0, active: 0, scheduled: 0, ended: 0, ok: 0, pending: 0, invalid: 0, not_published: 0, evidences: 0 },
     };
     portal.stats.total += 1;
-    portal.stats[item.state === "scheduled" ? "scheduled" : "active"] += 1;
+    if (item.periodoInicio > targetDate) portal.stats.scheduled += 1;
+    else if (item.periodoFim < targetDate) portal.stats.ended += 1;
+    else portal.stats.active += 1;
     portal.stats[item.state] += 1;
     portal.stats.evidences += item.evidenceDays.filter((day) => day.status.startsWith("audited")).length;
     const campaignKey = `${item.campanhaId || "sem"}-${item.campanhaName || ""}`;
@@ -731,10 +732,14 @@ function renderInsertion(item) {
         ${item.publicationAction ? `<small><b>Próxima ação:</b> ${escapeHtml(item.publicationAction)}</small>` : ""}
       </div>`
     : "";
+  const endedBadge = item.periodoFim < targetDate
+    ? statusBadge("scheduled", `Encerrada em ${fullDatePt(item.periodoFim)}`)
+    : "";
   return `<article class="insertion ${escapeHtml(item.state)}">
     <div class="insert-main">
       <div class="insert-top">
         <span class="insert-id">#${escapeHtml(item.id)}</span>
+        ${endedBadge}
         ${statusBadge(stateForBadge, evidenceDetails(item))}
       </div>
       <strong>${escapeHtml(item.localFormatoNormalizado || item.localFormato || "-")}</strong>
@@ -771,7 +776,14 @@ function renderCampaign(campaign, portalKey) {
     item.periodoFim > targetDate && item.periodoFim <= endingWindowDate ? "ending" : null,
   ].filter(Boolean)))).join(" ");
   const filterMetadata = buildCampaignFilterMetadata(campaign, targetDate);
-  const search = normalize([campaign.name, campaign.pi, campaign.cliente, campaign.agencia, ...campaign.items.map((item) => item.siteSigla)].join(" "));
+  const search = normalize([
+    campaign.name,
+    campaign.pi,
+    campaign.cliente,
+    campaign.agencia,
+    campaign.id,
+    ...campaign.items.flatMap((item) => [item.siteSigla, item.campanhaId, item.id]),
+  ].join(" "));
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
   const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
   const commercialExportBlocker = campaign.items.find((item) => item.commercialExportBlocker)?.commercialExportBlocker || "";
@@ -808,6 +820,7 @@ function renderPortal(portal) {
       <div class="portal-stats">
         <span><b>${portal.stats.active}</b> ativas</span>
         <span><b>${portal.stats.scheduled}</b> agendadas</span>
+        <span><b>${portal.stats.ended}</b> encerradas</span>
         <span><b>${portal.stats.ok}</b> em dia</span>
         <span><b>${portal.stats.pending}</b> pend.</span>
         <span><b>${portal.stats.invalid}</b> erro</span>
@@ -1006,6 +1019,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
         <div class="kpi"><span>inserções</span><b>${summary.total}</b></div>
         <div class="kpi"><span>ativas</span><b>${summary.active}</b></div>
         <div class="kpi"><span>agendadas</span><b>${summary.scheduled}</b></div>
+        <div class="kpi"><span>encerradas</span><b>${summary.ended}</b></div>
         <div class="kpi"><span>em dia</span><b>${summary.ok}</b></div>
         <div class="kpi"><span>pendentes</span><b>${summary.pending}</b></div>
         <div class="kpi"><span>erro</span><b>${summary.invalid}</b></div>
@@ -1027,7 +1041,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
           <div class="filter-field">
             <label for="publicationFilterDesktop">Publicação</label>
             <select class="publication-filter" id="publicationFilterDesktop">
-              <option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option>
+              <option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option>
             </select>
           </div>
           <div class="filter-field">
@@ -1050,7 +1064,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       <div class="tool-row">
         <div class="filter-field"><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
         <div class="filter-field"><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
-        <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option></select></div>
+        <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option></select></div>
         <div class="filter-field"><label for="evidenceFilter">Evidências</label><select class="evidence-filter" id="evidenceFilter"><option value="all">Todas</option><option value="complete">Completas</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option></select></div>
       </div>
       <div class="filter-actions"><button class="clear-filters" type="button" id="clearFilters">Limpar filtros</button></div>
@@ -1151,7 +1165,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
     modal.addEventListener('close', () => lastModalTrigger?.focus());
     const params = new URLSearchParams(window.location.search);
-    const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending']);
+    const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending', 'ended']);
     const validEvidenceStates = new Set(['all', 'complete', 'retroactive_missing', 'invalid']);
     const legacyState = String(params.get('state') || '').toLowerCase();
     const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending' })[legacyState] || 'all';
@@ -1264,7 +1278,6 @@ async function main() {
     .filter((item) => item.competencia === competencia || !item.competencia)
     .filter((item) => !terminalStatuses.has(String(item.statusNormalizado || "").toLowerCase()))
     .filter((item) => item.periodoFim >= bounds.start && item.periodoInicio <= bounds.end)
-    .filter((item) => item.periodoInicio > targetDate || item.periodoFim >= targetDate || activeStatuses.has(String(item.statusNormalizado || "").toLowerCase()) || item.bannerPublicadoNoSite)
     .sort((a, b) => String(a.siteSigla).localeCompare(String(b.siteSigla)) || String(a.campanhaName).localeCompare(String(b.campanhaName)) || a.id - b.id);
 
   const statusMap = new Map(eligible.flatMap((item) => (item.evidenceDays || []).map((day) => [
@@ -1303,14 +1316,20 @@ async function main() {
     const relation = relationMap.get(item.id);
     const links = adrotateLinks(item, relation);
     const campaign = campaignMap.get(item.campanhaId);
-    const state = computeInsertionState(item, evidenceDays, targetDate);
+    const operation = operationByInsertionId.get(item.id);
+    const publicConfirmed = operation?.adops?.publicConfirmation === "confirmed";
+    const effectiveItem = {
+      ...item,
+      bannerPublicadoNoSite: item.bannerPublicadoNoSite === true || publicConfirmed,
+    };
+    const state = computeInsertionState(effectiveItem, evidenceDays, targetDate);
     const missingDates = evidenceDays.filter((day) => day.status === "missing").map((day) => day.date);
     const invalidDates = evidenceDays.filter((day) => !day.status.startsWith("audited") && day.status !== "missing").map((day) => day.date);
     const retroactiveMissingDates = missingDates.filter((date) => date < targetDate);
-    const operation = operationByInsertionId.get(item.id);
     const guidance = publicationGuidance(operation);
     return {
-      ...item,
+      ...effectiveItem,
+      publicConfirmed,
       campanhaName: item.campanhaName || campaign?.name || `Campanha ${item.campanhaId || "-"}`,
       clienteNome: item.clienteNome || campaign?.clienteNome || "-",
       agenciaNome: item.agenciaNome || campaign?.agenciaNome || "-",
@@ -1348,8 +1367,9 @@ async function main() {
 
   const summary = {
     total: enriched.length,
-    active: enriched.filter((item) => item.state !== "scheduled").length,
+    active: enriched.filter((item) => item.periodoInicio <= targetDate && item.periodoFim >= targetDate).length,
     scheduled: enriched.filter((item) => item.state === "scheduled").length,
+    ended: enriched.filter((item) => item.periodoFim < targetDate).length,
     ok: enriched.filter((item) => item.state === "ok").length,
     pending: enriched.filter((item) => item.state === "pending").length,
     invalid: enriched.filter((item) => item.state === "invalid").length,

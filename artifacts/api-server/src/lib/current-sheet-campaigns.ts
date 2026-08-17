@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { createHash } from "node:crypto";
 
 export const CAMPAIGN_SHEET_VERSION = "current-sheet-campaigns-v1" as const;
 
@@ -75,6 +76,7 @@ export type CurrentSheetCampaignResult = {
   source: {
     exportUrl: string;
     downloadedAt: string;
+    sha256: string;
   };
 };
 
@@ -274,15 +276,20 @@ export async function loadCurrentSheetCampaigns(options: {
   siteSigla?: string | null;
   includeUpcoming?: boolean;
   upcomingDays?: number;
+  scope?: "daily" | "monthly";
 } = {}): Promise<CurrentSheetCampaignResult> {
   const targetDate = options.date ?? todayInCuiaba();
   const expectedSheet = currentSheetNameForDate(targetDate);
   const upcomingDays = Math.max(0, Math.min(options.upcomingDays ?? 45, 370));
   const upcomingLimit = addDays(targetDate, upcomingDays);
+  const targetMonthStart = `${targetDate.slice(0, 7)}-01`;
+  const nextMonthStart = `${addDays(targetMonthStart, 32).slice(0, 7)}-01`;
+  const targetMonthEnd = addDays(nextMonthStart, -1);
   const exportUrl = options.exportUrl ?? process.env.PLANILHA_XLSX_URL ?? DEFAULT_EXPORT_URL;
   const response = await fetch(exportUrl);
   if (!response.ok) throw new Error(`Falha ao baixar planilha: HTTP ${response.status}`);
   const buffer = Buffer.from(await response.arrayBuffer());
+  const sourceSha256 = createHash("sha256").update(buffer).digest("hex");
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const sheetName = workbook.SheetNames.find((name) => normalizeForMatch(name) === normalizeForMatch(expectedSheet));
   if (!sheetName) throw new Error(`Aba corrente não encontrada: ${expectedSheet}`);
@@ -364,9 +371,11 @@ export async function loadCurrentSheetCampaigns(options: {
         dataEnvioAgencia,
       };
 
-      if (parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
+      if (options.scope === "monthly" && parsedPeriod.inicio <= targetMonthEnd && parsedPeriod.fim >= targetMonthStart) {
         parsedRows.push(parsedRow);
-      } else if (options.includeUpcoming && parsedPeriod.inicio > targetDate && parsedPeriod.inicio <= upcomingLimit) {
+      } else if (options.scope !== "monthly" && parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
+        parsedRows.push(parsedRow);
+      } else if (options.scope !== "monthly" && options.includeUpcoming && parsedPeriod.inicio > targetDate && parsedPeriod.inicio <= upcomingLimit) {
         upcomingRows.push(parsedRow);
       }
     });
@@ -381,6 +390,7 @@ export async function loadCurrentSheetCampaigns(options: {
     source: {
       exportUrl,
       downloadedAt: new Date().toISOString(),
+      sha256: sourceSha256,
     },
   };
 }

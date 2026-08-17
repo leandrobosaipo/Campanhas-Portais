@@ -50,6 +50,16 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
       res.end(JSON.stringify({ ok: true, kind: "campaign-publication-reconcile", jobId: "reconcile-test", status: "ready_for_runner" }));
       return;
     }
+    if (req.method === "GET" && req.url === "/api/ops/incidents?limit=5") {
+      if (req.headers.authorization !== "Bearer configured-in-production") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "missing_forwarded_authorization" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ items: [{ id: "incident-test", layer: "audit" }] }));
+      return;
+    }
     res.writeHead(404).end();
   });
   const workerPort = await listen(worker);
@@ -96,6 +106,13 @@ test("POST publico de campanha chega ao Worker sem Bearer e rota interna continu
     });
     assert.equal(reconcile.status, 202);
     assert.equal((await reconcile.json()).jobId, "reconcile-test");
+    const unauthorizedIncidents = await fetch(`${baseUrl}/api/ops/incidents?limit=5`);
+    assert.equal(unauthorizedIncidents.status, 401);
+    const incidents = await fetch(`${baseUrl}/api/ops/incidents?limit=5`, {
+      headers: { authorization: "Bearer configured-in-production" },
+    });
+    assert.equal(incidents.status, 200);
+    assert.equal((await incidents.json()).items[0].id, "incident-test");
     const internal = await fetch(`${baseUrl}/api/internal/campaign-evidence-exports?piCodigo=17048&competencia=AGOSTO%2F2026`);
     assert.equal(internal.status, 401);
   } finally {

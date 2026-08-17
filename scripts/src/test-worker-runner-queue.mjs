@@ -23,6 +23,7 @@ function jobRecord(overrides = {}) {
 function fakeEnv(options = {}) {
   const statements = [];
   const rows = new Map((options.active ?? []).map((item) => [String(item.id), { ...item }]));
+  const incidents = new Map();
   let queueSends = 0;
   const db = {
     prepare(sql) {
@@ -34,16 +35,35 @@ function fakeEnv(options = {}) {
           return this;
         },
         async run() {
-          if (/UPDATE ops_jobs SET status/.test(sql)) {
-            const id = String(statement.values.at(-1));
+          if (/UPDATE ops_jobs\s+SET status/.test(sql)) {
+            const transactionalFailure = /status = 'failed'/.test(sql);
+            const id = String(transactionalFailure ? statement.values.at(-3) : statement.values.at(-1));
             const row = rows.get(id);
             if (row) {
-              row.status = statement.values[0];
-              row.result_json = statement.values[1];
-              row.error_text = statement.values[2];
-              row.runner_id = statement.values[3];
-              row.updated_at = statement.values[4];
+              row.status = transactionalFailure ? "failed" : statement.values[0];
+              row.result_json = transactionalFailure ? statement.values[0] : statement.values[1];
+              row.error_text = transactionalFailure ? statement.values[1] : statement.values[2];
+              row.runner_id = transactionalFailure ? statement.values[2] : statement.values[3];
+              row.updated_at = transactionalFailure ? statement.values[3] : statement.values[4];
             }
+          }
+          if (/INSERT INTO ops_incidents/.test(sql)) {
+            const fingerprint = String(statement.values[1]);
+            const current = incidents.get(fingerprint);
+            incidents.set(fingerprint, {
+              id: current?.id ?? statement.values[0],
+              fingerprint,
+              status: "open",
+              layer: statement.values[2],
+              job_id: statement.values[3],
+              job_kind: statement.values[4],
+              summary: statement.values[5],
+              error_text: statement.values[6],
+              evidence_json: statement.values[7],
+              attempts: (current?.attempts ?? 0) + 1,
+              created_at: current?.created_at ?? statement.values[8],
+              updated_at: statement.values[9],
+            });
           }
           return { meta: { changes: 1 } };
         },
@@ -53,6 +73,7 @@ function fakeEnv(options = {}) {
             const row = rows.get(String(statement.values[0]));
             return row ? { status: row.status } : null;
           }
+          if (/SELECT \* FROM ops_incidents WHERE fingerprint/.test(sql)) return incidents.get(String(statement.values[0])) ?? null;
           if (/kind = 'print-batch'/.test(sql)) {
             if (options.dailyExisting?.status === "failed" && sql.includes("status IN ('queued','ready_for_runner','running','completed')")) return null;
             return options.dailyExisting ?? null;
@@ -64,6 +85,11 @@ function fakeEnv(options = {}) {
           return { results: [] };
         },
       };
+    },
+    async batch(batchStatements) {
+      const results = [];
+      for (const statement of batchStatements) results.push(await statement.run());
+      return results;
     },
   };
   return {
@@ -124,7 +150,7 @@ test("cron diário cria nova tentativa quando o job anterior falhou", async () =
   assert.match(fixture.statements.find((item) => item.sql.includes("kind = 'print-batch'"))?.sql ?? "", /status IN \('queued','ready_for_runner','running','completed'\)/);
 });
 
-test("cron de retomada cria reconciliador idempotente no runner do Drive", async () => {
+test("cron de retomada sincroniza a planilha antes de criar reconciliador dependente", async () => {
   const fixture = fakeEnv();
   const promises = [];
   await worker.scheduled({ cron: "30 21 * * *", scheduledTime: Date.parse("2026-08-13T21:30:00.000Z") }, fixture.env, {
@@ -132,9 +158,14 @@ test("cron de retomada cria reconciliador idempotente no runner do Drive", async
   });
   await Promise.all(promises);
 
-  const insert = fixture.statements.find((item) => item.sql.includes("INSERT OR IGNORE INTO ops_jobs"));
-  assert.equal(insert?.values[1], "campaign-publication-reconcile");
-  assert.match(String(insert?.values[2]), /campaign-publication-reconcile:2026-08-13/);
+  const inserts = fixture.statements.filter((item) => item.sql.includes("INSERT OR IGNORE INTO ops_jobs"));
+  assert.equal(inserts.length, 2);
+  assert.equal(inserts[0]?.values[1], "sync-planilha");
+  assert.match(String(inserts[0]?.values[2]), /daily-sheet-sync:2026-08-13/);
+  assert.equal(inserts[1]?.values[1], "campaign-publication-reconcile");
+  const reconcilePayload = JSON.parse(String(inserts[1]?.values[2]));
+  assert.equal(reconcilePayload.dependsOnJobId, String(inserts[0]?.values[0]));
+  assert.equal(reconcilePayload.idempotencyKey, "campaign-publication-reconcile:2026-08-13");
 });
 
 test("atualização do Drive agenda retomada idempotente depois do ingest", async () => {
@@ -166,7 +197,8 @@ test("atualização do Drive agenda retomada idempotente depois do ingest", asyn
 });
 
 test("watchdog recupera uma vez job legado queued em vez de marcá-lo como failed", async () => {
-  const fixture = fakeEnv({ active: [jobRecord()] });
+  const old = new Date(Date.now() - 31 * 60_000).toISOString();
+  const fixture = fakeEnv({ active: [jobRecord({ created_at: old, updated_at: old })] });
   const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/watchdog", {
     method: "POST",
     headers: { authorization: "Bearer test-token", "content-type": "application/json" },
@@ -189,6 +221,7 @@ test("reconciliador espera ingest concluído e usa timeout longo", async () => {
   assert.match(source, /dependency\.status = 'completed'/);
   assert.match(source, /waitingForDependency/);
   assert.match(source, /stage: "dependency_failed"/);
+  assert.match(source, /kind === "print-batch"/);
 });
 
 test("watchdog não expira reconciliador enquanto ingest ainda executa", async () => {

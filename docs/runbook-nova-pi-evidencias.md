@@ -118,6 +118,10 @@ Aceite:
 
 ## 7. Gerar retroativos
 
+Campanha encerrada não deve ser reativada para produzir evidência. Use backfill restrito à inserção e à data contratada. Para PI 14771/OMT (`campaignId=969`, `insertionId=1841`) e PI 9750/AFL (`campaignId=981`, `insertionId=1854`), a única data pendente confirmada em 17/08/2026 era 15/08/2026. Aceite o resultado somente com `audited` ou `audited_best_effort`, checklist aprovado, URL acessível e nenhum bloqueio.
+
+O relatório mensal deve continuar mostrando a campanha depois do encerramento. O endpoint diário `campaign-operations/active` não serve para montar o histórico do mês; use `campaign-operations/evidence-monthly-source`.
+
 Use `print-backfill` somente após publicação real. Datas críticas rodam em série, com captura concorrência 1. Para evidência inválida, refaça a data individual com `replace=true`; não sobrescreva evidência válida sem motivo.
 
 Reconstrução histórica só é aceita quando a auditoria confirma que a prova representa o slot, mídia, data e contexto esperados. Caso contrário, registre blocker por portal, formato e data.

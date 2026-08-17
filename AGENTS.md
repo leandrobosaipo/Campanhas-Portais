@@ -116,6 +116,15 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Divergência entre `config/adrotate-sites.json` e regras publicadas no painel/API.
 - Campos inválidos: `scrollMode`, `proofStyle`, `slotSelector`.
 
+## Rotina diária e relatório mensal
+
+- Às 17h30 de Cuiabá, `sync-planilha` deve terminar antes de `campaign-publication-reconcile`. A sincronização cadastra de forma idempotente somente linhas canônicas realmente ausentes.
+- Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
+- Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
+- `campaign-operations/active` continua sendo a fonte diária. Não use esse endpoint isoladamente para construir um relatório mensal.
+- `bannerPublicadoNoSite=true` é somente publicação reportada. Confirmação pública exige a relação AdRotate e a mídia no HTML público.
+- Uma falha terminal de job deve ser gravada junto do incidente na mesma operação transacional. Incidentes e logs nunca podem persistir credenciais.
+
 ## Serviços relacionados
 
 - Painel público: `https://adops-campanhas-portais.pages.dev`

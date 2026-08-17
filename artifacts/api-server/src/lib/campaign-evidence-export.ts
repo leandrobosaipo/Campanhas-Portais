@@ -138,7 +138,9 @@ export function buildPendingPublicationView<T extends {
     item.requiredActions?.includes("publish_on_site")
     || item.requiredActions?.includes("generate_evidence")
   )).map((item: any) => {
-    const published = item.adops?.bannerPublicadoNoSite === true && Boolean(item.adops?.mediaUrl);
+    const published = Boolean(item.adops?.mediaUrl) && (
+      item.adops?.bannerPublicadoNoSite === true || item.adops?.publicConfirmation === "confirmed"
+    );
     const canonicalPi = String(item.sourceIdentity?.canonicalPi ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
     const authoritativePiInPdf = Boolean(canonicalPi) && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? [])
       .map((value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""))

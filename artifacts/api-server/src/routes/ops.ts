@@ -90,6 +90,7 @@ async function proxyPublicWorkerJob(req: Request, res: Response): Promise<void> 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
+    const method = req.method.toUpperCase();
     const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${req.originalUrl}`, {
       method: req.method,
       signal: controller.signal,
@@ -98,7 +99,7 @@ async function proxyPublicWorkerJob(req: Request, res: Response): Promise<void> 
         "content-type": "application/json",
         ...(req.header("authorization") ? { authorization: req.header("authorization")! } : {}),
       },
-      body: JSON.stringify(req.body ?? {}),
+      ...(method === "GET" || method === "HEAD" ? {} : { body: JSON.stringify(req.body ?? {}) }),
     });
     const contentType = upstream.headers.get("content-type");
     if (contentType) res.setHeader("content-type", contentType);
@@ -527,6 +528,9 @@ function parseJson(value: string | null) {
 function sanitizeJobText(value: unknown, maxLength = 12000) {
   if (typeof value !== "string") return value;
   return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\b(authorization|cookie|set-cookie|x-api-key|x-adops-api-token)\s*:\s*[^\r\n,}]+/gi, "$1: [redacted]")
+    .replace(/([?&](?:access_)?(?:token|api[_-]?key|secret|password|authorization|cookie)=)[^&#\s]+/gi, "$1[redacted]")
     .replace(/\b[A-Za-z0-9._-]+@(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ssh-user-host]")
     .replace(/\[(?:\d{1,3}\.){3}\d{1,3}\]:\d+/g, "[ssh-host-port]")
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]")
@@ -538,9 +542,21 @@ function sanitizeJobValue(value: unknown): unknown {
   if (typeof value === "string") return sanitizeJobText(value);
   if (Array.isArray(value)) return value.map((item) => sanitizeJobValue(item));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJobValue(item)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, isSensitiveJobKey(key) ? "[redacted]" : sanitizeJobValue(item)]));
   }
   return value;
+}
+
+function isSensitiveJobKey(key: string) {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return normalized.includes("authorization")
+    || normalized.endsWith("token")
+    || normalized.endsWith("apikey")
+    || normalized.endsWith("secret")
+    || normalized.endsWith("password")
+    || normalized.endsWith("passwd")
+    || normalized.endsWith("cookie")
+    || normalized === "bearer";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1975,6 +1991,7 @@ router.get("/ops/quickstart.html", (_req, res): void => {
 });
 
 router.post("/ops/jobs/campaign-publication-reconcile", proxyPublicWorkerJob);
+router.get("/ops/incidents", proxyPublicWorkerJob);
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
   const insertionId = typeof req.body?.insertionId === "number" ? req.body.insertionId : null;

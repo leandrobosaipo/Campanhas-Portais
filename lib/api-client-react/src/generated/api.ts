@@ -73,6 +73,8 @@ import type {
   InsertionWithRelations,
   ListCampaignsParams,
   ListInsertionsParams,
+  ListOpsIncidents200,
+  ListOpsIncidentsParams,
   ListOpsJobs200,
   ListOpsJobsParams,
   MediaConsistencyResult,
@@ -523,6 +525,104 @@ export function useListOpsJobs<
 }
 
 /**
+ * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+export const getListOpsIncidentsUrl = (params?: ListOpsIncidentsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/incidents?${stringifiedParams}`
+    : `/api/ops/incidents`;
+};
+
+export const listOpsIncidents = async (
+  params?: ListOpsIncidentsParams,
+  options?: RequestInit,
+): Promise<ListOpsIncidents200> => {
+  return customFetch<ListOpsIncidents200>(getListOpsIncidentsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOpsIncidentsQueryKey = (
+  params?: ListOpsIncidentsParams,
+) => {
+  return [`/api/ops/incidents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListOpsIncidentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOpsIncidents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListOpsIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListOpsIncidentsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listOpsIncidents>>
+  > = ({ signal }) => listOpsIncidents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOpsIncidents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOpsIncidentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOpsIncidents>>
+>;
+export type ListOpsIncidentsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+
+export function useListOpsIncidents<
+  TData = Awaited<ReturnType<typeof listOpsIncidents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListOpsIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOpsIncidentsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Read the complete operational job for final inspection or diagnosis
  */
 export const getGetOpsJobUrl = (id: string) => {
@@ -957,7 +1057,7 @@ export const getGetMonthlyEvidenceSourceQueryKey = (
 
 export const getGetMonthlyEvidenceSourceQueryOptions = <
   TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
 >(
   params?: GetMonthlyEvidenceSourceParams,
   options?: {
@@ -989,7 +1089,7 @@ export const getGetMonthlyEvidenceSourceQueryOptions = <
 export type GetMonthlyEvidenceSourceQueryResult = NonNullable<
   Awaited<ReturnType<typeof getMonthlyEvidenceSource>>
 >;
-export type GetMonthlyEvidenceSourceQueryError = ErrorType<unknown>;
+export type GetMonthlyEvidenceSourceQueryError = ErrorType<ErrorResponse>;
 
 /**
  * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
@@ -997,7 +1097,7 @@ export type GetMonthlyEvidenceSourceQueryError = ErrorType<unknown>;
 
 export function useGetMonthlyEvidenceSource<
   TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
-  TError = ErrorType<unknown>,
+  TError = ErrorType<ErrorResponse>,
 >(
   params?: GetMonthlyEvidenceSourceParams,
   options?: {

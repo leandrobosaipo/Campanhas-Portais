@@ -1348,7 +1348,7 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
   const candidates = selectCampaignEvidenceInsertions(enriched, identity);
   const candidateById = new Map(candidates.map((item) => [item.id, item]));
-  const operations = await getActiveCampaignOperations({ date: asOfDate, includeEvidence });
+  const operations = await getActiveCampaignOperations({ date: asOfDate, includeEvidence, sheetScope: "monthly" });
   const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
     normalizeCampaignPi(item.piCodigo) === identity.piCodigo
     && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
@@ -1357,11 +1357,18 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
   const requiredDatesByInsertion = new Map(operations.items
     .filter((item) => Number.isFinite(item.adops.insertionId))
     .map((item) => [Number(item.adops.insertionId), item.evidence.requiredDates]));
+  const publiclyConfirmedInsertionIds = new Set(operations.items
+    .filter((item) => item.adops.publicConfirmation === "confirmed")
+    .map((item) => Number(item.adops.insertionId))
+    .filter((id) => Number.isInteger(id) && id > 0));
   return {
     identity,
     operations: matchingOperations,
     requiredDatesByInsertion,
-    insertions: candidates.filter((item) => canonicalIds.has(item.id)).sort((left, right) => (
+    insertions: candidates.filter((item) => canonicalIds.has(item.id)).map((item) => ({
+      ...item,
+      bannerPublicadoNoSite: item.bannerPublicadoNoSite === true || publiclyConfirmedInsertionIds.has(item.id),
+    })).sort((left, right) => (
       String(left.siteSigla || "").localeCompare(String(right.siteSigla || ""))
       || String(left.periodoInicio || "").localeCompare(String(right.periodoInicio || ""))
       || left.id - right.id
@@ -2031,8 +2038,12 @@ router.post("/integrations/adrotate/media/sync-live", async (req, res): Promise<
 
 router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
   const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
+  const insertionIds = typeof req.query.insertionIds === "string"
+    ? new Set(req.query.insertionIds.split(",").map((value) => Number.parseInt(value, 10)).filter((value) => Number.isInteger(value) && value > 0))
+    : null;
 
   let rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
+  if (insertionIds) rawInsertions = rawInsertions.filter((item) => insertionIds.has(item.id));
   if (siteId) rawInsertions = rawInsertions.filter((item) => item.siteId === siteId);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
 
@@ -2040,7 +2051,7 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
     if (competencia && item.competencia !== competencia) return false;
     if (clienteId && item.clienteId !== clienteId) return false;
     if (agenciaId && item.agenciaId !== agenciaId) return false;
-    if (!item.bannerPublicadoNoSite) return false;
+    if (!item.bannerPublicadoNoSite && !insertionIds) return false;
     if (!item.mediaUrl) return false;
     if (getAdRotateGroupId(item.siteSigla, item.localFormatoNormalizado ?? item.localFormato) == null) return false;
     const start = parseDateOnly(item.periodoInicio);
@@ -2055,7 +2066,9 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
   res.json({
     date: targetDate,
     totalEligible: checks.length,
-    ok: checks.filter((item) => item.status === "ok").length,
+    ok: checks.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,
+    strictOk: checks.filter((item) => item.status === "ok").length,
+    bestEffort: checks.filter((item) => item.status === "ok_best_effort").length,
     missing: checks.filter((item) => item.status === "missing").length,
     invalid: checks.filter((item) => item.status === "invalid_url" || item.status === "invalid_audit").length,
     items: checks,
@@ -2954,8 +2967,18 @@ router.get("/campaign-operations/evidence-monthly-source", async (req, res): Pro
   const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
     ? req.query.date
     : formatIsoDate(new Date());
+  const requestedCompetencia = typeof req.query.competencia === "string" ? req.query.competencia.trim() : "";
   try {
-    const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true });
+    const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true, sheetScope: "monthly" });
+    const canonicalCompetencia = operations.sheet.name.replace(/\s+(\d{4})$/, "/$1");
+    const normalizeCompetencia = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").toUpperCase();
+    if (requestedCompetencia && normalizeCompetencia(requestedCompetencia) !== normalizeCompetencia(canonicalCompetencia)) {
+      res.status(400).json({
+        error: "competencia_divergente",
+        details: `A data ${targetDate} pertence à competência ${canonicalCompetencia}.`,
+      });
+      return;
+    }
     const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
     const enrichedInsertions = await Promise.all(rawInsertions.map(enrichInsertion));
     const insertionById = new Map(enrichedInsertions.map((item) => [item.id, item]));
@@ -3011,6 +3034,12 @@ router.get("/campaign-operations/evidence-monthly-source", async (req, res): Pro
     res.setHeader("Cache-Control", "no-store");
     res.json({
       ...source,
+      source: {
+        sheetName: operations.sheet.name,
+        downloadedAt: operations.sheet.downloadedAt,
+        sha256: operations.sheet.sourceSha256,
+        competencia: canonicalCompetencia,
+      },
       insertions: [...monthlyItems, ...upcomingItems].map((item) => item.insertion).filter(Boolean),
     });
   } catch (error) {
