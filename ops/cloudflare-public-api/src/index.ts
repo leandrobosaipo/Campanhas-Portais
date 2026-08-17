@@ -442,6 +442,17 @@ function parseCompetenciaMonth(value: string | null | undefined) {
   return { year, month };
 }
 
+function canonicalCompetencia(value: string | null | undefined) {
+  const normalized = normalizeText(value).toUpperCase().replace(/\s+/g, "");
+  const numericMonthFirst = normalized.match(/^(0?[1-9]|1[0-2])\/(\d{4})$/);
+  if (numericMonthFirst) return `${numericMonthFirst[2]}-${pad2(Number(numericMonthFirst[1]))}`;
+  const numericYearFirst = normalized.match(/^(\d{4})-(0?[1-9]|1[0-2])$/);
+  if (numericYearFirst) return `${numericYearFirst[1]}-${pad2(Number(numericYearFirst[2]))}`;
+  const named = normalized.match(/^(JANEIRO|FEVEREIRO|MARCO|ABRIL|MAIO|JUNHO|JULHO|AGOSTO|SETEMBRO|OUTUBRO|NOVEMBRO|DEZEMBRO)\/(\d{4})$/);
+  const parsed = named ? parseCompetenciaMonth(normalized) : null;
+  return parsed ? `${parsed.year}-${pad2(parsed.month + 1)}` : "";
+}
+
 function resolveAnalyticsMonthWindow(insertion: InsertionContext) {
   const competenciaMonth = parseCompetenciaMonth(insertion.competencia);
   const base = competenciaMonth
@@ -1262,7 +1273,7 @@ async function createCampaignEvidenceExportJob(
   allowHistoricalCutoff = false,
 ) {
   const piCodigo = String(body.piCodigo || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
-  const competencia = typeof body.competencia === "string" ? body.competencia.trim().toUpperCase() : "";
+  const competencia = canonicalCompetencia(typeof body.competencia === "string" ? body.competencia : "");
   const asOfDate = typeof body.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.asOfDate) ? body.asOfDate : "";
   if (body.asOfDate !== undefined && !allowHistoricalCutoff) return jsonNoStore({ error: "as_of_date_requires_authenticated_batch" }, { status: 403 });
   if (body.asOfDate !== undefined && !asOfDate) return badRequest("asOfDate deve estar no formato YYYY-MM-DD.");

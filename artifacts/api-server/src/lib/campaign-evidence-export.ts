@@ -32,11 +32,31 @@ function normalizeCompetencia(value: unknown) {
   return String(value ?? "").trim().toUpperCase();
 }
 
+const COMPETENCIA_MONTHS = new Map([
+  ["JANEIRO", 1], ["FEVEREIRO", 2], ["MARCO", 3], ["ABRIL", 4],
+  ["MAIO", 5], ["JUNHO", 6], ["JULHO", 7], ["AGOSTO", 8],
+  ["SETEMBRO", 9], ["OUTUBRO", 10], ["NOVEMBRO", 11], ["DEZEMBRO", 12],
+]);
+
+export function normalizeCompetenciaMonthKey(value: unknown) {
+  const normalized = normalizeCompetencia(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "");
+  let match = normalized.match(/^(0?[1-9]|1[0-2])\/(\d{4})$/);
+  if (match) return `${match[2]}-${String(Number(match[1])).padStart(2, "0")}`;
+  match = normalized.match(/^(\d{4})-(0?[1-9]|1[0-2])$/);
+  if (match) return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}`;
+  match = normalized.match(/^([A-Z]+)\/(\d{4})$/);
+  const month = match ? COMPETENCIA_MONTHS.get(match[1]) : null;
+  return match && month ? `${match[2]}-${String(month).padStart(2, "0")}` : null;
+}
+
 export function parseCampaignEvidenceIdentity(input: { piCodigo?: unknown; competencia?: unknown }) {
   const piCodigo = normalizeCampaignPi(input?.piCodigo);
-  const competencia = normalizeCompetencia(input?.competencia);
+  const competencia = normalizeCompetenciaMonthKey(input?.competencia);
   if (!piCodigo) throw new CampaignEvidenceExportConflict("A campanha precisa de PI canônica para gerar o pacote completo.");
-  if (!competencia) throw new CampaignEvidenceExportConflict("A competência é obrigatória para isolar o pacote da campanha.");
+  if (!competencia) throw new CampaignEvidenceExportConflict("A competência mensal válida é obrigatória para isolar o pacote da campanha.");
   return { piCodigo, competencia };
 }
 
@@ -47,9 +67,11 @@ export function selectCampaignEvidenceInsertions<T extends {
   bannerPublicadoNoSite?: unknown;
   mediaUrl?: unknown;
 }>(insertions: T[], identity: { piCodigo: string; competencia: string }) {
+  const expectedMonth = normalizeCompetenciaMonthKey(identity.competencia);
   return (insertions || []).filter((item) => (
     normalizeCampaignPi(item.piCodigo) === identity.piCodigo
-    && normalizeCompetencia(item.competencia) === identity.competencia
+    && expectedMonth !== null
+    && normalizeCompetenciaMonthKey(item.competencia) === expectedMonth
     && String(item.statusNormalizado || "").trim().toLowerCase() !== "cancelado"
   ));
 }
