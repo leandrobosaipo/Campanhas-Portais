@@ -121,7 +121,92 @@ test("prefere POP UP publicado em vez de duplicata detalhada em rascunho", () =>
   assert.equal(result.insertion?.id, 1861);
 });
 
+test("prefere as tres insercoes publicadas da PI 90892 aos rascunhos detalhados", () => {
+  const cases = [
+    {
+      sheet: "MEGABANNER TOPO — HEADER — 825x120",
+      publishedFormat: "MEGABANNER TOPO",
+      publishedId: 1843,
+      draftId: 2188,
+    },
+    {
+      sheet: "VIDEO — LATERAL 01 — SIDEBAR — 300x250",
+      publishedFormat: "VIDEO",
+      publishedId: 1844,
+      draftId: 2190,
+    },
+  ];
+
+  for (const item of cases) {
+    const published = insertion({
+      id: item.publishedId,
+      localFormato: item.publishedFormat,
+      localFormatoNormalizado: item.publishedFormat,
+      periodoInicio: "2026-08-01",
+      periodoFim: "2026-08-12",
+      statusNormalizado: "publicado",
+      bannerPublicadoNoSite: true,
+      mediaUrl: `https://cdn.example.test/${item.publishedId}.gif`,
+    });
+    const duplicateDraft = insertion({
+      id: item.draftId,
+      localFormato: item.sheet,
+      localFormatoNormalizado: item.sheet,
+      periodoInicio: "2026-08-01",
+      periodoFim: "2026-08-12",
+      statusNormalizado: "print_gerado",
+      bannerPublicadoNoSite: false,
+      mediaUrl: null,
+    });
+    const result = selectBestAdopsMatch({
+      localFormato: item.sheet,
+      periodoInicio: "2026-08-01",
+      periodoFim: "2026-08-12",
+    }, [published, duplicateDraft]);
+
+    assert.equal(result.compatible.length, 2, item.sheet);
+    assert.equal(result.insertion?.id, item.publishedId, item.sheet);
+  }
+});
+
+test("prefere a insercao OMT publicada da PI 742 ao rascunho duplicado", () => {
+  const published = insertion({
+    id: 1840,
+    localFormato: "TOPO",
+    localFormatoNormalizado: "TOPO",
+    periodoInicio: "2026-07-31",
+    periodoFim: "2026-08-09",
+    statusNormalizado: "publicado",
+    bannerPublicadoNoSite: true,
+    mediaUrl: "https://cdn.example.test/pi-742.gif",
+  });
+  const duplicateDraft = insertion({
+    id: 1852,
+    localFormato: "MEGABANNER TOPO",
+    localFormatoNormalizado: "MEGABANNER TOPO",
+    periodoInicio: "2026-07-31",
+    periodoFim: "2026-08-09",
+    statusNormalizado: "print_gerado",
+    bannerPublicadoNoSite: false,
+    mediaUrl: null,
+  });
+  const result = selectBestAdopsMatch({
+    localFormato: "MEGABANNER TOPO",
+    periodoInicio: "2026-07-31",
+    periodoFim: "2026-08-09",
+  }, [published, duplicateDraft]);
+
+  assert.equal(result.compatible.length, 2);
+  assert.equal(result.insertion?.id, 1840);
+});
+
 test("nao mistura outra variante POP UP com o SITEWIDE 970x90", () => {
   assert.equal(isFormatCompatible("POP UP — SITEWIDE — 970x90", "POP UP MOBILE"), false);
   assert.equal(isFormatCompatible("POP UP — SITEWIDE — 970x90", "POP UP 300x250"), false);
+});
+
+test("nao amplia aliases de topo e video para outras posicoes", () => {
+  assert.equal(isFormatCompatible("TOPO", "TOPO LATERAL"), false);
+  assert.equal(isFormatCompatible("VIDEO", "VIDEO MOBILE"), false);
+  assert.equal(isFormatCompatible("TOPO", "MEGABANNER TOPO — HEADER — 825x120"), false);
 });
