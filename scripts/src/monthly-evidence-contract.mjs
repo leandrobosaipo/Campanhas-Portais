@@ -53,6 +53,28 @@ export function canonicalCommercialPi(value) {
   return match ? match[1].replace(/^0+(?=\d)/, "") : null;
 }
 
+const COMPETENCIA_MONTHS = [
+  "JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO",
+  "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
+];
+
+export function competenciaMonthKey(value) {
+  const normalized = normalizeFilterValue(value);
+  const iso = normalized.match(/^(\d{4}) (0?[1-9]|1[0-2])$/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}`;
+  const numeric = normalized.match(/^(0?[1-9]|1[0-2]) (\d{4})$/);
+  if (numeric) return `${numeric[2]}-${String(Number(numeric[1])).padStart(2, "0")}`;
+  const named = normalized.match(/^([A-Z]+) (\d{4})$/);
+  const monthIndex = named ? COMPETENCIA_MONTHS.indexOf(named[1]) : -1;
+  return monthIndex >= 0 ? `${named[2]}-${String(monthIndex + 1).padStart(2, "0")}` : null;
+}
+
+export function competenciaMatchesMonth(value, expectedCompetencia, targetMonth) {
+  if (!value) return true;
+  const expectedKey = competenciaMonthKey(targetMonth) || competenciaMonthKey(expectedCompetencia);
+  return Boolean(expectedKey && competenciaMonthKey(value) === expectedKey);
+}
+
 export function resolveReportPortainerUrl(env) {
   return String(env?.ADOPS_REPORT_PORTAINER_URL || env?.PORTAINER_URL || "").replace(/\/$/, "");
 }

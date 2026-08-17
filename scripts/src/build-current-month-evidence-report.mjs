@@ -26,6 +26,7 @@ import {
   buildDeliveryProbeOptions,
   adaptAggregatedEvidenceDay,
   canonicalCommercialPi,
+  competenciaMatchesMonth,
   canonicalRequiredDates,
   EVIDENCE_ZIP_VALIDATION_PYTHON,
   shouldRetryDeliveryStatus,
@@ -1275,7 +1276,7 @@ async function main() {
   const canonicalInsertions = selectCanonicalInsertions(canonicalOperationItems, insertions);
   if (canonicalInsertions.some((item) => item.id === 1826)) throw new Error("Gate canônico recusou a inserção duplicada #1826.");
   const eligible = canonicalInsertions
-    .filter((item) => item.competencia === competencia || !item.competencia)
+    .filter((item) => competenciaMatchesMonth(item.competencia, competencia, targetMonth))
     .filter((item) => !terminalStatuses.has(String(item.statusNormalizado || "").toLowerCase()))
     .filter((item) => item.periodoFim >= bounds.start && item.periodoInicio <= bounds.end)
     .sort((a, b) => String(a.siteSigla).localeCompare(String(b.siteSigla)) || String(a.campanhaName).localeCompare(String(b.campanhaName)) || a.id - b.id);

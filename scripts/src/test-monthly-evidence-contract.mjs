@@ -9,6 +9,12 @@ test("seleciona somente insercoes canonicas retornadas por campaign-operations",
   assert.deepEqual(contract.selectCanonicalInsertions(active, month).map((item) => item.id), [1827, 1831]);
 });
 
+test("trata competencia numerica e por extenso como o mesmo mes", () => {
+  assert.equal(contract.competenciaMatchesMonth("08/2026", "AGOSTO/2026", "2026-08"), true);
+  assert.equal(contract.competenciaMatchesMonth("AGOSTO 2026", "AGOSTO/2026", "2026-08"), true);
+  assert.equal(contract.competenciaMatchesMonth("07/2026", "AGOSTO/2026", "2026-08"), false);
+});
+
 test("classifica audited, missing e invalid sem aceitar HTTP 200 isolado", () => {
   assert.equal(contract.classifyEvidenceStatus({ status: "ok", isReachable: true, checklistValidation: { approved: true } }), "audited");
   assert.equal(contract.classifyEvidenceStatus({ status: "ok_best_effort", isReachable: true, checklistValidation: { approved: true } }), "audited_best_effort");
