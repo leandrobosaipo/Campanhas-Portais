@@ -4110,6 +4110,22 @@ function selectCanonicalSnapshotAd(snapshot) {
   return (Array.isArray(snapshot?.ads) ? snapshot.ads : []).slice().sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] || null;
 }
 
+function isAdrotateSnapshotPublicationConfirmed(snapshot, expected) {
+  const normalized = normalizePerrengueAdrotateSnapshot(snapshot);
+  const adId = Number(expected?.adId || 0);
+  const groupId = Number(expected?.groupId || 0);
+  const scheduleId = Number(expected?.scheduleId || 0);
+  const insertionId = Number(expected?.insertionId || 0);
+  const externalKey = String(expected?.externalKey || "");
+  const mediaBasename = String(expected?.mediaBasename || "");
+  const ad = normalized.ads.find((item) => Number(item?.id) === adId);
+  if (!ad || Number(ad?.adops_insertion_id || 0) !== insertionId || String(ad?.adops_external_key || "") !== externalKey) return false;
+  if (mediaBasename && String(ad?.adops_media_basename || "") !== mediaBasename) return false;
+  const link = normalized.links.find((item) => Number(item?.ad) === adId && Number(item?.group) === groupId && Number(item?.schedule) === scheduleId);
+  if (!link) return false;
+  return normalized.schedules.some((item) => Number(item?.id) === scheduleId);
+}
+
 function isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult }) {
   return Boolean(apply && purgeCache && (
     wpCliResult?.cache_maintenance_requested !== true
@@ -6629,8 +6645,29 @@ async function executeOperationalMediaPublish(payload) {
     const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
     preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
     published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
-    if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.historicalRelationOk !== true && published?.publicHtmlValidation?.ok !== true)) {
-      throw new Error(`Publicação operacional da inserção ${insertionId} não passou nos gates AdRotate/HTML.`);
+    let historicalSnapshotOk = false;
+    if (String(latestInsertion.periodoFim || "") < todayInCuiaba() && published?.wpCliResult?.ad_id) {
+      const afterSnapshot = await snapshotSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey });
+      historicalSnapshotOk = isAdrotateSnapshotPublicationConfirmed(afterSnapshot, {
+        adId: published.wpCliResult.ad_id,
+        groupId: published.wpCliResult.group_id,
+        scheduleId: published.wpCliResult.schedule_id,
+        insertionId,
+        externalKey,
+        mediaBasename: mediaBasenameFromUrl(mediaUrl),
+      });
+    }
+    if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.historicalRelationOk !== true && historicalSnapshotOk !== true && published?.publicHtmlValidation?.ok !== true)) {
+      const diagnostic = {
+        adId: published?.wpCliResult?.ad_id ?? null,
+        groupId: published?.wpCliResult?.group_id ?? null,
+        scheduleId: published?.wpCliResult?.schedule_id ?? null,
+        relationOk: published?.relationOk === true,
+        historicalRelationOk: published?.historicalRelationOk === true,
+        historicalSnapshotOk,
+        publicHtmlOk: published?.publicHtmlValidation?.ok === true,
+      };
+      throw new Error(`Publicação operacional da inserção ${insertionId} não passou nos gates AdRotate/HTML: ${JSON.stringify(diagnostic)}.`);
     }
   } catch (error) {
     const rollbackErrors = [];
@@ -7663,6 +7700,7 @@ export {
   isSocialInsertion,
   isCacheMaintenanceDegraded,
   isAdrotatePublicationConfirmed,
+  isAdrotateSnapshotPublicationConfirmed,
   isDiscardableDraftCampaign,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,

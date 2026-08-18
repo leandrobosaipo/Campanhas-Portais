@@ -606,6 +606,23 @@ assert.equal(runner.isAdrotatePublicationConfirmed({ activeToday: true, relation
   "campanha ativa continua exigindo relação ao vivo ou HTML público");
 assert.equal(runner.isAdrotatePublicationConfirmed({ activeToday: false, relationAfter: historicalRelation, adId: 78, groupId: 2, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", publicHtmlOk: false }), false,
   "relação histórica de outro anúncio não confirma a publicação");
+const expiredSnapshot = {
+  ads: [{ id: "182", adops_insertion_id: "2370", adops_external_key: "ADOPS-PERRENGUE-2370", adops_media_basename: "queimadas.mp4", image: "https://cdn.example/queimadas.mp4" }],
+  links: [{ id: "9", ad: "182", group: "2", schedule: "61" }],
+  schedules: [{ id: "61", name: "AdOps 2370" }],
+};
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 61, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", mediaBasename: "queimadas.mp4" }), true,
+  "campanha encerrada deve confirmar anúncio, grupo, agenda, inserção e mídia diretamente no AdRotate");
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 99, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", mediaBasename: "queimadas.mp4" }), false,
+  "agenda diferente não confirma a publicação histórica");
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 61, insertionId: 9999, externalKey: "ADOPS-OUTRA", mediaBasename: "queimadas.mp4" }), false,
+  "identidade de outra inserção não confirma a publicação histórica");
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 61, insertionId: 9999, externalKey: "ADOPS-PERRENGUE-2370", mediaBasename: "queimadas.mp4" }), false,
+  "chave coincidente não compensa insertion ID divergente");
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 61, insertionId: 2370, externalKey: "ADOPS-OUTRA", mediaBasename: "queimadas.mp4" }), false,
+  "insertion ID coincidente não compensa chave divergente");
+assert.equal(runner.isAdrotateSnapshotPublicationConfirmed(expiredSnapshot, { adId: 182, groupId: 2, scheduleId: 61, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", mediaBasename: "old-queimadas.mp4" }), false,
+  "basename apenas semelhante não confirma a mídia publicada");
 assert.equal(runner.buildAdrotatePublishPayload({
   insertion: { id: 1944, campanhaId: 989, siteSigla: "PERRENGUE", mediaUrl: "https://cdn.example/radar.gif", observacoes: "Link destino informado: https://stale.example/" },
   campaign: { id: 989, nome: "RADAR" },
