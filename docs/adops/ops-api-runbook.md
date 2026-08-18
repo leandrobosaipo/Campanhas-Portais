@@ -78,7 +78,13 @@ O Worker grava a transição terminal do job e o incidente em um único `D1Datab
 
 Incidente não autoriza alteração ou deploy automático de código. Ele fornece dados reproduzíveis para revisão, teste, documentação, release e validação do consumidor real. Capturas idempotentes podem ser retomadas de forma serial; uma falha persistente exige revisão técnica.
 
-O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos; envia `pi_code=null` ao AdRotate e mantém faturamento e ZIP por PI bloqueados. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF, banner compatível e redirect HTTPS. Nos três modos, o runner relê as fontes e limita a mutação à campanha/inserção já cadastradas.
+O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos; envia `pi_code=null` ao AdRotate e mantém faturamento e ZIP por PI bloqueados. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF e banner compatível. Zero redirect significa anúncio sem clique; um redirect fornecido precisa ser HTTPS público e único. Nos três modos, o runner relê as fontes e limita a mutação à campanha/inserção já cadastradas.
+
+### Status diário compacto
+
+`GET /api/ops/daily-print-status` retorna somente a auditoria canônica gravada pelo próprio `print-batch`: última tentativa, contagens aprovadas/ausentes/inválidas, último dia totalmente aprovado e próxima execução às 18h de Cuiabá. A resposta não inclui payload completo, logs internos ou credenciais. O relatório usa esse endpoint para o painel e o contador regressivo.
+
+Backfills que reconstroem uma veiculação tardia usam `reconstructionReason=late_publication_recovery`. O log registra data contratada, horário real da reconstrução, mídia e hash quando a URL content-addressed o disponibiliza. Uma captura diária comum nunca deve receber essa permissão.
 
 ## Matriz de evidência
 

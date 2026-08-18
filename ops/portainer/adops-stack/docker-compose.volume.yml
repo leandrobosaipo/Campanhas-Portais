@@ -106,7 +106,19 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        set -e;
+        if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+          apt-get update;
+          apt-get install -y --no-install-recommends ffmpeg;
+          rm -rf /var/lib/apt/lists/*;
+        fi;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
@@ -188,13 +200,15 @@ services:
       - -lc
       - >-
         set -e;
-        if ! python3 -c 'from PIL import Image' >/dev/null 2>&1 || ! command -v pdftotext >/dev/null 2>&1; then
+        if ! python3 -c 'from PIL import Image' >/dev/null 2>&1 || ! command -v pdftotext >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
           apt-get update;
-          apt-get install -y --no-install-recommends python3-pil poppler-utils;
+          apt-get install -y --no-install-recommends python3-pil poppler-utils ffmpeg;
           rm -rf /var/lib/apt/lists/*;
         fi;
         python3 -c 'from PIL import Image';
         command -v pdftotext >/dev/null;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
         exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
@@ -284,7 +298,19 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        set -e;
+        if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+          apt-get update;
+          apt-get install -y --no-install-recommends ffmpeg;
+          rm -rf /var/lib/apt/lists/*;
+        fi;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}

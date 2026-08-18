@@ -88,6 +88,11 @@ function html() {
     summary: { total: 1, active: 1, scheduled: 0, ok: 1, pending: 0, invalid: 0, notPublished: 0, auditedDays: 2 },
     forecast: { starting: [], ending: [] },
     sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+    dailyPrintStatus: {
+      timeZone: "America/Cuiaba", schedule: "18:00", nextRunAt: "2026-08-18T22:00:00.000Z",
+      lastAttempt: { jobId: "job-1", targetDate: "2026-08-17", status: "partial", startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z", expected: 16, approved: 14, missing: 2, invalid: 0, summary: "14 de 16 campanhas tiveram o print aprovado; duas precisam de nova tentativa." },
+      lastFullyApproved: { targetDate: "2026-08-16", finishedAt: "2026-08-16T22:10:00.000Z" },
+    },
   });
 }
 
@@ -158,4 +163,19 @@ test("JavaScript inline gerado permanece sintaticamente válido", async () => {
   const scriptPath = path.join(buildDir, "report-inline.js");
   await writeFile(scriptPath, scripts[0], "utf8");
   await execFileAsync(process.execPath, ["--check", scriptPath]);
+});
+
+test("mostra a rotina diária, contador acessível e fontes operacionais", () => {
+  const output = html();
+  assert.match(output, /Rotina diária/);
+  assert.match(output, /Início e fim/);
+  assert.match(output, /2 ausentes · 0 inválidas/);
+  assert.match(output, /14 de 16 campanhas tiveram o print aprovado/);
+  assert.match(output, /id="dailyCountdown"/);
+  assert.match(output, /data-next-run="2026-08-18T22:00:00\.000Z"/);
+  assert.match(output, /setInterval\([^,]+,\s*60000\)/s);
+  assert.match(output, /Planilha — aba AGOSTO 2026/);
+  assert.match(output, /docs\.google\.com\/spreadsheets\/d\/1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu\/edit#gid=971687922/);
+  assert.match(output, /Pasta de mídias no Google Drive/);
+  assert.match(output, /drive\.google\.com\/drive\/folders\/18kyuQLL-sbTc0qgP2Z8SCldDthKqKZV6/);
 });

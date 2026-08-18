@@ -412,7 +412,7 @@ test("não amplia a exceção sem PDF nem publica identidade composta em portal 
   assert.notEqual(unsupportedRooFormat.items[0].identityMode, "sheet_drive_composite");
 });
 
-test("identidade composta bloqueia quando falta redirect ou há divergência entre PIs", () => {
+test("identidade composta permite banner informativo sem redirect e bloqueia PI divergente", () => {
   const base = {
     date: "2026-08-14",
     generatedAt: "2026-08-14T09:40:00.000Z",
@@ -424,14 +424,39 @@ test("identidade composta bloqueia quando falta redirect ou há divergência ent
     period: { start: "2026-08-09", end: "2026-08-31" }, format: { normalized: "POP UP — SITEWIDE — 970X90" },
     sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 18 },
     sourceIdentity: { decision: "confirmed", canonicalPi: "17142", sources: { sheetPi: "17142", adopsPi: "17142", driveFolderPiCandidates: ["17142"], drivePdfPiCandidates: ["17142"] } },
-    drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17142 - FAKE NEWS", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif" }], pdfFiles: [{ id: "pdf" }], textFiles: [] },
+    drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17142 - FAKE NEWS", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif", size: "100", md5Checksum: "a".repeat(32) }], pdfFiles: [{ id: "pdf", size: "200", md5Checksum: "b".repeat(32) }], textFiles: [] },
     adops: { status: "matched", campaignId: 987, insertionId: 2193, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
     requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
   };
   const missingRedirect = contract.buildPendingPublicationView({ ...base, items: [item] });
-  assert.notEqual(missingRedirect.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(missingRedirect.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(missingRedirect.items[0].destinationMode, "none");
+  assert.equal(missingRedirect.items[0].destinationStatusText, "Banner informativo, sem link");
+  assert.equal(missingRedirect.items[0].operationalIdentity.gates.destinationPolicyValid, true);
   const divergent = contract.buildPendingPublicationView({ ...base, items: [{ ...item, sourceIdentity: { ...item.sourceIdentity, sources: { ...item.sourceIdentity.sources, sheetPi: "99999" } }, drive: { ...item.drive, textFiles: [{ id: "redirect" }] } }] });
   assert.notEqual(divergent.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("identidade composta bloqueia destinos múltiplos antes do preflight", () => {
+  const item = {
+    campaignName: "FAKE NEWS", piCodigo: "PI 57687 - AFL", siteSigla: "AFL",
+    period: { start: "2026-08-14", end: "2026-08-19" }, format: { normalized: "MEGABANNER TOPO" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 12 },
+    sourceIdentity: { decision: "confirmed", canonicalPi: "57687", sources: { sheetPi: "57687", adopsPi: "57687", driveFolderPiCandidates: ["57687"], drivePdfPiCandidates: ["57687"] } },
+    drive: {
+      status: "matched", folderId: "folder-57687", folderPath: "/AFL/AGOSTO/PI 57687", inventoryScanId: "scan",
+      mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found",
+      mediaFiles: [{ id: "gif", size: "150135", md5Checksum: "a".repeat(32) }],
+      pdfFiles: [{ id: "pdf", size: "72584", md5Checksum: "b".repeat(32) }],
+      textFiles: [{ id: "redirect-a" }, { id: "redirect-b" }],
+    },
+    adops: { status: "matched", campaignId: 1000, insertionId: 2413, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+  };
+  const result = contract.buildPendingPublicationView({ date: "2026-08-17", generatedAt: "2026-08-17T20:00:00.000Z", summary: {}, items: [item], upcomingItems: [] });
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].destinationMode, "ambiguous");
+  assert.equal(result.items[0].destinationStatusText, "Foram encontrados links diferentes");
 });
 
 test("identidade composta exige checksum e tamanho do PDF no snapshot", () => {

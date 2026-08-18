@@ -170,6 +170,12 @@ export function buildPendingPublicationView<T extends {
     const mediaFiles = Array.isArray(item.drive?.mediaFiles) ? item.drive.mediaFiles : [];
     const pdfFiles = Array.isArray(item.drive?.pdfFiles) ? item.drive.pdfFiles : [];
     const textFiles = Array.isArray(item.drive?.textFiles) ? item.drive.textFiles : [];
+    const destinationMode = textFiles.length === 0 ? "none" : textFiles.length === 1 ? "https_candidate" : "ambiguous";
+    const destinationStatusText = destinationMode === "none"
+      ? "Banner informativo, sem link"
+      : destinationMode === "https_candidate"
+        ? "Link encontrado; será validado antes da publicação"
+        : "Foram encontrados links diferentes";
     const operationalMediaProfile = resolveCompositePublicationTarget(
       item.siteSigla,
       item.format?.normalized ?? item.format?.adops ?? item.format?.sheet,
@@ -183,7 +189,7 @@ export function buildPendingPublicationView<T extends {
       approvedOperationalTarget: isCompositePublicationTarget(item.siteSigla, item.format?.normalized ?? item.format?.adops ?? item.format?.sheet),
       folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
       mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
-      destinationCandidateUnique: textFiles.length === 1,
+      destinationPolicyValid: textFiles.length <= 1,
       campaignConsistent: !(item.blockingIssues ?? []).some((issue: unknown) => /nome da campanha diverge/i.test(String(issue))),
       portalConsistent: !item.requiredActions?.includes("review_site_divergence"),
       periodConsistent: !item.requiredActions?.includes("review_period_divergence"),
@@ -233,6 +239,7 @@ export function buildPendingPublicationView<T extends {
       media: mediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       pdfDocuments: pdfFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       destinationDocuments: textFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+      destinationMode,
       operationalMediaProfile,
     };
     const operationalIdentity = {
@@ -298,6 +305,8 @@ export function buildPendingPublicationView<T extends {
             : "retry_reconcile";
     return {
       ...item,
+      destinationMode,
+      destinationStatusText,
       identityMode,
       commercialIdentityStatus,
       publicationStatus,

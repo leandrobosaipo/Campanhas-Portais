@@ -63,6 +63,9 @@ function parseArgs(argv) {
     candidateOnly: options.candidateOnly === true || options.candidateOnly === "true",
     replaceExisting: options.replaceExisting === true || options.replaceExisting === "true",
     captureAt: options.captureAt ? String(options.captureAt) : null,
+    reconstructionReason: options.reconstructionReason === "late_publication_recovery"
+      ? "late_publication_recovery"
+      : null,
     previewSignature: options.previewSignature ? String(options.previewSignature) : null,
     jobId: options.jobId ? String(options.jobId) : null,
     runnerJobId: options.runnerJobId ? String(options.runnerJobId) : null,
@@ -2787,20 +2790,22 @@ function currentDateInCuiaba(now = new Date()) {
   return `${read("year")}-${read("month")}-${read("day")}`;
 }
 
-function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart, periodEnd, currentDate = currentDateInCuiaba(), explicitCaptureAt = false }) {
+function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart, periodEnd, currentDate = currentDateInCuiaba(), explicitCaptureAt = false, reconstructionReason = null }) {
   const capture = String(captureDate || "").slice(0, 10);
   const start = String(periodStart || "").slice(0, 10);
   const end = String(periodEnd || "").slice(0, 10);
   const today = String(currentDate || "").slice(0, 10);
   if (explicitCaptureAt !== true || ![capture, start, end, today].every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))) return false;
-  return capture < today && start <= capture && capture <= end && end < today;
+  const authorizedLateRecovery = reconstructionReason === "late_publication_recovery";
+  return capture < today && start <= capture && capture <= end && (end < today || authorizedLateRecovery);
 }
 
 async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasename, options = {}) {
   const allowExplicitStaticInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1";
   if (!allowExplicitStaticInjection) return false;
+  if (options.reconstructionReason !== "late_publication_recovery") return false;
   const domain = String(mapping?.domain || "").toLowerCase();
-  if ((domain === "omatogrossense.com" || domain === "afolhalivre.com") && options.allowConfiguredSlotReconstruction !== true) return false;
+  if (options.allowConfiguredSlotReconstruction !== true) return false;
   if (mapping?.domain !== "perrenguematogrosso.com" && !allowExplicitStaticInjection) return false;
   if (!allowExplicitStaticInjection && mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
   const url = String(mediaUrl || "").trim();
@@ -6735,13 +6740,24 @@ async function main() {
     periodStart: insertion.periodoInicio,
     periodEnd: insertion.periodoFim,
     explicitCaptureAt: Boolean(args.captureAt),
+    reconstructionReason: args.reconstructionReason,
   });
   const portalRetroPreviewOptions = {
     allowReconstruction: allowConfiguredRetroSlotReconstruction,
   };
   const staticRetroAdOptions = {
     allowConfiguredSlotReconstruction: allowConfiguredRetroSlotReconstruction,
+    reconstructionReason: args.reconstructionReason,
   };
+  const reconstruction = args.reconstructionReason === "late_publication_recovery"
+    ? {
+        reason: "late_publication_recovery",
+        contractedDate: isoDate,
+        reconstructedAt: new Date().toISOString(),
+        mediaUrl: insertion.mediaUrl,
+        mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
+      }
+    : null;
 
   const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
   const outDir = args.candidateOnly
@@ -7591,6 +7607,7 @@ async function main() {
       retroContentManifest,
       retroContentProof,
       retroGate,
+      reconstruction,
       visiblePageDateAudit,
       creativePlacementAudit,
       headerAdPolicyAudit,
@@ -7792,6 +7809,7 @@ async function main() {
           jobId: args.jobId || null,
           runnerJobId: args.runnerJobId || null,
           captureAt: effectiveCaptureAt,
+          reconstruction,
           siteSigla: insertion.siteSigla,
           status: "ok",
           uploadedUrl: publicUrl,
@@ -7892,6 +7910,7 @@ async function main() {
       pendingLogFlush,
       retroGate,
       retroContentProof,
+      reconstruction,
       manifestHash: retroContentManifest ? crypto.createHash("sha256").update(JSON.stringify(retroContentManifest)).digest("hex") : null,
       probableCause: analysis.probableCause,
     }, null, 2));
@@ -7967,6 +7986,7 @@ async function main() {
             jobId: args.jobId || null,
             runnerJobId: args.runnerJobId || null,
             captureAt: effectiveCaptureAt,
+            reconstruction,
             siteSigla: insertion.siteSigla,
             status: "failed",
             uploadedUrl: publicUrl,
@@ -8039,7 +8059,8 @@ async function main() {
               log: {
                 jobId: args.jobId || null,
                 runnerJobId: args.runnerJobId || null,
-                captureAt: effectiveCaptureAt,
+                  captureAt: effectiveCaptureAt,
+                  reconstruction,
                 siteSigla: insertion.siteSigla,
                 status: "failed",
                 errorCode,

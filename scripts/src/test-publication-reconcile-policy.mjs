@@ -116,6 +116,35 @@ test("reconciliador cria preflight composto para a inserção canônica sem exig
   assert.equal(plan.actions[0]?.payload.pdfDocument.id, "pdf-17046");
 });
 
+test("reconciliador preserva destino nulo para banner informativo", () => {
+  const base = item({
+    identityMode: "sheet_drive_composite",
+    commercialIdentityStatus: "confirmed",
+    piCodigo: "PI 57687 - AFL",
+    siteSigla: "AFL",
+    campaignName: "FAKE NEWS",
+    sourceIdentity: { decision: "confirmed", canonicalPi: "57687" },
+    adops: { campaignId: 1000, insertionId: 2413, mediaUrl: null, bannerPublicadoNoSite: false },
+    operationalIdentity: {
+      fingerprint: "d".repeat(64),
+      source: {
+        expectedPiCodigo: "57687",
+        folderId: "folder-57687",
+        folderPath: "/AFL/AGOSTO/PI 57687 - FAKE NEWS",
+        operationalMediaProfile: { groupId: 1, width: 825, height: 120, formats: ["GIF"] },
+        media: [{ id: "gif-57687" }],
+        pdfDocuments: [{ id: "pdf-57687" }],
+        destinationDocuments: [],
+      },
+    },
+  });
+  const plan = planCampaignPublicationReconciliation([base], "2026-08-17T21:30:00.000Z");
+  assert.equal(plan.blockers.length, 0);
+  assert.equal(plan.actions[0].type, "operational_media_publish");
+  assert.equal(plan.actions[0].payload.destinationMode, "none");
+  assert.equal(plan.actions[0].payload.destinationDocument, null);
+});
+
 test("release mantém API em modo monitor e documenta o job protegido", async () => {
   const deploy = await readFile(new URL("../../ops/portainer/adops-stack/scripts/deploy-production.sh", import.meta.url), "utf8");
   const openapi = await readFile(new URL("../../lib/api-spec/openapi.yaml", import.meta.url), "utf8");

@@ -45,6 +45,7 @@ import type {
   CreatePiSiteExportJob202,
   CreatePiSiteExportJobBody,
   CreateSiteBody,
+  DailyPrintStatus,
   DashboardSummary,
   DownloadInsertionEvidenceParams,
   DrivePiReconcileBody,
@@ -516,6 +517,81 @@ export function useListOpsJobs<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getListOpsJobsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+export const getGetDailyPrintStatusUrl = () => {
+  return `/api/ops/daily-print-status`;
+};
+
+export const getDailyPrintStatus = async (
+  options?: RequestInit,
+): Promise<DailyPrintStatus> => {
+  return customFetch<DailyPrintStatus>(getGetDailyPrintStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDailyPrintStatusQueryKey = () => {
+  return [`/api/ops/daily-print-status`] as const;
+};
+
+export const getGetDailyPrintStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDailyPrintStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>
+  > = ({ signal }) => getDailyPrintStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDailyPrintStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDailyPrintStatus>>
+>;
+export type GetDailyPrintStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+
+export function useGetDailyPrintStatus<
+  TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDailyPrintStatusQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

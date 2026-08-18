@@ -124,7 +124,21 @@
         "operationalMediaProfile": {
           "width": 670,
           "height": 90,
-          "formats": ["GIF"]
+          "formats": ["GIF", "MP4"],
+          "deliveryTransforms": {
+            "MP4": {
+              "mode": "contain-pad",
+              "sourceWidth": 824,
+              "sourceHeight": 120,
+              "contentWidth": 618,
+              "contentHeight": 90,
+              "targetWidth": 670,
+              "targetHeight": 90,
+              "videoCodec": "h264",
+              "pixelFormat": "yuv420p",
+              "faststart": true
+            }
+          }
         },
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,

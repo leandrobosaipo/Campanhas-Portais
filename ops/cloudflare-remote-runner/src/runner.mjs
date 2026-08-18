@@ -170,7 +170,7 @@ async function privateApi(pathname, body, extraHeaders = {}) {
   return payload;
 }
 
-async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false }) {
+async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, reconstructionReason = null }) {
   if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
   const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
   const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
@@ -178,6 +178,7 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
     captureAt,
     replace: replace || force,
     force,
+    reconstructionReason,
   }, { "Idempotency-Key": idempotencyKey });
   const jobId = String(accepted?.jobId || "").trim();
   if (!jobId) throw new Error(`API não retornou jobId para captura ${insertionId}/${date}.`);
@@ -1762,26 +1763,26 @@ function extractUrlsFromText(text) {
 }
 
 function resolveOperationalDestination(observations) {
-  const urls = Array.from(new Set((Array.isArray(observations) ? observations : [])
-    .flatMap((item) => extractUrlsFromText(item?.text))
-    .filter((value) => {
-      try {
-        const parsed = new URL(value);
-        return parsed.protocol === "https:"
-          && !parsed.username
-          && !parsed.password
-          && !isReservedDestinationHost(parsed.hostname)
-          && !/(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname);
-      } catch {
-        return false;
-      }
-    })));
-  if (urls.length !== 1) {
-    const hasHttp = (Array.isArray(observations) ? observations : []).some((item) => /http:\/\//i.test(String(item?.text || "")));
-    if (!urls.length && hasHttp) throw new Error("Destino operacional deve usar HTTPS.");
-    throw new Error(`Documento de destino deve conter exatamente um URL HTTPS válido; encontrados ${urls.length}.`);
+  return resolveOptionalOperationalDestination(observations).url;
+}
+
+function resolveOptionalOperationalDestination(observations) {
+  const items = Array.isArray(observations) ? observations : [];
+  if (items.length === 0) return { mode: "none", url: null, statusText: "Banner informativo, sem link" };
+  if (items.some((item) => item?.error)) throw new Error("O link fornecido precisa ser corrigido: o documento não pôde ser lido.");
+  const urls = Array.from(new Set(items.flatMap((item) => extractUrlsFromText(item?.text))));
+  if (urls.length > 1) throw new Error("Foram encontrados links diferentes; informe somente um destino.");
+  if (urls.length === 0) throw new Error("O link fornecido precisa ser corrigido: o documento não contém um endereço válido.");
+  let parsed;
+  try {
+    parsed = new URL(urls[0]);
+  } catch {
+    throw new Error("O link fornecido precisa ser corrigido.");
   }
-  return urls[0];
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || isReservedDestinationHost(parsed.hostname) || /(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname)) {
+    throw new Error("O link fornecido precisa ser corrigido: use um único endereço HTTPS público.");
+  }
+  return { mode: "https", url: urls[0], statusText: "Link válido encontrado" };
 }
 
 function isReservedDestinationHost(hostname) {
@@ -2016,6 +2017,67 @@ with Image.open(source_path) as source:
   return { transformed: true, source, metadata, filePath: outputPath, transform };
 }
 
+async function readOperationalVideoMetadata(filePath) {
+  await execFileAsync("ffmpeg", ["-v", "error", "-i", filePath, "-f", "null", "-"], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v", "error", "-select_streams", "v:0",
+    "-show_entries", "stream=codec_name,width,height,pix_fmt:format=format_name,duration",
+    "-of", "json", filePath,
+  ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+  const parsed = JSON.parse(stdout);
+  const stream = parsed?.streams?.[0];
+  const formatName = String(parsed?.format?.format_name || "").toLowerCase();
+  if (!stream || !/(^|,)mp4(,|$)|mov/.test(formatName)) throw new Error("Container de vídeo não é MP4 válido.");
+  const metadata = {
+    format: "MP4",
+    codec: String(stream.codec_name || "").toLowerCase(),
+    width: Number(stream.width),
+    height: Number(stream.height),
+    pixelFormat: String(stream.pix_fmt || "").toLowerCase(),
+    duration: Number(parsed?.format?.duration),
+    frames: null,
+  };
+  if (metadata.codec !== "h264" || !Number.isFinite(metadata.duration) || metadata.duration <= 0 || metadata.width <= 0 || metadata.height <= 0) {
+    throw new Error("Vídeo MP4 precisa ser H.264, íntegro e ter duração positiva.");
+  }
+  return metadata;
+}
+
+async function prepareOperationalDeliveryMedia(filePath, profile) {
+  const extension = path.extname(filePath).toLowerCase();
+  const mediaFormat = extension === ".mp4" ? "MP4" : "GIF";
+  const allowed = (Array.isArray(profile?.formats) ? profile.formats : []).map((value) => String(value).toUpperCase());
+  if (!allowed.includes(mediaFormat)) throw new Error(`Perfil vigente não permite ${mediaFormat}.`);
+  if (mediaFormat === "GIF") return prepareOperationalDeliveryImage(filePath, profile);
+
+  const source = await readOperationalVideoMetadata(filePath);
+  const transform = profile?.deliveryTransforms?.MP4;
+  const exactTransform = transform?.mode === "contain-pad"
+    && Number(transform.sourceWidth) === source.width
+    && Number(transform.sourceHeight) === source.height
+    && Number(transform.contentWidth) > 0
+    && Number(transform.contentHeight) > 0
+    && Number(transform.targetWidth) === Number(profile?.width)
+    && Number(transform.targetHeight) === Number(profile?.height)
+    && Number(transform.contentWidth) <= Number(transform.targetWidth)
+    && Number(transform.contentHeight) <= Number(transform.targetHeight);
+  if (!exactTransform) throw new Error("Dimensões do MP4 divergem da transformação autorizada para o formato contratado.");
+  const outputPath = path.join(path.dirname(filePath), `${path.basename(filePath, extension)}-${transform.targetWidth}x${transform.targetHeight}-delivery.mp4`);
+  const filter = `scale=${Number(transform.contentWidth)}:${Number(transform.contentHeight)}:flags=lanczos,pad=${Number(transform.targetWidth)}:${Number(transform.targetHeight)}:(ow-iw)/2:(oh-ih)/2:color=black`;
+  await execFileAsync("ffmpeg", [
+    "-y", "-v", "error", "-i", filePath, "-vf", filter, "-an",
+    "-c:v", "libx264", "-pix_fmt", String(transform.pixelFormat || "yuv420p"),
+    ...(transform.faststart ? ["-movflags", "+faststart"] : []),
+    outputPath,
+  ], { timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
+  const metadata = await readOperationalVideoMetadata(outputPath);
+  if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height) || metadata.pixelFormat !== String(transform.pixelFormat || "yuv420p") || metadata.codec !== "h264") {
+    throw new Error("Conversão MP4 não produziu o perfil HOME 1 aprovado.");
+  }
+  if (Math.abs(metadata.duration - source.duration) > 0.15) throw new Error("Conversão MP4 alterou a duração da peça.");
+  return { transformed: true, source, metadata, filePath: outputPath, transform };
+}
+
 async function assertOperationalMediaReadback({ mediaUrl, expectedSha256, expectedProfile, archivePath }) {
   const url = new URL(mediaUrl);
   url.searchParams.set("adops_sha", String(expectedSha256).slice(0, 16));
@@ -2029,14 +2091,14 @@ async function assertOperationalMediaReadback({ mediaUrl, expectedSha256, expect
   const bytes = Buffer.from(await response.arrayBuffer());
   const actualSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   if (actualSha256 !== expectedSha256) throw new Error("Readback público da mídia divergiu do SHA-256 da entrega.");
-  const readbackPath = `${archivePath}.public-readback.gif`;
+  const expectedFormat = String(expectedProfile?.format || expectedProfile?.formats?.find((value) => String(value).toUpperCase() === "MP4") || "GIF").toUpperCase();
+  const readbackPath = `${archivePath}.public-readback.${expectedFormat === "MP4" ? "mp4" : "gif"}`;
   await writeFile(readbackPath, bytes);
   try {
-    const metadata = await inspectOperationalImage(readbackPath, {
-      width: Number(expectedProfile.width),
-      height: Number(expectedProfile.height),
-      format: "GIF",
-    });
+    const metadata = expectedFormat === "MP4"
+      ? await readOperationalVideoMetadata(readbackPath)
+      : await inspectOperationalImage(readbackPath, { width: Number(expectedProfile.width), height: Number(expectedProfile.height), format: "GIF" });
+    if (Number(metadata.width) !== Number(expectedProfile.width) || Number(metadata.height) !== Number(expectedProfile.height)) throw new Error("Readback público da mídia divergiu das dimensões aprovadas.");
     return { ok: true, sha256: actualSha256, bytes: bytes.length, metadata };
   } finally {
     await rm(readbackPath, { force: true });
@@ -2054,12 +2116,16 @@ function normalizeOperationalMediaProfile(profile) {
         targetHeight: Number(profile.deliveryTransform.targetHeight),
       }
     : null;
+  const deliveryTransforms = profile.deliveryTransforms && typeof profile.deliveryTransforms === "object"
+    ? Object.fromEntries(Object.entries(profile.deliveryTransforms).sort(([left], [right]) => left.localeCompare(right)).map(([format, value]) => [String(format).toUpperCase(), Object.fromEntries(Object.entries(value || {}).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, typeof item === "number" ? Number(item) : item]))]))
+    : null;
   return {
     groupId: Number(profile.groupId),
     width: Number(profile.width),
     height: Number(profile.height),
     formats: (Array.isArray(profile.formats) ? profile.formats : []).map((value) => String(value).toUpperCase()).sort(),
     ...(deliveryTransform ? { deliveryTransform } : {}),
+    ...(deliveryTransforms ? { deliveryTransforms } : {}),
   };
 }
 
@@ -2841,6 +2907,37 @@ function hasHttpsDrivePiDestination(fields, expectedInsertion = null) {
   return insertions.length > 0 && insertions.every(hasHttps);
 }
 
+function validateOptionalDrivePiDestination(fields, expectedInsertion = null) {
+  const values = [];
+  const globalDestination = readStringRecord(fields, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+  if (globalDestination) values.push(globalDestination);
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const scoped = expectedInsertion
+    ? insertions.filter((raw) => (
+        Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expectedInsertion.siteId || 0)
+        && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "") === normalizeSlotKey(expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato)
+        && readStringRecord(raw, ["periodoInicio", "inicio"]) === expectedInsertion.periodoInicio
+        && readStringRecord(raw, ["periodoFim", "fim"]) === expectedInsertion.periodoFim
+      ))
+    : insertions;
+  for (const item of scoped) {
+    const value = readStringRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+    if (value) values.push(value);
+  }
+  const unique = [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+  if (unique.length === 0) return { ok: true, mode: "none", url: null, issue: null };
+  if (unique.length > 1) return { ok: false, mode: "ambiguous", url: null, issue: "ambiguous_destination" };
+  try {
+    const parsed = new URL(unique[0]);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || /(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname) || isReservedDestinationHost(parsed.hostname)) {
+      return { ok: false, mode: "invalid", url: null, issue: "invalid_provided_destination" };
+    }
+    return { ok: true, mode: "https", url: unique[0], issue: null };
+  } catch {
+    return { ok: false, mode: "invalid", url: null, issue: "invalid_provided_destination" };
+  }
+}
+
 function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false, requireHttpsDestination = false, expectedInsertion = null } = {}) {
   const hasInsertionMedia = fields.insertions.some((item) => readStringRecord(item, ["mediaUrl", "media_url"]));
   const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"]));
@@ -2849,7 +2946,10 @@ function validateDrivePiPackageReadiness(packageClassification, fields, mediaPro
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
   if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
   if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
-  if (requireHttpsDestination && !hasHttpsDrivePiDestination(fields, expectedInsertion)) issues.push("missing_https_destination");
+  if (requireHttpsDestination) {
+    const destination = validateOptionalDrivePiDestination(fields, expectedInsertion);
+    if (!destination.ok && destination.issue) issues.push(destination.issue);
+  }
   for (const issue of mediaProcessing?.issues || []) issues.push(issue);
   return {
     ok: issues.length === 0,
@@ -3702,7 +3802,7 @@ function destinationUrlFromObservations(value) {
   return match?.[1] ? trimUrlPunctuation(match[1]) : null;
 }
 
-function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence, identityMode }) {
+function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence, identityMode, destinationOverride }) {
   const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
   const mediaUrl = firstNonEmptyString(
     checklist?.expectedMedia?.mediaUrl,
@@ -3721,17 +3821,19 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
     insertion.campaignPiCodigo,
     campaign?.piCodigo,
   );
-  const linkUrl = firstNonEmptyString(
-    insertion.linkUrl,
-    insertion.urlDestino,
-    insertion.destinationUrl,
-    insertion.destinoUrl,
-    insertion.campanha?.linkUrl,
-    insertion.campaign?.linkUrl,
-    campaign?.linkUrl,
-    campaign?.urlDestino,
-    destinationUrlFromObservations(insertion.observacoes),
-  );
+  const linkUrl = destinationOverride !== undefined
+    ? destinationOverride
+    : firstNonEmptyString(
+        insertion.linkUrl,
+        insertion.urlDestino,
+        insertion.destinationUrl,
+        insertion.destinoUrl,
+        insertion.campanha?.linkUrl,
+        insertion.campaign?.linkUrl,
+        campaign?.linkUrl,
+        campaign?.urlDestino,
+        destinationUrlFromObservations(insertion.observacoes),
+      );
   if (!groupId) throw new Error(`Checklist da inserção ${insertion.id} não resolveu groupId.`);
   if (!mediaUrl) throw new Error(`Inserção ${insertion.id} sem mediaUrl resolvida.`);
   if (!campaignId) throw new Error(`Inserção ${insertion.id} sem campanha vinculada.`);
@@ -4824,6 +4926,9 @@ async function executeAdrotatePublishJob(payload) {
     purgeCache,
     generateEvidence,
     identityMode: payload?.identityMode,
+    destinationOverride: payload?.publicationGuard?.destinationMode
+      ? payload.publicationGuard.destinationUrl ?? null
+      : undefined,
   });
   const payloadJson = JSON.stringify(publishPayload);
   const wpCliCommand = [
@@ -5217,9 +5322,12 @@ async function executeDrivePiIngest(payload) {
     ? filterSiteInsertions(fields.insertions)
     : { accepted: fields.insertions, excluded: [] };
   fields = { ...fields, insertions: insertionScope.accepted };
-  const destinationReady = hasHttpsDrivePiDestination(fields, expectedInsertionContext);
+  const destinationPolicy = validateOptionalDrivePiDestination(fields, expectedInsertionContext);
+  if (payload?.publish === true && destinationPolicy.ok && destinationPolicy.url) {
+    await assertPublicOperationalDestination(destinationPolicy.url);
+  }
   const shouldResolveMedia = (payload?.resolveMedia === true || payload?.publish === true)
-    && (payload?.publish !== true || destinationReady);
+    && (payload?.publish !== true || destinationPolicy.ok);
   const videoResolution = shouldResolveMedia
     ? await resolveDrivePiVideoMedia(fields, packageContext, payload)
     : { fields, videoMediaProcessing: { skipped: true, results: [], issues: [] } };
@@ -5699,6 +5807,12 @@ async function executePrintBatch(job) {
       missing: audit.missing,
       invalid: audit.invalid,
     },
+    canonicalAudit: {
+      expected: candidates.length,
+      approved: Number(audit.ok ?? 0),
+      missing: Number(audit.missing ?? 0),
+      invalid: Number(audit.invalid ?? 0),
+    },
     transportError,
   };
 }
@@ -5817,6 +5931,7 @@ async function executePrintBackfill(job) {
         captureAt,
         replace: replaceRequested || !isAuditApprovedStatus(before),
         force,
+        reconstructionReason: "late_publication_recovery",
       });
       const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
         status: "status_error",
@@ -5868,6 +5983,9 @@ async function executePrintSingle(job) {
     captureAt: payload?.captureAt ?? null,
     replace: payload?.replace === true,
     force: payload?.force === true,
+    reconstructionReason: payload?.reconstructionReason === "late_publication_recovery"
+      ? "late_publication_recovery"
+      : null,
   });
   return {
     ok: true,
@@ -6292,20 +6410,21 @@ async function executeOperationalMediaPublish(payload) {
   const documentId = firstNonEmptyString(payload?.destinationDocument?.id, payload?.destinationDocument?.driveFileId);
   const pdfId = firstNonEmptyString(payload?.pdfDocument?.id, payload?.pdfDocument?.driveFileId);
   const mediaItem = folderItems.find((item) => item.driveFileId === mediaId);
-  const destinationItem = folderItems.find((item) => item.driveFileId === documentId);
+  const destinationItem = documentId ? folderItems.find((item) => item.driveFileId === documentId) : null;
   const pdfItem = pdfId ? folderItems.find((item) => item.driveFileId === pdfId) : null;
-  if (!mediaItem || !destinationItem || (payload.identityMode === "sheet_drive_composite" && !pdfItem)) throw new Error("Mídia, PDF ou documento exatos não pertencem mais à pasta operacional.");
+  if (!mediaItem || (documentId && !destinationItem) || (payload.identityMode === "sheet_drive_composite" && !pdfItem)) throw new Error("Mídia, PDF ou documento exatos não pertencem mais à pasta operacional.");
   validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
-  validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
+  if (destinationItem) validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
   if (payload.identityMode === "sheet_drive_composite") validateOperationalDriveItem(payload.pdfDocument, pdfItem, "PDF");
-  const imageCandidates = folderItems.filter(isImageMediaItem);
+  const mediaCandidates = folderItems.filter((item) => isImageMediaItem(item) || isVideoMediaItem(item));
   const pdfCandidates = folderItems.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
-  if (imageCandidates.length !== 1 || textCandidates.length !== 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, PDF e documento de destino.");
+  if (mediaCandidates.length !== 1 || textCandidates.length > 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, um destino opcional inequívoco e o PDF esperado.");
 
-  const observations = await readDriveTextObservations([destinationItem]);
-  const destinationUrl = resolveOperationalDestination(observations);
-  await assertPublicOperationalDestination(destinationUrl);
+  const observations = destinationItem ? await readDriveTextObservations([destinationItem]) : [];
+  const destination = resolveOptionalOperationalDestination(observations);
+  const destinationUrl = destination.url;
+  if (destinationUrl) await assertPublicOperationalDestination(destinationUrl);
   if (payload.identityMode === "sheet_drive_composite") {
     const pdfArchive = await materializeMediaSource({ driveItem: pdfItem, fallbackName: pdfItem.name || "documento.pdf" });
     const parsedPdf = await parseDrivePiPdfFields(pdfArchive);
@@ -6320,14 +6439,14 @@ async function executeOperationalMediaPublish(payload) {
   if (!approvedMediaProfile || JSON.stringify(mediaProfile) !== JSON.stringify(approvedMediaProfile)) {
     throw new Error("Perfil de mídia/transformação mudou desde o fingerprint aprovado; nenhuma mutação foi aplicada.");
   }
-  const allowedFormats = Array.isArray(mediaProfile.formats) ? mediaProfile.formats.map((value) => String(value).toUpperCase()) : [];
-  if (!allowedFormats.includes("GIF")) throw new Error("Perfil vigente do formato não permite GIF.");
-  const deliveryImage = await prepareOperationalDeliveryImage(materialized.filePath, mediaProfile);
-  const imageMetadata = deliveryImage.metadata;
-  const deliveryBuffer = deliveryImage.transformed ? await readFile(deliveryImage.filePath) : materialized.buffer;
+  const deliveryMedia = await prepareOperationalDeliveryMedia(materialized.filePath, mediaProfile);
+  const mediaMetadata = deliveryMedia.metadata;
+  const mediaFormat = String(mediaMetadata.format || "GIF").toUpperCase();
+  const deliveryBuffer = deliveryMedia.transformed ? await readFile(deliveryMedia.filePath) : materialized.buffer;
   const deliverySha256 = crypto.createHash("sha256").update(deliveryBuffer).digest("hex");
-  const deliverySourceName = deliveryImage.transformed
-    ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${imageMetadata.width}x${imageMetadata.height}.gif`
+  const deliveryExtension = mediaFormat === "MP4" ? ".mp4" : ".gif";
+  const deliverySourceName = deliveryMedia.transformed
+    ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${mediaMetadata.width}x${mediaMetadata.height}${deliveryExtension}`
     : materialized.sourceName;
   if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
 
@@ -6342,13 +6461,13 @@ async function executeOperationalMediaPublish(payload) {
   };
   const bucket = spacesBucketForSite(siteSigla);
   const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: deliverySourceName, contentHash: deliverySha256 });
-  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: materialized.mimeType || "image/gif" });
+  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: mediaFormat === "MP4" ? "video/mp4" : "image/gif" });
   const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
   const stagedReadback = await assertOperationalMediaReadback({
     mediaUrl: stagedUrl,
     expectedSha256: deliverySha256,
-    expectedProfile: mediaProfile,
-    archivePath: deliveryImage.filePath,
+    expectedProfile: { ...mediaProfile, format: mediaFormat },
+    archivePath: deliveryMedia.filePath,
   });
   const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, deliverySha256].join(":" )).digest("hex");
   const wordpressImport = String(siteSigla).toUpperCase() === "PERRENGUE"
@@ -6360,8 +6479,8 @@ async function executeOperationalMediaPublish(payload) {
     : await assertOperationalMediaReadback({
         mediaUrl,
         expectedSha256: deliverySha256,
-        expectedProfile: mediaProfile,
-        archivePath: deliveryImage.filePath,
+        expectedProfile: { ...mediaProfile, format: mediaFormat },
+        archivePath: deliveryMedia.filePath,
       });
   const [latestInsertion, latestCampaign] = await Promise.all([
     privateApiGet(`/api/insertions/${insertionId}`),
@@ -6382,10 +6501,10 @@ async function executeOperationalMediaPublish(payload) {
       mediaUrl,
       observacoes: [
         latestInsertion.observacoes,
-        `Link destino informado: ${destinationUrl}`,
-        `Mídia validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${imageMetadata.width}x${imageMetadata.height}; ${imageMetadata.frames} frame(s)).`,
-        deliveryImage.transformed
-          ? `Derivação de entrega auditável: original ${deliveryImage.source.width}x${deliveryImage.source.height} preservado; canvas ${imageMetadata.width}x${imageMetadata.height} por ${deliveryImage.transform.mode}; SHA-256 origem ${materialized.sha256}; SHA-256 entrega ${deliverySha256}.`
+        destinationUrl ? `Link destino informado: ${destinationUrl}` : "Banner informativo publicado sem link de direcionamento.",
+        `Mídia ${mediaFormat} validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${mediaMetadata.width}x${mediaMetadata.height}${mediaMetadata.frames ? `; ${mediaMetadata.frames} frame(s)` : ""}).`,
+        deliveryMedia.transformed
+          ? `Derivação de entrega auditável: original ${deliveryMedia.source.width}x${deliveryMedia.source.height} preservado; canvas ${mediaMetadata.width}x${mediaMetadata.height} por ${deliveryMedia.transform.mode}; SHA-256 origem ${materialized.sha256}; SHA-256 entrega ${deliverySha256}.`
           : null,
         payload.identityMode === "operational_identity"
           ? "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial."
@@ -6404,6 +6523,8 @@ async function executeOperationalMediaPublish(payload) {
       expectedMediaUrl: mediaUrl,
       expectedPiCodigo: payload.expectedPiCodigo,
       identityMode: payload.identityMode,
+      destinationMode: destination.mode,
+      destinationUrl,
       fingerprint: payload.fingerprint,
       expectedUpdatedAt: patchedInsertion?.updatedAt,
     };
@@ -6460,14 +6581,15 @@ async function executeOperationalMediaPublish(payload) {
       sourceDriveFileId: mediaId,
       stagedUrl,
       mediaUrl,
-      metadata: imageMetadata,
-      transformed: deliveryImage.transformed,
-      sourceMetadata: deliveryImage.source,
+      metadata: mediaMetadata,
+      transformed: deliveryMedia.transformed,
+      sourceMetadata: deliveryMedia.source,
       sourceSha256: materialized.sha256,
       deliverySha256,
       stagedReadback,
       canonicalReadback,
     },
+    destinationMode: destination.mode,
     destinationUrl,
     preview,
     published,
@@ -7452,6 +7574,7 @@ export {
   parseRestrictedAdrotateBaseTable,
   parseRestrictedAdrotateSnapshotOutput,
   prepareOperationalDeliveryImage,
+  prepareOperationalDeliveryMedia,
   restrictedReplaceSql,
   normalizePerrengueAdrotateSnapshot,
   mergeDrivePiFields,
@@ -7460,11 +7583,13 @@ export {
   parseDrivePiPdfFields,
   resolveDrivePiClickUrl,
   resolveOperationalDestination,
+  resolveOptionalOperationalDestination,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectCanonicalSnapshotAd,
   selectObservedMediaLink,
   validateDrivePiPackageReadiness,
+  validateOptionalDrivePiDestination,
   validateExpectedDrivePiCommercialContext,
   validateExpectedDrivePiIdentity,
   extractExplicitPiFromPdfText,

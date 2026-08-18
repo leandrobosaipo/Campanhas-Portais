@@ -170,6 +170,8 @@ assert(adrotatePlugin.includes("catch (\\Throwable $error)"), "RedisException n�
 const maintenanceHarness = String.raw`
 class WP_CLI { public static $warnings = array(); public static function add_command($name, $callable) {} public static function warning($message) { self::$warnings[] = $message; } }
 class RedisException extends Exception {}
+function esc_url_raw($value) { return preg_match('/^https:\/\//', (string) $value) ? (string) $value : ''; }
+function esc_attr($value) { return htmlspecialchars((string) $value, ENT_QUOTES); }
 function wp_cache_flush() { throw new RedisException('redis unavailable'); }
 $GLOBALS['evaluated'] = false; $GLOBALS['scheduled'] = false;
 function adrotate_evaluate_ads() { $GLOBALS['evaluated'] = true; }
@@ -177,7 +179,9 @@ function adrotate_check_schedules() { $GLOBALS['scheduled'] = true; }
 require $argv[1];
 $result = adrotate_adops_run_maintenance();
 $fields = adrotate_adops_maintenance_fields(true, $result);
-echo json_encode(array('result' => $result, 'fields' => $fields, 'evaluated' => $GLOBALS['evaluated'], 'scheduled' => $GLOBALS['scheduled'], 'warnings' => WP_CLI::$warnings));
+$no_link = adrotate_adops_build_bannercode(array('media_url' => 'https://cdn.example/banner.gif', 'link_url' => null, 'title' => 'Campanha'));
+$with_link = adrotate_adops_build_bannercode(array('media_url' => 'https://cdn.example/banner.mp4', 'link_url' => 'https://destino.example/', 'title' => 'Campanha'));
+echo json_encode(array('result' => $result, 'fields' => $fields, 'evaluated' => $GLOBALS['evaluated'], 'scheduled' => $GLOBALS['scheduled'], 'warnings' => WP_CLI::$warnings, 'no_link' => $no_link, 'with_link' => $with_link));
 `;
 const maintenanceResult = JSON.parse(execFileSync("php", ["-r", maintenanceHarness, path.join(root, "ops/wordpress/adrotate-adops.php")], { encoding: "utf8" }));
 assert.equal(maintenanceResult.result.ok, false);
@@ -188,6 +192,10 @@ assert.equal(maintenanceResult.fields.cache_maintenance_warnings.length, 1);
 assert.equal(maintenanceResult.evaluated, true);
 assert.equal(maintenanceResult.scheduled, true);
 assert.equal(maintenanceResult.warnings.length, 1);
+assert.match(maintenanceResult.no_link, /<img /);
+assert.doesNotMatch(maintenanceResult.no_link, /<a\b/i, "banner sem redirect não pode ficar clicável");
+assert.match(maintenanceResult.with_link, /<a href="https:\/\/destino\.example\/"/);
+assert.match(maintenanceResult.with_link, /<video /);
 assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true } }), true);
 assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true, cache_maintenance_ok: false } }), true);
 assert.equal(runner.isCacheMaintenanceDegraded({ apply: true, purgeCache: true, wpCliResult: { cache_maintenance_requested: true, cache_maintenance_ok: true } }), false);

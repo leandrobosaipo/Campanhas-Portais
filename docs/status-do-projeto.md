@@ -62,10 +62,10 @@ As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer red
 
 - `PI 90892 - PREF VG` já possui três inserções publicadas e auditadas em todo o período de 01 a 12/08: `#1843` (Megabanner), `#1855/#1941` (Lateral 02, duplicidade operacional existente) e `#1844` (Vídeo). O relatório escolhia rascunhos detalhados `#2188/#2190` por não reconhecer aliases exatos de formato; a seleção canônica foi corrigida sem criar ou recapturar evidências.
 - `PI 742 - PREF VG` já está publicada no OMT como campanha `#976`, inserção `#1840`, com dez evidências auditadas entre 31/07 e 09/08. O rascunho `#1852` não deve ser recriado nem usado no relatório.
-- `PI 57687 - ALMT`, AFL, campanha `#1000`, inserção `#2413`, possui PDF e GIF 825x120, mas a pasta exata do Drive não possui documento de redirect. Publicação e quatro evidências de 14 a 17/08 permanecem bloqueadas por `missing_https_destination`.
-- `PI 009746 - PREF ROO`, Perrengue, campanha `#985`, possui PDF e MP4 na pasta exata, mas nenhum arquivo de redirect. As inserções `#1859/#1942/#2370` não devem ser publicadas ou duplicadas enquanto o destino HTTPS autoritativo estiver ausente.
+- `PI 57687 - ALMT`, AFL, campanha `#1000`, inserção `#2413`, possui PDF e GIF 825x120. A pasta não possui redirect; pela política vigente isso significa banner informativo sem clique, não bloqueio.
+- `PI 009746 - PREF ROO`, Perrengue, campanha `#985`, inserção canônica `#2370`, possui PDF e MP4 H.264 824x120. O perfil HOME 1 aceita MP4 e normaliza a cópia para 670x90, sem corte; as inserções antigas `#1859/#1942` não devem ser recriadas nem selecionadas.
 
-Regra aprendida: nomes detalhados de posição só podem ser equivalentes por pares exatos aprovados. Nunca usar `includes("TOPO")` ou `includes("VIDEO")`, pois isso pode selecionar outra posição. PDF e mídia, sem destino HTTPS, não autorizam publicação.
+Regra aprendida: nomes detalhados de posição só podem ser equivalentes por pares exatos aprovados. Nunca usar `includes("TOPO")` ou `includes("VIDEO")`, pois isso pode selecionar outra posição. Redirect é opcional; quando ausente, o banner deve ser publicado sem link. Quando fornecido, continua obrigatório validar um único HTTPS público.
 
 RADAR/PERRENGUE, inserção `#1944`, pode usar identidade operacional única para veiculação sem PDF, preservando `commercialIdentityStatus=awaiting_authoritative_pi`. O Drive contém mídia candidata e documento de destino. A publicação depende do preflight vivo e nunca associa a campanha à PI 17190. Faturamento e ZIP por PI aguardam a fonte autoritativa.
 

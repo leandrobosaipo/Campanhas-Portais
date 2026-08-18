@@ -82,6 +82,7 @@ function fakeEnv(options = {}) {
         },
         async all() {
           if (/status IN \('queued','ready_for_runner','running'\)/.test(sql)) return { results: Array.from(rows.values()) };
+          if (/SELECT \* FROM ops_jobs/.test(sql) && /kind IN/.test(sql)) return { results: options.dailyJobs ?? [] };
           return { results: [] };
         },
       };
@@ -103,6 +104,31 @@ function fakeEnv(options = {}) {
     queueSends: () => queueSends,
   };
 }
+
+test("status diário público expõe somente o resumo canônico e não vaza payload ou erro interno", async () => {
+  const fixture = fakeEnv({
+    dailyJobs: [{
+      ...jobRecord(),
+      id: "daily-2026-08-17",
+      status: "failed",
+      payload_json: JSON.stringify({ source: "cloudflare-cron-daily-print", date: "2026-08-17", accessToken: "segredo" }),
+      result_json: JSON.stringify({ canonicalAudit: { expected: 16, approved: 14, missing: 2, invalid: 0 } }),
+      error_text: "Bearer segredo fetch failed",
+      created_at: "2026-08-17T22:00:00.000Z",
+      updated_at: "2026-08-17T22:14:00.000Z",
+    }],
+  });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/daily-print-status"), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.lastAttempt.expected, 16);
+  assert.equal(payload.lastAttempt.approved, 14);
+  assert.equal(payload.lastAttempt.missing, 2);
+  assert.equal("payload" in payload.lastAttempt, false);
+  assert.equal(JSON.stringify(payload).includes("segredo"), false);
+  assert.match(payload.lastAttempt.summary, /14 de 16 inserções.*2 precisam/);
+});
 
 test("job destinado ao runner nasce pronto no D1 sem depender da Cloudflare Queue", async () => {
   const fixture = fakeEnv();

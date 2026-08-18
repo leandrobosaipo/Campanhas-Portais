@@ -2,6 +2,7 @@ import { snapshot } from "../data/snapshot";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
+import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -2514,6 +2515,7 @@ export default {
           toDate,
           replace: body.replace === true,
           force: body.force === true,
+          reconstructionReason: "late_publication_recovery",
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" }, { status: 202 });
@@ -2533,6 +2535,9 @@ export default {
           captureAt,
           replace: typeof body.replace === "boolean" ? body.replace : false,
           force: typeof body.force === "boolean" ? body.force : false,
+          reconstructionReason: body.reconstructionReason === "late_publication_recovery"
+            ? "late_publication_recovery"
+            : null,
           source: "cloudflare-protected-api",
         }, "ops-api");
         return json({ ok: true, jobId, kind: "print-single", status: "ready_for_runner" }, { status: 202 });
@@ -3324,6 +3329,11 @@ export default {
           olderThanMinutes,
         }),
       });
+    }
+
+    if (path === "/api/ops/daily-print-status") {
+      const jobs = await listOpsJobsByFilter(env, { limit: 100, statuses: null, kinds: ["print-batch"], olderThanMinutes: null });
+      return jsonNoStore(buildDailyPrintStatus({ jobs, now: new Date() }));
     }
 
     if (path === "/api/ops/incidents") {

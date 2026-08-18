@@ -5,6 +5,50 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+export type DailyPrintAttemptStatus =
+  (typeof DailyPrintAttemptStatus)[keyof typeof DailyPrintAttemptStatus];
+
+export const DailyPrintAttemptStatus = {
+  queued: "queued",
+  running: "running",
+  completed: "completed",
+  partial: "partial",
+  failed: "failed",
+} as const;
+
+export interface DailyPrintAttempt {
+  jobId: string;
+  targetDate: string;
+  status: DailyPrintAttemptStatus;
+  /** @nullable */
+  startedAt?: string | null;
+  /** @nullable */
+  finishedAt?: string | null;
+  /** @minimum 0 */
+  expected: number;
+  /** @minimum 0 */
+  approved: number;
+  /** @minimum 0 */
+  missing: number;
+  /** @minimum 0 */
+  invalid: number;
+  summary: string;
+}
+
+export type DailyPrintStatusLastFullyApproved = {
+  targetDate: string;
+  /** @nullable */
+  finishedAt: string | null;
+} | null;
+
+export interface DailyPrintStatus {
+  timeZone: "America/Cuiaba";
+  schedule: "18:00";
+  nextRunAt: string;
+  lastAttempt: DailyPrintAttempt | null;
+  lastFullyApproved: DailyPrintStatusLastFullyApproved;
+}
+
 export interface DrivePiReconcileBody {
   /** @minimum 1 */
   insertionId: number;

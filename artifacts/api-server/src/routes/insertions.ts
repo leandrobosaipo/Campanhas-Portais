@@ -4239,11 +4239,18 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
   const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
   const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
   const forceCapture = req.body?.force === true || req.body?.force === "true";
+  const reconstructionReason = req.body?.reconstructionReason === "late_publication_recovery"
+    ? "late_publication_recovery" as const
+    : null;
+  if (req.body?.reconstructionReason != null && !reconstructionReason) {
+    res.status(400).json({ error: "reconstructionReason inválido." });
+    return;
+  }
   const requestedIdempotencyKey = typeof req.headers["idempotency-key"] === "string"
     ? req.headers["idempotency-key"].trim()
     : "";
   const idempotencyKey = requestedIdempotencyKey || crypto.createHash("sha256")
-    .update(JSON.stringify({ insertionId: params.data.id, targetDate, captureAt, candidateOnly, promoteCandidate }))
+    .update(JSON.stringify({ insertionId: params.data.id, targetDate, captureAt, candidateOnly, promoteCandidate, reconstructionReason }))
     .digest("hex");
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
     res.status(400).json({ error: "Idempotency-Key inválida." });
@@ -4270,6 +4277,7 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
         replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate || forceCapture,
         candidateOnly,
         promoteCandidate,
+        reconstructionReason,
       }],
       { competencia: null, siteId: insertion.siteId ?? null, source: "api" },
     ),

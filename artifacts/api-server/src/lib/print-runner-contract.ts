@@ -17,6 +17,7 @@ export type PrintRunnerJobTarget = {
   replaceExisting?: boolean;
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
+  reconstructionReason?: "late_publication_recovery" | null;
 };
 
 export type PrintRunnerJobPayload = {

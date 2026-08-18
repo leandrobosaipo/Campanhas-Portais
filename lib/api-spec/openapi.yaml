@@ -165,6 +165,19 @@ paths:
                 type: object
                 additionalProperties: true
 
+  /ops/daily-print-status:
+    get:
+      operationId: getDailyPrintStatus
+      tags: [operations]
+      summary: Get the sanitized status of the canonical daily evidence routine
+      responses:
+        "200":
+          description: Last attempt, last fully approved day and next scheduled run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyPrintStatus"
+
   /ops/incidents:
     get:
       operationId: listOpsIncidents
@@ -1540,6 +1553,44 @@ paths:
 
 components:
   schemas:
+    DailyPrintAttempt:
+      type: object
+      additionalProperties: false
+      required: [jobId, targetDate, status, expected, approved, missing, invalid, summary]
+      properties:
+        jobId: { type: string }
+        targetDate: { type: string, format: date }
+        status: { type: string, enum: [queued, running, completed, partial, failed] }
+        startedAt: { type: [string, "null"], format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+        expected: { type: integer, minimum: 0 }
+        approved: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        invalid: { type: integer, minimum: 0 }
+        summary: { type: string }
+
+    DailyPrintStatus:
+      type: object
+      additionalProperties: false
+      required: [timeZone, schedule, nextRunAt, lastAttempt, lastFullyApproved]
+      properties:
+        timeZone: { type: string, const: America/Cuiaba }
+        schedule: { type: string, const: "18:00" }
+        nextRunAt: { type: string, format: date-time }
+        lastAttempt:
+          oneOf:
+            - $ref: "#/components/schemas/DailyPrintAttempt"
+            - type: "null"
+        lastFullyApproved:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [targetDate, finishedAt]
+              properties:
+                targetDate: { type: string, format: date }
+                finishedAt: { type: [string, "null"], format: date-time }
+            - type: "null"
+
     DrivePiReconcileBody:
       type: object
       properties:

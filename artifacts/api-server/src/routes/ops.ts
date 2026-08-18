@@ -148,6 +148,7 @@ router.use((req, res, next) => {
   }
   const d1Read = method === "GET" && (
     req.path === "/ops/jobs"
+    || req.path === "/ops/daily-print-status"
     || req.path === "/ops/queue/overview"
     || /^\/ops\/jobs\/[^/]+(?:\/progress)?$/.test(req.path)
   );

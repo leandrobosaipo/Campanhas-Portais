@@ -549,7 +549,7 @@ export async function getActiveCampaignOperations(options: {
       periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
-    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado, getSiteIntegration(row.blockSite)?.formatMappings.find((mapping) => mapping.aliases.some((alias) => normalizeForMatch(alias) === normalizeForMatch(row.localFormatoNormalizado)))?.operationalMediaProfile?.formats ?? null);
     const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
     const evidence = await resolveEvidence(insertion, row, date, includeEvidence);
     const requiredActions: RequiredAction[] = [];
@@ -664,7 +664,7 @@ export async function getActiveCampaignOperations(options: {
       periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
-    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado, getSiteIntegration(row.blockSite)?.formatMappings.find((mapping) => mapping.aliases.some((alias) => normalizeForMatch(alias) === normalizeForMatch(row.localFormatoNormalizado)))?.operationalMediaProfile?.formats ?? null);
     const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];

@@ -85,6 +85,12 @@ const snapshotDir = path.join(outputRoot, snapshotSlug);
 const outputPath = path.join(latestDir, "index.html");
 const snapshotPath = path.join(snapshotDir, "index.html");
 const publicUrl = `https://sites.codigo5.com.br/reports/${slug}/`;
+const sheetDocumentId = "1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu";
+const driveMediaFolderId = "18kyuQLL-sbTc0qgP2Z8SCldDthKqKZV6";
+const sheetGids = { "AGOSTO 2026": "971687922" };
+const currentSheetName = competencia.replace("/", " ");
+const currentSheetUrl = `https://docs.google.com/spreadsheets/d/${sheetDocumentId}/edit${sheetGids[currentSheetName] ? `#gid=${sheetGids[currentSheetName]}` : ""}`;
+const driveMediaUrl = `https://drive.google.com/drive/folders/${driveMediaFolderId}`;
 const reportMarkSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="AdOps"><rect width="128" height="128" rx="16" fill="#164e63"/><path d="M28 92 53 32h22l25 60H80l-4-12H52l-4 12H28Zm30-29h12l-6-18-6 18Z" fill="#fff"/></svg>`;
 let apiRequestCount = 0;
 let apiResponseBytes = 0;
@@ -154,6 +160,13 @@ function fullDatePt(value) {
   const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
   if (!year || !month || !day) return String(value);
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function dateTimePt(value) {
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime())
+    ? parsed.toLocaleString("pt-BR", { timeZone, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+    : "—";
 }
 
 function monthBounds(month) {
@@ -837,7 +850,7 @@ function renderForecast(items, dateField, emptyText) {
   return `<ul>${items.map((item) => `<li><b>${escapeHtml(item.campanhaName || item.campaignName || `Inserção #${item.id}`)}</b><span>${escapeHtml(item.siteSigla || "-")} · ${escapeHtml(item.piCodigo || "sem PI")} · ${fullDatePt(item[dateField])}</span></li>`).join("")}</ul>`;
 }
 
-function renderHtml({ insertions, portals, audits, summary, forecast, sources }) {
+function renderHtml({ insertions, portals, audits, summary, forecast, sources, dailyPrintStatus = null }) {
   const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, item]));
   const portalOptions = buildPortalFilterOptions(portals);
   return `<!doctype html>
@@ -880,6 +893,16 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     .kpi span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; font-weight: 800; }
     .kpi b { display: block; margin-top: 5px; font-size: clamp(18px, 2vw, 28px); line-height: 1; }
     .tools { display: grid; gap: 10px; padding-bottom: 14px; }
+    .daily-panel { margin: 16px auto 0; display: grid; gap: 12px; grid-template-columns: minmax(0, 1.5fr) minmax(220px, .7fr); }
+    .daily-card, .source-card { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .daily-card h2, .source-card h2 { font-size: 17px; margin-bottom: 8px; }
+    .daily-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .daily-grid div { padding: 8px; border-radius: 4px; background: var(--bg); }
+    .daily-grid span { display: block; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+    .daily-grid strong { display: block; margin-top: 4px; font-size: 14px; }
+    .daily-summary { margin: 10px 0 0; font-size: 13px; line-height: 1.4; }
+    .source-links { display: grid; gap: 8px; }
+    .source-links a { min-height: 44px; display: flex; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; color: var(--steel); font-size: 12px; font-weight: 850; }
     .mobile-toolbar { display: none; }
     .filter-panel { border: 0; padding: 0; background: var(--panel); color: var(--ink); }
     .filter-panel-inner { display: grid; gap: 12px; padding: 16px; }
@@ -976,7 +999,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
     footer { padding: 20px 0 36px; color: var(--muted); font-size: 12px; }
     @media (max-width: 1180px) { .kpis { grid-template-columns: repeat(4, 1fr); } .insertions { grid-template-columns: 1fr; } }
     @media (max-width: 760px) {
-      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast, .tool-row { grid-template-columns: 1fr; }
+      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast, .tool-row, .daily-panel { grid-template-columns: 1fr; }
+      .daily-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .snapshot { text-align: left; }
       .kpis { grid-template-columns: repeat(2, 1fr); }
       .portal-stats, .mini-stats { justify-content: flex-start; }
@@ -1055,6 +1079,27 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
       </div>
     </div>
   </header>
+  <section class="wrap daily-panel" aria-labelledby="dailyRoutineTitle">
+    <article class="daily-card">
+      <h2 id="dailyRoutineTitle">Rotina diária</h2>
+      <div class="daily-grid">
+        <div><span>Última tentativa</span><strong>${escapeHtml(dailyPrintStatus?.lastAttempt?.targetDate ? datePt(dailyPrintStatus.lastAttempt.targetDate) : "Ainda não registrada")}</strong></div>
+        <div><span>Situação</span><strong>${escapeHtml(dailyPrintStatus?.lastAttempt?.status === "completed" ? "Concluída" : dailyPrintStatus?.lastAttempt?.status === "partial" ? "Parcial" : dailyPrintStatus?.lastAttempt?.status === "running" ? "Em execução" : dailyPrintStatus?.lastAttempt?.status === "queued" ? "Na fila" : dailyPrintStatus?.lastAttempt ? "Falhou" : "Sem histórico")}</strong></div>
+        <div><span>Início e fim</span><strong>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dateTimePt(dailyPrintStatus.lastAttempt.startedAt)} → ${dateTimePt(dailyPrintStatus.lastAttempt.finishedAt)}` : "—")}</strong></div>
+        <div><span>Aprovadas</span><strong>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.approved}/${dailyPrintStatus.lastAttempt.expected}` : "—")}</strong></div>
+        <div><span>Ausentes e inválidas</span><strong>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.missing} ausentes · ${dailyPrintStatus.lastAttempt.invalid} inválidas` : "—")}</strong></div>
+        <div><span>Próxima execução</span><strong><time id="dailyCountdown" data-next-run="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}" datetime="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}">calculando</time></strong></div>
+      </div>
+      <p class="daily-summary">${escapeHtml(dailyPrintStatus?.lastAttempt?.summary || "A rotina diária ainda não possui uma tentativa registrada.")} ${dailyPrintStatus?.lastFullyApproved?.targetDate ? `Último dia 100% aprovado: ${escapeHtml(datePt(dailyPrintStatus.lastFullyApproved.targetDate))}.` : "Ainda não há um dia 100% aprovado no histórico compacto."}${dailyPrintStatus?.lastAttempt?.jobId ? ` Job: ${escapeHtml(dailyPrintStatus.lastAttempt.jobId)}.` : ""}</p>
+    </article>
+    <aside class="source-card" aria-labelledby="sourceTitle">
+      <h2 id="sourceTitle">Fontes</h2>
+      <div class="source-links">
+        <a href="${escapeHtml(currentSheetUrl)}" target="_blank" rel="noreferrer">Planilha — aba ${escapeHtml(currentSheetName)}</a>
+        <a href="${escapeHtml(driveMediaUrl)}" target="_blank" rel="noreferrer">Pasta de mídias no Google Drive</a>
+      </div>
+    </aside>
+  </section>
   <div class="mobile-toolbar" aria-label="Controles móveis do relatório">
     <strong>Evidências AdOps<span id="resultCount" aria-live="polite">${summary.total} campanhas</span></strong>
     <button type="button" id="filterToggle" aria-controls="filterPanel" aria-expanded="false">Filtros</button>
@@ -1097,6 +1142,17 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources })
   <script type="application/json" id="modal-data">${safeJson(modalData)}</script>
   <script>
     const data = JSON.parse(document.getElementById('modal-data').textContent);
+    const dailyCountdown = document.getElementById('dailyCountdown');
+    const updateCountdown = () => {
+      if (!dailyCountdown || !dailyCountdown.dataset.nextRun) return;
+      const remaining = Math.max(0, Date.parse(dailyCountdown.dataset.nextRun) - Date.now());
+      const totalMinutes = Math.ceil(remaining / 60000);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      dailyCountdown.textContent = remaining === 0 ? 'em execução ou aguardando registro' : 'em ' + hours + 'h ' + String(minutes).padStart(2, '0') + 'min';
+    };
+    updateCountdown();
+    setInterval(updateCountdown, 60000);
     const modal = document.getElementById('modal');
     const modalImg = document.getElementById('modalImg');
     const modalTitle = document.getElementById('modalTitle');
@@ -1266,6 +1322,7 @@ async function main() {
 
   const sourceStartedAtMs = Date.now();
   const operationsRaw = await api(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(targetDate)}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS });
+  const dailyPrintStatus = await api("/api/ops/daily-print-status", { timeoutMs: 30_000 }).catch(() => null);
   timings.sourceFetchMs = Date.now() - sourceStartedAtMs;
   const insertions = operationsRaw.insertions || [];
   const campaignMap = new Map();
@@ -1388,8 +1445,10 @@ async function main() {
     sheet: operationsRaw.sheet || null,
     driveInventory: operationsRaw.driveInventory || null,
     campaignOperationsGeneratedAt: operationsRaw.generatedAt || null,
+    sheetUrl: currentSheetUrl,
+    driveMediaUrl,
   };
-  const html = renderHtml({ insertions: enriched, portals, audits, summary, forecast, sources });
+  const html = renderHtml({ insertions: enriched, portals, audits, summary, forecast, sources, dailyPrintStatus });
   const data = {
     generatedAt: generatedAt.toISOString(),
     targetDate,
@@ -1397,6 +1456,7 @@ async function main() {
     competencia,
     publicUrl,
     sources,
+    dailyPrintStatus,
     summary,
     forecast,
     audits,

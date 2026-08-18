@@ -86,6 +86,8 @@ Relatório: `https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/`
 - Preserve o PNG canônico; comprima somente a cópia de entrega.
 - Polling usa `/progress`; carregue o job completo apenas no final ou diagnóstico.
 - Não exponha valores de tokens, cookies, headers ou arquivos `.env`.
+- Redirect é opcional: zero link publica banner sem clique; um HTTPS público publica banner clicável; link fornecido inválido ou ambíguo bloqueia.
+- GIF e MP4 são aceitos somente quando o perfil real da posição permitir e o binário passar em dimensões, codec e integridade.
 
 ## Diagnóstico inicial
 
@@ -99,7 +101,11 @@ Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` perma
 
 A rotina diária começa às 17h30 de Cuiabá com a sincronização da planilha e só depois reconcilia Drive, AdOps e publicação. Às 18h captura somente o dia corrente. Às 22h15 publica o relatório mensal completo. PI 9750/AFL e PI 14771/OMT já são as inserções canônicas `#1854` e `#1841`; nunca devem ser recriadas.
 
+Consulte o resumo sanitizado da captura em `GET /api/ops/daily-print-status`. O relatório exibe essa mesma leitura, a próxima execução às 18h e os links da planilha mensal e da pasta de mídias.
+
 Retroativo de campanha encerrada nunca reativa o anúncio. Se o AdRotate não renderizar mais o slot, OMT e AFL podem usar a reconstrução auditada do capturador: notícias vêm da API WordPress até a data pedida, o banner vem da `mediaUrl` do AdOps e nada é gravado no portal. Qualquer divergência impede a evidência.
+
+Toda reconstrução tardia usa `reconstructionReason=late_publication_recovery` e registra a data contratada, a data real da reconstrução e a mídia usada. A captura diária normal não recebe essa autorização.
 
 Uma campanha encerrada não aparece em `campaign-operations/active` depois do fim. Isso é correto para a captura diária, mas não para o relatório. Para auditoria mensal, use sempre a fonte mensal e procure também por PI, portal, campaign ID ou insertion ID.
 

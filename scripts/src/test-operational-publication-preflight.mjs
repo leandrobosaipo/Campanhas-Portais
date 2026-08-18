@@ -291,6 +291,18 @@ assert.deepEqual(advisoryMerge.insertions, [agentInsertionWithWrongSchedule]);
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "https://destino.example/", insertions: [] }), true);
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: "http://destino.example/", insertions: [] }), false);
 assert.equal(runner.hasHttpsDrivePiDestination({ clickUrl: null, insertions: [] }), false);
+assert.deepEqual(runner.resolveOptionalOperationalDestination([]), {
+  mode: "none",
+  url: null,
+  statusText: "Banner informativo, sem link",
+});
+assert.deepEqual(runner.resolveOptionalOperationalDestination([{ text: "Acesse https://example.com/campanha" }]), {
+  mode: "https",
+  url: "https://example.com/campanha",
+  statusText: "Link válido encontrado",
+});
+assert.throws(() => runner.resolveOptionalOperationalDestination([{ text: "Acesse http://example.com" }]), /precisa ser corrigido/i);
+assert.throws(() => runner.resolveOptionalOperationalDestination([{ text: "https://a.example https://b.example" }]), /links diferentes/i);
 const expectedDestinationInsertion = {
   siteId: 4,
   localFormato: "HOME 1",
@@ -323,13 +335,19 @@ assert.deepEqual(runner.validateDrivePiPackageReadiness(
   { clickUrl: null, insertions: [{ mediaUrl: "https://cdn.example/banner.gif" }] },
   { issues: [] },
   { requireResolvedMedia: true, requireHttpsDestination: true },
-).issues, ["missing_https_destination"]);
+).issues, []);
 assert.deepEqual(runner.validateDrivePiPackageReadiness(
   { hasPdf: true, hasMedia: true },
   mixedDestinations,
   { issues: [] },
   { requireResolvedMedia: true, requireHttpsDestination: true, expectedInsertion: expectedDestinationInsertion },
-).issues, ["missing_https_destination"]);
+).issues, []);
+assert.deepEqual(runner.validateDrivePiPackageReadiness(
+  { hasPdf: true, hasMedia: true },
+  { clickUrl: "http://inseguro.example/", insertions: [{ mediaUrl: "https://cdn.example/banner.gif" }] },
+  { issues: [] },
+  { requireResolvedMedia: true, requireHttpsDestination: true },
+).issues, ["invalid_provided_destination"]);
 
 const mergedExpectedContext = runner.mergeExpectedDrivePiContext({
   piCodigo: "PI 14807",
@@ -370,11 +388,11 @@ const destination = runner.resolveOperationalDestination([
   { text: "Destino: https://www.tce.mt.gov.br/" },
 ]);
 assert.equal(destination, "https://www.tce.mt.gov.br/");
-assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: http://example.com/" }]), /HTTPS/);
-assert.throws(() => runner.resolveOperationalDestination([{ text: "https://a.example/ https://b.example/" }]), /exatamente um/);
-assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://localhost/admin" }]), /exatamente um/);
-assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://127.0.0.1/private" }]), /exatamente um/);
-assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://user:pass@example.com/" }]), /exatamente um/);
+assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: http://example.com/" }]), /corrigido|HTTPS/);
+assert.throws(() => runner.resolveOperationalDestination([{ text: "https://a.example/ https://b.example/" }]), /links diferentes/);
+assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://localhost/admin" }]), /corrigido/);
+assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://127.0.0.1/private" }]), /corrigido/);
+assert.throws(() => runner.resolveOperationalDestination([{ text: "Destino: https://user:pass@example.com/" }]), /corrigido/);
 
 const contract = runner.validateOperationalPublicationContract({
   expectedCampaignId: 989,
@@ -581,6 +599,22 @@ const adrotatePayload = runner.buildAdrotatePublishPayload({
 assert.equal(adrotatePayload.pi_code, null);
 assert.equal(adrotatePayload.external_key, "ADOPS-PERRENGUE-1944");
 assert.equal(adrotatePayload.group_id, 2);
+assert.equal(runner.buildAdrotatePublishPayload({
+  insertion: { id: 1944, campanhaId: 989, siteSigla: "PERRENGUE", mediaUrl: "https://cdn.example/radar.gif", observacoes: "Link destino informado: https://stale.example/" },
+  campaign: { id: 989, nome: "RADAR" },
+  site: { sigla: "PERRENGUE" },
+  checklist: { expectedSelectors: { groupId: 2 }, expectedMedia: { mediaUrl: "https://cdn.example/radar.gif" } },
+  destinationOverride: null,
+}).link_url, null, "modo sem redirect deve remover até link histórico das observações");
+assert.equal(runner.buildAdrotatePublishPayload({
+  insertion: { id: 1944, campanhaId: 989, siteSigla: "PERRENGUE", mediaUrl: "https://cdn.example/radar.gif", linkUrl: "https://old.example/" },
+  campaign: { id: 989, nome: "RADAR" },
+  site: { sigla: "PERRENGUE" },
+  checklist: { expectedSelectors: { groupId: 2 }, expectedMedia: { mediaUrl: "https://cdn.example/radar.gif" } },
+  destinationOverride: "https://new.example/",
+}).link_url, "https://new.example/", "redirect validado no Drive deve prevalecer sobre link antigo");
+assert.equal(runner.validateOptionalDrivePiDestination({ clickUrl: "https://user:password@example.com/", insertions: [] }).ok, false,
+  "redirect com credenciais embutidas deve ser bloqueado antes de upload ou publicação");
 assert.equal(runner.validateOperationalDriveItem(
   { id: "gif-radar", name: "670x90 tce.gif", mimeType: "image/gif", modifiedTime: "2026-08-12T00:34:08.000Z", size: "65191", md5Checksum: "abc" },
   { driveFileId: "gif-radar", name: "670x90 tce.gif", mimeType: "image/gif", modifiedTime: "2026-08-12T00:34:08.000Z", size: "65191", md5Checksum: "abc" },
@@ -736,6 +770,20 @@ for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   },
     `grupo ${groupId} deve ter perfil binário único para o preflight operacional`);
 }
+const perrengueHome1Profile = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === 2)?.operationalMediaProfile;
+assert.deepEqual(perrengueHome1Profile.formats, ["GIF", "MP4"]);
+assert.deepEqual(perrengueHome1Profile.deliveryTransforms.MP4, {
+  mode: "contain-pad",
+  sourceWidth: 824,
+  sourceHeight: 120,
+  contentWidth: 618,
+  contentHeight: 90,
+  targetWidth: 670,
+  targetHeight: 90,
+  videoCodec: "h264",
+  pixelFormat: "yuv420p",
+  faststart: true,
+});
 
 const dir = await mkdtemp(path.join(tmpdir(), "adops-operational-gif-"));
 try {
@@ -806,6 +854,25 @@ try {
       targetHeight: 120,
     },
   }), /Dimens/);
+
+  const sourceVideo = path.join(dir, "source-824x120.mp4");
+  await execFileAsync("ffmpeg", ["-y", "-f", "lavfi", "-i", "testsrc=size=824x120:rate=12", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", sourceVideo], { timeout: 30000 });
+  const videoDelivery = await runner.prepareOperationalDeliveryMedia(sourceVideo, perrengueHome1Profile);
+  assert.equal(videoDelivery.transformed, true);
+  assert.equal(videoDelivery.source.format, "MP4");
+  assert.equal(videoDelivery.source.width, 824);
+  assert.equal(videoDelivery.source.height, 120);
+  assert.equal(videoDelivery.metadata.width, 670);
+  assert.equal(videoDelivery.metadata.height, 90);
+  assert.equal(videoDelivery.metadata.codec, "h264");
+  assert.equal(videoDelivery.metadata.pixelFormat, "yuv420p");
+  assert.ok(videoDelivery.metadata.duration > 0);
+  assert.match(videoDelivery.filePath, /670x90-delivery\.mp4$/);
+  await assert.rejects(() => runner.prepareOperationalDeliveryMedia(sourceVideo, {
+    width: 670,
+    height: 90,
+    formats: ["GIF"],
+  }), /não permite MP4/i);
   for (const [name, source] of [
     ["snapshot.php", runner.buildPerrengueAdrotateSnapshotPhp()],
     ["restore.php", runner.buildPerrengueAdrotateRestorePhp()],

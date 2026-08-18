@@ -91,7 +91,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     await this.save(job, payload);
 
     for (const [index, target] of payload.targets.entries()) {
-      const item = await this.executeTarget(job.id, target);
+      const item = await this.executeTarget(job.id, target, payload.kind);
       job.items.push(item);
       job.completedTargets = job.items.filter((entry) => entry.status !== "skipped").length;
       job.failedTargets = job.items.filter((entry) => entry.status === "error").length;
@@ -107,7 +107,11 @@ class LocalPrintRunner implements PrintRunnerPort {
     return job;
   }
 
-  private async executeTarget(jobId: string, target: PrintRunnerJobPayload["targets"][number]): Promise<PrintRunnerJobResultItem> {
+  private async executeTarget(
+    jobId: string,
+    target: PrintRunnerJobPayload["targets"][number],
+    kind: PrintRunnerJobPayload["kind"],
+  ): Promise<PrintRunnerJobResultItem> {
     let lastError = "Falha desconhecida na captura.";
     for (let attempt = 1; attempt <= PRINT_TARGET_MAX_ATTEMPTS; attempt += 1) {
       try {
@@ -117,6 +121,8 @@ class LocalPrintRunner implements PrintRunnerPort {
           runnerJobId: jobId,
           candidateOnly: target.candidateOnly === true,
           promoteCandidate: target.promoteCandidate === true,
+          reconstructionReason: target.reconstructionReason
+            ?? (kind === "capture-proof-backfill" ? "late_publication_recovery" : null),
         });
         return {
           insertionId: target.insertionId,

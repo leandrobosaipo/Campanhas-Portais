@@ -25,6 +25,8 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Preferir correção simples, auditável e reversível.
 - Preservar operação em produção: nunca quebrar prints, planilha, AdRotate, Telegram ou Cloudflare por mudança não testada.
 - Ao trabalhar com PI, a prioridade de fonte é: PDF/email da PI, depois planilha, depois AdOps, depois AdRotate.
+- Link de direcionamento é opcional. Sem link, publique o banner sem clique. Se houver link, aceite somente um HTTPS público e inequívoco; link inseguro, inválido ou ambíguo bloqueia a publicação.
+- Valide o arquivo real da mídia. GIF ou MP4 só são aceitos quando o perfil da posição declarar o tipo e as dimensões. Preserve o original e normalize somente a cópia de entrega.
 - Em caso de divergência, registrar a divergência e corrigir sem duplicar anúncio, campanha ou inserção.
 
 ## Mapa rápido
@@ -43,7 +45,7 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 
 ## Fluxo para nova PI
 
-1. Conferir PI/email/PDF e identificar campanha, cliente, agência, portal, posição, período, mídia e destino.
+1. Conferir PI/email/PDF e identificar campanha, cliente, agência, portal, posição, período, mídia e destino, quando houver.
 2. Sincronizar planilha.
 3. Verificar se campanha/inserção já existem no AdOps.
 4. Verificar AdRotate do portal e evitar duplicidade.
@@ -53,6 +55,19 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 8. Gerar prints obrigatórios, incluindo retroativos em aberto.
 9. Validar auditoria por data.
 10. Enviar resumo e prints no Telegram quando solicitado.
+
+## Feedback operacional obrigatório
+
+Ao explicar uma falha ao usuário, não entregue somente códigos técnicos. Use frases simples e informe, nesta ordem:
+
+1. campanha, PI, portal e insertion ID;
+2. datas afetadas;
+3. o que já existe;
+4. por que parou;
+5. o que ainda falta;
+6. o que o sistema tentará fazer;
+7. o que depende de informação humana;
+8. link para conferir.
 
 ## Comandos operacionais principais
 
@@ -123,6 +138,7 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
 - `campaign-operations/active` continua sendo a fonte diária. Não use esse endpoint isoladamente para construir um relatório mensal.
 - `bannerPublicadoNoSite=true` é somente publicação reportada. Confirmação pública exige a relação AdRotate e a mídia no HTML público.
+- `GET /api/ops/daily-print-status` é a leitura compacta da última rotina diária e da próxima execução. Não exponha payloads, tokens ou logs internos nessa resposta.
 - Uma falha terminal de job deve ser gravada junto do incidente na mesma operação transacional. Incidentes e logs nunca podem persistir credenciais.
 
 ## Serviços relacionados

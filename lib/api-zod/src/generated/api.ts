@@ -113,6 +113,53 @@ export const ListOpsJobsQueryParams = zod.object({
 export const ListOpsJobsResponse = zod.record(zod.string(), zod.unknown());
 
 /**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+export const getDailyPrintStatusResponseLastAttemptOneExpectedMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneApprovedMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneMissingMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneInvalidMin = 0;
+
+export const GetDailyPrintStatusResponse = zod.object({
+  timeZone: zod.literal("America/Cuiaba"),
+  schedule: zod.literal("18:00"),
+  nextRunAt: zod.coerce.date(),
+  lastAttempt: zod.union([
+    zod.object({
+      jobId: zod.string(),
+      targetDate: zod.coerce.date(),
+      status: zod.enum(["queued", "running", "completed", "partial", "failed"]),
+      startedAt: zod.coerce.date().nullish(),
+      finishedAt: zod.coerce.date().nullish(),
+      expected: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneExpectedMin),
+      approved: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneApprovedMin),
+      missing: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneMissingMin),
+      invalid: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneInvalidMin),
+      summary: zod.string(),
+    }),
+    zod.null(),
+  ]),
+  lastFullyApproved: zod.union([
+    zod.object({
+      targetDate: zod.coerce.date(),
+      finishedAt: zod.coerce.date().nullable(),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
  * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
  * @summary List sanitized operational incidents for diagnosis and correction planning
  */

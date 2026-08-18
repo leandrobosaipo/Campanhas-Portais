@@ -51,16 +51,16 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 | Anúncio correto existe no grupo | Reutilizar e vincular |
 | Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
 | PI/PDF ausente, identidade operacional única | Usar `identityMode=operational_identity`, manter `commercialIdentityStatus=awaiting_authoritative_pi` e liberar somente o preflight vivo de publicação |
-| PDF presente, mas os campos comerciais estão divididos entre planilha e pasta | Usar `identityMode=sheet_drive_composite` somente quando PI, linha, campanha, inserção, portal, período, formato e pasta forem únicos; exigir um PDF, uma mídia compatível e um documento com exatamente um destino HTTPS |
+| PDF presente, mas os campos comerciais estão divididos entre planilha e pasta | Usar `identityMode=sheet_drive_composite` somente quando PI, linha, campanha, inserção, portal, período, formato e pasta forem únicos; exigir um PDF e uma mídia compatível. O redirect é opcional |
 | PI/PDF ausente e fonte ambígua | Manter `failed_retryable`; mídia candidata não vira “mídia ausente” e nenhuma entidade é criada |
 
 Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
 
 ### Retomada automática sem duplicação
 
-O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Sem PDF, ele pode publicar somente quando competência, portal, campanha, período, formato, linha, pasta, mídia e destino formam uma correspondência operacional única. O runner relê as fontes, valida o binário e o destino HTTPS antes de mutar. A PI continua pendente para faturamento e ZIP por PI. Quando o PDF chegar, o fluxo completa a campanha e a inserção existentes, sem duplicar ou trocar o portal por semelhança de nome.
+O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Sem PDF, ele pode publicar somente quando competência, portal, campanha, período, formato, linha, pasta e mídia formam uma correspondência operacional única. O redirect não é obrigatório: se não existir, o anúncio fica sem clique; se existir, o runner exige um único HTTPS público antes de mutar. A PI continua pendente para faturamento e ZIP por PI. Quando o PDF chegar, o fluxo completa a campanha e a inserção existentes, sem duplicar ou trocar o portal por semelhança de nome.
 
-Quando o PDF existe, mas não contém texto extraível suficiente, a planilha continua sendo a fonte canônica de portal, PI, período e formato. O modo `sheet_drive_composite` só é liberado se planilha, AdOps, pasta e nome do PDF apontarem para a mesma PI e houver exatamente um PDF, uma mídia e um redirect. O runner baixa novamente os três arquivos, compara ID, tamanho e checksum, rejeita uma PI explícita divergente no PDF e publica apenas a inserção canônica existente.
+Quando o PDF existe, mas não contém texto extraível suficiente, a planilha continua sendo a fonte canônica de portal, PI, período e formato. O modo `sheet_drive_composite` só é liberado se planilha, AdOps, pasta e nome do PDF apontarem para a mesma PI e houver exatamente um PDF e uma mídia. O runner baixa novamente esses arquivos, compara ID, tamanho e checksum, rejeita uma PI explícita divergente no PDF e publica apenas a inserção canônica existente. Um redirect ausente gera `destinationMode=none`; um redirect presente continua sujeito à validação HTTPS e de unicidade.
 
 Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
@@ -82,7 +82,9 @@ Confirme o arquivo binário, não apenas o nome:
 - dimensões;
 - conteúdo visual;
 - compatibilidade com o formato;
-- URL de destino.
+- URL de destino, quando fornecida.
+
+O perfil em `config/adrotate-sites.json` define os tipos aceitos. GIF exige assinatura, dimensões, frames e conteúdo. MP4 exige container íntegro, H.264, duração positiva, dimensões e pixel format compatível. Quando o perfil declarar transformação, normalize apenas uma cópia com chave baseada no SHA-256; nunca altere o original do Drive.
 
 Compare a URL no WordPress, AdRotate, AdOps e HTML público. Se o portal opera via Spaces/CDN, use o host público que realmente serve a peça. Perrengue pode usar domínio/CDN próprio; não force Spaces por regra geral.
 

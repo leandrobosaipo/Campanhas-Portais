@@ -452,7 +452,14 @@ export async function findDriveCampaignMedia(input: {
   };
 }
 
-export function driveMediaMatchesFormat(mediaFiles: DriveCampaignFile[], normalizedFormat: string) {
+export function driveMediaMatchesFormat(mediaFiles: DriveCampaignFile[], normalizedFormat: string, allowedFormats: string[] | null = null) {
+  if (Array.isArray(allowedFormats) && allowedFormats.length) {
+    const allowed = new Set(allowedFormats.map((value) => String(value).toUpperCase()));
+    return mediaFiles.some((file) => (
+      (file.kind === "video" && allowed.has("MP4"))
+      || (file.kind === "image" && allowed.has("GIF"))
+    ));
+  }
   if (normalizeForMatch(normalizedFormat).includes("VIDEO")) {
     return mediaFiles.some((file) => file.kind === "video");
   }

@@ -13,6 +13,8 @@ export type SiteFormatMapping = {
     width: number;
     height: number;
     formats: string[];
+    deliveryTransform?: Record<string, unknown>;
+    deliveryTransforms?: Record<string, Record<string, unknown>>;
   };
   auditOverrides?: Partial<SiteAuditConfig>;
 };
