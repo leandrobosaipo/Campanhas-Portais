@@ -407,6 +407,7 @@ function icon(name) {
     filter: '<svg viewBox="0 0 20 20"><path d="M2.5 4h15v2h-15V4Zm3 5h9v2h-9V9Zm3 5h3v2h-3v-2Z"/></svg>',
     sheet: '<svg viewBox="0 0 20 20"><path d="M4 2h9l3 3v13H4V2Zm2 2v12h8V7h-3V4H6Zm1 5h6v1.5H7V9Zm0 3h6v1.5H7V12Z"/></svg>',
     drive: '<svg viewBox="0 0 20 20"><path d="M7.2 2h5.6l5.1 8.8-2.8 4.8H4.9l-2.8-4.8L7.2 2Zm1.2 2L5 9.8h3.3l3.4-5.8H8.4Zm5.6 2.1-1.7 2.9 2.8 4.8 1.7-3L14 6.1ZM5 11.8l-1.7 3h10.6l-1.7-3H5Z"/></svg>',
+    calendar: '<svg viewBox="0 0 20 20"><path d="M5 2h2v2h6V2h2v2h2v14H3V4h2V2Zm10 7H5v7h10V9ZM5 6v1h10V6H5Z"/></svg>',
   };
   return (icons[name] || icons.link).replace("<svg ", '<svg aria-hidden="true" focusable="false" ');
 }
@@ -698,6 +699,37 @@ function dayTitle(day, item) {
   return `${fullDatePt(day.date)}: evidência com status ${day.status}. ${day.issues?.map((issue) => issue.label || issue.code || issue).join(", ") || ""}`;
 }
 
+function evidenceDaysNewestFirst(item) {
+  return [...(item.evidenceDays || [])].sort((left, right) => String(right.date).localeCompare(String(left.date)));
+}
+
+function safePublicMediaUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function mediaKind(url) {
+  const clean = String(url || "").split(/[?#]/, 1)[0].toLowerCase();
+  return clean.endsWith(".mp4") ? "video" : clean ? "image" : "missing";
+}
+
+function renderMediaPreview(item) {
+  const mediaUrl = safePublicMediaUrl(item.mediaUrl);
+  const kind = mediaKind(mediaUrl);
+  const label = `Ver mídia de ${item.campanhaName || `inserção ${item.id}`}, ${item.localFormatoNormalizado || item.localFormato || "formato não informado"}`;
+  if (kind === "missing") {
+    return `<div class="media-preview media-missing" role="status">${icon("image")}<span>Mídia ainda não disponível</span></div>`;
+  }
+  const media = kind === "video"
+    ? `<video preload="metadata" muted playsinline tabindex="-1" aria-hidden="true"><source src="${escapeHtml(mediaUrl)}" type="video/mp4"></video><span class="media-type">Vídeo</span>`
+    : `<img src="${escapeHtml(mediaUrl)}" alt="" loading="lazy" decoding="async"><span class="media-type">Peça</span>`;
+  return `<button class="media-preview media-open" type="button" data-media-modal-id="${escapeHtml(item.modalId)}" aria-label="${escapeHtml(label)}">${media}</button>`;
+}
+
 function publicationGuidance(operation) {
   const actions = Array.isArray(operation?.requiredActions) ? operation.requiredActions : [];
   const blockers = Array.isArray(operation?.blockingIssues) ? operation.blockingIssues : [];
@@ -723,13 +755,14 @@ function renderThumbs(item) {
   if (!item.evidenceDays.length) {
     return `<button class="thumb-empty" type="button" data-modal-id="${escapeHtml(item.modalId)}" title="${escapeHtml(evidenceDetails(item))}">${icon(item.state === "scheduled" ? "clock" : "warn")}<span>${escapeHtml(evidenceLabel(item.state))}</span></button>`;
   }
-  return item.evidenceDays
-    .map((day) => {
+  return evidenceDaysNewestFirst(item)
+    .map((day, index) => {
       const title = dayTitle(day, item);
+      const latest = index === 0 ? `<b class="latest-label">Mais recente</b>` : "";
       if (day.status.startsWith("audited") && day.url) {
-        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}"><img src="${escapeHtml(day.downloadUrl || day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span></button>`;
+        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}${index === 0 ? ", a mais recente" : ""}"><img src="${escapeHtml(day.downloadUrl || day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span>${latest}</button>`;
       }
-      return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon(day.status === "missing" ? "warn" : "warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "sem evid." : "inválida")}</b></button>`;
+      return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon("warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "Print pendente" : "Evidência inválida")}</b>${latest}</button>`;
     })
     .join("");
 }
@@ -752,27 +785,39 @@ function renderInsertion(item) {
   const endedBadge = item.periodoFim < targetDate
     ? statusBadge("scheduled", `Encerrada em ${fullDatePt(item.periodoFim)}`)
     : "";
+  const stateLabel = item.state === "ok" ? "Em dia" : item.state === "scheduled" ? "Agendada" : item.state === "not_published" ? "Banner não publicado" : item.state === "invalid" ? "Evidência com erro" : "Print pendente";
+  const evidenceSummary = item.requiredDays.length
+    ? `${item.auditedDays} de ${item.requiredDays.length} ${item.requiredDays.length === 1 ? "print aprovado" : "prints aprovados"}`
+    : "Nenhum print exigido até esta data";
+  const mediaAction = safePublicMediaUrl(item.mediaUrl)
+    ? `<button class="icon-link media-action media-open" type="button" data-media-modal-id="${escapeHtml(item.modalId)}">${icon("image")}<span>Ver mídia</span></button>`
+    : "";
   return `<article class="insertion ${escapeHtml(item.state)}">
-    <div class="insert-main">
-      <div class="insert-top">
-        <span class="insert-id">#${escapeHtml(item.id)}</span>
-        ${endedBadge}
-        ${statusBadge(stateForBadge, evidenceDetails(item))}
-      </div>
-      <strong>${escapeHtml(item.localFormatoNormalizado || item.localFormato || "-")}</strong>
-      <span>${escapeHtml(item.clienteNome || "-")} · ${escapeHtml(item.piCodigo || "sem PI")}</span>
-      <small>${fullDatePt(item.periodoInicio)} → ${fullDatePt(item.periodoFim)} · ${item.auditedDays}/${item.requiredDays.length} dias</small>
-      <small class="reason">${escapeHtml(evidenceDetails(item))}</small>
-      ${publicationPending}
-      <div class="bar"><i style="width:${progress}%"></i></div>
-      <div class="links">
-        ${linkButton(item.portalUrl, "portal", "link")}
-        ${linkButton(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? "ad" : "grupo", "plugin")}
-        ${linkButton(item.mediaUrl, "mídia", "image")}
-        ${linkButton(`${adopsPanelBase}/insercoes/${item.id}`, "adops", "link")}
+    <div class="insertion-overview">
+      ${renderMediaPreview(item)}
+      <div class="insert-main">
+        <div class="insert-top">
+          <span class="insert-id">Inserção #${escapeHtml(item.id)}</span>
+          <span class="insert-statuses">${endedBadge}${statusBadge(stateForBadge, stateLabel)}</span>
+        </div>
+        <strong>${escapeHtml(item.localFormatoNormalizado || item.localFormato || "Formato não informado")}</strong>
+        <p class="insertion-identity">${escapeHtml(item.clienteNome || "Cliente não informado")} · ${escapeHtml(item.piCodigo || "PI não informada")} · ${escapeHtml(item.siteSigla || "Portal não informado")}</p>
+        <p class="insertion-period">Campanha de ${fullDatePt(item.periodoInicio)} até ${fullDatePt(item.periodoFim)}.</p>
+        <p class="evidence-summary"><strong>${escapeHtml(evidenceSummary)}</strong>. ${escapeHtml(evidenceDetails(item))}</p>
+        ${publicationPending}
+        <div class="bar" role="progressbar" aria-label="Progresso das evidências da inserção ${escapeHtml(item.id)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="width:${progress}%"></i></div>
+        <div class="links insertion-actions">
+          ${linkButton(item.portalUrl, "Abrir portal", "link")}
+          ${linkButton(item.adrotateAdUrl || item.adrotateGroupUrl, "Ver anúncio", "plugin")}
+          ${mediaAction}
+          ${linkButton(`${adopsPanelBase}/insercoes/${item.id}`, "Abrir no AdOps", "link")}
+        </div>
       </div>
     </div>
-    <div class="thumbs">${renderThumbs(item)}</div>
+    <section class="evidence-section" aria-label="Evidências da inserção ${escapeHtml(item.id)}">
+      <div class="evidence-heading"><strong>Prints, mais recentes primeiro</strong><span>${escapeHtml(evidenceSummary)}</span></div>
+      <div class="thumbs">${renderThumbs(item)}</div>
+    </section>
   </article>`;
 }
 
@@ -804,23 +849,29 @@ function renderCampaign(campaign, portalKey) {
   const batchDownloadUrl = campaign.items.find((item) => item.batchDownloadUrl)?.batchDownloadUrl || "";
   const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
   const commercialExportBlocker = campaign.items.find((item) => item.commercialExportBlocker)?.commercialExportBlocker || "";
+  const insertionSummary = `${campaign.items.length} ${campaign.items.length === 1 ? "inserção" : "inserções"}`;
+  const printSummary = `${campaignAudited} de ${campaignRequired} ${campaignRequired === 1 ? "print aprovado" : "prints aprovados"}`;
+  const attentionSummary = invalid
+    ? `${invalid} ${invalid === 1 ? "inserção com evidência inválida" : "inserções com evidência inválida"}`
+    : pending
+      ? `${pending} ${pending === 1 ? "inserção com print pendente" : "inserções com prints pendentes"}`
+      : notPublished
+        ? `${notPublished} ${notPublished === 1 ? "inserção sem publicação" : "inserções sem publicação"}`
+        : scheduled
+          ? `${scheduled} ${scheduled === 1 ? "inserção agendada" : "inserções agendadas"}`
+          : "Todas as inserções estão em dia";
   return `<section class="campaign" data-portal="${escapeHtml(portalKey)}" data-search="${escapeHtml(search)}" data-states="${escapeHtml(states)}" data-publication-states="${escapeHtml(filterMetadata.publicationStates)}" data-evidence-states="${escapeHtml(filterMetadata.evidenceStates)}">
     <div class="campaign-head">
-      <div>
+      <div class="campaign-identity">
         <h3>${escapeHtml(campaign.name)}</h3>
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
-        ${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "baixar todos os prints", "image") : ""}
-        ${batchDownloadUrl ? linkButton(batchDownloadUrl, "ZIP deste portal", "image") : ""}
-        ${commercialExportBlocker ? `<span class="note">${escapeHtml(commercialExportBlocker)}</span>` : ""}
+        <div class="campaign-downloads">${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "Baixar todos os prints", "image") : ""}${batchDownloadUrl ? linkButton(batchDownloadUrl, "Baixar ZIP deste portal", "image") : ""}</div>
+        ${commercialExportBlocker ? `<p class="note">${escapeHtml(commercialExportBlocker)}</p>` : ""}
       </div>
-      <div class="mini-stats">
-        <b>${campaign.items.length}</b><span>ins.</span>
-        <b>${ok}</b><span>ok</span>
-        <b>${pending}</b><span>pend.</span>
-        <b>${scheduled}</b><span>ag.</span>
-        <b>${invalid}</b><span>erro</span>
-        <b>${notPublished}</b><span>s/pub</span>
-        <b>${campaignAudited}/${campaignRequired}</b><span>evid.</span>
+      <div class="campaign-summary" aria-label="Resumo da campanha">
+        <span>${escapeHtml(insertionSummary)}</span>
+        <span>${escapeHtml(printSummary)}</span>
+        <strong>${escapeHtml(attentionSummary)}</strong>
       </div>
     </div>
     <div class="insertions">${campaign.items.sort((a, b) => a.id - b.id).map(renderInsertion).join("")}</div>
@@ -839,9 +890,9 @@ function renderPortal(portal) {
         <span><b>${portal.stats.scheduled}</b> agendadas</span>
         <span><b>${portal.stats.ended}</b> encerradas</span>
         <span><b>${portal.stats.ok}</b> em dia</span>
-        <span><b>${portal.stats.pending}</b> pend.</span>
-        <span><b>${portal.stats.invalid}</b> erro</span>
-        <span><b>${portal.stats.not_published}</b> sem pub.</span>
+        <span><b>${portal.stats.pending}</b> com prints pendentes</span>
+        <span><b>${portal.stats.invalid}</b> com erro</span>
+        <span><b>${portal.stats.not_published}</b> sem publicação</span>
       </div>
     </div>
     ${portal.campaigns.map((campaign) => renderCampaign(campaign, portal.key)).join("")}
@@ -854,7 +905,7 @@ function renderForecast(items, dateField, emptyText) {
 }
 
 function renderHtml({ insertions, portals, audits, summary, forecast, sources, dailyPrintStatus = null }) {
-  const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, item]));
+  const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, { ...item, mediaUrl: safePublicMediaUrl(item.mediaUrl) }]));
   const portalOptions = buildPortalFilterOptions(portals);
   const currentEvidenceIssues = Number(summary.pending || 0) + Number(summary.invalid || 0);
   const currentAttentionCount = currentEvidenceIssues + Number(summary.notPublished || 0);
@@ -874,6 +925,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published">${icon("plugin")}<span>Ver ${summary.notPublished} ${summary.notPublished === 1 ? "campanha sem publicação" : "campanhas sem publicação"}</span></button>`
       : "",
   ].filter(Boolean).join("") || `<span class="attention-clear">${icon("ok")} Campanhas publicadas em dia</span>`;
+  const compactAttentionAction = Number(summary.invalid || 0) > 0
+    ? `<button type="button" class="attention-action bad" data-quick-evidence="invalid">${icon("warn")}<span>${summary.invalid} ${summary.invalid === 1 ? "erro" : "erros"}</span></button>`
+    : Number(summary.pending || 0) > 0
+      ? `<button type="button" class="attention-action warn" data-quick-evidence="missing">${icon("warn")}<span>${summary.pending} ${summary.pending === 1 ? "print pendente" : "prints pendentes"}</span></button>`
+      : Number(summary.notPublished || 0) > 0
+        ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published">${icon("plugin")}<span>${summary.notPublished} ${summary.notPublished === 1 ? "sem publicação" : "sem publicação"}</span></button>`
+        : `<span class="attention-clear">${icon("ok")} Em dia</span>`;
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -916,33 +974,45 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .header-metric span { color: var(--muted); font-size: 10px; font-weight: 800; }
     .header-metric.attention b { color: var(--warn); }
     .metric-details { position: relative; color: var(--muted); font-size: 11px; }
-    .metric-details summary { min-height: 24px; display: flex; align-items: center; justify-content: flex-end; cursor: pointer; font-weight: 800; }
+    .metric-details summary { min-height: 44px; display: flex; align-items: center; justify-content: flex-end; cursor: pointer; font-weight: 800; }
     .metric-details div { position: absolute; z-index: 12; top: 28px; right: 0; min-width: 290px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 12px 30px rgba(15, 35, 40, .14); }
     .metric-details span { padding: 5px 7px; border-radius: 4px; background: var(--bg); color: var(--ink); }
     .tools { display: grid; gap: 8px; padding-bottom: 10px; }
-    .daily-panel { margin: 12px auto 0; display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(260px, .8fr); }
-    .daily-card, .source-card { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
-    .daily-card h2, .source-card h2 { font-size: 16px; margin: 0; }
-    .routine-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: start; }
-    .routine-eyebrow { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: .04em; }
-    .routine-summary { margin: 5px 0 0; max-width: 74ch; color: var(--muted); font-size: 12px; line-height: 1.4; }
-    .routine-next { min-width: 160px; padding-left: 12px; border-left: 1px solid var(--line); }
-    .routine-next span { display: block; color: var(--muted); font-size: 10px; font-weight: 850; text-transform: uppercase; }
-    .routine-next strong { display: block; margin-top: 4px; font-size: 14px; }
-    .attention-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .operations-bar { width: min(1540px, calc(100% - 28px)); height: 64px; max-height: 72px; margin: 10px auto 0; display: grid; grid-template-columns: minmax(250px, 1fr) auto auto; gap: 8px; align-items: center; overflow: hidden; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .operations-summary { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
+    .operations-state { min-width: 0; }
+    .operations-state strong, .operations-state span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .operations-state strong { font-size: 13px; }
+    .operations-state span { margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .operations-next { min-width: 130px; padding-left: 10px; border-left: 1px solid var(--line); }
+    .operations-next span, .operations-next strong { display: block; }
+    .operations-next span { color: var(--muted); font-size: 10px; font-weight: 800; }
+    .operations-next strong { margin-top: 2px; font-size: 12px; }
+    .operations-buttons, .attention-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .operations-attention { max-width: 210px; flex-wrap: nowrap; overflow: hidden; }
+    .operations-attention > * { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .operations-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--steel); font: inherit; font-size: 12px; font-weight: 850; cursor: pointer; }
     .attention-action, .attention-clear { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; font-size: 12px; font-weight: 850; }
     .attention-action { cursor: pointer; }
     .attention-action.warn { border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); color: var(--warn); }
     .attention-action.bad { border-color: color-mix(in oklch, var(--bad) 45%, var(--line)); color: var(--bad); }
     .attention-action.neutral { color: var(--steel); }
     .attention-clear { color: var(--ok); }
-    .routine-details { margin-top: 8px; font-size: 11px; }
-    .routine-details summary { min-height: 32px; display: inline-flex; align-items: center; color: var(--steel); cursor: pointer; font-weight: 850; }
-    .routine-details dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; margin: 4px 0 0; padding: 9px; border-radius: 6px; background: var(--bg); }
-    .routine-details dt { color: var(--muted); }
-    .routine-details dd { margin: 0; overflow-wrap: anywhere; }
-    .source-card { align-content: start; }
-    .source-card > p { margin: 4px 0 9px; color: var(--muted); font-size: 11px; }
+    .operations-panel { width: min(720px, calc(100% - 24px)); }
+    .operations-panel-inner { max-height: 84dvh; display: grid; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; }
+    .operations-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border-bottom: 1px solid var(--line); }
+    .operations-panel-head h2 { font-size: 18px; }
+    .operations-panel-close { min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); font: inherit; font-weight: 850; cursor: pointer; }
+    .operations-panel-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+    .operations-panel-nav button { min-height: 44px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--steel); font: inherit; font-weight: 850; cursor: pointer; }
+    .operations-panel-nav button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+    .operations-panel-content { min-height: 0; overflow: auto; padding: 14px; }
+    .operations-section { display: grid; gap: 10px; }
+    .operations-section h3 { font-size: 17px; }
+    .operations-section > p { margin: 0; max-width: 70ch; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .routine-facts { display: grid; grid-template-columns: minmax(130px, auto) minmax(0, 1fr); gap: 7px 12px; margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; font-size: 12px; }
+    .routine-facts dt { color: var(--muted); }
+    .routine-facts dd { margin: 0; overflow-wrap: anywhere; }
     .source-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
     .source-link { min-height: 58px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 9px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--steel); background: var(--bg); }
     .source-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; background: var(--panel); }
@@ -952,6 +1022,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .source-copy strong, .source-copy span { display: block; }
     .source-copy strong { font-size: 12px; }
     .source-copy span { margin-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.2; }
+    .agenda-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .agenda-block { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+    .agenda-block h4 { margin: 0; font-size: 14px; }
+    .agenda-block p, .agenda-block ul { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .agenda-block ul { padding-left: 18px; }
+    .agenda-block li { margin: 7px 0; overflow-wrap: anywhere; }
+    .agenda-block li span { display: block; }
     .mobile-toolbar { display: none; }
     .filter-panel { border: 0; padding: 0; background: var(--panel); color: var(--ink); }
     .filter-panel-inner { display: grid; gap: 12px; padding: 16px; }
@@ -974,31 +1051,44 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .brand img, .brand > span { width: 48px; height: 48px; object-fit: contain; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 5px; display: grid; place-items: center; font-size: 12px; font-weight: 900; }
     h2 { margin: 0; font-size: 22px; }
     .brand a { display: inline-block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .portal-stats, .mini-stats { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-    .portal-stats span, .mini-stats span, .mini-stats b { border: 1px solid var(--line); border-radius: 7px; background: var(--bg); padding: 6px 8px; font-size: 12px; }
+    .portal-stats { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .portal-stats span { border: 1px solid var(--line); border-radius: 7px; background: var(--bg); padding: 6px 8px; font-size: 12px; }
     .portal-stats b { font-size: 16px; }
-    .campaign { padding: 12px 14px 14px; border-top: 1px solid color-mix(in oklch, var(--line) 70%, transparent); }
+    .campaign { min-width: 0; overflow: hidden; padding: 12px 14px 14px; border-top: 1px solid color-mix(in oklch, var(--line) 70%, transparent); }
     .campaign:first-of-type { border-top: 0; }
     .campaign-head { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; margin-bottom: 10px; }
+    .campaign-identity { min-width: 0; }
     h3 { margin: 0; font-size: 17px; line-height: 1.15; }
-    .campaign p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
-    .insertions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .insertion { display: grid; grid-template-columns: minmax(250px, 0.95fr) minmax(160px, 1fr); gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; }
+    .campaign p { margin: 4px 0 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .campaign-downloads { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .campaign-summary { min-width: 220px; display: grid; gap: 4px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 12px; }
+    .campaign-summary span { color: var(--muted); }
+    .campaign-summary strong { color: var(--ink); }
+    .insertions { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .insertion { min-width: 0; overflow: hidden; display: grid; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
     .insertion.ok { border-color: color-mix(in oklch, var(--ok) 38%, var(--line)); }
     .insertion.pending { border-color: color-mix(in oklch, var(--warn) 50%, var(--line)); }
     .insertion.invalid { border-color: color-mix(in oklch, var(--bad) 52%, var(--line)); }
     .insertion.scheduled { opacity: .78; }
+    .insertion-overview { min-width: 0; display: grid; grid-template-columns: minmax(112px, 142px) minmax(0, 1fr); gap: 10px; align-items: start; }
+    .media-preview { position: relative; width: 100%; min-width: 0; min-height: 96px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; padding: 0; background: var(--bg); color: var(--muted); font: inherit; }
+    button.media-preview { cursor: pointer; }
+    .media-preview img, .media-preview video { display: block; width: 100%; height: 100%; max-height: 118px; object-fit: contain; background: oklch(0.15 0.01 180); }
+    .media-preview .media-type { position: absolute; right: 5px; bottom: 5px; padding: 2px 6px; border-radius: 999px; background: rgba(6, 12, 12, .76); color: oklch(0.98 0.004 170); font-size: 10px; font-weight: 900; }
+    .media-missing { grid-template-columns: auto; gap: 5px; padding: 10px; text-align: center; font-size: 11px; font-weight: 800; }
     .insert-main { min-width: 0; display: grid; gap: 6px; align-content: start; }
-    .insert-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .insert-top { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .insert-statuses { min-width: 0; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
     .insert-id { font-size: 13px; font-weight: 900; color: var(--steel); }
-    .status { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 900; white-space: nowrap; }
+    .status { max-width: 100%; display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 900; }
+    .status span { overflow-wrap: anywhere; }
     .status.ok { color: var(--ok); background: color-mix(in oklch, var(--ok) 12%, var(--panel)); }
     .status.warn { color: var(--warn); background: color-mix(in oklch, var(--warn) 15%, var(--panel)); }
     .status.scheduled { color: var(--steel); background: color-mix(in oklch, var(--steel) 12%, var(--panel)); }
     .status.not_published { color: var(--steel); background: color-mix(in oklch, var(--steel) 10%, var(--panel)); }
     .insert-main strong { font-size: 14px; line-height: 1.15; }
-    .insert-main span, .insert-main small { color: var(--muted); font-size: 12px; line-height: 1.25; }
-    .reason { color: var(--ink) !important; background: var(--bg); border-radius: 6px; padding: 6px 7px; }
+    .insert-main p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    .insert-main .evidence-summary { color: var(--ink); }
     .publication-pending { display: grid; gap: 4px; padding: 9px; border: 1px solid color-mix(in oklch, var(--warn) 55%, var(--line)); border-radius: 6px; background: color-mix(in oklch, var(--warn) 9%, var(--panel)); }
     .publication-pending strong { color: var(--ink); }
     .publication-pending span { color: var(--warn); font-weight: 750; }
@@ -1006,15 +1096,21 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .bar { height: 6px; border-radius: 999px; background: var(--bg); overflow: hidden; }
     .bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
     .links { display: flex; flex-wrap: wrap; gap: 6px; }
-    .icon-link { min-height: 44px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; font-size: 11px; font-weight: 800; color: var(--steel); background: var(--bg); }
-    .thumbs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(118px, 34%); gap: 6px; align-content: start; overflow-x: auto; padding-bottom: 4px; scroll-snap-type: x proximity; }
+    .insertion-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .icon-link { min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; font: inherit; font-size: 11px; font-weight: 800; color: var(--steel); background: var(--bg); overflow-wrap: anywhere; cursor: pointer; }
+    .evidence-section { min-width: 0; display: grid; gap: 7px; padding-top: 8px; border-top: 1px solid var(--line); }
+    .evidence-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 11px; }
+    .evidence-heading span { color: var(--muted); text-align: right; }
+    .thumbs { min-width: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(118px, 30%); gap: 6px; align-content: start; overflow-x: auto; overscroll-behavior-inline: contain; padding-bottom: 4px; scroll-snap-type: x mandatory; }
     .thumb { position: relative; min-width: 44px; min-height: 78px; border: 0; padding: 0; background: var(--bg); border-radius: 4px; overflow: hidden; cursor: pointer; aspect-ratio: 16 / 9; scroll-snap-align: start; }
     .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .thumb span { position: absolute; left: 5px; bottom: 5px; padding: 2px 5px; border-radius: 999px; background: rgba(6, 12, 12, .72); color: white; font-size: 10px; font-weight: 900; }
+    .thumb > span { position: absolute; left: 5px; bottom: 5px; padding: 2px 5px; border-radius: 999px; background: rgba(6, 12, 12, .72); color: oklch(0.98 0.004 170); font-size: 10px; font-weight: 900; }
+    .latest-label { position: absolute; top: 5px; left: 5px; padding: 2px 5px; border-radius: 999px; background: var(--ok); color: oklch(0.98 0.004 170); font-size: 9px; font-weight: 900; }
     .thumb-empty, .day-card { min-height: 78px; display: grid; place-items: center; gap: 3px; color: var(--muted); background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; font-size: 11px; font-weight: 800; cursor: pointer; scroll-snap-align: start; }
     .day-card.missing { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); background: color-mix(in oklch, var(--warn) 9%, var(--panel)); }
     .day-card.invalid_audit, .day-card.failed, .day-card.invalid_url { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, var(--line)); background: color-mix(in oklch, var(--bad) 8%, var(--panel)); }
     .day-card b { font-size: 10px; }
+    .day-card .latest-label { position: static; }
     dialog { width: min(1180px, calc(100% - 24px)); border: 0; padding: 0; border-radius: 8px; background: var(--panel); color: var(--ink); box-shadow: 0 20px 80px rgba(0,0,0,.4); }
     dialog::backdrop { background: rgba(8, 14, 15, .78); }
     .modal-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; max-height: 88vh; }
@@ -1036,13 +1132,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .day-dot.invalid_audit, .day-dot.failed, .day-dot.invalid_url { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 45%, var(--line)); }
     .day-dot.current { color: var(--panel); background: var(--steel); border-color: var(--steel); }
     .modal-close { position: absolute; min-width: 44px; min-height: 44px; top: 8px; right: 8px; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; background: rgba(0,0,0,.66); color: white; padding: 8px 10px; cursor: pointer; font-weight: 900; }
-    .forecast { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
-    .forecast article { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
-    .forecast h2 { font-size: 16px; }
-    .forecast p, .forecast ul { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
-    .forecast ul { padding-left: 18px; }
-    .forecast li { margin: 7px 0; }
-    .forecast li span { display: block; }
+    .media-modal-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; max-height: 88dvh; }
+    .media-modal-stage { min-height: 420px; display: grid; place-items: center; background: oklch(0.12 0.01 180); overflow: hidden; }
+    .media-modal-stage img, .media-modal-stage video { display: block; max-width: 100%; max-height: 88dvh; object-fit: contain; }
+    .media-modal-stage video { width: 100%; }
+    .media-modal-side { padding: 18px; border-left: 1px solid var(--line); overflow: auto; }
+    .media-modal-side h2 { margin: 0 64px 8px 0; font-size: 19px; overflow-wrap: anywhere; }
+    .media-modal-side p { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
     :focus-visible { outline: 3px solid #145da0; outline-offset: 2px; }
     [hidden] { display: none !important; }
     footer { padding: 20px 0 36px; color: var(--muted); font-size: 12px; }
@@ -1052,20 +1148,19 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       .header-side { justify-items: start; }
       .metric-details summary { justify-content: flex-start; }
       .metric-details div { right: auto; left: 0; justify-content: flex-start; }
-      .daily-panel { grid-template-columns: minmax(0, 1.3fr) minmax(240px, .7fr); }
       #modal { width: min(960px, calc(100% - 20px)); }
       #modal .modal-grid { grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); max-height: 92dvh; }
       #modal .modal-image img { max-height: 92dvh; }
     }
     @media (max-width: 760px) {
-      .topbar, .portal-head, .campaign-head, .insertion, .modal-grid, .forecast, .tool-row, .daily-panel { grid-template-columns: 1fr; }
+      .topbar, .portal-head, .campaign-head, .tool-row { grid-template-columns: 1fr; }
       .topbar { min-height: 56px; padding: 8px 0; }
       .mark { width: 36px; height: 36px; border-radius: 6px; }
       h1 { font-size: 18px; }
       .sub .public-url { display: none; }
       .header-side { display: none; }
       .snapshot { text-align: left; }
-      .portal-stats, .mini-stats { justify-content: flex-start; }
+      .portal-stats { justify-content: flex-start; }
       .modal-side { border-left: 0; border-top: 1px solid var(--line); }
       .desktop-tools { display: none; }
       .mobile-toolbar { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px max(14px, env(safe-area-inset-right)) 6px max(14px, env(safe-area-inset-left)); background: color-mix(in oklch, var(--panel) 94%, transparent); border-bottom: 1px solid var(--line); backdrop-filter: blur(14px); }
@@ -1073,11 +1168,18 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       .mobile-toolbar span { display: block; color: var(--muted); font-size: 11px; font-weight: 700; }
       .mobile-toolbar button { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--ink); color: var(--panel); padding: 7px 10px; font: inherit; font-size: 12px; font-weight: 900; }
       .mobile-toolbar button span { min-width: 20px; min-height: 20px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--panel); color: var(--ink); font-size: 10px; }
-      .daily-panel { margin-top: 10px; }
-      .routine-top { grid-template-columns: 1fr; gap: 9px; }
-      .routine-next { min-width: 0; padding: 8px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-      .attention-actions { display: grid; grid-template-columns: 1fr; }
-      .attention-action, .attention-clear { width: 100%; }
+      .operations-bar { height: auto; min-height: 0; max-height: 112px; grid-template-columns: minmax(0, 1fr) minmax(112px, auto); gap: 6px; margin-top: 8px; padding: 6px 8px; }
+      .operations-summary { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+      .operations-state span { display: none; }
+      .operations-next { min-width: 112px; padding-left: 7px; }
+      .operations-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .operations-button { justify-content: center; padding: 6px; }
+      .operations-attention { min-width: 0; max-width: 170px; }
+      .operations-attention .attention-action, .operations-attention .attention-clear { max-width: 170px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .operations-panel { width: 100%; max-width: none; max-height: 88dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; }
+      .operations-panel-inner { max-height: 88dvh; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+      .operations-panel-content { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+      .routine-facts, .source-links, .agenda-grid { grid-template-columns: 1fr; }
       .source-links { grid-template-columns: 1fr; }
       .filter-panel { width: 100%; max-width: none; max-height: 85dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; }
       .filter-panel::backdrop { background: rgba(8, 14, 15, .58); }
@@ -1090,6 +1192,12 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       #modal .modal-image { min-height: 0; }
       #modal .modal-image img { max-height: 58dvh; }
       #modal .modal-side { min-height: 0; overflow: auto; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+      #mediaModal { width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; }
+      .media-modal-grid { height: 100%; max-height: 100dvh; grid-template-columns: 1fr; grid-template-rows: minmax(42dvh, 62dvh) minmax(0, 1fr); }
+      .media-modal-stage { min-height: 0; }
+      .media-modal-stage img, .media-modal-stage video { max-height: 62dvh; }
+      .media-modal-side { min-height: 0; overflow: auto; border-left: 0; border-top: 1px solid var(--line); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+      .insertion-overview { grid-template-columns: minmax(102px, 124px) minmax(0, 1fr); }
       .thumbs { grid-auto-columns: minmax(132px, 46%); }
     }
     @media (max-width: 430px) {
@@ -1100,6 +1208,15 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       #modal .modal-image img { max-height: 46dvh; }
       .modal-navigation { position: sticky; top: 0; z-index: 2; margin-top: 0; padding: 4px 0; background: var(--panel); }
       .modal-days { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+      .insertion-overview { grid-template-columns: 1fr; }
+      .media-preview { min-height: 112px; }
+      .media-preview img, .media-preview video { max-height: 140px; }
+      .insertion-actions { grid-template-columns: 1fr; }
+      .campaign-summary { min-width: 0; }
+      .evidence-heading { align-items: flex-start; flex-direction: column; }
+      .operations-buttons { grid-template-columns: repeat(3, 44px); justify-content: start; }
+      .operations-button { width: 44px; min-width: 44px; justify-content: center; padding: 6px; }
+      .operations-button span { display: none; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
   </style>
@@ -1158,34 +1275,55 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       </div>
     </div>
   </header>
-  <section class="wrap daily-panel" aria-labelledby="dailyRoutineTitle">
-    <article class="daily-card">
-      <div class="routine-top">
-        <div>
-          <span class="routine-eyebrow">Rotina diária · ${escapeHtml(dailyPrintStatus?.lastAttempt?.targetDate ? datePt(dailyPrintStatus.lastAttempt.targetDate) : "sem histórico")}</span>
-          <h2 id="dailyRoutineTitle">${escapeHtml(currentAttentionCount === 0 ? "Campanhas publicadas conferidas" : `${currentAttentionCount} ${currentAttentionCount === 1 ? "campanha precisa" : "campanhas precisam"} de atenção`)}</h2>
-          <p class="routine-summary">${escapeHtml(routineSummary)}</p>
-        </div>
-        <div class="routine-next"><span>Próxima captura automática</span><strong><time id="dailyCountdown" data-next-run="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}" datetime="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}">calculando</time></strong></div>
-      </div>
-      <div class="attention-actions" aria-label="Atalhos para campanhas que precisam de atenção">${attentionActions}</div>
-      <details class="routine-details"><summary>Ver horários e histórico da rotina</summary><dl>
-        <dt>Situação registrada</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.status === "completed" ? "Concluída" : dailyPrintStatus?.lastAttempt?.status === "partial" ? "Parcial" : dailyPrintStatus?.lastAttempt?.status === "running" ? "Em execução" : dailyPrintStatus?.lastAttempt?.status === "queued" ? "Na fila" : dailyPrintStatus?.lastAttempt ? "Falhou" : "Sem histórico")}</dd>
-        <dt>Início e fim</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dateTimePt(dailyPrintStatus.lastAttempt.startedAt)} → ${dateTimePt(dailyPrintStatus.lastAttempt.finishedAt)}` : "—")}</dd>
-        <dt>Resultado original</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.approved}/${dailyPrintStatus.lastAttempt.expected} aprovadas · ${dailyPrintStatus.lastAttempt.missing} ausentes · ${dailyPrintStatus.lastAttempt.invalid} inválidas` : "—")}</dd>
-        <dt>Último dia completo</dt><dd>${escapeHtml(dailyPrintStatus?.lastFullyApproved?.targetDate ? datePt(dailyPrintStatus.lastFullyApproved.targetDate) : "Ainda não registrado no histórico compacto")}</dd>
-        <dt>Job</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.jobId || "—")}</dd>
-      </dl></details>
-    </article>
-    <aside class="source-card" aria-labelledby="sourceTitle">
-      <h2 id="sourceTitle">Acessar fontes</h2>
-      <p>Abra a planilha do mês ou a pasta usada para validar as mídias.</p>
-      <div class="source-links">
-        <a class="source-link sheet-source" href="${escapeHtml(currentSheetUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Planilha — aba ${escapeHtml(currentSheetName)} em nova guia"><span class="source-icon">${icon("sheet")}</span><span class="source-copy"><strong>Planilha — aba ${escapeHtml(currentSheetName)}</strong><span>Abrir aba ${escapeHtml(currentSheetName)}</span></span></a>
-        <a class="source-link drive-source" href="${escapeHtml(driveMediaUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Pasta de mídias no Google Drive em nova guia"><span class="source-icon">${icon("drive")}</span><span class="source-copy"><strong>Pasta de mídias no Google Drive</strong><span>Abrir pasta compartilhada</span></span></a>
-      </div>
-    </aside>
+  <section class="operations-bar" aria-label="Resumo operacional">
+    <div class="operations-summary">
+      <div class="operations-state"><strong>${escapeHtml(currentAttentionCount === 0 ? "Campanhas publicadas conferidas" : `${currentAttentionCount} ${currentAttentionCount === 1 ? "campanha precisa" : "campanhas precisam"} de atenção`)}</strong><span>Rotina diária de ${escapeHtml(dailyPrintStatus?.lastAttempt?.targetDate ? datePt(dailyPrintStatus.lastAttempt.targetDate) : "data ainda não registrada")}</span></div>
+      <div class="operations-next"><span>Próxima captura</span><strong><time id="dailyCountdown" data-next-run="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}" datetime="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}">calculando</time></strong></div>
+    </div>
+    <div class="operations-buttons" aria-label="Detalhes operacionais">
+      <button class="operations-button" type="button" data-operations-section="routine" aria-label="Abrir rotina diária" aria-controls="operationsPanel" aria-expanded="false">${icon("clock")}<span>Rotina</span></button>
+      <button class="operations-button" type="button" data-operations-section="sources" aria-label="Abrir fontes operacionais" aria-controls="operationsPanel" aria-expanded="false">${icon("sheet")}<span>Fontes</span></button>
+      <button class="operations-button" type="button" data-operations-section="agenda" aria-label="Abrir agenda de campanhas" aria-controls="operationsPanel" aria-expanded="false">${icon("calendar")}<span>Agenda</span></button>
+    </div>
+    <div class="attention-actions operations-attention" aria-label="Atalho para campanhas que precisam de atenção">${compactAttentionAction}</div>
   </section>
+  <dialog class="operations-panel" id="operationsPanel" aria-labelledby="operationsPanelTitle">
+    <div class="operations-panel-inner">
+      <div class="operations-panel-head"><h2 id="operationsPanelTitle">Operação AdOps</h2><button class="operations-panel-close" type="button" id="operationsPanelClose">Fechar</button></div>
+      <nav class="operations-panel-nav" aria-label="Seções operacionais">
+        <button type="button" data-panel-section="routine" aria-pressed="true">Rotina</button>
+        <button type="button" data-panel-section="sources" aria-pressed="false">Fontes</button>
+        <button type="button" data-panel-section="agenda" aria-pressed="false">Agenda</button>
+      </nav>
+      <div class="operations-panel-content">
+        <section class="operations-section" data-operations-content="routine">
+          <h3>Rotina diária</h3><p>${escapeHtml(routineSummary)}</p>
+          <div class="attention-actions" aria-label="Campanhas que precisam de atenção">${attentionActions}</div>
+          <dl class="routine-facts">
+            <dt>Situação registrada</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.status === "completed" ? "Concluída" : dailyPrintStatus?.lastAttempt?.status === "partial" ? "Parcial" : dailyPrintStatus?.lastAttempt?.status === "running" ? "Em execução" : dailyPrintStatus?.lastAttempt?.status === "queued" ? "Na fila" : dailyPrintStatus?.lastAttempt ? "Falhou" : "Sem histórico")}</dd>
+            <dt>Início e fim</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dateTimePt(dailyPrintStatus.lastAttempt.startedAt)} → ${dateTimePt(dailyPrintStatus.lastAttempt.finishedAt)}` : "—")}</dd>
+            <dt>Resultado original</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.approved} de ${dailyPrintStatus.lastAttempt.expected} campanhas aprovadas · ${dailyPrintStatus.lastAttempt.missing} ausentes · ${dailyPrintStatus.lastAttempt.invalid} inválidas` : "—")}</dd>
+            <dt>Último dia completo</dt><dd>${escapeHtml(dailyPrintStatus?.lastFullyApproved?.targetDate ? datePt(dailyPrintStatus.lastFullyApproved.targetDate) : "Ainda não registrado no histórico compacto")}</dd>
+            <dt>Job</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.jobId || "—")}</dd>
+          </dl>
+        </section>
+        <section class="operations-section" data-operations-content="sources" hidden>
+          <h3>Fontes operacionais</h3><p>Abra diretamente a planilha do mês ou a pasta usada para validar as mídias.</p>
+          <div class="source-links">
+            <a class="source-link sheet-source" href="${escapeHtml(currentSheetUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Planilha — aba ${escapeHtml(currentSheetName)} em nova guia"><span class="source-icon">${icon("sheet")}</span><span class="source-copy"><strong>Planilha — aba ${escapeHtml(currentSheetName)}</strong><span>Abrir aba ${escapeHtml(currentSheetName)}</span></span></a>
+            <a class="source-link drive-source" href="${escapeHtml(driveMediaUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Pasta de mídias no Google Drive em nova guia"><span class="source-icon">${icon("drive")}</span><span class="source-copy"><strong>Pasta de mídias no Google Drive</strong><span>Abrir pasta compartilhada</span></span></a>
+          </div>
+        </section>
+        <section class="operations-section" data-operations-content="agenda" hidden>
+          <h3>Agenda dos próximos sete dias</h3>
+          <div class="agenda-grid">
+            <article class="agenda-block"><h4>Próximas a entrar no ar</h4>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.")}</article>
+            <article class="agenda-block"><h4>Próximas a vencer</h4>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
+          </div>
+        </section>
+      </div>
+    </div>
+  </dialog>
   <dialog class="filter-panel" id="filterPanel" aria-labelledby="filterPanelTitle">
     <div class="filter-panel-inner">
       <div class="filter-panel-head"><h2 id="filterPanelTitle">Filtrar campanhas</h2><button class="filter-close" type="button" id="filterClose">Fechar</button></div>
@@ -1199,10 +1337,6 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     </div>
   </dialog>
   <main class="wrap" id="mainContent" tabindex="-1">
-    <section class="forecast" aria-label="Previsão dos próximos sete dias">
-      <article><h2>Próximas a entrar no ar</h2>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.")}</article>
-      <article><h2>Próximas a vencer</h2>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
-    </section>
     ${portals.map(renderPortal).join("") || '<section class="portal"><div class="portal-head"><h2>Sem inserções ativas ou agendadas</h2></div></section>'}
     <p class="empty-results" id="emptyResults" role="status" hidden>Nenhuma campanha encontrada.</p>
   </main>
@@ -1214,10 +1348,24 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       <aside class="modal-side">
         <h2 id="modalTitle">Evidência</h2>
         <span class="modal-date" id="modalDate" aria-live="polite"></span>
-        <div class="modal-navigation"><button class="modal-nav" type="button" id="modalPrevious">Data anterior</button><button class="modal-nav" type="button" id="modalNext">Próxima data</button></div>
+        <div class="modal-navigation"><button class="modal-nav" type="button" id="modalPrevious">Dia anterior</button><button class="modal-nav" type="button" id="modalNext">Dia seguinte</button></div>
         <div class="modal-days" id="modalDays"></div>
         <details class="modal-details"><summary>Detalhes da evidência</summary><dl id="modalMeta"></dl></details>
         <div class="links" id="modalLinks"></div>
+      </aside>
+    </div>
+  </dialog>
+  <dialog id="mediaModal" aria-labelledby="mediaModalTitle">
+    <button class="modal-close" type="button" id="mediaModalClose">Fechar</button>
+    <div class="media-modal-grid">
+      <div class="media-modal-stage">
+        <img id="mediaModalImage" alt="Mídia ampliada" hidden>
+        <video id="mediaModalVideo" controls playsinline preload="metadata" hidden></video>
+      </div>
+      <aside class="media-modal-side">
+        <h2 id="mediaModalTitle">Mídia da campanha</h2>
+        <p id="mediaModalMeta"></p>
+        <a class="icon-link" id="mediaModalOriginal" target="_blank" rel="noreferrer">Abrir arquivo original</a>
       </aside>
     </div>
   </dialog>
@@ -1246,25 +1394,27 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     const previous = document.getElementById('modalPrevious');
     const next = document.getElementById('modalNext');
     let currentItem = null;
+    let currentEvidenceDays = [];
     let currentDayIndex = -1;
     let lastModalTrigger = null;
     const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const iconLink = (href, label) => href ? '<a class="icon-link" target="_blank" rel="noreferrer" href="' + esc(href) + '">' + esc(label) + '</a>' : '';
     const renderModal = (item, requestedDate) => {
         currentItem = item;
-        const requestedIndex = item.evidenceDays.findIndex((entry) => entry.date === requestedDate);
-        const firstWithUrl = item.evidenceDays.findIndex((entry) => entry.url);
+        currentEvidenceDays = [...(item.evidenceDays || [])].sort((left, right) => String(right.date).localeCompare(String(left.date)));
+        const requestedIndex = currentEvidenceDays.findIndex((entry) => entry.date === requestedDate);
+        const firstWithUrl = currentEvidenceDays.findIndex((entry) => entry.url);
         currentDayIndex = requestedIndex >= 0 ? requestedIndex : firstWithUrl >= 0 ? firstWithUrl : 0;
-        const day = item.evidenceDays[currentDayIndex] || null;
+        const day = currentEvidenceDays[currentDayIndex] || null;
         modalImg.src = day?.url || '';
         modalImg.alt = day?.url
           ? 'Evidência de ' + item.campanhaName + ' no portal ' + item.siteSigla + ' em ' + day.date
           : 'Sem imagem de evidência para esta data';
         modalTitle.textContent = '#' + item.id + ' · ' + item.campanhaName;
         modalDate.textContent = day?.date ? 'Data selecionada: ' + day.date.split('-').reverse().join('/') : 'Sem data disponível';
-        previous.disabled = currentDayIndex <= 0;
-        next.disabled = currentDayIndex < 0 || currentDayIndex >= item.evidenceDays.length - 1;
-        modalDays.innerHTML = item.evidenceDays.map((entry, index) => '<button type="button" class="day-dot ' + esc(entry.status) + (index === currentDayIndex ? ' current' : '') + '" data-modal-date="' + esc(entry.date) + '" title="' + esc(entry.statusDetail || entry.status) + '" aria-label="Abrir evidência de ' + esc(entry.date) + '"' + (index === currentDayIndex ? ' aria-current="date"' : '') + '>' + esc(entry.date.slice(8, 10)) + '</button>').join('');
+        previous.disabled = currentDayIndex < 0 || currentDayIndex >= currentEvidenceDays.length - 1;
+        next.disabled = currentDayIndex <= 0;
+        modalDays.innerHTML = currentEvidenceDays.map((entry, index) => '<button type="button" class="day-dot ' + esc(entry.status) + (index === currentDayIndex ? ' current' : '') + '" data-modal-date="' + esc(entry.date) + '" title="' + esc(entry.statusDetail || entry.status) + '" aria-label="Abrir evidência de ' + esc(entry.date) + '"' + (index === currentDayIndex ? ' aria-current="date"' : '') + '>' + esc(entry.date.slice(8, 10)) + '</button>').join('');
         modalDays.querySelectorAll('[data-modal-date]').forEach((dayButton) => dayButton.addEventListener('click', () => renderModal(item, dayButton.dataset.modalDate)));
         modalMeta.innerHTML = [
           ['Portal', item.siteSigla],
@@ -1273,7 +1423,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           ['PI', item.piCodigo],
           ['Formato', item.localFormatoNormalizado || item.localFormato],
           ['Período', item.periodoInicio + ' a ' + item.periodoFim],
-          ['Evidências', item.auditedDays + '/' + item.requiredDays.length],
+          ['Evidências', item.auditedDays + ' de ' + item.requiredDays.length + ' prints aprovados'],
           ['Status', item.statusDetail],
           ['ZIP por PI', item.commercialExportBlocker || 'disponível após auditoria'],
           ['Pendentes', item.missingDates.length ? item.missingDates.join(', ') : '-'],
@@ -1281,13 +1431,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           ['Grupo', item.adrotateGroupId || '-']
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
-          iconLink(day?.downloadUrl, 'baixar JPEG'),
-          iconLink(item.completeCampaignDownloadUrl, 'baixar todos os prints'),
+          iconLink(day?.downloadUrl, 'Baixar JPEG'),
+          iconLink(item.completeCampaignDownloadUrl, 'Baixar todos os prints'),
           iconLink(item.batchDownloadUrl, 'ZIP deste portal'),
-          iconLink(item.portalUrl, 'portal'),
-          iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'adrotate ad' : 'adrotate grupo'),
-          iconLink(item.mediaUrl, 'mídia'),
-          iconLink('${adopsPanelBase}/insercoes/' + item.id, 'adops')
+          iconLink(item.portalUrl, 'Abrir portal'),
+          iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'Ver anúncio' : 'Ver grupo do anúncio'),
+          iconLink(item.mediaUrl, 'Abrir mídia'),
+          iconLink('${adopsPanelBase}/insercoes/' + item.id, 'Abrir no AdOps')
         ].join('');
     };
     document.querySelectorAll('.thumb, .day-card, .thumb-empty').forEach((button) => {
@@ -1298,11 +1448,74 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         modal.showModal();
       });
     });
-    previous.addEventListener('click', () => currentItem && currentDayIndex > 0 && renderModal(currentItem, currentItem.evidenceDays[currentDayIndex - 1].date));
-    next.addEventListener('click', () => currentItem && currentDayIndex < currentItem.evidenceDays.length - 1 && renderModal(currentItem, currentItem.evidenceDays[currentDayIndex + 1].date));
+    previous.addEventListener('click', () => currentItem && currentDayIndex < currentEvidenceDays.length - 1 && renderModal(currentItem, currentEvidenceDays[currentDayIndex + 1].date));
+    next.addEventListener('click', () => currentItem && currentDayIndex > 0 && renderModal(currentItem, currentEvidenceDays[currentDayIndex - 1].date));
     close.addEventListener('click', () => modal.close());
     modal.addEventListener('click', (event) => { if (event.target === modal) modal.close(); });
     modal.addEventListener('close', () => lastModalTrigger?.focus());
+    const mediaModal = document.getElementById('mediaModal');
+    const mediaModalImage = document.getElementById('mediaModalImage');
+    const mediaModalVideo = document.getElementById('mediaModalVideo');
+    const mediaModalTitle = document.getElementById('mediaModalTitle');
+    const mediaModalMeta = document.getElementById('mediaModalMeta');
+    const mediaModalOriginal = document.getElementById('mediaModalOriginal');
+    const mediaModalClose = document.getElementById('mediaModalClose');
+    let lastMediaTrigger = null;
+    const openMediaModal = (button) => {
+      const item = data[button.dataset.mediaModalId];
+      if (!item?.mediaUrl) return;
+      lastMediaTrigger = button;
+      const isVideo = String(item.mediaUrl).split(/[?#]/, 1)[0].toLowerCase().endsWith('.mp4');
+      mediaModalTitle.textContent = item.campanhaName + ' · Inserção #' + item.id;
+      mediaModalMeta.textContent = (item.siteSigla || 'Portal não informado') + ' · ' + (item.localFormatoNormalizado || item.localFormato || 'Formato não informado');
+      mediaModalOriginal.href = item.mediaUrl;
+      mediaModalImage.hidden = isVideo;
+      mediaModalVideo.hidden = !isVideo;
+      if (isVideo) {
+        mediaModalImage.removeAttribute('src');
+        mediaModalVideo.src = item.mediaUrl;
+      } else {
+        mediaModalVideo.pause();
+        mediaModalVideo.removeAttribute('src');
+        mediaModalImage.src = item.mediaUrl;
+        mediaModalImage.alt = 'Mídia de ' + item.campanhaName + ', inserção ' + item.id;
+      }
+      mediaModal.showModal();
+      mediaModalClose.focus();
+    };
+    document.querySelectorAll('.media-open').forEach((button) => button.addEventListener('click', () => openMediaModal(button)));
+    mediaModalClose.addEventListener('click', () => mediaModal.close());
+    mediaModal.addEventListener('click', (event) => { if (event.target === mediaModal) mediaModal.close(); });
+    mediaModal.addEventListener('close', () => {
+      mediaModalVideo.pause();
+      mediaModalVideo.removeAttribute('src');
+      mediaModalImage.removeAttribute('src');
+      lastMediaTrigger?.focus();
+    });
+    const operationsPanel = document.getElementById('operationsPanel');
+    const operationsPanelClose = document.getElementById('operationsPanelClose');
+    const operationsTriggers = [...document.querySelectorAll('[data-operations-section]')];
+    const operationsTabs = [...document.querySelectorAll('[data-panel-section]')];
+    const operationsContents = [...document.querySelectorAll('[data-operations-content]')];
+    let lastOperationsTrigger = null;
+    const selectOperationsSection = (section) => {
+      operationsTabs.forEach((tab) => tab.setAttribute('aria-pressed', String(tab.dataset.panelSection === section)));
+      operationsContents.forEach((content) => { content.hidden = content.dataset.operationsContent !== section; });
+    };
+    operationsTriggers.forEach((button) => button.addEventListener('click', () => {
+      lastOperationsTrigger = button;
+      selectOperationsSection(button.dataset.operationsSection);
+      operationsTriggers.forEach((trigger) => trigger.setAttribute('aria-expanded', String(trigger === button)));
+      operationsPanel.showModal();
+      operationsTabs.find((tab) => tab.dataset.panelSection === button.dataset.operationsSection)?.focus();
+    }));
+    operationsTabs.forEach((tab) => tab.addEventListener('click', () => selectOperationsSection(tab.dataset.panelSection)));
+    operationsPanelClose.addEventListener('click', () => operationsPanel.close());
+    operationsPanel.addEventListener('click', (event) => { if (event.target === operationsPanel) operationsPanel.close(); });
+    operationsPanel.addEventListener('close', () => {
+      operationsTriggers.forEach((trigger) => trigger.setAttribute('aria-expanded', 'false'));
+      lastOperationsTrigger?.focus();
+    });
     const params = new URLSearchParams(window.location.search);
     const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending', 'ended']);
     const validEvidenceStates = new Set(['all', 'complete', 'missing', 'retroactive_missing', 'invalid']);
@@ -1411,6 +1624,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         evidenceFilter.value = activeEvidence;
         evidenceFilterDesktop.value = activeEvidence;
         applyFilters();
+        if (operationsPanel.open) operationsPanel.close();
         const mainContent = document.getElementById('mainContent');
         mainContent.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
         mainContent.focus({ preventScroll: true });

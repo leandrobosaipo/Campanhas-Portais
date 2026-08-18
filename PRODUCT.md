@@ -32,6 +32,11 @@ Clara, confiável e operacional. O tom é profissional e direto, com linguagem s
 - Separar histórico da rotina e situação atual das evidências.
 - Usar densidade média no desktop e divulgação progressiva no celular.
 - Fazer cada controle dizer claramente o que será aberto ou alterado.
+- Manter rotina, fontes e agenda em uma faixa compacta; os detalhes ficam em um único painel acessível.
+- Mostrar a mídia correspondente a cada inserção e formato, nunca uma peça genérica da campanha.
+- Apresentar os prints do mais recente para o mais antigo sem alterar a ordem canônica dos dados.
+- Escrever quantidades como frases completas, sem abreviações operacionais isoladas.
+- Preservar a rolagem horizontal somente na faixa de prints, com o print mais recente já visível.
 
 ## Accessibility & Inclusion
 

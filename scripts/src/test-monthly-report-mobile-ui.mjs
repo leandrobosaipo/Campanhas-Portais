@@ -36,6 +36,7 @@ const insertion = {
   piCodigo: "PI - TCE",
   localFormato: "HOME 1",
   localFormatoNormalizado: "HOME 1",
+  mediaUrl: "https://cdn.example/radar.gif",
   periodoInicio: "2026-08-12",
   periodoFim: "2026-08-25",
   requiredDays: ["2026-08-12", "2026-08-13"],
@@ -127,6 +128,38 @@ function mixedHtml() {
       lastAttempt: { jobId: "job-1", targetDate: "2026-08-17", status: "partial", startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z", expected: 16, approved: 14, missing: 2, invalid: 0, summary: "14 de 16 campanhas tiveram o print aprovado; duas precisam de nova tentativa." },
       lastFullyApproved: { targetDate: "2026-08-16", finishedAt: "2026-08-16T22:10:00.000Z" },
     },
+  });
+}
+
+function mediaVariantsHtml() {
+  const videoInsertion = {
+    ...insertion,
+    id: 1945,
+    modalId: "ins-1945",
+    localFormato: "VIDEO",
+    localFormatoNormalizado: "VIDEO",
+    mediaUrl: "https://cdn.example/radar.mp4",
+  };
+  const missingMediaInsertion = {
+    ...insertion,
+    id: 1946,
+    modalId: "ins-1946",
+    localFormato: "LATERAL 02",
+    localFormatoNormalizado: "LATERAL 02",
+    mediaUrl: "",
+  };
+  const items = [insertion, videoInsertion, missingMediaInsertion];
+  return renderHtml({
+    insertions: items,
+    portals: [{
+      ...portal,
+      stats: { active: 3, scheduled: 0, ended: 0, ok: 3, pending: 0, invalid: 0, not_published: 0, evidences: 6 },
+      campaigns: [{ ...portal.campaigns[0], items }],
+    }],
+    audits: {},
+    summary: { total: 3, active: 3, scheduled: 0, ended: 0, ok: 3, pending: 0, invalid: 0, notPublished: 0, auditedDays: 6 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
   });
 }
 
@@ -233,4 +266,85 @@ test("mostra a rotina diária, contador acessível e fontes operacionais", () =>
   assert.match(output, /<svg[^>]+aria-hidden="true"/);
   assert.match(output, /Abrir aba AGOSTO 2026/);
   assert.match(output, /Abrir pasta compartilhada/);
+});
+
+test("mostra primeiro o print mais recente sem alterar a ordem canônica dos dados", () => {
+  const originalDates = insertion.evidenceDays.map((day) => day.date);
+  const output = html();
+  const firstEvidence = output.indexOf('data-date="2026-08-13"');
+  const olderEvidence = output.indexOf('data-date="2026-08-12"');
+  assert.ok(firstEvidence >= 0 && firstEvidence < olderEvidence, "a evidência mais recente deve ser a primeira miniatura");
+  assert.match(output, /data-date="2026-08-13"[\s\S]*?Mais recente/);
+  assert.deepEqual(insertion.evidenceDays.map((day) => day.date), originalDates, "renderização não deve reordenar data.json");
+});
+
+test("renderiza a mídia correta por inserção e abre um modal independente", () => {
+  const output = mediaVariantsHtml();
+  assert.match(output, /class="media-preview[^\"]*"[\s\S]*?<img[^>]+src="https:\/\/cdn\.example\/radar\.gif"/);
+  assert.match(output, /class="media-preview[^\"]*"[\s\S]*?<video[^>]+preload="metadata"[^>]*>[\s\S]*?radar\.mp4/);
+  assert.match(output, /Mídia ainda não disponível/);
+  assert.match(output, /<dialog[^>]+id="mediaModal"/);
+  assert.match(output, /id="mediaModalImage"/);
+  assert.match(output, /id="mediaModalVideo"/);
+  assert.match(output, /mediaModal\.addEventListener\('close',[\s\S]*?focus\(\)/);
+});
+
+test("bloqueia protocolo inseguro na mídia do card e do modal", () => {
+  const unsafeInsertion = { ...insertion, mediaUrl: "javascript:alert(document.domain)" };
+  const output = renderHtml({
+    insertions: [unsafeInsertion],
+    portals: [{ ...portal, campaigns: [{ ...portal.campaigns[0], items: [unsafeInsertion] }] }],
+    audits: {},
+    summary: { total: 1, active: 1, scheduled: 0, ended: 0, ok: 1, pending: 0, invalid: 0, notPublished: 0, auditedDays: 2 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+  });
+  assert.doesNotMatch(output, /javascript:alert/);
+  assert.match(output, /Mídia ainda não disponível/);
+  const insecureHttpInsertion = { ...insertion, mediaUrl: "http://cdn.example/radar.gif" };
+  const httpOutput = renderHtml({
+    insertions: [insecureHttpInsertion],
+    portals: [{ ...portal, campaigns: [{ ...portal.campaigns[0], items: [insecureHttpInsertion] }] }],
+    audits: {},
+    summary: { total: 1, active: 1, scheduled: 0, ended: 0, ok: 1, pending: 0, invalid: 0, notPublished: 0, auditedDays: 2 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+  });
+  assert.doesNotMatch(httpOutput, /http:\/\/cdn\.example\/radar\.gif/);
+});
+
+test("condensa rotina, fontes e agenda em uma única faixa e um único painel", () => {
+  const output = html();
+  assert.match(output, /class="operations-bar"/);
+  assert.match(output, /data-operations-section="routine"/);
+  assert.match(output, /data-operations-section="sources"/);
+  assert.match(output, /data-operations-section="agenda"/);
+  assert.match(output, /<dialog[^>]+id="operationsPanel"/);
+  assert.equal((output.match(/<dialog[^>]+id="operationsPanel"/g) || []).length, 1);
+  assert.doesNotMatch(output, /class="wrap daily-panel"/);
+  assert.doesNotMatch(output, /<section class="forecast"/);
+  assert.match(output, /\.operations-bar\s*\{[^}]*height:\s*64px[^}]*max-height:\s*72px/s);
+  assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*?\.operations-bar\s*\{[^}]*max-height:\s*112px/s);
+  assert.match(output, /class="attention-actions operations-attention"/);
+  assert.match(output, /@media \(max-width:\s*430px\)[\s\S]*?\.operations-buttons\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*44px\)/s);
+  assert.match(output, /@media \(max-width:\s*430px\)[\s\S]*?\.operations-button span\s*\{[^}]*display:\s*none/s);
+  assert.match(output, /data-operations-section="routine"[^>]+aria-label="Abrir rotina diária"/);
+});
+
+test("explica os números dos cards sem abreviações operacionais", () => {
+  const output = html();
+  assert.match(output, /1 inserção/);
+  assert.match(output, /2 de 2 prints aprovados/);
+  assert.match(output, /Abrir portal/);
+  assert.match(output, /Ver anúncio/);
+  assert.match(output, /Ver mídia/);
+  assert.match(output, /Abrir no AdOps/);
+  assert.doesNotMatch(output, />ins\.</);
+  assert.doesNotMatch(output, />pend\.</);
+  assert.doesNotMatch(output, />s\/pub</);
+  assert.doesNotMatch(output, />evid\.</);
+  assert.doesNotMatch(output, />\d+\/\d+[^<]*aprovad/);
+  assert.doesNotMatch(output, /item\.auditedDays\s*\+\s*['"]\/['"]/);
+  assert.match(output, /item\.auditedDays \+ ' de ' \+ item\.requiredDays\.length \+ ' prints aprovados'/);
+  assert.match(output, /\.metric-details summary\s*\{[^}]*min-height:\s*44px/s);
 });
