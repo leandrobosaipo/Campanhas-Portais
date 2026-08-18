@@ -1086,7 +1086,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       .filter-panel .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
       .filter-panel .filter { width: 100%; }
       #modal { width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; }
-      #modal .modal-grid { max-height: 100dvh; height: 100%; grid-template-rows: minmax(38dvh, 58dvh) minmax(0, 1fr); }
+      #modal .modal-grid { max-height: 100dvh; height: 100%; grid-template-columns: 1fr; grid-template-rows: minmax(38dvh, 58dvh) minmax(0, 1fr); }
       #modal .modal-image { min-height: 0; }
       #modal .modal-image img { max-height: 58dvh; }
       #modal .modal-side { min-height: 0; overflow: auto; padding-bottom: max(16px, env(safe-area-inset-bottom)); }

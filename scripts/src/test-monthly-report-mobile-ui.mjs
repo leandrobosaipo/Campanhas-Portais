@@ -197,6 +197,7 @@ test("visualizador móvel navega por data sem IDs duplicados", () => {
   assert.match(output, /id="modalNext"/);
   assert.match(output, /id="modalDate"/);
   assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*#modal\s*\{[^}]*height:\s*100dvh/s);
+  assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*#modal \.modal-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(output, /@media \(max-width:\s*1024px\)[\s\S]*#modal/s);
   assert.match(output, /<details class="modal-details"><summary>/);
 });
