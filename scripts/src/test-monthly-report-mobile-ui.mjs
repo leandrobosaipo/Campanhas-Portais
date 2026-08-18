@@ -107,12 +107,56 @@ function nonPublishedHtml() {
   });
 }
 
+function mixedHtml() {
+  return renderHtml({
+    insertions: [insertion, nonPublishedInsertion],
+    portals: [{
+      ...portal,
+      stats: { active: 2, scheduled: 0, ok: 1, pending: 0, invalid: 0, not_published: 1, evidences: 2 },
+      campaigns: [
+        portal.campaigns[0],
+        { name: "CRIME AMBIENTAL", pi: "PI 17046 - GOV", cliente: "Governo", agencia: "ZF", items: [nonPublishedInsertion] },
+      ],
+    }],
+    audits: {},
+    summary: { total: 2, active: 2, scheduled: 0, ended: 0, ok: 1, pending: 0, invalid: 0, notPublished: 1, auditedDays: 2 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+    dailyPrintStatus: {
+      timeZone: "America/Cuiaba", schedule: "18:00", nextRunAt: "2026-08-18T22:00:00.000Z",
+      lastAttempt: { jobId: "job-1", targetDate: "2026-08-17", status: "partial", startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z", expected: 16, approved: 14, missing: 2, invalid: 0, summary: "14 de 16 campanhas tiveram o print aprovado; duas precisam de nova tentativa." },
+      lastFullyApproved: { targetDate: "2026-08-16", finishedAt: "2026-08-16T22:10:00.000Z" },
+    },
+  });
+}
+
 test("mantém somente uma barra móvel compacta e abre filtros em dialog acessível", () => {
   const output = html();
   assert.match(output, /id="filterToggle"[^>]+aria-controls="filterPanel"[^>]+aria-expanded="false"/);
   assert.match(output, /<dialog[^>]+id="filterPanel"/);
   assert.match(output, /\.mobile-toolbar\s*\{[^}]*position:\s*sticky[^}]*min-height:\s*56px/s);
   assert.doesNotMatch(output, /header\s*\{[^}]*position:\s*sticky/s);
+  assert.ok(output.indexOf('class="mobile-toolbar"') < output.indexOf("<header>"), "filtro móvel deve aparecer antes do cabeçalho");
+  assert.match(output, /id="filterToggle"[^>]*>[\s\S]*?Filtrar campanhas[\s\S]*?<\/button>/);
+  assert.match(output, /id="filterActiveCount"[^>]+aria-hidden="true"/);
+});
+
+test("condensa o cabeçalho e separa métricas principais das secundárias", () => {
+  const output = html();
+  assert.match(output, /class="header-overview"/);
+  assert.match(output, /class="metric-details"/);
+  assert.doesNotMatch(output, /<section class="kpis">/);
+  assert.match(output, /\.topbar\s*\{[^}]*min-height:\s*64px/s);
+});
+
+test("traduz falha histórica e oferece atalho para a pendência atual", () => {
+  const output = mixedHtml();
+  assert.match(output, /2 prints precisaram de nova tentativa/);
+  assert.match(output, /campanhas publicadas estão em dia agora/);
+  assert.match(output, /1 campanha precisa de atenção/);
+  assert.match(output, /data-quick-publication="not_published"/);
+  assert.match(output, /data-quick-evidence="retroactive_missing"/);
+  assert.match(output, /Ver 1 campanha sem publicação/);
 });
 
 test("preserva filtros na URL e anuncia a quantidade de resultados", () => {
@@ -152,6 +196,8 @@ test("visualizador móvel navega por data sem IDs duplicados", () => {
   assert.match(output, /id="modalNext"/);
   assert.match(output, /id="modalDate"/);
   assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*#modal\s*\{[^}]*height:\s*100dvh/s);
+  assert.match(output, /@media \(max-width:\s*1024px\)[\s\S]*#modal/s);
+  assert.match(output, /<details class="modal-details"><summary>/);
 });
 
 test("JavaScript inline gerado permanece sintaticamente válido", async () => {
@@ -170,7 +216,9 @@ test("mostra a rotina diária, contador acessível e fontes operacionais", () =>
   assert.match(output, /Rotina diária/);
   assert.match(output, /Início e fim/);
   assert.match(output, /2 ausentes · 0 inválidas/);
-  assert.match(output, /14 de 16 campanhas tiveram o print aprovado/);
+  assert.match(output, /2 prints precisaram de nova tentativa/);
+  assert.match(output, /campanhas publicadas estão em dia agora/);
+  assert.doesNotMatch(output, /14 de 16 campanhas tiveram o print aprovado/);
   assert.match(output, /id="dailyCountdown"/);
   assert.match(output, /data-next-run="2026-08-18T22:00:00\.000Z"/);
   assert.match(output, /setInterval\([^,]+,\s*60000\)/s);
@@ -178,4 +226,9 @@ test("mostra a rotina diária, contador acessível e fontes operacionais", () =>
   assert.match(output, /docs\.google\.com\/spreadsheets\/d\/1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu\/edit#gid=971687922/);
   assert.match(output, /Pasta de mídias no Google Drive/);
   assert.match(output, /drive\.google\.com\/drive\/folders\/18kyuQLL-sbTc0qgP2Z8SCldDthKqKZV6/);
+  assert.match(output, /class="source-link sheet-source"/);
+  assert.match(output, /class="source-link drive-source"/);
+  assert.match(output, /<svg[^>]+aria-hidden="true"/);
+  assert.match(output, /Abrir aba AGOSTO 2026/);
+  assert.match(output, /Abrir pasta compartilhada/);
 });
