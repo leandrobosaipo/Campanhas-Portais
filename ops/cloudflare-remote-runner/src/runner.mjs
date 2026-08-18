@@ -254,27 +254,102 @@ async function privateApiGet(pathname) {
   return payload;
 }
 
+function httpDownloadBuffer(url, {
+  method = "GET",
+  headers = {},
+  body = undefined,
+  timeoutMs = 20 * 60_000,
+  maxBytes = ADOPS_MEDIA_MAX_BYTES,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === "http:" ? http : https;
+    const requestBody = body === undefined ? null : Buffer.from(body);
+    let settled = false;
+    let deadline = null;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      reject(error);
+    };
+    const succeed = (result) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      resolve(result);
+    };
+    const req = client.request({
+      method,
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "http:" ? 80 : 443),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: {
+        ...headers,
+        ...(requestBody ? { "content-length": String(requestBody.length) } : {}),
+      },
+    }, (response) => {
+      const declaredLength = Number(response.headers["content-length"] || 0);
+      if (declaredLength > maxBytes) {
+        const error = new Error(`Download excede o limite de ${maxBytes} bytes.`);
+        fail(error);
+        response.destroy(error);
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      response.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > maxBytes) {
+          const error = new Error(`Download excede o limite de ${maxBytes} bytes.`);
+          fail(error);
+          response.destroy(error);
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      });
+      response.on("error", fail);
+      response.on("end", () => succeed({
+        statusCode: response.statusCode || 0,
+        contentType: String(response.headers["content-type"] || "application/octet-stream").split(";", 1)[0],
+        buffer: Buffer.concat(chunks),
+      }));
+    });
+    const timeoutError = () => new Error(`Timeout após ${timeoutMs} ms no download da API privada.`);
+    deadline = setTimeout(() => {
+      const error = timeoutError();
+      fail(error);
+      req.destroy(error);
+    }, timeoutMs);
+    req.setTimeout(timeoutMs, () => {
+      const error = timeoutError();
+      fail(error);
+      req.destroy(error);
+    });
+    req.on("error", fail);
+    if (requestBody) req.write(requestBody);
+    req.end();
+  });
+}
+
 async function privateApiDownload(pathname, body = undefined) {
-  const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
+  const result = await httpDownloadBuffer(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
     method: body === undefined ? "GET" : "POST",
     headers: {
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok) {
-    const details = await response.text().catch(() => "");
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    const details = result.buffer.toString("utf8");
     throw new Error(details || `Falha na API privada ${pathname}`);
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = result.buffer;
   if (!buffer.length) throw new Error("A API privada concluiu o export sem conteúdo.");
-  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) {
-    throw new Error(`Artefato excede ADOPS_MEDIA_MAX_BYTES (${buffer.length} bytes).`);
-  }
   return {
     buffer,
-    contentType: String(response.headers.get("content-type") || "application/octet-stream").split(";", 1)[0],
+    contentType: result.contentType,
   };
 }
 
@@ -7369,6 +7444,7 @@ export {
   isCacheMaintenanceDegraded,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,
+  httpDownloadBuffer,
   mergeExpectedDrivePiContext,
   inspectOperationalImage,
   isRestrictedKvm8GatewaySite,
