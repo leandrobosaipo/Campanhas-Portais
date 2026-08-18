@@ -3,13 +3,13 @@
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
 > Última validação operacional completa: 2026-08-17
-> Última observação de disponibilidade: 2026-08-18 05:57 America/Cuiaba
-> Release validada antes da indisponibilidade: a499a399b822412cbd05d229003f857f9069d64a
+> Última observação de disponibilidade: 2026-08-18 06:18 America/Cuiaba
+> Release ativa validada: b78ddf4e07dacdb819e7cc6c71fd971ab31e6b59
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
 
-O código da recuperação corresponde ao commit `a499a399b822412cbd05d229003f857f9069d64a`. Em 18/08, depois da recuperação das evidências, o servidor ficou indisponível e os domínios privados responderam Cloudflare HTTP 530; o Worker público continuou acessível. O servidor voltou às 05:21 de Cuiabá. Às 05:57, API, Portainer, relatório, PostgreSQL e três runners estavam saudáveis. Os runners informaram a mesma versão operacional `a499a399a14e`.
+O código da recuperação inicial corresponde ao commit `a499a399b822412cbd05d229003f857f9069d64a`. Em 18/08, depois da recuperação das evidências, o servidor ficou indisponível e os domínios privados responderam Cloudflare HTTP 530; o Worker público continuou acessível. O servidor voltou às 05:21 de Cuiabá. Às 06:18, API, Portainer, relatório, PostgreSQL e três runners estavam saudáveis na release `b78ddf4e07dacdb819e7cc6c71fd971ab31e6b59`; os runners informaram a mesma versão operacional curta `b78ddf4e07da`.
 
 O endereço `100.126.99.28` foi confirmado por SSH como o host `codigo5-cloud`, com Docker e o container `codigo5-cloud-tunnel` ativos. Esse é o IP administrativo vigente; não deve ser confundido com uma URL pública do relatório.
 
@@ -77,6 +77,8 @@ As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer red
 O relatório mensal só pode substituir a versão pública depois de confirmar novamente zero datas ausentes ou inválidas entre as inserções publicadas canônicas. Em indisponibilidade do servidor ou falha desse gate, a versão pública anterior permanece intacta.
 
 Após o retorno do servidor, o job mensal `fac6a39f-c3ab-4312-b5dd-f9a3b0573ba2` foi executado uma única vez e terminou `completed` às 05:57 de Cuiabá. O relatório público passou a usar corte em 17/08, com 24 inserções canônicas, 219 datas auditadas e gate das campanhas publicadas em zero ausências e zero inválidas. A única data ainda ausente pertence à campanha não publicada `PI 57732 - ALMT`, PNMT, inserção `#2423`, bloqueada porque o Drive encontrou mais de uma pasta candidata.
+
+Depois do deploy `b78ddf4e07da`, o job mensal `d7a2855f-9425-43e6-8d3a-b0e83f81c7b9` terminou `completed` às 06:18 de Cuiabá. A página manteve o corte em 17/08 e os mesmos totais de campanha/evidência, mas passou a mostrar corretamente o inventário do Drive como `fresh`, com 470 itens. A API mensal publica apenas estado, horário, idade, vencimento e quantidade; IDs internos de varredura, pasta-raiz e erros brutos não são expostos.
 
 Regra aprendida: nomes detalhados de posição só podem ser equivalentes por pares exatos aprovados. Nunca usar `includes("TOPO")` ou `includes("VIDEO")`, pois isso pode selecionar outra posição. Redirect é opcional; quando ausente, o banner deve ser publicado sem link. Quando fornecido, continua obrigatório validar um único HTTPS público.
 
