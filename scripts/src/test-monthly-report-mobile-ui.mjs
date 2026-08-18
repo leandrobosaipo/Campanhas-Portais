@@ -155,7 +155,7 @@ test("traduz falha histórica e oferece atalho para a pendência atual", () => {
   assert.match(output, /campanhas publicadas estão em dia agora/);
   assert.match(output, /1 campanha precisa de atenção/);
   assert.match(output, /data-quick-publication="not_published"/);
-  assert.match(output, /data-quick-evidence="retroactive_missing"/);
+  assert.doesNotMatch(output, /data-quick-publication="not_published"[^>]+data-quick-evidence/);
   assert.match(output, /Ver 1 campanha sem publicação/);
 });
 
@@ -174,6 +174,7 @@ test("expõe filtros independentes de publicação e evidências retroativas", (
   assert.match(output, /value="not_published"[^>]*>Não publicadas</);
   assert.match(output, /for="evidenceFilter"[^>]*>Evidências</);
   assert.match(output, /id="evidenceFilter"/);
+  assert.match(output, /value="missing"[^>]*>Qualquer print pendente</);
   assert.match(output, /value="retroactive_missing"[^>]*>Retroativos pendentes</);
   assert.match(output, /params\.get\('publication'\)/);
   assert.match(output, /params\.get\('evidence'\)/);

@@ -167,8 +167,10 @@ export function buildCampaignFilterMetadata(campaign, targetDate) {
       && (item?.invalidDates || []).length === 0) {
       evidenceStates.add("complete");
     }
+    const missingDates = item?.missingDates || [];
     if ((item?.invalidDates || []).length > 0) evidenceStates.add("invalid");
-    if ((item?.missingDates || []).some((date) => typeof date === "string" && date < targetDate)) {
+    if (missingDates.length > 0) evidenceStates.add("missing");
+    if (missingDates.some((date) => typeof date === "string" && date < targetDate)) {
       evidenceStates.add("retroactive_missing");
     }
   }

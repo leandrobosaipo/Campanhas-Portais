@@ -865,13 +865,13 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     : dailyPrintStatus?.lastAttempt?.summary || "A rotina diária ainda não possui uma tentativa registrada.";
   const attentionActions = [
     Number(summary.pending || 0) > 0
-      ? `<button type="button" class="attention-action warn" data-quick-evidence="retroactive_missing">${icon("warn")}<span>Ver ${summary.pending} ${summary.pending === 1 ? "evidência pendente" : "evidências pendentes"}</span></button>`
+      ? `<button type="button" class="attention-action warn" data-quick-evidence="missing">${icon("warn")}<span>Ver ${summary.pending} ${summary.pending === 1 ? "campanha com print pendente" : "campanhas com prints pendentes"}</span></button>`
       : "",
     Number(summary.invalid || 0) > 0
       ? `<button type="button" class="attention-action bad" data-quick-evidence="invalid">${icon("warn")}<span>Ver ${summary.invalid} ${summary.invalid === 1 ? "evidência com erro" : "evidências com erro"}</span></button>`
       : "",
     Number(summary.notPublished || 0) > 0
-      ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published" data-quick-evidence="retroactive_missing">${icon("plugin")}<span>Ver ${summary.notPublished} ${summary.notPublished === 1 ? "campanha sem publicação" : "campanhas sem publicação"}</span></button>`
+      ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published">${icon("plugin")}<span>Ver ${summary.notPublished} ${summary.notPublished === 1 ? "campanha sem publicação" : "campanhas sem publicação"}</span></button>`
       : "",
   ].filter(Boolean).join("") || `<span class="attention-clear">${icon("ok")} Campanhas publicadas em dia</span>`;
   return `<!doctype html>
@@ -1151,7 +1151,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           <div class="filter-field">
             <label for="evidenceFilterDesktop">Evidências</label>
             <select class="evidence-filter" id="evidenceFilterDesktop">
-              <option value="all">Todas</option><option value="complete">Completas</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option>
+              <option value="all">Todas</option><option value="complete">Completas</option><option value="missing">Qualquer print pendente</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option>
             </select>
           </div>
         </div>
@@ -1193,7 +1193,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         <div class="filter-field"><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
         <div class="filter-field"><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
         <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option></select></div>
-        <div class="filter-field"><label for="evidenceFilter">Evidências</label><select class="evidence-filter" id="evidenceFilter"><option value="all">Todas</option><option value="complete">Completas</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option></select></div>
+        <div class="filter-field"><label for="evidenceFilter">Evidências</label><select class="evidence-filter" id="evidenceFilter"><option value="all">Todas</option><option value="complete">Completas</option><option value="missing">Qualquer print pendente</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option></select></div>
       </div>
       <div class="filter-actions"><button class="clear-filters" type="button" id="clearFilters">Limpar filtros</button></div>
     </div>
@@ -1305,10 +1305,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     modal.addEventListener('close', () => lastModalTrigger?.focus());
     const params = new URLSearchParams(window.location.search);
     const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending', 'ended']);
-    const validEvidenceStates = new Set(['all', 'complete', 'retroactive_missing', 'invalid']);
+    const validEvidenceStates = new Set(['all', 'complete', 'missing', 'retroactive_missing', 'invalid']);
     const legacyState = String(params.get('state') || '').toLowerCase();
     const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending' })[legacyState] || 'all';
-    const legacyEvidence = ({ ok: 'complete', pending: 'retroactive_missing', invalid: 'invalid' })[legacyState] || 'all';
+    const legacyEvidence = ({ ok: 'complete', pending: 'missing', invalid: 'invalid' })[legacyState] || 'all';
     let activePublication = validPublications.has(params.get('publication')) ? params.get('publication') : legacyPublication;
     let activeEvidence = validEvidenceStates.has(params.get('evidence')) ? params.get('evidence') : legacyEvidence;
     const search = document.getElementById('campaignSearch');

@@ -98,6 +98,20 @@ test("classifica evidência completa sem depender do estado de publicação", ()
   assert.match(metadata.evidenceStates, /\bcomplete\b/);
 });
 
+test("distingue qualquer print pendente de retroativo pendente", () => {
+  const currentMissing = contract.buildCampaignFilterMetadata({
+    items: [{ requiredDays: ["2026-08-17"], auditedDays: 0, missingDates: ["2026-08-17"], invalidDates: [] }],
+  }, "2026-08-17");
+  assert.match(currentMissing.evidenceStates, /\bmissing\b/);
+  assert.doesNotMatch(currentMissing.evidenceStates, /\bretroactive_missing\b/);
+
+  const retroactiveMissing = contract.buildCampaignFilterMetadata({
+    items: [{ requiredDays: ["2026-08-16"], auditedDays: 0, missingDates: ["2026-08-16"], invalidDates: [] }],
+  }, "2026-08-17");
+  assert.match(retroactiveMissing.evidenceStates, /\bmissing\b/);
+  assert.match(retroactiveMissing.evidenceStates, /\bretroactive_missing\b/);
+});
+
 test("gera report.json nao listado e chave estavel baseada nas evidencias aprovadas", () => {
   const report = contract.buildMonthlyReportManifest({
     slug: "adops-evidencias-agosto-2026",
