@@ -2,17 +2,18 @@
 
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
-> Última validação: 2026-08-17
-> Release validada: 72c1cb9fbc8df38ef032de310b3e9b40f9029c3d
+> Última validação operacional completa: 2026-08-17
+> Última observação de disponibilidade: 2026-08-18
+> Release validada antes da indisponibilidade: a499a399b822412cbd05d229003f857f9069d64a
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
 
-O AdOps está em produção na release `72c1cb9fbc8df38ef032de310b3e9b40f9029c3d`, confirmada pelo release readback, health público e pelos três runners.
+O último readback completo confirmou a release `a499a399b822412cbd05d229003f857f9069d64a` na API e nos três runners. Em 18/08, depois da recuperação das evidências, os domínios privados passaram a responder Cloudflare HTTP 530 e os IPs locais documentados deixaram de responder. O Worker público continuou acessível. Enquanto essa indisponibilidade não for resolvida, API, relatório e consumidores privados são estado pendente, não “ativos e validados”.
 
 Isto substitui a afirmação histórica de que produção estava “em preparação”. Histórico de implantação continua disponível no Git, mas não descreve o runtime atual.
 
-## Estado por capacidade
+## Estado por capacidade no último readback completo
 
 | Capacidade | Estado em 2026-08-17 | Evidência autoritativa |
 |---|---|---|
@@ -22,7 +23,7 @@ Isto substitui a afirmação histórica de que produção estava “em preparaç
 | Prints e exportações | ativo | runner dedicado e jobs concluídos |
 | Inventário do Drive | ativo | monitor e snapshot atual |
 | Relatório mensal | ativo | página não listada e downloads |
-| Worker público | ativo | deployment `d436a6f9-1622-4ed2-979c-1b0eceb674cc` e três crons ativos |
+| Worker público | ativo | deployment `4b369cca-564a-4465-b787-b17f55aab383` e três crons ativos |
 | Telegram | sob demanda | somente quando solicitado |
 
 ## Relatório de agosto
@@ -64,6 +65,14 @@ As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer red
 - `PI 742 - PREF VG` já está publicada no OMT como campanha `#976`, inserção `#1840`, com dez evidências auditadas entre 31/07 e 09/08. O rascunho `#1852` não deve ser recriado nem usado no relatório.
 - `PI 57687 - ALMT`, AFL, campanha `#1000`, inserção `#2413`, possui PDF e GIF 825x120. A pasta não possui redirect; pela política vigente isso significa banner informativo sem clique, não bloqueio.
 - `PI 009746 - PREF ROO`, Perrengue, campanha `#985`, inserção canônica `#2370`, possui PDF e MP4 H.264 824x120. O perfil HOME 1 aceita MP4 e normaliza a cópia para 670x90, sem corte; as inserções antigas `#1859/#1942` não devem ser recriadas nem selecionadas.
+
+### Recuperação validada em 17/08/2026
+
+- `PI 57687 - ALMT`, AFL, campanha `#1000`, inserção `#2413`: publicada sem link, anúncio `42` no grupo `1`. O GIF público 825x120 respondeu HTTP 200. As datas 14, 15, 16 e 17/08 terminaram `audited`, com checklist aprovado, zero bloqueios e URL acessível.
+- `PI 009746 - PREF ROO`, Perrengue, campanha `#985`, inserção `#2370`: publicada sem link como campanha encerrada, anúncio `190`, grupo `2`, agenda `199`. O MP4 original 824x120 foi preservado; a cópia H.264/yuv420p 670x90 respondeu HTTP 200 e manteve hash de entrega verificado. As 12 datas de 04 a 15/08 terminaram `audited`, com checklist aprovado, zero bloqueios e URL acessível.
+- O gate mensal encontrou e recuperou uma pendência fora dessas duas campanhas: `PI 25207030 - GOV`, PNMT, campanha `#973`, inserção `#1839`, data 17/08. O HTML público continha o anúncio correto no grupo `2`, mas o preview histórico removia o slot. A release `a499a399b822412cbd05d229003f857f9069d64a` restringiu a reconstrução a PNMT/home/grupo 2, dentro do período e com motivo explícito `late_publication_recovery`; captura normal continua sem injeção. Antes da indisponibilidade, o job de backfill `00a89d80-08f9-4b52-8af0-b2d7fc0fe190` terminou e a evidência de 17/08 foi lida como `audited`, com checklist aprovado, zero bloqueios e URL pública acessível. Esse fato é histórico confirmado; a leitura não pôde ser repetida durante o HTTP 530 de 18/08.
+
+O relatório mensal só pode substituir a versão pública depois de confirmar novamente zero datas ausentes ou inválidas entre as inserções publicadas canônicas. Em indisponibilidade do servidor ou falha desse gate, a versão pública anterior permanece intacta.
 
 Regra aprendida: nomes detalhados de posição só podem ser equivalentes por pares exatos aprovados. Nunca usar `includes("TOPO")` ou `includes("VIDEO")`, pois isso pode selecionar outra posição. Redirect é opcional; quando ausente, o banner deve ser publicado sem link. Quando fornecido, continua obrigatório validar um único HTTPS público.
 

@@ -62,6 +62,8 @@ O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e 
 
 Quando o PDF existe, mas não contém texto extraível suficiente, a planilha continua sendo a fonte canônica de portal, PI, período e formato. O modo `sheet_drive_composite` só é liberado se planilha, AdOps, pasta e nome do PDF apontarem para a mesma PI e houver exatamente um PDF e uma mídia. O runner baixa novamente esses arquivos, compara ID, tamanho e checksum, rejeita uma PI explícita divergente no PDF e publica apenas a inserção canônica existente. Um redirect ausente gera `destinationMode=none`; um redirect presente continua sujeito à validação HTTPS e de unicidade.
 
+Em recuperação histórica, a página assinada de um portal pode manter o bloco da posição e omitir o slot do AdRotate. Nunca crie um slot genérico. Só reconstrua quando existir uma regra explícita por domínio, página, grupo, seletor e contexto. Para PNMT HOME 1, a exceção aprovada é exclusivamente `portalnortemt.com`, home, grupo `2`, seletor `.g.g-2` e um único contexto `#block-9`. Ela exige data passada dentro do período e `late_publication_recovery`; a evidência deve registrar que foi reconstruída.
+
 Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
 ## 4. Atualizar entidades no lugar correto
