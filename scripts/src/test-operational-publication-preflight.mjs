@@ -599,6 +599,13 @@ const adrotatePayload = runner.buildAdrotatePublishPayload({
 assert.equal(adrotatePayload.pi_code, null);
 assert.equal(adrotatePayload.external_key, "ADOPS-PERRENGUE-1944");
 assert.equal(adrotatePayload.group_id, 2);
+const historicalRelation = { historicalAdminMatches: [{ adId: 77, groupId: 2, adopsInsertionId: 2370, adopsExternalKey: "ADOPS-PERRENGUE-2370" }] };
+assert.equal(runner.isAdrotatePublicationConfirmed({ activeToday: false, relationAfter: historicalRelation, adId: 77, groupId: 2, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", publicHtmlOk: false }), true,
+  "campanha encerrada deve aceitar a relação histórica exata do anúncio recém-publicado");
+assert.equal(runner.isAdrotatePublicationConfirmed({ activeToday: true, relationAfter: historicalRelation, adId: 77, groupId: 2, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", publicHtmlOk: false }), false,
+  "campanha ativa continua exigindo relação ao vivo ou HTML público");
+assert.equal(runner.isAdrotatePublicationConfirmed({ activeToday: false, relationAfter: historicalRelation, adId: 78, groupId: 2, insertionId: 2370, externalKey: "ADOPS-PERRENGUE-2370", publicHtmlOk: false }), false,
+  "relação histórica de outro anúncio não confirma a publicação");
 assert.equal(runner.buildAdrotatePublishPayload({
   insertion: { id: 1944, campanhaId: 989, siteSigla: "PERRENGUE", mediaUrl: "https://cdn.example/radar.gif", observacoes: "Link destino informado: https://stale.example/" },
   campaign: { id: 989, nome: "RADAR" },

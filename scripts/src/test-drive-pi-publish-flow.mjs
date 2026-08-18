@@ -206,6 +206,22 @@ for (const marker of ["g-placeholder", "data-cod5-ad-placeholder", "/assets/perr
   assert(capture.includes(marker), `auditoria sem marcador ${marker}`);
 }
 const runnerSource = await readFile(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"), "utf8");
+assert.match(runnerSource, /validateDrivePiDedupeSafety\(fields, expectedTarget = null\)/,
+  "retomada canônica deve limitar deduplicação aos IDs já aprovados");
+assert.match(runnerSource, /ignoredDraftCampaignIds/,
+  "rascunho concorrente deve ser registrado sem impedir a inserção canônica exata");
+const safeDraft = { origem: "google-drive-monitor", insertions: [{ id: 2407, statusNormalizado: "aguardando_publicacao", observacoes: "Criado a partir do Drive: /AFL/AGOSTO", bannerPublicadoNoSite: false, mediaUrl: null, totalEvidencias: 0, printGerado: false }] };
+assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plannedSelf: null, exactLiveMatches: [], historicalAdminMatches: [] }]])), true,
+  "rascunho sem mídia, publicação ou evidência pode ser ignorado diante do alvo canônico");
+for (const unsafe of [
+  { ...safeDraft, insertions: [{ ...safeDraft.insertions[0], bannerPublicadoNoSite: true }] },
+  { ...safeDraft, insertions: [{ ...safeDraft.insertions[0], mediaUrl: "https://cdn.example/banner.gif" }] },
+  { ...safeDraft, insertions: [{ ...safeDraft.insertions[0], totalEvidencias: 1 }] },
+  { ...safeDraft, insertions: [{ ...safeDraft.insertions[0], observacoes: "Origem desconhecida" }] },
+  { ...safeDraft, origem: "manual" },
+]) assert.equal(runner.isDiscardableDraftCampaign(unsafe, new Map([[2407, { plannedSelf: null, exactLiveMatches: [], historicalAdminMatches: [] }]])), false);
+assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plannedSelf: { adId: 10 }, exactLiveMatches: [], historicalAdminMatches: [] }]])), false,
+  "histórico AdRotate impede ignorar a concorrente");
 for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "buildPerrengueRebuildTriggerReason", "operationId: crypto.randomUUID()", "return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
   assert(runnerSource.includes(marker), `runner sem marcador ${marker}`);
 }

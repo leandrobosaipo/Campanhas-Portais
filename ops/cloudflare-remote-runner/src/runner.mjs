@@ -2774,7 +2774,30 @@ function uniqueStrings(values) {
   return Array.from(new Set(values.filter(Boolean).map(String)));
 }
 
-async function validateDrivePiDedupeSafety(fields) {
+function isDiscardableDraftCampaign(detail, relationsByInsertionId = new Map()) {
+  const insertions = Array.isArray(detail?.insertions) ? detail.insertions : [];
+  const trustedDraftOrigin = ["google-drive-monitor", "planilha_sincronizada"].includes(String(detail?.origem || "").trim().toLowerCase());
+  if (!trustedDraftOrigin) return false;
+  return insertions.every((insertion) => {
+    const status = normalizeText(insertion?.statusNormalizado);
+    const knownDraftOrigin = /^(criado a partir do drive|sincronizado da planilha)/.test(normalizeText(insertion?.observacoes));
+    const relation = relationsByInsertionId.get(Number(insertion?.id)) || {};
+    const hasAdrotateHistory = Boolean(
+      relation?.plannedSelf
+      || (Array.isArray(relation?.exactLiveMatches) && relation.exactLiveMatches.length)
+      || (Array.isArray(relation?.historicalAdminMatches) && relation.historicalAdminMatches.length),
+    );
+    return knownDraftOrigin
+      && ["rascunho", "aguardando_publicacao"].includes(status)
+      && insertion?.bannerPublicadoNoSite !== true
+      && !firstNonEmptyString(insertion?.mediaUrl)
+      && Number(insertion?.totalEvidencias || 0) === 0
+      && insertion?.printGerado !== true
+      && !hasAdrotateHistory;
+  });
+}
+
+async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
   const piKey = normalizePiDigits(fields.piCodigo);
   const competenciaKey = normalizeCompetenciaKey(fields.competencia);
   if (!piKey || !competenciaKey) return { ok: true, conflicts: [], checkedCampaignIds: [] };
@@ -2798,6 +2821,53 @@ async function validateDrivePiDedupeSafety(fields) {
     normalizeText(item?.nome) === normalizeText(fields.campaignName) &&
     Number(item?.agenciaId ?? 0) === Number(fields.agenciaId)
   );
+
+  const expectedCampaignId = readPositiveInteger(expectedTarget?.expectedCampaignId);
+  const expectedInsertionId = readPositiveInteger(expectedTarget?.expectedInsertionId);
+  if (expectedCampaignId && expectedInsertionId) {
+    const campaign = campaignCandidates.find((item) => Number(item?.id) === expectedCampaignId);
+    if (!campaign) {
+      return { ok: false, conflicts: [`dedupe_conflict: campanha canônica #${expectedCampaignId} não corresponde mais à PI/competência`], checkedCampaignIds: [] };
+    }
+    const detail = await privateApiGet(`/api/campaigns/${expectedCampaignId}`).catch(() => null);
+    const expectedInsertion = Array.isArray(detail?.insertions)
+      ? detail.insertions.find((item) => Number(item?.id) === expectedInsertionId)
+      : null;
+    const raw = fields.insertions.length === 1 ? fields.insertions[0] : null;
+    const sameScope = Boolean(raw && expectedInsertion
+      && Number(expectedInsertion.siteId ?? 0) === Number(readNumberRecord(raw, ["siteId"]) || 0)
+      && normalizeSlotKey(expectedInsertion.localFormatoNormalizado ?? expectedInsertion.localFormato) === normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]))
+      && expectedInsertion.periodoInicio === readStringRecord(raw, ["periodoInicio", "inicio"])
+      && expectedInsertion.periodoFim === readStringRecord(raw, ["periodoFim", "fim"]));
+    if (!sameScope) {
+      return { ok: false, conflicts: [`dedupe_conflict: inserção canônica #${expectedInsertionId} não corresponde mais ao portal/formato/período`], checkedCampaignIds: [expectedCampaignId] };
+    }
+    const ignoredDraftCampaignIds = [];
+    for (const competitor of campaignCandidates.filter((item) => Number(item?.id) !== expectedCampaignId)) {
+      const competitorDetail = await privateApiGet(`/api/campaigns/${competitor.id}`).catch(() => null);
+      if (!Array.isArray(competitorDetail?.insertions)) {
+        return { ok: false, conflicts: [`dedupe_check_failed: não foi possível validar a campanha concorrente #${competitor.id}`], checkedCampaignIds: [expectedCampaignId] };
+      }
+      const relations = new Map();
+      for (const insertion of competitorDetail.insertions) {
+        const relation = await privateApiGet(`/api/integrations/adrotate/insertions/${insertion.id}/relation`).catch(() => null);
+        if (!relation) {
+          return { ok: false, conflicts: [`dedupe_check_failed: não foi possível validar o histórico AdRotate da inserção #${insertion.id}`], checkedCampaignIds: [expectedCampaignId] };
+        }
+        relations.set(Number(insertion.id), relation);
+      }
+      if (!isDiscardableDraftCampaign(competitorDetail, relations)) {
+        return { ok: false, conflicts: [`dedupe_conflict: campanha concorrente #${competitor.id} possui publicação, mídia, evidência ou origem não descartável`], checkedCampaignIds: [expectedCampaignId, Number(competitor.id)] };
+      }
+      ignoredDraftCampaignIds.push(Number(competitor.id));
+    }
+    return {
+      ok: true,
+      conflicts: [],
+      checkedCampaignIds: [expectedCampaignId],
+      ignoredDraftCampaignIds,
+    };
+  }
 
   const conflicts = [];
   if (campaignCandidates.length > 1 && exactCandidates.length !== 1) {
@@ -3889,6 +3959,19 @@ function compactAdrotateRelation(relation) {
       adopsMediaBasename: item?.adopsMediaBasename ?? null,
     })),
   };
+}
+
+function isAdrotatePublicationConfirmed({ activeToday, relationAfter, adId, groupId, insertionId, externalKey, publicHtmlOk }) {
+  if (publicHtmlOk === true) return true;
+  const live = Array.isArray(relationAfter?.exactLiveMatches) ? relationAfter.exactLiveMatches : [];
+  if (live.some((item) => Number(item?.adId) === Number(adId) && Number(item?.groupId) === Number(groupId))) return true;
+  if (activeToday) return false;
+  const historical = Array.isArray(relationAfter?.historicalAdminMatches) ? relationAfter.historicalAdminMatches : [];
+  return historical.some((item) => (
+    Number(item?.adId) === Number(adId)
+    && Number(item?.groupId) === Number(groupId)
+    && (Number(item?.adopsInsertionId) === Number(insertionId) || String(item?.adopsExternalKey || "") === String(externalKey || ""))
+  ));
 }
 
 function sitePublicHomeUrl(site) {
@@ -5035,6 +5118,17 @@ async function executeAdrotatePublishJob(payload) {
       }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
     : null;
   const activeToday = todayInCuiaba() >= String(insertion.periodoInicio || "") && todayInCuiaba() <= String(insertion.periodoFim || "");
+  const publicationConfirmed = apply && wpCliPublished
+    ? isAdrotatePublicationConfirmed({
+        activeToday,
+        relationAfter,
+        adId: wpCliResult.ad_id,
+        groupId: wpCliResult.group_id,
+        insertionId,
+        externalKey: publishPayload.external_key,
+        publicHtmlOk: publicHtmlValidation?.ok === true,
+      })
+    : false;
   const cacheMaintenanceDegraded = isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult });
   if (apply && wpCliPublished && activeToday && cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true) {
     throw new Error(`Manutenção de cache falhou e o anúncio não apareceu no HTML público da inserção ${insertionId}.`);
@@ -5107,6 +5201,7 @@ async function executeAdrotatePublishJob(payload) {
     stderr: safeProcessOutput(stderr, 8000),
     relationAfter,
     relationOk: apply ? exactLiveCount > 0 : null,
+    historicalRelationOk: apply && !activeToday ? publicationConfirmed : null,
     cacheMaintenanceDegraded,
     headlessRebuild,
     publicHtmlValidation,
@@ -5349,8 +5444,11 @@ async function executeDrivePiIngest(payload) {
     expectedInsertion: expectedInsertionContext,
   });
   const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
+  const dedupeTarget = readPositiveInteger(payload?.expectedCampaignId) && readPositiveInteger(payload?.expectedInsertionId)
+    ? { expectedCampaignId: payload.expectedCampaignId, expectedInsertionId: payload.expectedInsertionId }
+    : null;
   const dedupe = validation.ok && packageReadiness.ok && rollout.ok
-    ? await validateDrivePiDedupeSafety(fields)
+    ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
   const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
   // The protected drive-pi-publish endpoint is an explicit mutation request even
@@ -5380,7 +5478,7 @@ async function executeDrivePiIngest(payload) {
   }
   const preApplySyncOk = !(canApply && mutationEnabled) || preApplySyncPlanilha.ok !== false;
   const preApplyDedupe = canApply && mutationEnabled && preApplySyncOk
-    ? await validateDrivePiDedupeSafety(fields)
+    ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
     : dedupe;
   const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;
   const reviewReasons = buildDrivePiReviewReasons({
@@ -6531,7 +6629,7 @@ async function executeOperationalMediaPublish(payload) {
     const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
     preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
     published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
-    if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.publicHtmlValidation?.ok !== true)) {
+    if (!published?.wpCliResult?.ad_id || (published?.relationOk !== true && published?.historicalRelationOk !== true && published?.publicHtmlValidation?.ok !== true)) {
       throw new Error(`Publicação operacional da inserção ${insertionId} não passou nos gates AdRotate/HTML.`);
     }
   } catch (error) {
@@ -7564,6 +7662,8 @@ export {
   filterSiteInsertions,
   isSocialInsertion,
   isCacheMaintenanceDegraded,
+  isAdrotatePublicationConfirmed,
+  isDiscardableDraftCampaign,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,
   httpDownloadBuffer,
