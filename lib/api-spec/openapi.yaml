@@ -385,6 +385,18 @@ paths:
                       downloadedAt: { type: string, format: date-time }
                       sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
                       competencia: { type: string }
+                  driveInventory:
+                    type: object
+                    required: [snapshotStatus, snapshotAt, snapshotAgeSeconds, stale, itemCount]
+                    additionalProperties: false
+                    properties:
+                      snapshotStatus:
+                        type: string
+                        enum: [fresh, stale, unavailable, syncing, failed]
+                      snapshotAt: { type: [string, "null"], format: date-time }
+                      snapshotAgeSeconds: { type: [integer, "null"], minimum: 0 }
+                      stale: { type: boolean }
+                      itemCount: { type: integer, minimum: 0 }
                 additionalProperties: true
         "400":
           description: The requested competence does not match the target date month

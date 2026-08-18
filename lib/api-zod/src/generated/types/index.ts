@@ -75,6 +75,8 @@ export * from "./getDashboardBySiteParams";
 export * from "./getDashboardCriticalParams";
 export * from "./getDashboardSummaryParams";
 export * from "./getMonthlyEvidenceSource200";
+export * from "./getMonthlyEvidenceSource200DriveInventory";
+export * from "./getMonthlyEvidenceSource200DriveInventorySnapshotStatus";
 export * from "./getMonthlyEvidenceSource200Source";
 export * from "./getMonthlyEvidenceSourceParams";
 export * from "./getOpsJob200";

@@ -308,6 +308,9 @@ export const GetMonthlyEvidenceSourceQueryParams = zod.object({
 export const getMonthlyEvidenceSourceResponseSourceSha256RegExp = new RegExp(
   "^[a-f0-9]{64}$",
 );
+export const getMonthlyEvidenceSourceResponseDriveInventorySnapshotAgeSecondsMin = 0;
+
+export const getMonthlyEvidenceSourceResponseDriveInventoryItemCountMin = 0;
 
 export const GetMonthlyEvidenceSourceResponse = zod.object({
   source: zod
@@ -318,6 +321,28 @@ export const GetMonthlyEvidenceSourceResponse = zod.object({
         .string()
         .regex(getMonthlyEvidenceSourceResponseSourceSha256RegExp),
       competencia: zod.string(),
+    })
+    .optional(),
+  driveInventory: zod
+    .object({
+      snapshotStatus: zod.enum([
+        "fresh",
+        "stale",
+        "unavailable",
+        "syncing",
+        "failed",
+      ]),
+      snapshotAt: zod.coerce.date().nullable(),
+      snapshotAgeSeconds: zod
+        .number()
+        .min(
+          getMonthlyEvidenceSourceResponseDriveInventorySnapshotAgeSecondsMin,
+        )
+        .nullable(),
+      stale: zod.boolean(),
+      itemCount: zod
+        .number()
+        .min(getMonthlyEvidenceSourceResponseDriveInventoryItemCountMin),
     })
     .optional(),
 });

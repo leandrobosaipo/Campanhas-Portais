@@ -67,6 +67,8 @@ import {
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
+import { getDriveInventoryStatus } from "../lib/drive-inventory";
+import { toPublicDriveInventoryStatus } from "../lib/drive-inventory-public";
 import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
 import {
@@ -3031,6 +3033,7 @@ router.get("/campaign-operations/evidence-monthly-source", async (req, res): Pro
       items: monthlyItems.map((item) => item.operation),
       upcomingItems: upcomingItems.map((item) => item.operation),
     });
+    const inventory = await getDriveInventoryStatus();
     res.setHeader("Cache-Control", "no-store");
     res.json({
       ...source,
@@ -3040,6 +3043,7 @@ router.get("/campaign-operations/evidence-monthly-source", async (req, res): Pro
         sha256: operations.sheet.sourceSha256,
         competencia: canonicalCompetencia,
       },
+      driveInventory: toPublicDriveInventoryStatus(inventory),
       insertions: [...monthlyItems, ...upcomingItems].map((item) => item.insertion).filter(Boolean),
     });
   } catch (error) {

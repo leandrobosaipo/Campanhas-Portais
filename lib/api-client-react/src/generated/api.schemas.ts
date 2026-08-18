@@ -1232,8 +1232,34 @@ export type GetMonthlyEvidenceSource200Source = {
   competencia: string;
 };
 
+export type GetMonthlyEvidenceSource200DriveInventorySnapshotStatus =
+  (typeof GetMonthlyEvidenceSource200DriveInventorySnapshotStatus)[keyof typeof GetMonthlyEvidenceSource200DriveInventorySnapshotStatus];
+
+export const GetMonthlyEvidenceSource200DriveInventorySnapshotStatus = {
+  fresh: "fresh",
+  stale: "stale",
+  unavailable: "unavailable",
+  syncing: "syncing",
+  failed: "failed",
+} as const;
+
+export type GetMonthlyEvidenceSource200DriveInventory = {
+  snapshotStatus: GetMonthlyEvidenceSource200DriveInventorySnapshotStatus;
+  /** @nullable */
+  snapshotAt: string | null;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  snapshotAgeSeconds: number | null;
+  stale: boolean;
+  /** @minimum 0 */
+  itemCount: number;
+};
+
 export type GetMonthlyEvidenceSource200 = {
   source?: GetMonthlyEvidenceSource200Source;
+  driveInventory?: GetMonthlyEvidenceSource200DriveInventory;
   [key: string]: unknown;
 };
 

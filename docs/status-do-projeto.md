@@ -3,13 +3,15 @@
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
 > Última validação operacional completa: 2026-08-17
-> Última observação de disponibilidade: 2026-08-18
+> Última observação de disponibilidade: 2026-08-18 05:57 America/Cuiaba
 > Release validada antes da indisponibilidade: a499a399b822412cbd05d229003f857f9069d64a
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
 
-O último readback completo confirmou a release `a499a399b822412cbd05d229003f857f9069d64a` na API e nos três runners. Em 18/08, depois da recuperação das evidências, os domínios privados passaram a responder Cloudflare HTTP 530 e os IPs locais documentados deixaram de responder. O Worker público continuou acessível. Enquanto essa indisponibilidade não for resolvida, API, relatório e consumidores privados são estado pendente, não “ativos e validados”.
+O código da recuperação corresponde ao commit `a499a399b822412cbd05d229003f857f9069d64a`. Em 18/08, depois da recuperação das evidências, o servidor ficou indisponível e os domínios privados responderam Cloudflare HTTP 530; o Worker público continuou acessível. O servidor voltou às 05:21 de Cuiabá. Às 05:57, API, Portainer, relatório, PostgreSQL e três runners estavam saudáveis. Os runners informaram a mesma versão operacional `a499a399a14e`.
+
+O endereço `100.126.99.28` foi confirmado por SSH como o host `codigo5-cloud`, com Docker e o container `codigo5-cloud-tunnel` ativos. Esse é o IP administrativo vigente; não deve ser confundido com uma URL pública do relatório.
 
 Isto substitui a afirmação histórica de que produção estava “em preparação”. Histórico de implantação continua disponível no Git, mas não descreve o runtime atual.
 
@@ -73,6 +75,8 @@ As duas pastas do snapshot continham PDF e GIF, mas `textFiles=[]`. Qualquer red
 - O gate mensal encontrou e recuperou uma pendência fora dessas duas campanhas: `PI 25207030 - GOV`, PNMT, campanha `#973`, inserção `#1839`, data 17/08. O HTML público continha o anúncio correto no grupo `2`, mas o preview histórico removia o slot. A release `a499a399b822412cbd05d229003f857f9069d64a` restringiu a reconstrução a PNMT/home/grupo 2, dentro do período e com motivo explícito `late_publication_recovery`; captura normal continua sem injeção. Antes da indisponibilidade, o job de backfill `00a89d80-08f9-4b52-8af0-b2d7fc0fe190` terminou e a evidência de 17/08 foi lida como `audited`, com checklist aprovado, zero bloqueios e URL pública acessível. Esse fato é histórico confirmado; a leitura não pôde ser repetida durante o HTTP 530 de 18/08.
 
 O relatório mensal só pode substituir a versão pública depois de confirmar novamente zero datas ausentes ou inválidas entre as inserções publicadas canônicas. Em indisponibilidade do servidor ou falha desse gate, a versão pública anterior permanece intacta.
+
+Após o retorno do servidor, o job mensal `fac6a39f-c3ab-4312-b5dd-f9a3b0573ba2` foi executado uma única vez e terminou `completed` às 05:57 de Cuiabá. O relatório público passou a usar corte em 17/08, com 24 inserções canônicas, 219 datas auditadas e gate das campanhas publicadas em zero ausências e zero inválidas. A única data ainda ausente pertence à campanha não publicada `PI 57732 - ALMT`, PNMT, inserção `#2423`, bloqueada porque o Drive encontrou mais de uma pasta candidata.
 
 Regra aprendida: nomes detalhados de posição só podem ser equivalentes por pares exatos aprovados. Nunca usar `includes("TOPO")` ou `includes("VIDEO")`, pois isso pode selecionar outra posição. Redirect é opcional; quando ausente, o banner deve ser publicado sem link. Quando fornecido, continua obrigatório validar um único HTTPS público.
 
