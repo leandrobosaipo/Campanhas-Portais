@@ -2762,11 +2762,11 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
 
 function buildStaticRetroSlotPlan(mapping) {
   const domain = String(mapping?.domain || "").toLowerCase();
-  if (!new Set(["omatogrossense.com", "afolhalivre.com"]).has(domain)) return null;
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
-  const contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-2"
+  const contextSelector = new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
     ? "#block-9"
     : configuredContextSelector;
   if (!slotSelector || !contextSelector || slotSelector === contextSelector) return null;
@@ -2776,6 +2776,7 @@ function buildStaticRetroSlotPlan(mapping) {
   if (!Number.isInteger(groupId) || groupId < 1) return null;
   if (domain === "omatogrossense.com" && groupId !== 1) return null;
   if (domain === "afolhalivre.com" && groupId !== 2) return null;
+  if (domain === "portalnortemt.com" && groupId !== 2) return null;
   return { contextSelector, groupClass: `g g-${groupId}`, groupId };
 }
 

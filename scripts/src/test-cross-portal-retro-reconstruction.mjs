@@ -14,6 +14,9 @@ const config = JSON.parse(await readFile(new URL("../../config/adrotate-sites.js
 const omt = config.OMT.formatMappings.find((item) => item.groupId === 1);
 const afl = config.AFL.formatMappings.find((item) => item.groupId === 2);
 const aflTop = config.AFL.formatMappings.find((item) => item.groupId === 1);
+const pnmt = config.PNMT.formatMappings.find((item) => item.groupId === 2);
+const pnmtTop = config.PNMT.formatMappings.find((item) => item.groupId === 1);
+const pnmtHome2 = config.PNMT.formatMappings.find((item) => item.groupId === 3);
 
 assert.deepEqual(buildStaticRetroSlotPlan({ ...omt, domain: config.OMT.domain }), {
   contextSelector: ".header-top-banner",
@@ -25,7 +28,14 @@ assert.deepEqual(buildStaticRetroSlotPlan({ ...afl, domain: config.AFL.domain })
   groupClass: "g g-2",
   groupId: 2,
 });
+assert.deepEqual(buildStaticRetroSlotPlan({ ...pnmt, domain: config.PNMT.domain }), {
+  contextSelector: "#block-9",
+  groupClass: "g g-2",
+  groupId: 2,
+});
 assert.equal(buildStaticRetroSlotPlan({ ...aflTop, domain: config.AFL.domain }), null, "AFL grupo 1 exige o slot real; não cria contêiner sintético");
+assert.equal(buildStaticRetroSlotPlan({ ...pnmtTop, domain: config.PNMT.domain }), null, "PNMT grupo 1 exige o slot real; não cria contêiner sintético");
+assert.equal(buildStaticRetroSlotPlan({ ...pnmtHome2, domain: config.PNMT.domain }), null, "PNMT grupo 3 não está autorizado para reconstrução de slot");
 assert.equal(buildStaticRetroSlotPlan({ domain: "example.com", page: "home", slotSelector: ".g.g-2", contextSelector: "main" }), null);
 assert.equal(buildStaticRetroSlotPlan({ domain: config.AFL.domain, page: "article", slotSelector: ".g.g-2", contextSelector: "#block-9" }), null);
 assert.equal(buildStaticRetroSlotPlan({ domain: config.AFL.domain, page: "home", slotSelector: ".g.g-3", contextSelector: ".g.g-3" }), null);
