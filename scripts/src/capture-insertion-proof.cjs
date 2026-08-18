@@ -6250,12 +6250,27 @@ async function resolveVisibleMediaSelector(page, mediaBasename, options = {}) {
   }, { basename: mediaBasename, anchorSelector: options.anchorSelector || null });
 }
 
-async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
-  if (!selector || !pngPath || !existsSync(pngPath)) {
-    return { ok: false, reason: "missing_selector_or_frame" };
-  }
-  const dataUrl = `data:image/png;base64,${readFileSync(pngPath).toString("base64")}`;
-  return await page.evaluate(async ({ selector, dataUrl }) => {
+function buildReferenceFrameOverlayLayout() {
+  return {
+    anchor: {
+      position: "relative",
+      overflow: "hidden",
+    },
+    overlay: {
+      position: "absolute",
+      inset: "0",
+      overflow: "hidden",
+    },
+    image: {
+      width: "100%",
+      height: "100%",
+      objectFit: "contain",
+      objectPosition: "center center",
+    },
+  };
+}
+
+async function applyReferenceFrameToDomMediaInPage({ selector, dataUrl, overlayLayout, lockIntervalMs = 60 }) {
     let node = document.querySelector(selector);
     if (!(node instanceof HTMLElement)) {
       return { ok: false, reason: "selector_not_found" };
@@ -6330,25 +6345,29 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
     }
 
     if (node instanceof HTMLImageElement && adGroup instanceof HTMLElement) {
+      adGroup.style.setProperty("position", overlayLayout.anchor.position, "important");
+      adGroup.style.setProperty("overflow", overlayLayout.anchor.overflow, "important");
       const previousOverlay = adGroup.querySelector(':scope > [data-adops-reference-frame-overlay="1"]');
       if (previousOverlay) previousOverlay.remove();
       const overlay = document.createElement("div");
       overlay.setAttribute("data-adops-reference-frame-overlay", "1");
       overlay.setAttribute("aria-hidden", "true");
-      overlay.style.setProperty("position", "absolute", "important");
-      overlay.style.setProperty("inset", "0", "important");
+      overlay.style.setProperty("position", overlayLayout.overlay.position, "important");
+      overlay.style.setProperty("inset", overlayLayout.overlay.inset, "important");
       overlay.style.setProperty("z-index", "20", "important");
       overlay.style.setProperty("display", "block", "important");
-      overlay.style.setProperty("overflow", "hidden", "important");
+      overlay.style.setProperty("overflow", overlayLayout.overlay.overflow, "important");
       overlay.style.setProperty("pointer-events", "none", "important");
       const overlayImage = document.createElement("img");
+      overlayImage.setAttribute("data-adops-reference-frame-overlay-image", "1");
       overlayImage.alt = "Publicidade";
       overlayImage.decoding = "sync";
       overlayImage.loading = "eager";
       overlayImage.style.setProperty("display", "block", "important");
-      overlayImage.style.setProperty("width", "100%", "important");
-      overlayImage.style.setProperty("height", "100%", "important");
-      overlayImage.style.setProperty("object-fit", "fill", "important");
+      overlayImage.style.setProperty("width", overlayLayout.image.width, "important");
+      overlayImage.style.setProperty("height", overlayLayout.image.height, "important");
+      overlayImage.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+      overlayImage.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
       overlay.appendChild(overlayImage);
       adGroup.appendChild(overlay);
       node = overlayImage;
@@ -6364,9 +6383,13 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
         if (!(referenceFrameAnchor instanceof HTMLElement) || !referenceFrameAnchor.isConnected) return;
         let target = referenceFrameAnchor.querySelector('[data-adops-reference-frame-locked="1"]');
         if (!(target instanceof HTMLElement)) {
-          target = mediaKind === "video"
-            ? referenceFrameAnchor.querySelector("video")
-            : referenceFrameAnchor.querySelector("img");
+          target = mediaKind === "video" && node instanceof HTMLVideoElement
+            ? node
+            : mediaKind === "image" && node instanceof HTMLImageElement
+              ? node
+              : mediaKind === "video"
+                ? referenceFrameAnchor.querySelector("video")
+                : referenceFrameAnchor.querySelector("img");
         }
         if (mediaKind === "image" && target instanceof HTMLImageElement) {
           target.setAttribute("data-adops-reference-frame-locked", "1");
@@ -6380,6 +6403,10 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
           target.style.setProperty("display", "block", "important");
           target.style.setProperty("opacity", "1", "important");
           target.style.setProperty("visibility", "visible", "important");
+          target.style.setProperty("width", overlayLayout.image.width, "important");
+          target.style.setProperty("height", overlayLayout.image.height, "important");
+          target.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+          target.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
           target.style.setProperty("transform", "none", "important");
           target.style.setProperty("transition", "none", "important");
           target.style.setProperty("animation", "none", "important");
@@ -6398,7 +6425,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       if (window.__adopsReferenceFrameLockInterval) {
         window.clearInterval(window.__adopsReferenceFrameLockInterval);
       }
-      window.__adopsReferenceFrameLockInterval = window.setInterval(enforceReferenceFrame, 60);
+      window.__adopsReferenceFrameLockInterval = window.setInterval(enforceReferenceFrame, lockIntervalMs);
       return true;
     };
 
@@ -6413,8 +6440,15 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       node.style.opacity = "1";
       node.style.visibility = "visible";
       node.style.display = "block";
-      node.style.width = "100%";
-      node.style.height = "auto";
+      if (node.hasAttribute("data-adops-reference-frame-overlay-image")) {
+        node.style.setProperty("width", overlayLayout.image.width, "important");
+        node.style.setProperty("height", overlayLayout.image.height, "important");
+        node.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+        node.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
+      } else {
+        node.style.width = "100%";
+        node.style.height = "auto";
+      }
       node.style.filter = "none";
       node.style.transition = "none";
       node.style.animation = "none";
@@ -6452,7 +6486,18 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       };
     }
     return { ok: false, reason: "unsupported_media_tag", tag: node.tagName };
-  }, { selector, dataUrl });
+}
+
+async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
+  if (!selector || !pngPath || !existsSync(pngPath)) {
+    return { ok: false, reason: "missing_selector_or_frame" };
+  }
+  const dataUrl = `data:image/png;base64,${readFileSync(pngPath).toString("base64")}`;
+  return await page.evaluate(applyReferenceFrameToDomMediaInPage, {
+    selector,
+    dataUrl,
+    overlayLayout: buildReferenceFrameOverlayLayout(),
+  });
 }
 
 function isVideoFormat(insertion) {
@@ -8129,6 +8174,8 @@ if (require.main === module) {
     evaluateFinalPngSlotAuditResult,
     selectBestFinalPngCreativeIdentityAudit,
     buildFinalPngCreativeReferenceFrames,
+    buildReferenceFrameOverlayLayout,
+    applyReferenceFrameToDomMediaInPage,
     resolveFinalPngSlotAuditBox,
     auditFinalPngSlotPixels,
     auditFinalPngCreativeIdentityAgainstFrames,

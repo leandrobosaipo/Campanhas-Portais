@@ -8,7 +8,25 @@ const {
   selectBestFinalPngCreativeIdentityAudit,
   buildFinalPngCreativeReferenceFrames,
   auditFinalPngCreativeIdentityAgainstFrames,
+  buildReferenceFrameOverlayLayout,
 } = require("./capture-insertion-proof.cjs");
+
+const referenceFrameOverlayLayout = buildReferenceFrameOverlayLayout();
+assert.deepEqual(referenceFrameOverlayLayout.anchor, {
+  position: "relative",
+  overflow: "hidden",
+});
+assert.deepEqual(referenceFrameOverlayLayout.overlay, {
+  position: "absolute",
+  inset: "0",
+  overflow: "hidden",
+});
+assert.deepEqual(referenceFrameOverlayLayout.image, {
+  width: "100%",
+  height: "100%",
+  objectFit: "contain",
+  objectPosition: "center center",
+});
 
 const insetStyle = resolveFinalCustomerProofStyle("viewport_with_slot_inset");
 assert.equal(insetStyle.finalProofStyle, "viewport_only");

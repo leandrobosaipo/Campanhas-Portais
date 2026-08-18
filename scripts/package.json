@@ -44,7 +44,7 @@
     "test:perrengue-static-retro-sparse": "node ./src/test-perrengue-static-retro-sparse.mjs",
     "test:perrengue-header-ad-policy": "node ./src/test-perrengue-header-ad-policy.mjs",
     "test:perrengue-popup-capture-rule": "node ./src/test-perrengue-popup-capture-rule.mjs",
-    "test:final-proof-style-contract": "node ./src/test-final-proof-style-contract.mjs && node --import tsx --test ./src/test-proof-style-checklist.ts",
+    "test:final-proof-style-contract": "node ./src/test-final-proof-style-contract.mjs && node ./src/test-reference-frame-dom-contract.mjs && node --import tsx --test ./src/test-proof-style-checklist.ts",
     "test:gif-capture-only-short-frames": "node ./src/test-gif-capture-only-short-frames.mjs",
     "test:afl-home1-gif-capture-rule": "node ./src/test-afl-home1-gif-capture-rule.mjs",
     "test:perrengue-august-evidence-rules": "node ./src/test-perrengue-august-evidence-rules.mjs",
