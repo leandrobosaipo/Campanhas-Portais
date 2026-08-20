@@ -33,6 +33,7 @@ import {
   takeDeliverySamples,
   resolveReportPortainerUrl,
   resolveReportsPublishMount,
+  resolveEvidenceWindow,
   isJsonContentType,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
@@ -586,7 +587,7 @@ async function materializeCampaignExports(items) {
   return results;
 }
 
-async function materializeCompleteCampaignExports(items) {
+async function materializeCompleteCampaignExports(items, asOfDate) {
   const groups = new Map();
   for (const item of items) {
     const piCodigo = canonicalCommercialPi(item.piCodigo);
@@ -609,7 +610,7 @@ async function materializeCompleteCampaignExports(items) {
       method: "POST",
       body: JSON.stringify({
         competencia,
-        asOfDate: targetDate,
+        asOfDate,
         campaigns: readyGroups.map((group) => ({ piCodigo: group.piCodigo })),
         mode: "prints-only",
         variant: "web",
@@ -760,7 +761,7 @@ function renderThumbs(item) {
       const title = dayTitle(day, item);
       const latest = index === 0 ? `<b class="latest-label">Mais recente</b>` : "";
       if (day.status.startsWith("audited") && day.url) {
-        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}${index === 0 ? ", a mais recente" : ""}"><img src="${escapeHtml(day.downloadUrl || day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span>${latest}</button>`;
+        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}${index === 0 ? ", a mais recente" : ""}"><img src="${escapeHtml(day.downloadUrl || day.url)}" data-fallback-src="${escapeHtml(day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span>${latest}</button>`;
       }
       return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon("warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "Print pendente" : "Evidência inválida")}</b>${latest}</button>`;
     })
@@ -1520,7 +1521,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending', 'ended']);
     const validEvidenceStates = new Set(['all', 'complete', 'missing', 'retroactive_missing', 'invalid']);
     const legacyState = String(params.get('state') || '').toLowerCase();
-    const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending' })[legacyState] || 'all';
+    const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending', ended: 'ended' })[legacyState] || 'active';
     const legacyEvidence = ({ ok: 'complete', pending: 'missing', invalid: 'invalid' })[legacyState] || 'all';
     let activePublication = validPublications.has(params.get('publication')) ? params.get('publication') : legacyPublication;
     let activeEvidence = validEvidenceStates.has(params.get('evidence')) ? params.get('evidence') : legacyEvidence;
@@ -1603,10 +1604,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       searchDesktop.value = '';
       portalFilter.value = 'ALL';
       portalFilterDesktop.value = 'ALL';
-      activePublication = 'all';
+      activePublication = 'active';
       activeEvidence = 'all';
-      publicationFilter.value = 'all';
-      publicationFilterDesktop.value = 'all';
+      publicationFilter.value = 'active';
+      publicationFilterDesktop.value = 'active';
       evidenceFilter.value = 'all';
       evidenceFilterDesktop.value = 'all';
       applyFilters();
@@ -1630,6 +1631,18 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         mainContent.focus({ preventScroll: true });
       });
     });
+    document.querySelectorAll('.thumb img[data-fallback-src]').forEach((image) => {
+      image.addEventListener('error', () => {
+        const fallback = image.dataset.fallbackSrc || '';
+        if (fallback && image.src !== fallback && image.dataset.fallbackTried !== '1') {
+          image.dataset.fallbackTried = '1';
+          image.src = fallback;
+          return;
+        }
+        image.closest('.thumb')?.classList.add('thumbnail-unavailable');
+        image.remove();
+      });
+    });
     applyFilters();
   </script>
 </body>
@@ -1640,13 +1653,14 @@ async function main() {
   const startedAtMs = Date.now();
   const timings = {};
   const bounds = monthBounds(targetMonth);
-  const monthEndForEvidence = targetDate < bounds.end ? targetDate : bounds.end;
   await mkdir(latestDir, { recursive: true });
   await mkdir(snapshotDir, { recursive: true });
 
   const sourceStartedAtMs = Date.now();
   const operationsRaw = await api(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(targetDate)}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS });
   const dailyPrintStatus = await api("/api/ops/daily-print-status", { timeoutMs: 30_000 }).catch(() => null);
+  const evidenceWindow = resolveEvidenceWindow({ reportDate: targetDate, now: generatedAt, dailyPrintStatus });
+  const monthEndForEvidence = evidenceWindow.evidenceCutoffDate < bounds.end ? evidenceWindow.evidenceCutoffDate : bounds.end;
   timings.sourceFetchMs = Date.now() - sourceStartedAtMs;
   const insertions = operationsRaw.insertions || [];
   const campaignMap = new Map();
@@ -1736,7 +1750,7 @@ async function main() {
   const exportsStartedAtMs = Date.now();
   const [exportLinks, completeExportLinks] = await Promise.all([
     materializeCampaignExports(enriched),
-    materializeCompleteCampaignExports(enriched),
+    materializeCompleteCampaignExports(enriched, monthEndForEvidence),
   ]);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
   for (const item of enriched) {
@@ -1776,6 +1790,8 @@ async function main() {
   const data = {
     generatedAt: generatedAt.toISOString(),
     targetDate,
+    evidenceCutoffDate: monthEndForEvidence,
+    evidenceWindowPhase: evidenceWindow.phase,
     targetMonth,
     competencia,
     publicUrl,

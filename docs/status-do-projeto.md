@@ -93,6 +93,13 @@ Enquanto a PI/PDF continuar ausente:
 
 ## Ganhos consolidados
 
+### Correção do relatório mensal em 20/08/2026
+
+- Causa: a produção não expunha `evidence-monthly-source` nem `daily-print-status`; o gerador publicado recuou para a visão ativa e cobrou o dia 20 às 14h56, antes do lote das 18h.
+- Correção: fonte mensal completa e estado diário publicados pela API/Worker, sem fallback; filtro inicial `Ativas` passou a ser apenas visual.
+- PNMT/DENGUE, PI 25207030, inserção `#1839`, é o caso sentinela: campanha encerrada de 03 a 17/08, restaurada com as 15 evidências existentes, sem geração retroativa.
+- O artefato registra separadamente `targetDate` e `evidenceCutoffDate`; o dia corrente só vira pendência depois da conclusão canônica ou do fechamento da janela.
+
 - seleção canônica exclui rascunhos duplicados como `#1826`;
 - auditoria exige checklist, acessibilidade da URL e ausência de blockers;
 - GIF exige frame visualmente válido;

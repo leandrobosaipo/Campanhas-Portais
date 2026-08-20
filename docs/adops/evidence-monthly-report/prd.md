@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Entregar um painel HTML mensal, publico em `sites.codigo5.com.br`, com a visao operacional das insercoes ativas e agendadas da competencia corrente.
+Entregar um painel HTML mensal, público em `sites.codigo5.com.br`, com todas as inserções canônicas da competência. A visão abre em `Ativas`, mas conserva `Encerradas` para consulta e entrega.
 
 ## Usuario
 
@@ -13,7 +13,7 @@ Entregar um painel HTML mensal, publico em `sites.codigo5.com.br`, com a visao o
 ## Requisitos
 
 - Agrupar por portal, campanha e insercao.
-- Exibir apenas insercoes ativas ou agendadas do mes.
+- Persistir inserções ativas, agendadas e encerradas do mês; excluir apenas canceladas ou excluídas.
 - Separar evidencias em dia, pendentes, invalidas, agendadas e sem publicacao.
 - Usar thumb de toda evidencia auditada do periodo exigido.
 - Exibir dias sem evidencia como celulas de data, para nao parecer que sumiram thumbs.

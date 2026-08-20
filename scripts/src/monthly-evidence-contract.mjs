@@ -103,6 +103,28 @@ function addIsoDays(value, amount) {
   return date.toISOString().slice(0, 10);
 }
 
+function localDateHour(value, timeZone = "America/Cuiaba") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23",
+  }).formatToParts(value);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return { date: `${map.year}-${map.month}-${map.day}`, hour: Number(map.hour) };
+}
+
+export function resolveEvidenceWindow({ reportDate, now = new Date(), dailyPrintStatus = null } = {}) {
+  const { date: localDate, hour } = localDateHour(now);
+  if (reportDate < localDate) return { evidenceCutoffDate: reportDate, phase: "historical" };
+  if (reportDate > localDate) return { evidenceCutoffDate: addIsoDays(localDate, -1), phase: "future" };
+  const attempt = dailyPrintStatus?.lastAttempt;
+  const sameDayAttempt = attempt?.targetDate === reportDate ? attempt : null;
+  if (sameDayAttempt?.status === "completed") return { evidenceCutoffDate: reportDate, phase: "completed" };
+  if (hour < 18) return { evidenceCutoffDate: addIsoDays(reportDate, -1), phase: "awaiting_capture" };
+  if (hour < 22 || ["queued", "running"].includes(String(sameDayAttempt?.status || ""))) {
+    return { evidenceCutoffDate: addIsoDays(reportDate, -1), phase: "processing" };
+  }
+  return { evidenceCutoffDate: reportDate, phase: "routine_overdue" };
+}
+
 function normalizeFilterValue(value) {
   return String(value || "")
     .normalize("NFD")

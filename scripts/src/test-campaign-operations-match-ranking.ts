@@ -210,3 +210,22 @@ test("nao amplia aliases de topo e video para outras posicoes", () => {
   assert.equal(isFormatCompatible("VIDEO", "VIDEO MOBILE"), false);
   assert.equal(isFormatCompatible("TOPO", "MEGABANNER TOPO — HEADER — 825x120"), false);
 });
+
+test("seleciona PNMT DENGUE #1839 e descarta rascunho ou cancelada", () => {
+  const canonical = insertion({
+    id: 1839, localFormato: "HOME 1", localFormatoNormalizado: "HOME 1",
+    periodoInicio: "2026-08-03", periodoFim: "2026-08-17",
+    statusNormalizado: "finalizado", bannerPublicadoNoSite: true,
+    mediaUrl: "https://cdn.example.test/dengue.gif",
+  });
+  const draft = insertion({
+    id: 2400, periodoInicio: "2026-08-03", periodoFim: "2026-08-17",
+    statusNormalizado: "rascunho", bannerPublicadoNoSite: false, mediaUrl: null,
+  });
+  const canceled = insertion({
+    id: 1826, periodoInicio: "2026-08-03", periodoFim: "2026-08-17",
+    statusNormalizado: "cancelado", bannerPublicadoNoSite: false, mediaUrl: null,
+  });
+  const result = selectBestAdopsMatch({ localFormato: "HOME 1", periodoInicio: "2026-08-03", periodoFim: "2026-08-17" }, [draft, canceled, canonical]);
+  assert.equal(result.insertion?.id, 1839);
+});

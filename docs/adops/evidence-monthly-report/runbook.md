@@ -25,6 +25,8 @@ fonte mensal agregada
 
 O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `print-single` e `print-backfill`.
 
+O relatório abre visualmente em `Ativas`, mas o artefato mensal sempre contém também `Encerradas`. Antes das 18h de Cuiabá ou durante fila/execução do lote diário, o corte termina no dia anterior. A restauração de encerradas reutiliza evidências existentes e nunca cria captura.
+
 ## Execução
 
 Antes de qualquer geração:

@@ -41,6 +41,12 @@ assert.equal("scanId" in publicInventory, false);
 assert.equal("rootFolderId" in publicInventory, false);
 assert.equal("error" in publicInventory, false);
 assert.doesNotMatch(reportSource, /item\.periodoFim >= targetDate \|\| activeStatuses/);
+assert.match(reportSource, /const legacyPublication[\s\S]*\|\| 'active'/);
+assert.match(reportSource, /activePublication = 'active'/);
+assert.match(reportSource, /data-fallback-src=/);
+assert.match(reportSource, /resolveEvidenceWindow/);
+assert.doesNotMatch(reportSource, /campaign-operations\/active/);
+assert.match(reportSource, /materializeCompleteCampaignExports\(enriched, monthEndForEvidence\)/);
 
 const metadata = buildCampaignFilterMetadata({ items: [{
   periodoInicio: "2026-08-01",

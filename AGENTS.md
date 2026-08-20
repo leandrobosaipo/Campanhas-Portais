@@ -137,6 +137,10 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
 - Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
 - `campaign-operations/active` continua sendo a fonte diária. Não use esse endpoint isoladamente para construir um relatório mensal.
+- O filtro visual inicial `Ativas` não reduz o conjunto persistido: `Encerradas` permanecem no HTML/JSON durante toda a competência.
+- É proibido recuar silenciosamente da fonte mensal para `campaign-operations/active`. Se a fonte mensal falhar, preserve a última publicação válida.
+- Antes das 18h, e enquanto o lote diário estiver em fila ou execução, o dia corrente é `aguardando captura`, nunca `pendente`. Ausência vira pendência somente após conclusão canônica ou fechamento da janela.
+- Restaurar campanha encerrada reutiliza evidências auditadas existentes e não autoriza `print-single`, `print-backfill` nem qualquer captura retroativa.
 - `bannerPublicadoNoSite=true` é somente publicação reportada. Confirmação pública exige a relação AdRotate e a mídia no HTML público.
 - `GET /api/ops/daily-print-status` é a leitura compacta da última rotina diária e da próxima execução. Não exponha payloads, tokens ou logs internos nessa resposta.
 - Uma falha terminal de job deve ser gravada junto do incidente na mesma operação transacional. Incidentes e logs nunca podem persistir credenciais.

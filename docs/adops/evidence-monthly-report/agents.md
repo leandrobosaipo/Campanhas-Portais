@@ -26,6 +26,10 @@ bash /Users/leandrobosaipo/.agents/skills/portainer/portainer.sh endpoints
 - Nao expor `OPS_API_TOKEN`, `PORTAINER_API_KEY` ou headers.
 - Nao usar `printGerado` como aprovacao de evidencia.
 - Nao chamar rotas de mutacao.
+- Usar exclusivamente a fonte mensal da API AdOps; nunca acessar a planilha diretamente nem usar fallback para a fonte ativa.
+- Manter campanhas encerradas no documento mesmo quando a interface abrir filtrada em `Ativas`.
+- Restaurar somente com evidências já armazenadas; não criar jobs de print.
+- Antes das 18h e durante a rotina diária, retirar o dia corrente do corte de pendências.
 - Nao tratar insercao futura como pendente.
 - Nao tratar insercao sem publicacao no site como pendente de evidencia.
 - Quando houver `pendente`, abrir o modal ou `data.json` e informar as datas exatas.

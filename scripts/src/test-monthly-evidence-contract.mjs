@@ -266,3 +266,21 @@ test("distingue falha de auditoria de falha tecnica do runner", () => {
   assert.equal(contract.isAuditFailureJob({ status: "failed", error: "callback_fetch_failed" }), false);
   assert.equal(contract.isAuditFailureJob({ status: "completed", error: null }), false);
 });
+
+test("não cobra o dia corrente antes ou durante a rotina das 18h", () => {
+  assert.deepEqual(contract.resolveEvidenceWindow({ reportDate: "2026-08-20", now: new Date("2026-08-20T18:30:00Z"), dailyPrintStatus: null }), {
+    evidenceCutoffDate: "2026-08-19", phase: "awaiting_capture",
+  });
+  assert.deepEqual(contract.resolveEvidenceWindow({ reportDate: "2026-08-20", now: new Date("2026-08-20T23:00:00Z"), dailyPrintStatus: { lastAttempt: { targetDate: "2026-08-20", status: "running" } } }), {
+    evidenceCutoffDate: "2026-08-19", phase: "processing",
+  });
+});
+
+test("cobra o dia após término canônico ou fechamento da janela", () => {
+  assert.deepEqual(contract.resolveEvidenceWindow({ reportDate: "2026-08-20", now: new Date("2026-08-20T23:15:00Z"), dailyPrintStatus: { lastAttempt: { targetDate: "2026-08-20", status: "completed" } } }), {
+    evidenceCutoffDate: "2026-08-20", phase: "completed",
+  });
+  assert.deepEqual(contract.resolveEvidenceWindow({ reportDate: "2026-08-20", now: new Date("2026-08-21T02:30:00Z"), dailyPrintStatus: null }), {
+    evidenceCutoffDate: "2026-08-20", phase: "routine_overdue",
+  });
+});
