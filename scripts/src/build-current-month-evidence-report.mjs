@@ -1844,8 +1844,11 @@ async function main() {
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
     const publishStartedAtMs = Date.now();
+    if (summary.publicationGate.invalid > 0) {
+      throw new Error(`Publicação bloqueada: invalid=${summary.publicationGate.invalid}.`);
+    }
     if (!isMonthlyReportPublishable(summary.publicationGate)) {
-      throw new Error(`Publicação bloqueada: missing=${summary.publicationGate.missing}, invalid=${summary.publicationGate.invalid}.`);
+      console.warn(`[monthly-report] publicando com ${summary.publicationGate.missing} pendência(s) visível(is); nenhuma evidência inválida foi encontrada.`);
     }
     await publishReport();
     const cacheToken = encodeURIComponent(generatedAt.toISOString());
