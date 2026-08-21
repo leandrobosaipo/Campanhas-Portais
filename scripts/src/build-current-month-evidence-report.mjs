@@ -580,10 +580,11 @@ async function materializeCampaignExports(items) {
         headers: { "idempotency-key": idempotencyKey },
         timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
       });
-      if (created.status !== "completed") {
-        await waitForCompactJob(created.jobId, `exportação ${group.piCodigo}/${group.siteSigla}`, 20 * 60_000);
+      if (created.status === "completed") {
+        results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
+      } else {
+        console.warn(`[monthly-report] pacote opcional em processamento para ${group.piCodigo}/${group.siteSigla}; relatório seguirá com as evidências individuais.`);
       }
-      results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote opcional indisponível para ${group.piCodigo}/${group.siteSigla}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -638,10 +639,11 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
       if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
         throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
       }
-      if (created.status !== "completed") {
-        await waitForCompactJob(created.jobId, `exportação completa da PI ${group.piCodigo}`, 30 * 60_000);
+      if (created.status === "completed") {
+        results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
+      } else {
+        console.warn(`[monthly-report] pacote completo opcional em processamento para PI ${group.piCodigo}; relatório seguirá com as evidências individuais.`);
       }
-      results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote completo opcional indisponível para PI ${group.piCodigo}: ${error instanceof Error ? error.message : String(error)}`);
     }
