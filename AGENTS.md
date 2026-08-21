@@ -136,6 +136,8 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Às 17h30 de Cuiabá, `sync-planilha` deve terminar antes de `campaign-publication-reconcile`. A sincronização cadastra de forma idempotente somente linhas canônicas realmente ausentes.
 - Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
 - Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
+- Cada evidência aprovada por `print-single`, `print-backfill` ou `print-batch` marca a competência como suja. O Worker agrupa aprovações por 60 segundos, mantém somente um job mensal ativo por competência e republica em modo incremental sem criar captura ou exportação nova.
+- Se uma aprovação chegar enquanto a revisão incremental estiver executando, ela cria a próxima revisão após o job atual. Falha de revisão mantém a competência suja e agenda retry; não esconda pendências para “destravar” o relatório.
 - `campaign-operations/active` continua sendo a fonte diária. Não use esse endpoint isoladamente para construir um relatório mensal.
 - O filtro visual inicial `Ativas` não reduz o conjunto persistido: `Encerradas` permanecem no HTML/JSON durante toda a competência.
 - É proibido recuar silenciosamente da fonte mensal para `campaign-operations/active`. Se a fonte mensal falhar, preserve a última publicação válida.

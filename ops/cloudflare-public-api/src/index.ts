@@ -68,6 +68,18 @@ type OpsJobRecord = {
   updated_at: string;
 };
 
+type MonthlyReportRefreshRecord = {
+  competencia: string;
+  target_date: string;
+  dirty_revision: number;
+  published_revision: number;
+  active_job_id: string | null;
+  debounce_until: string | null;
+  retry_count: number;
+  last_error: string | null;
+  updated_at: string;
+};
+
 type OpsIncidentRecord = {
   id: string;
   fingerprint: string;
@@ -1267,6 +1279,96 @@ async function createIdempotentOpsJob(
   return { jobId, status: "ready_for_runner" as JobStatus, duplicate: false };
 }
 
+function parseJobPayload(record: OpsJobRecord | null | undefined): Record<string, unknown> {
+  const value = parseJsonSafe(record?.payload_json ?? "{}");
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function isIncrementalMonthlyReportJob(record: OpsJobRecord | null | undefined) {
+  const payload = parseJobPayload(record);
+  return record?.kind === "evidence-monthly-report" && payload.incremental === true;
+}
+
+function isoAfterSeconds(seconds: number) {
+  return new Date(Date.now() + seconds * 1000).toISOString();
+}
+
+async function createMonthlyReportRefreshJob(env: Env, state: MonthlyReportRefreshRecord, requestedBy: string, notBefore?: string | null) {
+  const revision = Number(state.dirty_revision || 0);
+  if (!revision) throw new Error("Atualização incremental sem revisão pendente.");
+  const scheduleAt = notBefore ?? state.debounce_until ?? nowIso();
+  const idempotencyKey = `evidence-monthly-report:${state.competencia}:incremental:${revision}:attempt:${Number(state.retry_count || 0)}`;
+  const created = await createIdempotentOpsJob(env, "evidence-monthly-report", {
+    targetDate: state.target_date,
+    competencia: state.competencia,
+    incremental: true,
+    refreshRevision: revision,
+    notBefore: scheduleAt,
+    source: "evidence-approved-refresh",
+  }, requestedBy, idempotencyKey);
+  await env.adops_ops.prepare(
+    `UPDATE monthly_report_refreshes SET active_job_id = ?, updated_at = ? WHERE competencia = ?`,
+  ).bind(created.jobId, nowIso(), state.competencia).run();
+  return { ...created, refreshRevision: revision, notBefore: scheduleAt };
+}
+
+async function markMonthlyReportDirty(env: Env, input: { competencia: string; targetDate: string; requestedBy: string }) {
+  const competencia = input.competencia.trim().toUpperCase();
+  const debounceUntil = isoAfterSeconds(60);
+  const now = nowIso();
+  await env.adops_ops.prepare(
+    `INSERT INTO monthly_report_refreshes (competencia, target_date, dirty_revision, published_revision, active_job_id, debounce_until, retry_count, last_error, updated_at)
+     VALUES (?, ?, 1, 0, NULL, ?, 0, NULL, ?)
+     ON CONFLICT(competencia) DO UPDATE SET
+       target_date = excluded.target_date,
+       dirty_revision = monthly_report_refreshes.dirty_revision + 1,
+       debounce_until = excluded.debounce_until,
+       last_error = NULL,
+       updated_at = excluded.updated_at`,
+  ).bind(competencia, input.targetDate, debounceUntil, now).run();
+  const state = await env.adops_ops.prepare(`SELECT * FROM monthly_report_refreshes WHERE competencia = ?`).bind(competencia).first<MonthlyReportRefreshRecord>();
+  if (!state) throw new Error("Estado incremental do relatório não foi persistido.");
+  const active = state.active_job_id
+    ? await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(state.active_job_id).first<OpsJobRecord>()
+    : null;
+  if (active?.status === "ready_for_runner") {
+    const payload = parseJobPayload(active);
+    await env.adops_ops.prepare(
+      `UPDATE ops_jobs SET payload_json = ?, updated_at = ? WHERE id = ? AND status = 'ready_for_runner'`,
+    ).bind(JSON.stringify({ ...payload, targetDate: state.target_date, refreshRevision: state.dirty_revision, notBefore: debounceUntil }), nowIso(), active.id).run();
+    return { status: "debouncing" as const, jobId: active.id, refreshRevision: state.dirty_revision, debounceUntil };
+  }
+  if (active?.status === "running") {
+    return { status: "queued_after_running" as const, jobId: active.id, refreshRevision: state.dirty_revision, debounceUntil };
+  }
+  const job = await createMonthlyReportRefreshJob(env, state, input.requestedBy, debounceUntil);
+  return { status: job.status, jobId: job.jobId, refreshRevision: job.refreshRevision, debounceUntil };
+}
+
+async function settleMonthlyReportRefresh(env: Env, job: OpsJobRecord, outcome: "completed" | "failed", error: string | null) {
+  if (!isIncrementalMonthlyReportJob(job)) return;
+  const payload = parseJobPayload(job);
+  const competencia = String(payload.competencia || "").trim().toUpperCase();
+  const processedRevision = Number(payload.refreshRevision || 0);
+  if (!competencia || !processedRevision) return;
+  const state = await env.adops_ops.prepare(`SELECT * FROM monthly_report_refreshes WHERE competencia = ?`).bind(competencia).first<MonthlyReportRefreshRecord>();
+  if (!state || state.active_job_id !== job.id) return;
+  if (outcome === "completed" && Number(state.dirty_revision) <= processedRevision) {
+    await env.adops_ops.prepare(
+      `UPDATE monthly_report_refreshes SET published_revision = ?, active_job_id = NULL, retry_count = 0, last_error = NULL, updated_at = ? WHERE competencia = ?`,
+    ).bind(processedRevision, nowIso(), competencia).run();
+    return;
+  }
+  const retryCount = outcome === "failed" ? Number(state.retry_count || 0) + 1 : 0;
+  const retryDelaySeconds = outcome === "failed" ? Math.min(900, 60 * (2 ** Math.min(retryCount, 4))) : 0;
+  await env.adops_ops.prepare(
+    `UPDATE monthly_report_refreshes SET active_job_id = NULL, retry_count = ?, last_error = ?, updated_at = ? WHERE competencia = ?`,
+  ).bind(retryCount, outcome === "failed" ? String(error || "Falha incremental sem detalhe.").slice(0, 1000) : null, nowIso(), competencia).run();
+  const refreshed = await env.adops_ops.prepare(`SELECT * FROM monthly_report_refreshes WHERE competencia = ?`).bind(competencia).first<MonthlyReportRefreshRecord>();
+  if (!refreshed) return;
+  await createMonthlyReportRefreshJob(env, refreshed, "evidence-approved-refresh", outcome === "failed" ? isoAfterSeconds(retryDelaySeconds) : null);
+}
+
 async function createCampaignEvidenceExportJob(
   env: Env,
   body: Record<string, unknown>,
@@ -1949,11 +2051,12 @@ async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: stri
          AND dependency.status = 'completed'
     )
   )`;
+  const notBeforeReady = `AND (json_extract(ops_jobs.payload_json, '$.notBefore') IS NULL OR json_extract(ops_jobs.payload_json, '$.notBefore') <= ?)`;
   const sql = kinds?.length
-    ? `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ORDER BY created_at ASC LIMIT 1`
-    : `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ORDER BY created_at ASC LIMIT 1`;
+    ? `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`
+    : `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`;
   const statement = env.adops_ops.prepare(sql);
-  const row = await statement.bind(...(kinds ?? [])).first<OpsJobRecord>();
+  const row = await statement.bind(...(kinds ?? []), nowIso()).first<OpsJobRecord>();
   if (!row) return null;
   const claimed = await env.adops_ops
     .prepare(`UPDATE ops_jobs SET status = 'running', runner_id = ?, error_text = NULL, updated_at = ? WHERE id = ? AND status = 'ready_for_runner'`)
@@ -2561,6 +2664,23 @@ export default {
         return jsonNoStore({ ok: true, kind: "evidence-monthly-report", ...created }, { status: created.duplicate ? 200 : 202 });
       }
 
+      if (path === "/api/ops/monthly-report-refreshes") {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        const body = await readBody(request);
+        const targetDate = typeof body.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.targetDate) ? body.targetDate : null;
+        const competencia = typeof body.competencia === "string" && body.competencia.trim() ? body.competencia.trim().toUpperCase() : null;
+        if (!targetDate || !competencia) return badRequest("Informe targetDate=YYYY-MM-DD e competencia.");
+        const expectedCompetencia = competenciaForDate(targetDate);
+        if (competencia !== expectedCompetencia) return badRequest("competencia deve corresponder ao mês de targetDate.");
+        const refresh = await markMonthlyReportDirty(env, {
+          targetDate,
+          competencia,
+          requestedBy: typeof body.source === "string" ? body.source : "evidence-approved-refresh",
+        });
+        return jsonNoStore({ ok: true, competencia, targetDate, debounceSeconds: 60, ...refresh }, { status: 202 });
+      }
+
       if (path === "/api/ops/jobs/campaign-publication-reconcile") {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
@@ -3075,6 +3195,7 @@ export default {
           expectedStatus: "running",
           expectedRunnerId: runnerId,
         });
+        if (updated) await settleMonthlyReportRefresh(env, updated as OpsJobRecord, "completed", null);
         return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
       }
 
@@ -3112,6 +3233,7 @@ export default {
           "running",
         );
         if (!failed) return notFound("Job not found");
+        await settleMonthlyReportRefresh(env, failed.job, "failed", typeof body.error === "string" ? body.error : null);
         return json({ ok: true, job: describeJob(failed.job), incident: failed.incident });
       }
 

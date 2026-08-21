@@ -680,6 +680,23 @@ assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
   queued: false,
   last: { status: "ok", trigger: { reason: publishReason } },
 }, publishReason), { matched: true, completed: true, failed: false, status: "ok" });
+assert.deepEqual(runner.normalizePerrengueRebuildHealthPayload({
+  running: false,
+  lastRun: { status: "completed", trigger: { reason: publishReason } },
+  runs: [{ status: "completed", trigger: { reason: publishReason } }],
+}), {
+  available: true,
+  running: false,
+  queued: false,
+  last: { status: "completed", trigger: { reason: publishReason } },
+  recentRuns: [{ status: "completed", trigger: { reason: publishReason } }],
+  lastStatus: "completed",
+  lastStartedAt: null,
+  lastFinishedAt: null,
+});
+assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
+  last: { status: "completed", trigger: { reason: publishReason } },
+}, publishReason), { matched: true, completed: true, failed: false, status: "completed" });
 assert.deepEqual(runner.evaluatePerrengueRebuildHealth({
   running: false,
   queued: false,

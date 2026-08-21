@@ -2,7 +2,7 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-17
+> Última validação: 2026-08-21
 > Release anterior: b00779340442; confirmar a correção mensal pelo readback
 > Fonte autoritativa: job `evidence-monthly-report`, fonte mensal agregada e relatório público
 
@@ -24,6 +24,12 @@ fonte mensal agregada
 ```
 
 O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `print-single` e `print-backfill`.
+
+## Atualização incremental
+
+Quando uma evidência termina aprovada, o runner registra a competência como “suja”. O Worker aguarda 60 segundos desde a última aprovação próxima e executa uma revisão incremental única por competência. Ela reconsulta a fonte mensal e auditorias, atualiza HTML, `data.json`, miniaturas, contadores e modais, mas não solicita print, JPEG, ZIP nem pacote novo.
+
+Se outra aprovação ocorrer enquanto a página está sendo atualizada, ela fica registrada como uma nova revisão e é publicada depois do job em curso. Falha do relatório não invalida o print aprovado: a revisão permanece pendente para retry e a página continua exibindo o último estado público válido.
 
 O relatório abre visualmente em `Ativas`, mas o artefato mensal sempre contém também `Encerradas`. Antes das 18h de Cuiabá ou durante fila/execução do lote diário, o corte termina no dia anterior. A restauração de encerradas reutiliza evidências existentes e nunca cria captura.
 
@@ -120,3 +126,4 @@ Não copie um `index.html` isolado sobre dados de outra versão.
 - Falha de staging nunca pode apagar a última entrega válida.
 - `campaign-operations/active` é uma visão diária e exclui corretamente períodos encerrados. O relatório mensal deve usar exclusivamente `campaign-operations/evidence-monthly-source`.
 - `competencia` e `date` precisam pertencer ao mesmo mês; divergência é erro de contrato, não fallback silencioso.
+- Uma falha de rebuild do PERRENGUE bloqueia apenas a inserção afetada. Não marque o banner como publicado nem gere evidência até haver confirmação do AdRotate, do rebuild e do HTML público.

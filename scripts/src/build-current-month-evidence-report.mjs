@@ -74,6 +74,8 @@ const monthSlugNames = [
   "dezembro",
 ];
 const generatedAt = new Date();
+const refreshMode = process.env.ADOPS_REPORT_REFRESH_MODE === "incremental" ? "incremental" : "full";
+const refreshRevision = Math.max(0, Number.parseInt(process.env.ADOPS_REPORT_REFRESH_REVISION || "0", 10) || 0);
 const targetDate = process.env.ADOPS_REPORT_DATE || formatIsoDateInZone(generatedAt, timeZone);
 const targetMonth = process.env.ADOPS_REPORT_MONTH || targetDate.slice(0, 7);
 const competencia = process.env.ADOPS_REPORT_COMPETENCIA || competenciaFromMonth(targetMonth);
@@ -921,7 +923,7 @@ function renderForecast(items, dateField, emptyText) {
   return `<ul>${items.map((item) => `<li><b>${escapeHtml(item.campanhaName || item.campaignName || `Inserção #${item.id}`)}</b><span>${escapeHtml(item.siteSigla || "-")} · ${escapeHtml(item.piCodigo || "sem PI")} · ${fullDatePt(item[dateField])}</span></li>`).join("")}</ul>`;
 }
 
-function renderHtml({ insertions, portals, audits, summary, forecast, sources, dailyPrintStatus = null }) {
+function renderHtml({ insertions, portals, audits, summary, forecast, sources, dailyPrintStatus = null, refreshMode = "full", refreshRevision = 0 }) {
   const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, { ...item, mediaUrl: safePublicMediaUrl(item.mediaUrl) }]));
   const portalOptions = buildPortalFilterOptions(portals);
   const currentEvidenceIssues = Number(summary.pending || 0) + Number(summary.invalid || 0);
@@ -1250,7 +1252,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         <div class="mark">A5</div>
         <div>
           <h1>Evidências AdOps · ${escapeHtml(competencia)}</h1>
-          <div class="sub"><span>${fullDatePt(monthBounds(targetMonth).start)} → ${fullDatePt(targetDate)}</span><span class="public-url">Atualizado ${escapeHtml(generatedAt.toLocaleString("pt-BR", { timeZone }))}</span></div>
+          <div class="sub"><span>${fullDatePt(monthBounds(targetMonth).start)} → ${fullDatePt(targetDate)}</span><span class="public-url">Atualizado ${escapeHtml(generatedAt.toLocaleString("pt-BR", { timeZone }))} · ${refreshMode === "incremental" ? `sincronização automática · revisão ${refreshRevision}` : "revisão completa"}</span></div>
         </div>
       </div>
       <div class="header-side">
@@ -1802,9 +1804,11 @@ async function main() {
     sheetUrl: currentSheetUrl,
     driveMediaUrl,
   };
-  const html = renderHtml({ insertions: enriched, portals, audits, summary, forecast, sources, dailyPrintStatus });
+  const html = renderHtml({ insertions: enriched, portals, audits, summary, forecast, sources, dailyPrintStatus, refreshMode, refreshRevision });
   const data = {
     generatedAt: generatedAt.toISOString(),
+    refreshMode,
+    refreshRevision,
     targetDate,
     evidenceCutoffDate: monthEndForEvidence,
     evidenceWindowPhase: evidenceWindow.phase,
@@ -1824,6 +1828,8 @@ async function main() {
     generatedAt: generatedAt.toISOString(),
   });
   reportManifest.sources = sources;
+  reportManifest.refreshMode = refreshMode;
+  reportManifest.refreshRevision = refreshRevision;
   const latestAssets = path.join(latestDir, "assets");
   const snapshotAssets = path.join(snapshotDir, "assets");
   await Promise.all([mkdir(latestAssets, { recursive: true }), mkdir(snapshotAssets, { recursive: true })]);

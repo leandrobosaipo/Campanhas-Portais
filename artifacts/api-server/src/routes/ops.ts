@@ -121,6 +121,7 @@ const D1_JOB_POST_PATHS = new Set([
   "/ops/jobs/print-backfill",
   "/ops/jobs/print-single",
   "/ops/jobs/evidence-monthly-report",
+  "/ops/monthly-report-refreshes",
   "/ops/jobs/campaign-publication-reconcile",
   "/ops/jobs/drive-pi-preflight",
   "/ops/jobs/drive-pi-folder",

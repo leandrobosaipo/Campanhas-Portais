@@ -170,6 +170,32 @@ async function privateApi(pathname, body, extraHeaders = {}) {
   return payload;
 }
 
+function competenciaForEvidenceDate(date) {
+  const match = String(date || "").match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  const months = ["", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+  return `${months[Number(match[2])]}/${match[1]}`;
+}
+
+async function markMonthlyReportRefreshAfterApproval(date, insertionId) {
+  const competencia = competenciaForEvidenceDate(date);
+  if (!competencia) return null;
+  try {
+    return await request("/api/ops/monthly-report-refreshes", {
+      method: "POST",
+      body: JSON.stringify({
+        targetDate: date,
+        competencia,
+        insertionId,
+        source: "runner-evidence-approved",
+      }),
+    });
+  } catch (error) {
+    console.warn(`[runner] atualização incremental do relatório não foi agendada para #${insertionId}/${date}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, reconstructionReason = null }) {
   if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
   const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
@@ -196,6 +222,7 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
     if (job?.status === "completed") {
       const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
       if (!item || item.status !== "ok") throw new Error(item?.error || `Captura assíncrona ${jobId} concluiu sem item aprovado.`);
+      await markMonthlyReportRefreshAfterApproval(date, insertionId);
       return { jobId, job, item };
     }
     if (["failed", "cancelled"].includes(String(job?.status || ""))) {
@@ -3758,11 +3785,38 @@ function evaluatePerrengueRebuildHealth(health, expectedReason) {
   const matched = Boolean(match);
   const status = matched ? String(match?.status || "").toLowerCase() || null : null;
   const terminalFailure = new Set(["failed", "error", "cancelled", "canceled"]);
+  const terminalSuccess = new Set(["ok", "completed", "complete", "success", "succeeded"]);
   return {
     matched,
-    completed: matched && status === "ok",
+    completed: matched && terminalSuccess.has(status),
     failed: matched && terminalFailure.has(status),
     status,
+  };
+}
+
+function normalizePerrengueRebuildHealthPayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const last = source.last && typeof source.last === "object"
+    ? source.last
+    : source.lastRun && typeof source.lastRun === "object"
+      ? source.lastRun
+      : {};
+  const recentRuns = Array.isArray(source.recentRuns)
+    ? source.recentRuns
+    : Array.isArray(source.runs)
+      ? source.runs
+      : Array.isArray(source.recent)
+        ? source.recent
+        : [];
+  return {
+    available: source.available !== false,
+    running: Boolean(source.running),
+    queued: Boolean(source.queued),
+    last,
+    recentRuns,
+    lastStatus: last?.status ?? null,
+    lastStartedAt: last?.startedAt ?? null,
+    lastFinishedAt: last?.finishedAt ?? null,
   };
 }
 
@@ -3792,8 +3846,9 @@ $read_health = static function () use ($url) {
   if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) return ['available' => false];
   $body = json_decode((string) wp_remote_retrieve_body($response), true);
   if (!is_array($body)) return ['available' => false];
-  $last = isset($body['last']) && is_array($body['last']) ? $body['last'] : [];
-  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'recentRuns' => isset($body['recentRuns']) && is_array($body['recentRuns']) ? $body['recentRuns'] : [], 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
+$last = isset($body['last']) && is_array($body['last']) ? $body['last'] : (isset($body['lastRun']) && is_array($body['lastRun']) ? $body['lastRun'] : []);
+$recent_runs = isset($body['recentRuns']) && is_array($body['recentRuns']) ? $body['recentRuns'] : (isset($body['runs']) && is_array($body['runs']) ? $body['runs'] : (isset($body['recent']) && is_array($body['recent']) ? $body['recent'] : []));
+return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'recentRuns' => $recent_runs, 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
 };
 $insertion_id = (int) ($input['insertionId'] ?? 0);
 $trigger_reason = (string) ($input['triggerReason'] ?? '');
@@ -3815,7 +3870,7 @@ while (time() < $deadline) {
   }
   $matched = is_array($matched_run);
   $last_status = $matched ? strtolower((string) ($matched_run['status'] ?? '')) : '';
-  if ($matched && $last_status === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'triggerReason' => $trigger_reason, 'health' => $health]) . PHP_EOL; exit(0); }
+  if ($matched && in_array($last_status, ['ok', 'completed', 'complete', 'success', 'succeeded'], true)) { echo wp_json_encode(['accepted' => true, 'completed' => true, 'triggerReason' => $trigger_reason, 'health' => $health]) . PHP_EOL; exit(0); }
   $terminal_failure = in_array($last_status, ['failed', 'error', 'cancelled', 'canceled'], true);
   if ($matched && $terminal_failure) throw new RuntimeException('Rebuild ' . $trigger_reason . ' terminou com status ' . $last_status);
 }
@@ -4147,6 +4202,7 @@ async function captureAndValidatePublishedProof({ insertionId, targetDate, captu
     && (status?.blockingIssues || checklist?.blockingIssues || []).length === 0
     && Boolean(status?.arquivoUrl || status?.evidence?.arquivoUrl || capture?.arquivoUrl || capture?.capture?.arquivoUrl);
   if (!approved) throw new Error(`Evidência da inserção ${insertionId} não foi aprovada: ${JSON.stringify({ status: status?.status, blockingIssues: status?.blockingIssues || checklist?.blockingIssues || [] })}`);
+  await markMonthlyReportRefreshAfterApproval(targetDate, insertionId);
   return { capture, checklist, status };
 }
 
@@ -6121,6 +6177,8 @@ async function executeEvidenceMonthlyReport(job) {
   const startedAtMs = Date.now();
   const timings = {};
   const payload = job?.payload || {};
+  const incremental = payload.incremental === true;
+  const refreshRevision = incremental ? Number(payload.refreshRevision || 0) : null;
   const targetDate = String(payload.targetDate || todayInCuiaba());
   const competencia = String(payload.competencia || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !competencia) {
@@ -6134,27 +6192,41 @@ async function executeEvidenceMonthlyReport(job) {
     percentStage: 5,
     percentTotal: 5,
   });
-  await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"], {
-    cwd: PROJECT_ROOT,
-    env: process.env,
-    timeout: 20 * 60_000,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  timings.sheetSyncMs = Date.now() - startedAtMs;
-  await progressJob(job.id, {
-    stage: "collecting",
-    itemsDone: 1,
-    itemsTotal: 4,
-    percentStage: 35,
-    percentTotal: 15,
-  });
-  await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
-    cwd: PROJECT_ROOT,
-    env: process.env,
-    timeout: 10 * 60_000,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  timings.captureRulesAuditMs = Date.now() - startedAtMs - timings.sheetSyncMs;
+  if (!incremental) {
+    await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"], {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      timeout: 20 * 60_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    timings.sheetSyncMs = Date.now() - startedAtMs;
+    await progressJob(job.id, {
+      stage: "collecting",
+      itemsDone: 1,
+      itemsTotal: 4,
+      percentStage: 35,
+      percentTotal: 15,
+    });
+    await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      timeout: 10 * 60_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    timings.captureRulesAuditMs = Date.now() - startedAtMs - timings.sheetSyncMs;
+  } else {
+    timings.sheetSyncMs = 0;
+    timings.captureRulesAuditMs = 0;
+    await progressJob(job.id, {
+      stage: "collecting",
+      itemsDone: 2,
+      itemsTotal: 4,
+      percentStage: 50,
+      percentTotal: 30,
+      refreshMode: "incremental",
+      refreshRevision,
+    });
+  }
   await progressJob(job.id, {
     stage: "exporting",
     itemsDone: 2,
@@ -6183,7 +6255,9 @@ async function executeEvidenceMonthlyReport(job) {
         ADOPS_REPORT_COMPETENCIA: competencia,
         ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
         ADOPS_REPORT_SKIP_PUBLISH: "0",
-        ADOPS_REPORT_SKIP_EXPORTS: "0",
+        ADOPS_REPORT_SKIP_EXPORTS: incremental ? "1" : "0",
+        ADOPS_REPORT_REFRESH_MODE: incremental ? "incremental" : "full",
+        ADOPS_REPORT_REFRESH_REVISION: refreshRevision ? String(refreshRevision) : "",
       },
       timeout: 90 * 60_000,
       maxBuffer: 50 * 1024 * 1024,
@@ -6208,6 +6282,8 @@ async function executeEvidenceMonthlyReport(job) {
   }
   return {
     ok: true,
+    refreshMode: incremental ? "incremental" : "full",
+    refreshRevision,
     stage: "completed",
     targetDate,
     competencia,
@@ -7720,6 +7796,7 @@ export {
   prepareOperationalDeliveryMedia,
   restrictedReplaceSql,
   normalizePerrengueAdrotateSnapshot,
+  normalizePerrengueRebuildHealthPayload,
   mergeDrivePiFields,
   parsePeriodoFromBboxText,
   parsePeriodoFromLayoutText,

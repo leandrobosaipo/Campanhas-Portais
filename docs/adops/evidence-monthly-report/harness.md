@@ -41,6 +41,8 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - A quantidade de `.thumb` deve representar todos os dias auditados, nao apenas uma amostra.
 - O modal deve abrir tanto em thumb auditada quanto em celula `missing` ou `invalid`.
 - Se `ADOPS_REPORT_SKIP_PUBLISH=1`, nenhum container auxiliar deve ser criado.
+- Em `ADOPS_REPORT_REFRESH_MODE=incremental`, `ADOPS_REPORT_SKIP_EXPORTS=1` é obrigatório: o ciclo só reusa evidências existentes e não pode disparar captura, JPEG, ZIP ou exportação.
+- Duas aprovações próximas devem resultar em uma revisão com debounce de 60 segundos; uma aprovação durante a execução deve resultar em uma única revisão seguinte, sem jobs mensais concorrentes.
 
 ## Verificacao publica
 
