@@ -2,7 +2,8 @@ function cod5_string(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function planCampaignPublicationReconciliation(items, checkedAt) {
+export function planCampaignPublicationReconciliation(items, checkedAt, options = {}) {
+  const cod5_mode = options.mode === "preflight" ? "preflight" : "apply";
   const cod5_actions = [];
   const cod5_blockers = [];
   for (const cod5_item of Array.isArray(items) ? items : []) {
@@ -27,6 +28,14 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
         cod5_blockers.push({ insertionId: cod5_insertionId, code: "operational_preflight_source_incomplete", reason: "Identidade operacional não contém uma única mídia, uma política de destino válida e fingerprint." });
         continue;
       }
+      if (cod5_string(cod5_item?.adops?.mediaUrl)) {
+        cod5_blockers.push({
+          insertionId: cod5_insertionId,
+          code: "existing_media_requires_review",
+          reason: "A inserção já possui mídia canônica; a automação não a substitui.",
+        });
+        continue;
+      }
       cod5_actions.push({
         type: "operational_media_publish",
         insertionId: cod5_insertionId,
@@ -48,6 +57,7 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
           destinationDocument: cod5_documents[0] ?? null,
           mediaProfile: cod5_mediaProfile,
           fingerprint: cod5_fingerprint,
+          mode: cod5_mode,
         },
       });
       continue;
@@ -88,9 +98,29 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
           expectedCampaignId: Number(cod5_item?.adops?.campaignId || 0),
           expectedInsertionId: cod5_insertionId,
           expectedPiCodigo: cod5_canonicalPi,
+          // The monthly source is authoritative for the contracted slot and
+          // dates. PDFs often describe the whole competence and therefore
+          // must validate identity/media, never expand this insertion scope.
+          allowPdfInsertions: false,
+          parsedPi: {
+            piCodigo: cod5_canonicalPi,
+            competencia: cod5_string(cod5_item?.adops?.competencia) || null,
+            campaignName: cod5_string(cod5_item?.campaignName) || null,
+            insertions: [{
+              siteSigla: cod5_string(cod5_item?.siteSigla),
+              localFormato: cod5_string(cod5_item?.format?.normalized || cod5_item?.format?.sheet),
+              localFormatoNormalizado: cod5_string(cod5_item?.format?.normalized || cod5_item?.format?.adops || cod5_item?.format?.sheet),
+              periodoInicio: cod5_string(cod5_item?.period?.start),
+              periodoFim: cod5_string(cod5_item?.period?.end),
+              periodoOriginal: cod5_string(cod5_item?.period?.original),
+            }],
+          },
           publish: true,
-          generateEvidence: true,
+          // Publication must be confirmed before the scheduled capture window.
+          // The daily 18:00 Cuiabá routine owns the first capture for new items.
+          generateEvidence: false,
           purgeCache: true,
+          mode: cod5_mode,
           source: "campaign-publication-reconcile-api-publish",
         },
       });
@@ -102,10 +132,14 @@ export function planCampaignPublicationReconciliation(items, checkedAt) {
         insertionId: cod5_insertionId,
         payload: {
           insertionId: cod5_insertionId,
-          apply: true,
-          replaceExisting: true,
+          apply: cod5_mode === "apply",
+          // Never replace a relationship owned by another insertion automatically.
+          replaceExisting: false,
           purgeCache: true,
-          generateEvidence: true,
+          // Do not create an early same-day proof from the publication job.
+          // Approved evidence is produced by the daily capture routine.
+          generateEvidence: false,
+          mode: cod5_mode,
         },
       });
       continue;

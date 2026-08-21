@@ -134,6 +134,14 @@ Bloqueia publicação ou regeneração em lote se houver:
 ## Rotina diária e relatório mensal
 
 - Às 17h30 de Cuiabá, `sync-planilha` deve terminar antes de `campaign-publication-reconcile`. A sincronização cadastra de forma idempotente somente linhas canônicas realmente ausentes.
+- A publicação automática determinística usa somente a API AdOps, a planilha canônica e o snapshot interno do Drive. Ela depende de `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED=true`; não habilite as flags do agente IA para esse fluxo.
+- Falha transitória do monitor do Drive não pode atrasar job já autorizado: a varredura best-effort roda em loop separado do consumidor da fila de publicação.
+- Antes de qualquer mutação automática, o reconciliador deve sincronizar a planilha, repetir a deduplicação e validar PI, portal, período, formato, mídia única, HTTPS, grupo/slot e HTML público. Qualquer divergência termina em `needs_review`.
+- Para uma inserção canônica já resolvida na fonte mensal, portal, formato e período vêm sempre da planilha/API mensal. O PDF confirma PI, mídia e destino, mas nunca amplia o período contratado nem troca o slot da linha canônica.
+- Quando a campanha canônica já existe, cliente e agência também vêm da campanha/planilha. Diferença de nomenclatura comercial no PDF permanece auditável, mas não pode substituir nem bloquear o alvo já confirmado por PI, portal, formato e período.
+- A automação jamais substitui uma `mediaUrl` existente nem remove anúncio de outra inserção. Relação rotativa válida é preservada; `replaceExisting=false` é obrigatório no fluxo automático.
+- `campaign-publication-reconcile` aceita `mode=preflight|apply`. Eventos do Drive e cron só aplicam quando o gate explícito está ativo; com ele desligado retornam plano e bloqueios, sem mutar campanha, AdRotate ou evidência.
+- A reconciliação só cadastra/publica; ela nunca captura evidência do próprio dia. Após a confirmação do HTML público, a primeira captura continua exclusiva do `print-batch` das 18h.
 - Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
 - Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
 - Cada evidência aprovada por `print-single`, `print-backfill` ou `print-batch` marca a competência como suja. O Worker agrupa aprovações por 60 segundos, mantém somente um job mensal ativo por competência e republica em modo incremental sem criar captura ou exportação nova.

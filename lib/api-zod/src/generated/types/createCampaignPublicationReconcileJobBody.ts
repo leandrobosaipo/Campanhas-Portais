@@ -5,6 +5,7 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { CreateCampaignPublicationReconcileJobBodyMode } from "./createCampaignPublicationReconcileJobBodyMode";
 
 export type CreateCampaignPublicationReconcileJobBody = {
   targetDate?: Date;
@@ -13,4 +14,6 @@ export type CreateCampaignPublicationReconcileJobBody = {
    * @minimum 1
    */
   insertionId?: number;
+  /** Preflight returns only the deterministic decision; apply executes it when the automation gate permits. */
+  mode?: CreateCampaignPublicationReconcileJobBodyMode;
 };

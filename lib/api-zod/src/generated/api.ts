@@ -77,6 +77,8 @@ export const CreateDrivePiReconcileJobResponse = zod.object({
  * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
  */
 
+export const createCampaignPublicationReconcileJobBodyModeDefault = `apply`;
+
 export const CreateCampaignPublicationReconcileJobBody = zod.object({
   targetDate: zod.coerce.date().optional(),
   insertionId: zod
@@ -84,6 +86,12 @@ export const CreateCampaignPublicationReconcileJobBody = zod.object({
     .min(1)
     .optional()
     .describe("Restrict reconciliation to one existing canonical insertion."),
+  mode: zod
+    .enum(["preflight", "apply"])
+    .default(createCampaignPublicationReconcileJobBodyModeDefault)
+    .describe(
+      "Preflight returns only the deterministic decision; apply executes it when the automation gate permits.",
+    ),
 });
 
 export const CreateCampaignPublicationReconcileJobResponse = zod.object({

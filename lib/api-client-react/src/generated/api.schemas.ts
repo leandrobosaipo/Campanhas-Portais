@@ -1096,6 +1096,17 @@ export interface CompetenciaBreakdown {
   atrasadas: number;
 }
 
+/**
+ * Preflight returns only the deterministic decision; apply executes it when the automation gate permits.
+ */
+export type CreateCampaignPublicationReconcileJobBodyMode =
+  (typeof CreateCampaignPublicationReconcileJobBodyMode)[keyof typeof CreateCampaignPublicationReconcileJobBodyMode];
+
+export const CreateCampaignPublicationReconcileJobBodyMode = {
+  preflight: "preflight",
+  apply: "apply",
+} as const;
+
 export type CreateCampaignPublicationReconcileJobBody = {
   targetDate?: string;
   /**
@@ -1103,6 +1114,8 @@ export type CreateCampaignPublicationReconcileJobBody = {
    * @minimum 1
    */
   insertionId?: number;
+  /** Preflight returns only the deterministic decision; apply executes it when the automation gate permits. */
+  mode?: CreateCampaignPublicationReconcileJobBodyMode;
 };
 
 export type ListOpsJobsParams = {

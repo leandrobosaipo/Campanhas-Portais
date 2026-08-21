@@ -192,6 +192,25 @@ test("cron de retomada sincroniza a planilha antes de criar reconciliador depend
   const reconcilePayload = JSON.parse(String(inserts[1]?.values[2]));
   assert.equal(reconcilePayload.dependsOnJobId, String(inserts[0]?.values[0]));
   assert.equal(reconcilePayload.idempotencyKey, "campaign-publication-reconcile:2026-08-13");
+  assert.equal(reconcilePayload.mode, "apply");
+});
+
+test("reconciliador expõe preflight idempotente sem confundir com apply", async () => {
+  const fixture = fakeEnv();
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/campaign-publication-reconcile", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ targetDate: "2026-08-21", insertionId: 2692, mode: "preflight" }),
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(payload.kind, "campaign-publication-reconcile");
+  const insert = fixture.statements.find((item) => item.sql.includes("INSERT OR IGNORE INTO ops_jobs"));
+  const jobPayload = JSON.parse(String(insert?.values[2]));
+  assert.equal(jobPayload.mode, "preflight");
+  assert.equal(jobPayload.insertionId, 2692);
+  assert.equal(jobPayload.idempotencyKey, "campaign-publication-reconcile:2026-08-21:2692:preflight");
 });
 
 test("atualização do Drive agenda retomada idempotente depois do ingest", async () => {
@@ -248,6 +267,22 @@ test("reconciliador espera ingest concluído e usa timeout longo", async () => {
   assert.match(source, /waitingForDependency/);
   assert.match(source, /stage: "dependency_failed"/);
   assert.match(source, /kind === "print-batch"/);
+});
+
+test("monitor do Drive roda separado do consumidor de jobs autorizado", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  const poolSource = source.slice(source.indexOf("async function runPool"), source.indexOf("async function runDrivePiMonitorLoop"));
+  assert.match(poolSource, /const handled = await runOnce\(pool\.kinds\);/);
+  assert.doesNotMatch(poolSource, /runDrivePiMonitorOnce/);
+  assert.match(source, /async function runDrivePiMonitorLoop\(\)/);
+  assert.match(source, /workers\.push\(runDrivePiMonitorLoop\(\)\)/);
+});
+
+test("alvo canônico preserva cliente e agência da campanha, sem preferir o PDF", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  assert.match(source, /preferPdfCommercialIdentity: false/);
+  assert.match(source, /clienteId: readNumberRecord\(campaign, \["clienteId"\]\)/);
+  assert.match(source, /agenciaId: readNumberRecord\(campaign, \["agenciaId"\]\)/);
 });
 
 test("watchdog não expira reconciliador enquanto ingest ainda executa", async () => {

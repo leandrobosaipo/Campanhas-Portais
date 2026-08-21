@@ -115,6 +115,11 @@ paths:
                   format: int32
                   minimum: 1
                   description: Restrict reconciliation to one existing canonical insertion.
+                mode:
+                  type: string
+                  enum: [preflight, apply]
+                  default: apply
+                  description: Preflight returns only the deterministic decision; apply executes it when the automation gate permits.
       responses:
         "200":
           description: Existing idempotent reconciliation returned

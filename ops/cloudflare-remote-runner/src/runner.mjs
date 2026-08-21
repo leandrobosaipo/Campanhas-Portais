@@ -46,6 +46,9 @@ const GOOGLE_DRIVE_ACCESS_TOKEN = (process.env.GOOGLE_DRIVE_ACCESS_TOKEN || "").
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || "").trim();
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || "").trim();
 const ADOPS_DRIVE_PI_ALLOW_MUTATION = process.env.ADOPS_DRIVE_PI_ALLOW_MUTATION === "true";
+// This gate is intentionally independent from the generic Drive/AI intake.
+// It permits only the deterministic planilha + snapshot reconciliation flow.
+const ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED = process.env.ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED === "true";
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const ADOPS_PI_AGENT_ENABLED = process.env.ADOPS_PI_AGENT_ENABLED === "true";
 const ADOPS_PI_AGENT_AUTO_APPLY = process.env.ADOPS_PI_AGENT_AUTO_APPLY === "true";
@@ -2719,8 +2722,11 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText =
     ...fields,
     campaignName: fields?.campaignName || readStringRecord(campaign, ["nome", "campaignName"]),
     competencia: fields?.competencia || readStringRecord(campaign, ["competencia"]),
-    clienteId: readNumberRecord(fields, ["clienteId"]) ?? readNumberRecord(campaign, ["clienteId"]),
-    agenciaId: readNumberRecord(fields, ["agenciaId"]) ?? readNumberRecord(campaign, ["agenciaId"]),
+    // An expected campaign means the API has already fixed the commercial
+    // identity. Preserve the PDF extraction in raw audit data, but hydrate
+    // these fields from the canonical campaign before any mutation gate.
+    clienteId: readNumberRecord(campaign, ["clienteId"]),
+    agenciaId: readNumberRecord(campaign, ["agenciaId"]),
     insertions,
   };
 }
@@ -2761,10 +2767,10 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
       readPositiveInteger(payload?.expectedInsertionId)
       && readPositiveInteger(payload?.expectedCampaignId),
     ),
-    preferPdfCommercialIdentity: Boolean(
-      readPositiveInteger(payload?.expectedInsertionId)
-      && readPositiveInteger(payload?.expectedCampaignId),
-    ),
+    // Once the API has resolved a canonical campaign/insertion, its client
+    // and agency are the authoritative commercial identity. The PDF remains
+    // auditable in `raw`, but cannot overwrite or falsely block that target.
+    preferPdfCommercialIdentity: false,
   });
 }
 
@@ -6397,6 +6403,7 @@ async function executeRuntimeReadinessProbe() {
       telegramBridgeConfigured,
       telegramDirectReady,
       drivePiMutationAllowed: ADOPS_DRIVE_PI_ALLOW_MUTATION,
+      campaignAutoPublicationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
       piAgentEnabled: ADOPS_PI_AGENT_ENABLED,
       piAgentAutoApply: ADOPS_PI_AGENT_AUTO_APPLY,
       perrengueAdrotateExecMode: ADOPS_PERRENGUE_ADROTATE_EXEC_MODE,
@@ -6443,6 +6450,7 @@ async function executeRuntimeReadinessProbe() {
         title: "Política de mutação e IA",
         checks: namedChecks([
           { name: "ADOPS_DRIVE_PI_ALLOW_MUTATION", requiredFor: "Permitir intake aplicar cadastro." },
+          { name: "ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED", requiredFor: "Permitir reconciliação determinística criar/publicar somente itens canônicos." },
           { name: "ADOPS_PI_AGENT_ENABLED", requiredFor: "Permitir análise assistida de PI." },
           { name: "ADOPS_PI_AGENT_AUTO_APPLY", requiredFor: "Permitir auto-aplicação quando aprovado." },
           { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
@@ -6718,7 +6726,7 @@ async function executeOperationalMediaPublish(payload) {
       fingerprint: payload.fingerprint,
       expectedUpdatedAt: patchedInsertion?.updatedAt,
     };
-    const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: true, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
+    const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: false, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
     preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
     published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
     let historicalSnapshotOk = false;
@@ -6811,12 +6819,30 @@ async function executeCampaignPublicationReconcile(job) {
   const cod5_targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.targetDate || ""))
     ? String(job.payload.targetDate)
     : todayInCuiaba();
+  const cod5_source = String(job?.payload?.source || "").trim();
+  const cod5_automaticSource = ["google-drive-monitor", "cloudflare-cron-campaign-publication-reconcile"].includes(cod5_source);
+  const cod5_requestedMode = job?.payload?.mode === "preflight" ? "preflight" : "apply";
+  const cod5_apply = cod5_requestedMode === "apply" && (!cod5_automaticSource || ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED);
+  const cod5_mode = cod5_apply ? "apply" : "preflight";
   await progressJob(job.id, {
     stage: "consultando campanhas pendentes",
     stageKey: "collecting",
     targetDate: cod5_targetDate,
+    mode: cod5_mode,
+    automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
     percentTotal: 10,
   });
+  let cod5_sheetSync = { skipped: true, reason: "preflight_only" };
+  if (cod5_apply) {
+    await progressJob(job.id, {
+      stage: "sincronizando planilha canônica",
+      stageKey: "syncing_sheet",
+      targetDate: cod5_targetDate,
+      mode: cod5_mode,
+      percentTotal: 15,
+    });
+    cod5_sheetSync = await executeSyncPlanilha({ mode: "campaign-publication-reconcile" });
+  }
   const cod5_pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(cod5_targetDate)}`);
   const cod5_checkedAt = new Date().toISOString();
   const cod5_requestedInsertionId = readPositiveInteger(job?.payload?.insertionId);
@@ -6824,9 +6850,31 @@ async function executeCampaignPublicationReconcile(job) {
     ? (cod5_pending?.items || []).filter((item) => Number(item?.adops?.insertionId) === cod5_requestedInsertionId)
     : cod5_pending?.items;
   if (cod5_requestedInsertionId && !cod5_items.length) throw new Error(`Inserção ${cod5_requestedInsertionId} não está na fila de publicação.`);
-  const cod5_plan = planCampaignPublicationReconciliation(cod5_items, cod5_checkedAt);
+  const cod5_plan = planCampaignPublicationReconciliation(cod5_items, cod5_checkedAt, { mode: cod5_mode });
+  if (cod5_automaticSource && !ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED) {
+    cod5_plan.blockers.unshift({
+      insertionId: null,
+      code: "automatic_publication_disabled",
+      reason: "A automação está em observação; ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED ainda não foi habilitada.",
+    });
+  }
   const cod5_results = [];
   let cod5_done = 0;
+  if (!cod5_apply) {
+    return {
+      stage: "preflight",
+      targetDate: cod5_targetDate,
+      checkedAt: cod5_checkedAt,
+      mode: cod5_mode,
+      automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
+      sheetSync: cod5_sheetSync,
+      actionsPlanned: cod5_plan.actions.length,
+      actionsCompleted: 0,
+      blockers: cod5_plan.blockers,
+      actions: cod5_plan.actions,
+      nextAction: cod5_plan.actions.length ? "enable_or_request_apply" : "resolve_blockers",
+    };
+  }
   for (const cod5_action of cod5_plan.actions) {
     await progressJob(job.id, {
       stage: "retomando publicações liberadas",
@@ -6862,6 +6910,9 @@ async function executeCampaignPublicationReconcile(job) {
     stage: cod5_plan.actions.length ? "completed" : "waiting_sources",
     targetDate: cod5_targetDate,
     checkedAt: cod5_checkedAt,
+    mode: cod5_mode,
+    automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
+    sheetSync: cod5_sheetSync,
     actionsPlanned: cod5_plan.actions.length,
     actionsCompleted: cod5_results.length,
     blockers: cod5_plan.blockers,
@@ -7704,12 +7755,6 @@ async function runPool(pool, workerIndex) {
       if (pool.maintenance && workerIndex === 0) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
-      // The inventory monitor is best-effort. A temporary Google Drive rate
-      // limit must never starve already-authorized jobs in this same runner
-      // pool (notably a PI preflight or an idempotent publication retry).
-      await runDrivePiMonitorOnce().catch((error) => {
-        console.warn("[runner] monitor Drive PI falhou; continuando consumo da fila", error instanceof Error ? error.message : String(error));
-      });
       }
       const handled = await runOnce(pool.kinds);
       runnerLastCycleError = null;
@@ -7721,6 +7766,15 @@ async function runPool(pool, workerIndex) {
       console.error(`[runner] pool ${poolLabel} com erro`, runnerLastCycleError);
       await sleep(POLL_INTERVAL_MS);
     }
+  }
+}
+
+async function runDrivePiMonitorLoop() {
+  for (;;) {
+    await runDrivePiMonitorOnce().catch((error) => {
+      console.warn("[runner] monitor Drive PI falhou; tentará novamente sem bloquear a fila", error instanceof Error ? error.message : String(error));
+    });
+    await sleep(POLL_INTERVAL_MS);
   }
 }
 
@@ -7751,9 +7805,11 @@ async function main() {
   startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  await Promise.all(pools.flatMap((pool) => (
+  const workers = pools.flatMap((pool) => (
     Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex))
-  )));
+  ));
+  if (DRIVE_PI_MONITOR_ENABLED) workers.push(runDrivePiMonitorLoop());
+  await Promise.all(workers);
 }
 
 export {

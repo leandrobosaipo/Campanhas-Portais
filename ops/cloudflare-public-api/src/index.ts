@@ -1,4 +1,4 @@
-import { snapshot } from "../data/snapshot";
+import { snapshot } from "./snapshot-fallback";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
@@ -2690,10 +2690,12 @@ export default {
           : dateInTimeZone(new Date(), DAILY_PRINT_TIME_ZONE);
         const insertionId = body.insertionId === undefined ? null : Number(body.insertionId);
         if (insertionId !== null && (!Number.isInteger(insertionId) || insertionId <= 0)) return badRequest("insertionId deve ser inteiro positivo quando informado.");
-        const idempotencyKey = `campaign-publication-reconcile:${targetDate}:${insertionId || "all"}`;
+        const mode = body.mode === "preflight" ? "preflight" : "apply";
+        const idempotencyKey = `campaign-publication-reconcile:${targetDate}:${insertionId || "all"}:${mode}`;
         const created = await createIdempotentOpsJob(env, "campaign-publication-reconcile", {
           targetDate,
           insertionId,
+          mode,
           source: "cloudflare-protected-api",
         }, "ops-api", idempotencyKey, true, shouldRetryCompletedCampaignPublication);
         return jsonNoStore({ ok: true, kind: "campaign-publication-reconcile", ...created }, { status: created.duplicate ? 200 : 202 });
@@ -2843,6 +2845,7 @@ export default {
           triggerEventId: validated.event.eventId,
           dependsOnJobId: result.jobId,
           targetDate: todayInCuiaba(),
+          mode: "apply",
         }, "google-drive-monitor", `campaign-publication-reconcile:drive:${validated.event.eventId}`, true);
         return jsonNoStore({
           ok: true,

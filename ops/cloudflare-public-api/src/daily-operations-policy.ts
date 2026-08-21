@@ -51,6 +51,7 @@ export function buildDailyReconciliationJobs(date: string, syncJobId: string) {
       payload: {
         targetDate: date,
         source: "cloudflare-cron-campaign-publication-reconcile",
+        mode: "apply",
         idempotencyKey: `campaign-publication-reconcile:${date}`,
         dependsOnJobId: syncJobId,
       },

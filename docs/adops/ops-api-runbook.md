@@ -50,7 +50,7 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/campaign-operations/pending-publication?date
 | Campanha completa | `POST /api/campaign-evidence-exports/jobs` | `GET /api/campaign-evidence-exports/jobs/{id}` | `/download` | PI canônica e fingerprint válido |
 | Lote mensal | `POST /api/campaign-evidence-exports/jobs/batch` | jobs individuais | cache ou ZIP novo | no máximo três exportações simultâneas |
 | Relatório mensal | job `evidence-monthly-report` | `/progress` | leitura pública | staging inteiro precisa passar |
-| Retomar publicação | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | campanha existente ou blocker rastreável | aceita `insertionId`; exige identidade autoritativa ou operacional única |
+| Reconciliação/publicação automática | `POST /api/ops/jobs/campaign-publication-reconcile` | `/progress` | plano, publicação ou blocker rastreável | aceita `insertionId` e `mode=preflight|apply`; exige identidade autoritativa ou operacional única |
 
 Para retroativos encerrados, `sourceMode=audited_reconstruction` indica que o runner remontou a página somente na sessão de captura. Em OMT e AFL, as notícias vêm da API WordPress com corte na data pedida e o banner vem da `mediaUrl` canônica do AdOps. Isso não reativa a campanha nem altera o portal. Checklist, data visível, identidade criativa e URL acessível continuam obrigatórios.
 
@@ -78,7 +78,13 @@ O Worker grava a transição terminal do job e o incidente em um único `D1Datab
 
 Incidente não autoriza alteração ou deploy automático de código. Ele fornece dados reproduzíveis para revisão, teste, documentação, release e validação do consumidor real. Capturas idempotentes podem ser retomadas de forma serial; uma falha persistente exige revisão técnica.
 
-O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos; envia `pi_code=null` ao AdRotate e mantém faturamento e ZIP por PI bloqueados. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF e banner compatível. Zero redirect significa anúncio sem clique; um redirect fornecido precisa ser HTTPS público e único. Nos três modos, o runner relê as fontes e limita a mutação à campanha/inserção já cadastradas.
+O reconciliador de publicação roda às 17h30 de Cuiabá e também é agendado por mudança observada no Drive. Ele sincroniza a planilha antes de decidir, para que uma linha canônica ausente possa ser cadastrada pelo sincronizador idempotente. `mode=preflight` só devolve ações, bloqueios e próxima ação; `mode=apply` executa a sequência somente quando `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED=true` para fontes automáticas. Ele não libera campanha por nome. Com PDF textualmente completo, usa `authoritative_pi`. Sem PDF, usa `operational_identity` apenas quando todos os gates operacionais são únicos. Quando o PDF existe, mas os dados estão divididos entre a planilha e os arquivos da pasta, usa `sheet_drive_composite`: exige concordância da PI entre planilha, AdOps, pasta e nome do PDF, além de um único PDF e banner compatível. Zero redirect significa anúncio sem clique; um redirect fornecido precisa ser HTTPS público e único. Nos três modos, o runner relê as fontes, não troca mídia já existente e não remove anúncio pertencente a outra inserção.
+
+### Automação determinística de publicação
+
+O gate `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED` é independente do intake por IA. Deixe `ADOPS_DRIVE_PI_ALLOW_MUTATION` e `ADOPS_PI_AGENT_AUTO_APPLY` no estado já aprovado para o intake genérico; não os habilite para automatizar a planilha.
+
+Para cada linha, a API deve confirmar: PI canônica, portal, período, formato/slot, inserção única, mídia única compatível, checksum, URL HTTPS, destino HTTPS quando houver, relação AdRotate e HTML público. Mídia existente, conflito de rotação, PDF ambíguo, URL inválida ou divergência de período retornam `needs_review` e não são reexecutados cegamente. A desativação do gate interrompe novas mutações, mas mantém monitoramento e preflight.
 
 ### Status diário compacto
 

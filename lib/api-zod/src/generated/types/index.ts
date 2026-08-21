@@ -37,6 +37,7 @@ export * from "./createCampaignEvidenceExportJob200";
 export * from "./createCampaignEvidenceExportJob202";
 export * from "./createCampaignEvidenceExportJobBody";
 export * from "./createCampaignPublicationReconcileJobBody";
+export * from "./createCampaignPublicationReconcileJobBodyMode";
 export * from "./createClientBody";
 export * from "./createEvidenceBody";
 export * from "./createInsertionBody";

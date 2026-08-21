@@ -9,6 +9,13 @@
 
 ## Resumo executivo
 
+### Automação determinística de cadastro e publicação — 21/08/2026
+
+- A reconciliação de publicação passa a sincronizar a planilha canônica antes da decisão e expõe `mode=preflight|apply` no contrato operacional.
+- O gate independente `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED` separa essa automação do intake por IA: Drive/IA continuam no modo seguro já configurado.
+- A automação não substitui `mediaUrl` existente, não remove anúncio de outra inserção e bloqueia mídia, URL, PI, período, formato, slot ou rotação ambíguos em `needs_review`.
+- A validação de produção deve confirmar o gate no runtime, um job automático terminal e a publicação/relatório no consumidor real antes de considerar o fluxo ativo.
+
 ### Regularização PERRENGUE — 21/08/2026
 
 - As PIs `17046`, `14807` e `14879` possuem, respectivamente, as inserções canônicas `#2186`, `#2187` e `#2192`. Planilha, Drive/PDF, AdOps e relação pública confirmaram PI, período, Header 825x120 e mídia esperada.

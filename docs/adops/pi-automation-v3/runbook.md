@@ -42,6 +42,26 @@ A IA/OpenAI ajuda a compatibilizar PI com layout ruim, nomes de pasta, nomes de 
 
 O auto-apply so pode continuar quando `packageReadiness`, validacao, rollout, sync da planilha e dedupe estiverem todos `ok=true`. Se faltar PDF, midia ou houver conflito de duplicidade, o job termina em `needs_review` com `reviewReasons` acionavel.
 
+## Publicação automática por reconciliação
+
+Este fluxo não usa IA para decidir cadastro ou publicação. O monitor do Drive atualiza o snapshot; a API AdOps cruza esse snapshot com a planilha e o AdRotate. O cron das 17h30 e alterações do Drive criam `campaign-publication-reconcile` com `mode=apply`; o runner converte-o em preflight enquanto `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED=false`.
+
+Quando o gate estiver ativo, a ordem é fixa:
+
+```text
+sync-planilha -> dedupe -> preflight de PI/mídia/HTTPS/slot -> criar somente ausência canônica -> publicar sem substituir relação existente -> confirmar HTML -> aguardar captura das 18h
+```
+
+O monitor de inventário é best-effort e roda em loop separado do consumidor de jobs: uma indisponibilidade temporária do Google Drive fica auditada, mas não pode deixar reconciliações/preflights autorizados em `ready_for_runner`.
+
+A publicação automática sempre envia `generateEvidence=false`: ela não pode antecipar o print do dia. A rotina diária é a única dona da primeira evidência, depois que a relação pública foi confirmada.
+
+Quando a fonte mensal já definiu uma inserção canônica, ela também fixa portal, formato e intervalo contratado. O PDF é mantido como evidência de PI/mídia/destino; um período mensal genérico do documento não pode substituir, ampliar nem invalidar a linha específica da planilha.
+
+Da mesma forma, cliente e agência de uma campanha já canônica vêm do cadastro/planilha. Metadados comerciais do PDF são preservados para auditoria, mas não trocam nem impedem a publicação de uma inserção cuja identidade operacional já foi confirmada.
+
+O resultado contém `actionsPlanned`, `actionsCompleted`, `blockers`, `mode` e `automationEnabled`. Em conflito ou mídia existente, o resultado é `needs_review`; não sobrescreva a mídia para tentar concluir.
+
 Antes de qualquer mutacao:
 
 ```text
