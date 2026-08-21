@@ -169,6 +169,31 @@ test("prefere as tres insercoes publicadas da PI 90892 aos rascunhos detalhados"
   }
 });
 
+test("prefere a variante publicada com HEADER e dimensoes quando a PI possui alias legado tambem publicado", () => {
+  const legacy = insertion({
+    id: 1827,
+    localFormato: "MEGABANNER TOPO",
+    localFormatoNormalizado: "MEGABANNER TOPO",
+    periodoInicio: "2026-08-01",
+    periodoFim: "2026-08-22",
+    mediaUrl: "https://cdn.example.test/legacy.gif",
+  });
+  const header = insertion({
+    id: 2186,
+    localFormato: "MEGABANNER TOPO — HEADER — 825x120",
+    localFormatoNormalizado: "Megabanner Topo — Header — 825x120",
+    periodoInicio: "2026-08-01",
+    periodoFim: "2026-08-22",
+    mediaUrl: "https://cdn.example.test/header.gif",
+  });
+  const result = selectBestAdopsMatch({
+    localFormato: "MEGABANNER TOPO — HEADER — 825x120",
+    periodoInicio: "2026-08-01",
+    periodoFim: "2026-08-22",
+  }, [legacy, header]);
+  assert.equal(result.insertion?.id, 2186);
+});
+
 test("prefere a insercao OMT publicada da PI 742 ao rascunho duplicado", () => {
   const published = insertion({
     id: 1840,

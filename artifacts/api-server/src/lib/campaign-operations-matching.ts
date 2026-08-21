@@ -75,6 +75,10 @@ function scoreAdopsMatch(row: MatchRow, insertion: CampaignOperationMatchCandida
   let score = 0;
   if (isInactiveInsertionStatus(insertion.statusNormalizado)) score -= 1_000;
   const adopsFormat = insertion.localFormatoNormalizado ?? insertion.localFormato;
+  // Commercial aliases remain compatible, but a fully specified sheet format
+  // (for example, HEADER + dimensions) must win over its broader legacy alias
+  // when both are already published for the same PI and period.
+  if (normalizeFormato(row.localFormato) === normalizeFormato(adopsFormat)) score += 80;
   if (isFormatCompatible(row.localFormato, adopsFormat)) score += 100;
   if (insertion.periodoInicio === row.periodoInicio && insertion.periodoFim === row.periodoFim) score += 60;
   else if (periodsOverlap(row, insertion)) score += 30;
