@@ -4194,6 +4194,20 @@ function isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult }) {
   ));
 }
 
+function publicationFailureDiagnostic({ wpCliResult, headlessRebuild, publicHtmlValidation, exactLiveCount }) {
+  return JSON.stringify({
+    cacheRequested: wpCliResult?.cache_maintenance_requested === true,
+    cacheOk: wpCliResult?.cache_maintenance_ok === true,
+    cacheWarnings: Array.isArray(wpCliResult?.cache_maintenance_warnings)
+      ? wpCliResult.cache_maintenance_warnings.map((warning) => safeProcessOutput(warning, 240))
+      : [],
+    rebuildCompleted: headlessRebuild?.completed === true,
+    publicHtmlOk: publicHtmlValidation?.ok === true,
+    publicHtmlError: publicHtmlValidation?.error ? safeProcessOutput(publicHtmlValidation.error, 500) : null,
+    exactLiveCount,
+  });
+}
+
 async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
   const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
     date: targetDate,
@@ -5208,11 +5222,17 @@ async function executeAdrotatePublishJob(payload) {
       })
     : false;
   const cacheMaintenanceDegraded = isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult });
+  const failureDiagnostic = publicationFailureDiagnostic({
+    wpCliResult,
+    headlessRebuild,
+    publicHtmlValidation,
+    exactLiveCount,
+  });
   if (apply && wpCliPublished && activeToday && cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true) {
-    throw new Error(`Manutenção de cache falhou e o anúncio não apareceu no HTML público da inserção ${insertionId}.`);
+    throw new Error(`Manutenção de cache falhou e o anúncio não apareceu no HTML público da inserção ${insertionId}. Diagnóstico: ${failureDiagnostic}`);
   }
   if (apply && wpCliPublished && activeToday && !cacheMaintenanceDegraded && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
-    throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}.`);
+    throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}. Diagnóstico: ${failureDiagnostic}`);
   }
 
   let insertionAfterPublish = null;

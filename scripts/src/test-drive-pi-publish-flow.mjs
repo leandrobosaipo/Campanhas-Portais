@@ -225,8 +225,9 @@ assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plan
 for (const marker of ["targetInPeriod", "checklistDate", "validatePerrengueHeadlessRebuildReadiness", "future_date", "buildPerrengueRebuildTriggerReason", "operationId: crypto.randomUUID()", "return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;", "cod5_adops_verify", "strictExplicitPublishFlow", "help adops-adrotate-publish", "adrotate-adops.XXXXXX.php", "cmp -s", "install -m 0644", "restrictedKvm8Gateway", "payload?.generateEvidence === true", "extractSameOriginArticleCandidates"]) {
   assert(runnerSource.includes(marker), `runner sem marcador ${marker}`);
 }
-assert(runnerSource.includes("monitor Drive PI falhou; continuando consumo da fila"), "falha de monitor Drive nao pode bloquear a fila de jobs");
+assert(runnerSource.includes("monitor Drive PI falhou; tentará novamente sem bloquear a fila"), "falha de monitor Drive nao pode bloquear a fila de jobs");
 assert(runnerSource.includes("cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true"), "cache degradado deve exigir readback positivo do HTML público");
+assert(runnerSource.includes("publicationFailureDiagnostic"), "falha de publicação deve registrar diagnóstico de cache, rebuild e HTML público");
 assert(runnerSource.includes('const explicitPublishFlow = /api-publish$/.test'), "drive-pi-publish com publish=false deve permitir atualização somente no AdOps");
 assert(!runnerSource.includes('const explicitPublishFlow = payload?.publish === true && /api-publish$/.test'), "mutação explícita não pode depender de publicar no AdRotate");
 assert(runnerSource.includes("explicitPublishFlow\n    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)"), "endpoint protegido explícito deve ser independente das flags de automação");
