@@ -7628,7 +7628,12 @@ async function runPool(pool, workerIndex) {
       if (pool.maintenance && workerIndex === 0) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
-        await runDrivePiMonitorOnce();
+      // The inventory monitor is best-effort. A temporary Google Drive rate
+      // limit must never starve already-authorized jobs in this same runner
+      // pool (notably a PI preflight or an idempotent publication retry).
+      await runDrivePiMonitorOnce().catch((error) => {
+        console.warn("[runner] monitor Drive PI falhou; continuando consumo da fila", error instanceof Error ? error.message : String(error));
+      });
       }
       const handled = await runOnce(pool.kinds);
       runnerLastCycleError = null;
