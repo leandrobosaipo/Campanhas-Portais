@@ -1810,6 +1810,15 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
       liveMatches: item.mediaBasename ? live.items.filter((liveItem) => liveItem.groupId === item.adrotateGroupId && liveItem.mediaBasename === item.mediaBasename).map(enrichLiveItem) : [],
     }));
 
+  const otherLiveMediaInGroup = live.items
+    .filter((item) => item.groupId === groupId && item.mediaBasename && item.mediaBasename !== mediaBasename)
+    .map(enrichLiveItem);
+  const rotationMode = exactLiveMatches.length > 0 && otherLiveMediaInGroup.length > 0
+    ? "rotating"
+    : exactLiveMatches.length > 0
+      ? "exclusive_or_single_sample"
+      : "expected_media_not_observed";
+
   res.json({
     insertionId: insertion.id,
     campaignName: insertion.campanhaName,
@@ -1825,6 +1834,25 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
       : [],
     mediaUrl: insertion.mediaUrl,
     mediaBasename,
+    canonicalSelection: {
+      insertionId: insertion.id,
+      expectedPiCodigo: insertion.piCodigo,
+      expectedSiteSigla: siteSigla,
+      expectedGroupId: groupId,
+      expectedFormat: insertion.localFormatoNormalizado ?? insertion.localFormato,
+      expectedPeriod: { start: insertion.periodoInicio, end: insertion.periodoFim },
+      expectedMediaUrl: insertion.mediaUrl,
+      decision: plannedSelf && groupId != null && mediaBasename ? "confirmed" : "blocked",
+      blockingReasons: plannedSelf && groupId != null && mediaBasename
+        ? []
+        : ["A inserção não possui vínculo planejado, grupo ou mídia suficientes para captura auditável."],
+    },
+    rotation: {
+      mode: rotationMode,
+      expectedMediaObserved: exactLiveMatches.length > 0,
+      otherLiveMediaInGroup,
+      capturePolicy: "Aprovar somente evidência cuja mídia observada corresponda à mídia esperada da inserção; mídia rotativa diferente exige nova tentativa da mesma data.",
+    },
     plannedSelf,
     exactLiveMatches,
     historicalAdminMatches,

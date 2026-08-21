@@ -183,3 +183,14 @@ Para tarefas operacionais, além dos comandos, validar no sistema vivo:
 - URL pública do print;
 - auditoria sem issues;
 - Telegram enviado, se solicitado.
+
+## Rotação AdRotate e evidências
+
+- Mais de um anúncio no mesmo grupo pode ser rotação legítima; não desativar ou
+  reatribuir histórico por esse sinal isolado.
+- A decisão canônica deve registrar PI, portal, formato, período e mídia.
+  Sem vencedora determinística, bloquear publicação/captura e expor a causa.
+- Em grupo rotativo, aprovar evidência somente se o audit confirmar a mídia
+  esperada da inserção. Retry idempotente é somente para datas não aprovadas.
+- Toda aprovação deve marcar a competência para revisão incremental do relatório;
+  antes das 18h de Cuiabá, o dia corrente fica aguardando captura.

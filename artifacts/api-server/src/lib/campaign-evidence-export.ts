@@ -369,6 +369,7 @@ export function buildMonthlyEvidenceSource<T extends {
     format: item.format,
     sheetSource: item.sheetSource,
     sourceIdentity: item.sourceIdentity,
+    canonicalSelection: item.canonicalSelection ?? null,
     adops: item.adops,
     evidence: item.evidence,
     drive: item.drive ? {

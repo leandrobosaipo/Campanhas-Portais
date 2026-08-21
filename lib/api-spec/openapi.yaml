@@ -371,7 +371,7 @@ paths:
             type: string
       responses:
         "200":
-          description: All canonical sheet rows whose period intersects the requested month, including ended campaigns and compact daily evidence descriptors
+          description: All canonical sheet rows whose period intersects the requested month, including ended campaigns and compact daily evidence descriptors. Each item exposes canonicalSelection (deterministic insertion choice and identity evidence); a relation may expose rotation metadata when a valid AdRotate group serves multiple creatives.
           content:
             application/json:
               schema:

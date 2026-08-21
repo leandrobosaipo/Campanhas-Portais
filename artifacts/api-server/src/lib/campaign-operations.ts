@@ -104,6 +104,20 @@ export type CampaignOperationItem = {
     rowNumber: number;
   };
   sourceIdentity: SourceIdentityDecision;
+  canonicalSelection: {
+    insertionId: number | null;
+    decision: "confirmed" | "ambiguous" | "missing";
+    compatibleInsertionIds: number[];
+    reason: string;
+    identityEvidence: {
+      piCodigo: string;
+      siteSigla: string;
+      format: string;
+      periodStart: string | null;
+      periodEnd: string | null;
+      mediaUrl: string | null;
+    } | null;
+  };
   drive: DriveCampaignMediaMatch & {
     mediaMatchesFormat: boolean;
   };
@@ -551,6 +565,24 @@ export async function getActiveCampaignOperations(options: {
     });
     const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado, getSiteIntegration(row.blockSite)?.formatMappings.find((mapping) => mapping.aliases.some((alias) => normalizeForMatch(alias) === normalizeForMatch(row.localFormatoNormalizado)))?.operationalMediaProfile?.formats ?? null);
     const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
+    const canonicalSelection = {
+      insertionId: insertion?.id ?? null,
+      decision: insertion ? "confirmed" as const : compatible.length ? "ambiguous" as const : "missing" as const,
+      compatibleInsertionIds: compatible.map((candidate) => candidate.id).sort((left, right) => left - right),
+      reason: insertion
+        ? "Inserção selecionada por PI, portal, formato, período e prioridade da variante exata."
+        : compatible.length
+          ? "Há inserções compatíveis sem vencedora determinística; não autorize publicação ou captura."
+          : "Nenhuma inserção compatível foi encontrada para PI e portal.",
+      identityEvidence: insertion ? {
+        piCodigo: insertion.campaign?.piCodigo ?? row.piCodigo,
+        siteSigla: insertion.site?.sigla ?? row.blockSite,
+        format: insertion.localFormatoNormalizado ?? insertion.localFormato ?? row.localFormatoNormalizado,
+        periodStart: insertion.periodoInicio,
+        periodEnd: insertion.periodoFim,
+        mediaUrl: insertion.mediaUrl,
+      } : null,
+    };
     const evidence = await resolveEvidence(insertion, row, date, includeEvidence);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
@@ -626,6 +658,7 @@ export async function getActiveCampaignOperations(options: {
         rowNumber: row.rowNumber,
       },
       sourceIdentity,
+      canonicalSelection,
       drive: {
         ...drive,
         mediaMatchesFormat,

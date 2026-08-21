@@ -127,3 +127,8 @@ Não copie um `index.html` isolado sobre dados de outra versão.
 - `campaign-operations/active` é uma visão diária e exclui corretamente períodos encerrados. O relatório mensal deve usar exclusivamente `campaign-operations/evidence-monthly-source`.
 - `competencia` e `date` precisam pertencer ao mesmo mês; divergência é erro de contrato, não fallback silencioso.
 - Uma falha de rebuild do PERRENGUE bloqueia apenas a inserção afetada. Não marque o banner como publicado nem gere evidência até haver confirmação do AdRotate, do rebuild e do HTML público.
+- Grupos AdRotate com rotação não são duplicidade por si só. O relatório deve
+  preservar as inserções históricas e mostrar a canônica escolhida; captura
+  aprovada exige PI, inserção, período, grupo e mídia canônica coincidentes.
+- Em recuperação parcial, publique a revisão incremental após cada aprovação.
+  Não espere o lote terminar e não reexecute datas já auditadas.

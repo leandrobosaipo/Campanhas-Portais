@@ -74,6 +74,9 @@ function periodsOverlap(row: MatchRow, insertion: CampaignOperationMatchCandidat
 function scoreAdopsMatch(row: MatchRow, insertion: CampaignOperationMatchCandidate) {
   let score = 0;
   if (isInactiveInsertionStatus(insertion.statusNormalizado)) score -= 1_000;
+  // A detailed commercial label is evidence only after it represents a real
+  // publication. A draft must not displace an older creative that is live.
+  if (insertion.bannerPublicadoNoSite !== true) score -= 80;
   const adopsFormat = insertion.localFormatoNormalizado ?? insertion.localFormato;
   // Commercial aliases remain compatible, but a fully specified sheet format
   // (for example, HEADER + dimensions) must win over its broader legacy alias
