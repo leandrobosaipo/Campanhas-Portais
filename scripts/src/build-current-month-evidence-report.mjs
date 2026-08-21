@@ -558,31 +558,35 @@ async function materializeCampaignExports(items) {
       return;
     }
     if (process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") return;
-    const idempotencyKey = buildCampaignExportIdempotencyKey({
-      piCodigo: group.piCodigo,
-      siteSigla: group.siteSigla,
-      competencia,
-      evidences: evidenceDays,
-    });
-    const created = await api("/api/pi-site-exports/jobs", {
-      method: "POST",
-      body: JSON.stringify({
+    try {
+      const idempotencyKey = buildCampaignExportIdempotencyKey({
         piCodigo: group.piCodigo,
         siteSigla: group.siteSigla,
-        mode: "prints-only",
-        variant: "web",
-        imageMaxWidth: 1600,
-        imageQuality: 72,
-        requestedBy: "evidence-monthly-report",
-        source: "monthly-report",
-      }),
-      headers: { "idempotency-key": idempotencyKey },
-      timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
-    });
-    if (created.status !== "completed") {
-      await waitForCompactJob(created.jobId, `exportação ${group.piCodigo}/${group.siteSigla}`, 20 * 60_000);
+        competencia,
+        evidences: evidenceDays,
+      });
+      const created = await api("/api/pi-site-exports/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          piCodigo: group.piCodigo,
+          siteSigla: group.siteSigla,
+          mode: "prints-only",
+          variant: "web",
+          imageMaxWidth: 1600,
+          imageQuality: 72,
+          requestedBy: "evidence-monthly-report",
+          source: "monthly-report",
+        }),
+        headers: { "idempotency-key": idempotencyKey },
+        timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
+      });
+      if (created.status !== "completed") {
+        await waitForCompactJob(created.jobId, `exportação ${group.piCodigo}/${group.siteSigla}`, 20 * 60_000);
+      }
+      results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
+    } catch (error) {
+      console.warn(`[monthly-report] pacote opcional indisponível para ${group.piCodigo}/${group.siteSigla}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
   });
   return results;
 }
@@ -606,7 +610,9 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
     readyGroups.push(group);
   }
   if (!readyGroups.length) return results;
-  const batch = await api("/api/campaign-evidence-exports/jobs/batch", {
+  let batch;
+  try {
+    batch = await api("/api/campaign-evidence-exports/jobs/batch", {
       method: "POST",
       body: JSON.stringify({
         competencia,
@@ -621,16 +627,24 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
       }),
       timeoutMs: MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
     });
+  } catch (error) {
+    console.warn(`[monthly-report] pacotes completos opcionais indisponíveis: ${error instanceof Error ? error.message : String(error)}`);
+    return results;
+  }
   const itemByPi = new Map((batch.items || []).map((item) => [String(item.piCodigo), item]));
   await Promise.all(readyGroups.map(async (group) => {
-    const created = itemByPi.get(String(group.piCodigo));
-    if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
-      throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
+    try {
+      const created = itemByPi.get(String(group.piCodigo));
+      if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
+        throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
+      }
+      if (created.status !== "completed") {
+        await waitForCompactJob(created.jobId, `exportação completa da PI ${group.piCodigo}`, 30 * 60_000);
+      }
+      results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
+    } catch (error) {
+      console.warn(`[monthly-report] pacote completo opcional indisponível para PI ${group.piCodigo}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (created.status !== "completed") {
-      await waitForCompactJob(created.jobId, `exportação completa da PI ${group.piCodigo}`, 30 * 60_000);
-    }
-    results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
   }));
   return results;
 }
