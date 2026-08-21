@@ -9,6 +9,15 @@
 
 ## Resumo executivo
 
+### Regularização PERRENGUE — 21/08/2026
+
+- As PIs `17046`, `14807` e `14879` possuem, respectivamente, as inserções canônicas `#2186`, `#2187` e `#2192`. Planilha, Drive/PDF, AdOps e relação pública confirmaram PI, período, Header 825x120 e mídia esperada.
+- O grupo 1 do AdRotate opera em rotação. As inserções históricas `#1827`, `#1829` e `#1860` foram preservadas; elas não são usadas para creditar evidências às canônicas.
+- Fatores observados no atraso: a seleção mensal anterior não expunha a decisão canônica entre variantes e a rotina diária de 20/08 terminou parcial. Os dias 18–20 não tinham evidências auditadas nessas três inserções.
+- Correção ativa: `canonicalSelection` expõe a vencedora e candidatas; `relation.rotation` descreve rotação e exige a mídia esperada no print. Rascunho detalhado não ultrapassa anúncio publicado apenas pelo nome do formato.
+- Backfills oficiais concluídos: `690700ce-754b-4c6a-9e6b-e6151110b91e` (#2186), `6db1f370-c6c6-42e3-a243-9f66407f07a3` (#2187) e `c981de9b-9e50-4d16-a537-5832cc5b855e` (#2192), todos com 3/3 dias aprovados para 18–20/08.
+- A revisão incremental `526067df-6f05-4df9-962d-3526ae15767f` publicou a revisão 10 do relatório de agosto: 30 inserções conformes, zero pendentes/invalidas e 315 dias auditados no corte de 20/08.
+
 O código da recuperação inicial corresponde ao commit `a499a399b822412cbd05d229003f857f9069d64a`. Em 18/08, depois da recuperação das evidências, o servidor ficou indisponível e os domínios privados responderam Cloudflare HTTP 530; o Worker público continuou acessível. O servidor voltou às 05:21 de Cuiabá. Às 06:18, API, Portainer, relatório, PostgreSQL e três runners estavam saudáveis na release `b78ddf4e07dacdb819e7cc6c71fd971ab31e6b59`; os runners informaram a mesma versão operacional curta `b78ddf4e07da`.
 
 O endereço `100.126.99.28` foi confirmado por SSH como o host `codigo5-cloud`, com Docker e o container `codigo5-cloud-tunnel` ativos. Esse é o IP administrativo vigente; não deve ser confundido com uma URL pública do relatório.

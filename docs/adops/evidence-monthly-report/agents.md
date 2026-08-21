@@ -36,9 +36,11 @@ bash /Users/leandrobosaipo/.agents/skills/portainer/portainer.sh endpoints
 - Quando houver `erro`, informar status e issue retornada por `capture-proof/status`.
 - Nao publicar fora do `sites-index`.
 - Quando o portal mostrar o banner mas o AdOps marcar `sem publicação`, nao gere evidencia primeiro. Corrija metadata da insercao e regra publicada de captura, rode a integridade, e so entao gere retroativos.
+- Grupo AdRotate em rotação não é duplicidade: consulte `relation.canonicalSelection` e `relation.rotation`. Preservar anúncios históricos e aprovar somente quando a evidência pertencer à mídia esperada da inserção canônica.
+- Para retroativos, usar um job idempotente por inserção e acompanhar o mesmo `jobId` até terminal. Datas já `audited` não podem ser recapturadas.
 
 ## Quando houver divergencia
 
-- Se API e HTML divergirem, confiar na API e regenerar.
+- Se API e HTML divergirem, conferir `canonicalSelection`, mídia esperada e amostra pública do grupo antes de regenerar.
 - Se evidencia falhar, registrar como pendente ou erro. Nao aprovar manualmente.
 - Se Portainer falhar, manter artefato local e registrar bloqueio.

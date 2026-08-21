@@ -43,6 +43,8 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - Se `ADOPS_REPORT_SKIP_PUBLISH=1`, nenhum container auxiliar deve ser criado.
 - Em `ADOPS_REPORT_REFRESH_MODE=incremental`, `ADOPS_REPORT_SKIP_EXPORTS=1` é obrigatório: o ciclo só reusa evidências existentes e não pode disparar captura, JPEG, ZIP ou exportação.
 - Duas aprovações próximas devem resultar em uma revisão com debounce de 60 segundos; uma aprovação durante a execução deve resultar em uma única revisão seguinte, sem jobs mensais concorrentes.
+- Em grupo rotativo, `relation.rotation.mode=rotating` não bloqueia por si só; `canonicalSelection.decision=confirmed`, mídia esperada observada e checklist aprovado são obrigatórios.
+- Um retry parcial deve conter somente datas sem aprovação e manter os JPEGs já auditados sem substituição.
 
 ## Verificacao publica
 
