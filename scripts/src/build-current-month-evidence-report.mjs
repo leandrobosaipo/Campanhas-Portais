@@ -34,6 +34,7 @@ import {
   resolveReportPortainerUrl,
   resolveReportsPublishMount,
   resolveEvidenceWindow,
+  selectReportEvidenceDates,
   isJsonContentType,
   selectCanonicalInsertions,
 } from "./monthly-evidence-contract.mjs";
@@ -1701,8 +1702,13 @@ async function main() {
   const relationMap = new Map();
 
   const enriched = eligible.map((item) => {
-    const requiredDays = canonicalRequiredDates(item)
-      .filter((date) => date >= bounds.start && date <= monthEndForEvidence);
+    const contractualDays = canonicalRequiredDates(item)
+      .filter((date) => date >= bounds.start && date <= bounds.end);
+    const requiredDays = selectReportEvidenceDates(contractualDays, {
+      evidenceCutoffDate: monthEndForEvidence,
+      targetDate,
+      statusByDate: new Map(contractualDays.map((date) => [date, statusMap.get(`${item.id}:${date}`)])),
+    });
     const evidenceDays = requiredDays.map((date) => {
       const status = statusMap.get(`${item.id}:${date}`) || { date, status: "missing" };
       const classification = classifyEvidenceStatus(status);

@@ -125,6 +125,17 @@ export function resolveEvidenceWindow({ reportDate, now = new Date(), dailyPrint
   return { evidenceCutoffDate: reportDate, phase: "routine_overdue" };
 }
 
+// While today's capture window is still open, never create a missing-day debt
+// in the report.  Evidence that has already passed the canonical audit is safe
+// to show immediately, so operators can follow the batch incrementally.
+export function selectReportEvidenceDates(requiredDates, { evidenceCutoffDate, targetDate, statusByDate = new Map() } = {}) {
+  return Array.from(new Set(requiredDates || []))
+    .filter((date) => date <= evidenceCutoffDate || (
+      date <= targetDate && classifyEvidenceStatus(statusByDate.get(date) || { status: "missing" }).startsWith("audited")
+    ))
+    .sort();
+}
+
 function normalizeFilterValue(value) {
   return String(value || "")
     .normalize("NFD")

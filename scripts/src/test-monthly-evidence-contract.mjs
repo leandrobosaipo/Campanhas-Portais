@@ -183,6 +183,17 @@ test("evidencia agregada preserva aprovacao, alcance e datas canonicas", () => {
   assert.deepEqual(contract.canonicalRequiredDates({ evidenceDays: [{ date: "2026-08-12" }, { date: "2026-08-14" }] }), ["2026-08-12", "2026-08-14"]);
 });
 
+test("relatório incremental mostra prova aprovada do dia sem cobrar as demais antes do fechamento", () => {
+  const statusByDate = new Map([
+    ["2026-08-21", contract.adaptAggregatedEvidenceDay({ status: "audited", url: "https://cdn.example/proof.png" })],
+    ["2026-08-22", { status: "missing" }],
+  ]);
+  assert.deepEqual(contract.selectReportEvidenceDates(
+    ["2026-08-20", "2026-08-21", "2026-08-22"],
+    { evidenceCutoffDate: "2026-08-20", targetDate: "2026-08-21", statusByDate },
+  ), ["2026-08-20", "2026-08-21"]);
+});
+
 test("download e validado por leitura parcial real", () => {
   assert.deepEqual(contract.buildDeliveryProbeOptions(), {
     method: "GET",
