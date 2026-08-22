@@ -5925,6 +5925,7 @@ async function executePrintBatch(job) {
     });
   const captured = [];
   const skipped = [];
+  const failed = [];
   let transportError = null;
   for (const [index, item] of candidates.entries()) {
     const insertionId = readPositiveInteger(item?.adops?.insertionId);
@@ -5953,7 +5954,11 @@ async function executePrintBatch(job) {
       captured.push({ insertionId, captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
-      break;
+      failed.push({ insertionId, error: safeProcessOutput(transportError, 800) });
+      // A bad portal or audit gate must not suppress the remaining portals.
+      // The canonical audit below determines the batch outcome after every
+      // eligible insertion had its own documented attempt.
+      continue;
     }
   }
   const auditQuery = new URLSearchParams({ date: targetDate });
@@ -5997,6 +6002,7 @@ async function executePrintBatch(job) {
     totalCandidates: candidates.length,
     captured,
     skipped,
+    failed,
     audit: {
       totalEligible: audit.totalEligible,
       ok: audit.ok,
