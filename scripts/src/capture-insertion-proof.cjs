@@ -7430,7 +7430,13 @@ async function main() {
     // captura do próprio dia, o portal está no estado público atual; exigir
     // cards de um snapshot retroativo vazio reprova uma evidência visualmente
     // válida sem aumentar a garantia de veiculação.
-    const isHistoricalCapture = requiresRetroEditorialProof(isoDate);
+    // A recuperação tardia é marcada de forma explícita com data contratada,
+    // instante real da reconstrução e mídia canônica. Não existe como provar
+    // o editorial original se o portal não possui snapshot assinado daquela
+    // data; exigir essa amostra vazia só bloqueia uma prova visual válida do
+    // banner. As capturas históricas normais continuam exigindo essa prova.
+    const isHistoricalCapture = requiresRetroEditorialProof(isoDate)
+      && args.reconstructionReason !== "late_publication_recovery";
     const retroContentEvidence = isHistoricalCapture
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
