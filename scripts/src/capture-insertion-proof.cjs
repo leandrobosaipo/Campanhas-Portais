@@ -298,6 +298,11 @@ function formatCaptureAtForPreview(date = new Date()) {
   return `${take("year")}-${take("month")}-${take("day")}T${take("hour")}:${take("minute")}`;
 }
 
+function requiresRetroEditorialProof(captureIsoDate, now = new Date()) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(captureIsoDate || ""))
+    && captureIsoDate < getDateLabel(now).isoDate;
+}
+
 function parseCaptureDate(value) {
   if (!value) return null;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value)) {
@@ -7416,7 +7421,18 @@ async function main() {
       return visibleCandidates[0] || hiddenCandidates[0] || null;
     }, pageDateSelectors);
 
-    const retroContentEvidence = await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview);
+    // A prova editorial assinada protege reconstruções históricas. Para a
+    // captura do próprio dia, o portal está no estado público atual; exigir
+    // cards de um snapshot retroativo vazio reprova uma evidência visualmente
+    // válida sem aumentar a garantia de veiculação.
+    const isHistoricalCapture = requiresRetroEditorialProof(isoDate);
+    const retroContentEvidence = isHistoricalCapture
+      ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
+      : {
+          editorialSamples: [],
+          manifest: null,
+          retroContentProof: null,
+        };
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
     retroContentManifest = retroContentEvidence.manifest;
@@ -7441,7 +7457,7 @@ async function main() {
       pageDateText,
       contentDateSamples,
       retroContentProof,
-      requireRetroContentProof: mapping.auditConfig?.requireRetroContentProof === true,
+      requireRetroContentProof: isHistoricalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
       requireDomFrameSimilarity: frameSelection?.frameSelectionMode === "gif_source",
@@ -8189,6 +8205,7 @@ if (require.main === module) {
     evaluateContentTimeline,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    requiresRetroEditorialProof,
     buildEvidenceReplacementArchivePlan,
   };
 }
