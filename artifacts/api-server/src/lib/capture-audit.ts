@@ -319,6 +319,20 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     minRetroContentMatches?: number;
     allowAuditedReconstruction?: boolean;
   };
+  // A recovery after a late publication cannot honestly recreate the editorial
+  // page as it looked on the contracted day.  It is still a valid, explicitly
+  // labelled proof of the campaign only when the portal rule permits it and
+  // the runner persisted the complete reconstruction audit trail.  Do not
+  // waive any creative, slot, media or frame gate below.
+  const reconstruction = metadata.reconstruction && typeof metadata.reconstruction === "object"
+    ? metadata.reconstruction as Record<string, unknown>
+    : null;
+  const auditedLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
+    reconstruction?.reason === "late_publication_recovery" &&
+    reconstruction?.contractedDate === targetDate &&
+    typeof reconstruction?.reconstructedAt === "string" &&
+    typeof reconstruction?.mediaUrl === "string" &&
+    reconstruction.mediaUrl.trim().length > 0;
   const desktopMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
     : systemDateTime.includes(targetDate.split("-").reverse().join("/"));
@@ -402,8 +416,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
-  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true && requiresRetroEditorialProof(targetDate);
-  const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof && contentTimeline.reason !== "future_samples");
+  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true &&
+    requiresRetroEditorialProof(targetDate) &&
+    !auditedLatePublicationRecovery;
+  const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof &&
+    (contentTimeline.reason !== "future_samples" || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const visualsOk = Boolean(
     visualAuditAvailable &&
@@ -437,7 +454,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
         : `O site não exibiu a data esperada para ${targetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
-  if (!contentTimeline.ok && (requireRetroContentProof || contentTimeline.reason === "future_samples")) {
+  if (!contentTimeline.ok && (requireRetroContentProof ||
+    (contentTimeline.reason === "future_samples" && !auditedLatePublicationRecovery))) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
       label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
