@@ -31,6 +31,8 @@ Quando uma evidência termina aprovada, o runner registra a competência como �
 
 Se outra aprovação ocorrer enquanto a página está sendo atualizada, ela fica registrada como uma nova revisão e é publicada depois do job em curso. Falha do relatório não invalida o print aprovado: a revisão permanece pendente para retry e a página continua exibindo o último estado público válido.
 
+Uma evidência `invalid` também não bloqueia a publicação da revisão: ela precisa continuar visível no card e no modal como erro operacional, com a data e o motivo para recuperação. O bloqueio só é permitido quando a fonte mensal ou o artefato gerado estiver estruturalmente inconsistente.
+
 O relatório abre visualmente em `Ativas`, mas o artefato mensal sempre contém também `Encerradas`. Antes das 18h de Cuiabá ou durante fila/execução do lote diário, o corte termina no dia anterior. A restauração de encerradas reutiliza evidências existentes e nunca cria captura.
 
 ## Execução
