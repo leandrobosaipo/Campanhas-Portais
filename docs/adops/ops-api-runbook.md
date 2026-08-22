@@ -72,6 +72,8 @@ A API canônica `adops-api.codigo5.com.br` encaminha criação, listagem e progr
 1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.
 2. **18h00 Cuiabá:** `print-batch` consulta as inserções canônicas, cria capturas assíncronas por inserção e acompanha somente o progresso. Não mantém uma requisição HTTP aberta durante todo o lote.
 3. **Após o lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o Worker registra incidente idempotente com camada provável, job, versão, duração, dados de auditoria e próxima ação.
+
+Uma falha individual não interrompe as demais inserções do lote. No PERRENGUE, o ativo institucional pequeno `/assets/perrengue-sublogo.png` não é uma peça publicitária e não conta como mídia concorrente; qualquer outro banner ou vídeo adicional no slot continua bloqueando a aprovação.
 4. **22h15 Cuiabá:** o relatório consulta a fonte mensal, não a fonte diária. Campanhas encerradas continuam visíveis e suas datas continuam auditáveis.
 
 O Worker grava a transição terminal do job e o incidente em um único `D1Database.batch`. Se o incidente falhar, a transição também é revertida. O fingerprint inclui job, tipo, data-alvo, competência, portal/inserção e causa normalizada; payload e resultado são redigidos recursivamente antes de entrar no incidente.

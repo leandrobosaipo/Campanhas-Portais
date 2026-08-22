@@ -1534,6 +1534,11 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename, 
       if (expectedMediaKey) return normalizeMediaKey(value) === expectedMediaKey;
       return value.toLowerCase().includes(basename);
     };
+    const isPerrengueInstitutionalSublogo = (node) => {
+      const value = mediaValue(node).toLowerCase();
+      const rect = node.getBoundingClientRect();
+      return value.includes("/assets/perrengue-sublogo.png") && rect.width <= 100 && rect.height <= 100;
+    };
     const slot = document.querySelector(slotSelector);
     if (!(slot instanceof HTMLElement)) {
       return {
@@ -1550,7 +1555,7 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename, 
     const slotMedia = allMedia.filter((node) => slot.contains(node));
     const visibleSlotMedia = slotMedia.filter(isVisible);
     const visibleTargetsInside = visibleSlotMedia.filter(isTargetMedia);
-    const visibleConflictsInside = visibleSlotMedia.filter((node) => !isTargetMedia(node));
+    const visibleConflictsInside = visibleSlotMedia.filter((node) => !isTargetMedia(node) && !isPerrengueInstitutionalSublogo(node));
     const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && isTargetMedia(node));
 
     if (visibleTargetsInside.length !== 1) {
