@@ -45,14 +45,12 @@
       "postVisualWaitMs": 2000,
       "viewportTrimBottomPx": 0,
       "readinessMode": "strict-visible",
-      "criticalContentSelectors": [
-        "[data-cod5-pagespeed-frame=\"home-hero\"] img.wp-post-image"
-      ],
+      "criticalContentSelectors": [],
       "readinessTimeoutMs": 45000,
       "layoutStableSamples": 3,
       "layoutStableIntervalMs": 350,
       "captureRetryCount": 2,
-      "requireCriticalContentPainted": true
+      "requireCriticalContentPainted": false
     },
     "formatMappings": [
       {
