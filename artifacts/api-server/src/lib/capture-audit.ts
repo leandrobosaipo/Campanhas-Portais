@@ -166,6 +166,13 @@ export function formatIsoDate(value = new Date()) {
   return value.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
 }
 
+// Editorial timeline proof is meaningful only when reconstructing a past day.
+// A live capture for the current Cuiabá day cannot contain a retroactive page
+// timeline yet; the remaining visual, slot, media and clock gates still apply.
+export function requiresRetroEditorialProof(targetDate: string, now = new Date()) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(targetDate) && targetDate < formatIsoDate(now);
+}
+
 export function eachIsoDay(start: Date, end: Date) {
   const days: string[] = [];
   const cursor = new Date(start.getTime());
@@ -395,7 +402,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
-  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true;
+  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true && requiresRetroEditorialProof(targetDate);
   const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof && contentTimeline.reason !== "future_samples");
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const visualsOk = Boolean(
