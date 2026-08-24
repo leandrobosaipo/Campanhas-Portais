@@ -2064,6 +2064,7 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
   const insertionIds: number[] = Array.isArray(req.body?.insertionIds)
     ? Array.from(new Set<number>(req.body.insertionIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0)))
     : [];
+  const sourceCaptures = Array.isArray(req.body?.sourceCaptures) ? req.body.sourceCaptures as Array<Record<string, unknown>> : [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !sourceJobId || insertionIds.length === 0) {
     res.status(400).json({ error: "Informe date, sourceJobId e insertionIds." });
     return;
@@ -2071,6 +2072,8 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
 
   const items = [] as Array<Record<string, unknown>>;
   for (const insertionId of insertionIds) {
+    const sourceCapture = sourceCaptures.find((item) => Number(item.insertionId) === insertionId);
+    const captureJobId = typeof sourceCapture?.captureJobId === "string" ? sourceCapture.captureJobId : null;
     const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
     const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
     const logs = await db.select().from(captureProofLogsTable).where(and(
@@ -2079,7 +2082,7 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     )).orderBy(desc(captureProofLogsTable.createdAt));
     const correlated = logs.find((row) => (
-      (row.runnerJobId === sourceJobId || row.jobId === sourceJobId) &&
+      captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
       row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
       row.uploadedUrl && row.uploadedUrl === evidence?.arquivoUrl
     ));
@@ -2093,7 +2096,8 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     metadata.captureClass = CAPTURE_CLASS_SCHEDULED;
     metadata.targetDate = targetDate;
     metadata.capturedAt = correlated.createdAt.toISOString();
-    metadata.sourceJobId = sourceJobId;
+    metadata.sourceJobId = captureJobId;
+    metadata.sourceBatchJobId = sourceJobId;
     metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
     metadata.evidenceUrl = evidence.arquivoUrl;
     await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
