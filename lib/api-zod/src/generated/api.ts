@@ -1213,16 +1213,51 @@ export const GetCaptureProofStatusResponse = zod.object({
 /**
  * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
  */
+
 export const ReconcileScheduledCaptureProofsBody = zod.object({
   date: zod.coerce.date(),
-  sourceJobId: zod.string(),
-  insertionIds: zod.array(zod.number()),
+  insertionIds: zod.array(zod.number().min(1)).min(1),
+  mode: zod.enum(["dryRun", "apply"]),
+  sourceKind: zod.enum(["daily_batch", "same_day_inline"]),
+  sourceJobId: zod
+    .string()
+    .optional()
+    .describe("Required for daily_batch and omitted for same_day_inline."),
 });
 
-export const ReconcileScheduledCaptureProofsResponse = zod.record(
-  zod.string(),
-  zod.unknown(),
-);
+export const reconcileScheduledCaptureProofsResponseReconciledMin = 0;
+
+export const ReconcileScheduledCaptureProofsResponse = zod.object({
+  ok: zod.boolean(),
+  date: zod.coerce.date(),
+  mode: zod.enum(["dryRun", "apply"]),
+  sourceKind: zod.enum(["daily_batch", "same_day_inline"]),
+  sourceJobId: zod.string().nullish(),
+  reconciled: zod
+    .number()
+    .min(reconcileScheduledCaptureProofsResponseReconciledMin),
+  items: zod.array(
+    zod.object({
+      insertionId: zod.number(),
+      status: zod.enum(["ready", "ok", "ok_best_effort", "blocked"]),
+      reason: zod.string().nullish(),
+      blockers: zod.array(zod.string()).optional(),
+      logId: zod.string().nullish(),
+      evidenceId: zod.number().nullish(),
+      captureClass: zod
+        .union([
+          zod.literal("scheduled"),
+          zod.literal("same_day_retry"),
+          zod.literal("historical_recovery"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      sourceJobId: zod.string().nullish(),
+      capturedAt: zod.coerce.date().nullish(),
+      unchangedEvidence: zod.boolean().optional(),
+    }),
+  ),
+});
 
 /**
  * @summary Validate capture proof, including strict readiness gates

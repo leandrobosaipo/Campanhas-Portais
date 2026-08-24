@@ -24,6 +24,8 @@ import type {
   Campaign,
   CampaignDetail,
   CampaignPublicationReconcileJobAccepted,
+  CaptureProofReconciliationRequest,
+  CaptureProofReconciliationResponse,
   CaptureProofStatus,
   Client,
   ClientBreakdown,
@@ -84,8 +86,6 @@ import type {
   MediaConsistencyResult,
   OpsJobAccepted,
   OpsRuntimeTopology,
-  ReconcileScheduledCaptureProofs200,
-  ReconcileScheduledCaptureProofsBody,
   Site,
   SiteBreakdown,
   UpdateAgencyBody,
@@ -3259,16 +3259,16 @@ export const getReconcileScheduledCaptureProofsUrl = () => {
 };
 
 export const reconcileScheduledCaptureProofs = async (
-  reconcileScheduledCaptureProofsBody: ReconcileScheduledCaptureProofsBody,
+  captureProofReconciliationRequest: CaptureProofReconciliationRequest,
   options?: RequestInit,
-): Promise<ReconcileScheduledCaptureProofs200> => {
-  return customFetch<ReconcileScheduledCaptureProofs200>(
+): Promise<CaptureProofReconciliationResponse> => {
+  return customFetch<CaptureProofReconciliationResponse>(
     getReconcileScheduledCaptureProofsUrl(),
     {
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(reconcileScheduledCaptureProofsBody),
+      body: JSON.stringify(captureProofReconciliationRequest),
     },
   );
 };
@@ -3280,14 +3280,14 @@ export const getReconcileScheduledCaptureProofsMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
     TError,
-    { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+    { data: BodyType<CaptureProofReconciliationRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
   TError,
-  { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+  { data: BodyType<CaptureProofReconciliationRequest> },
   TContext
 > => {
   const mutationKey = ["reconcileScheduledCaptureProofs"];
@@ -3301,7 +3301,7 @@ export const getReconcileScheduledCaptureProofsMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
-    { data: BodyType<ReconcileScheduledCaptureProofsBody> }
+    { data: BodyType<CaptureProofReconciliationRequest> }
   > = (props) => {
     const { data } = props ?? {};
 
@@ -3315,7 +3315,7 @@ export type ReconcileScheduledCaptureProofsMutationResult = NonNullable<
   Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>
 >;
 export type ReconcileScheduledCaptureProofsMutationBody =
-  BodyType<ReconcileScheduledCaptureProofsBody>;
+  BodyType<CaptureProofReconciliationRequest>;
 export type ReconcileScheduledCaptureProofsMutationError = ErrorType<unknown>;
 
 /**
@@ -3328,14 +3328,14 @@ export const useReconcileScheduledCaptureProofs = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
     TError,
-    { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+    { data: BodyType<CaptureProofReconciliationRequest> },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
   TError,
-  { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+  { data: BodyType<CaptureProofReconciliationRequest> },
   TContext
 > => {
   return useMutation(

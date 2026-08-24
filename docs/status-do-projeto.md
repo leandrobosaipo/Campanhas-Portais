@@ -9,6 +9,11 @@
 
 ## Resumo executivo
 
+### Reconciliação das quatro capturas inline de 21/08 — 24/08/2026
+
+- `#2692`, `#2693`, `#2712` e `#2713` possuíam evidência e log `inline-*` correlacionados, mas sem proveniência imutável. A rota interna agora oferece `dryRun|apply` para `same_day_inline`, exige coincidência de arquivo, mídia, período, auditoria visual e data em Cuiabá, e registra `same_day_retry` sem trocar a evidência.
+- OpenAPI, cliente gerado, harness mensal, contrato documental, runbooks e a skill `adops-pi-sync` foram alinhados. A raiz antiga do OpenClaw deixou de ser orientação operacional e o relatório permanece consumidor, nunca aprovador de evidências.
+
 ### Recuperação de evidências de 22 e 23/08 — 24/08/2026
 
 - O diagnóstico confirmou 18 capturas geradas em 22/08 que foram reclassificadas indevidamente como retroativas quando o calendário avançou, e três ausências em 23/08. A correção grava `captureClass`, `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion` de forma imutável.

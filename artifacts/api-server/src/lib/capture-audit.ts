@@ -173,6 +173,57 @@ export const CAPTURE_CLASS_SCHEDULED = "scheduled";
 export const CAPTURE_CLASS_HISTORICAL_RECOVERY = "historical_recovery";
 export const AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE = "audit-policy-v1";
 
+export type LegacySameDayInlineCorrelationInput = {
+  targetDate: string;
+  runnerJobId: string | null;
+  status: string;
+  createdAt: Date | null;
+  capturedAt: string | null;
+  requestedCaptureAt: string | null;
+  uploadedUrl: string | null;
+  evidenceUrl: string | null;
+  matchedMediaUrl: string | null;
+  expectedMediaUrl: string | null;
+};
+
+function comparableUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function validateLegacySameDayInlineCorrelation(input: LegacySameDayInlineCorrelationInput) {
+  const blockers: string[] = [];
+  const sourceJobId = typeof input.runnerJobId === "string" && /^inline-\d+-[a-z0-9]+$/i.test(input.runnerJobId)
+    ? input.runnerJobId
+    : null;
+  const capturedAt = input.capturedAt && !Number.isNaN(new Date(input.capturedAt).getTime())
+    ? input.capturedAt
+    : input.createdAt?.toISOString() ?? null;
+  if (!ISO_DATE_REGEXP.test(input.targetDate)) blockers.push("target_date_invalid");
+  if (!sourceJobId) blockers.push("inline_runner_job_missing");
+  if (!['ok', 'pending_audit'].includes(input.status)) blockers.push("capture_log_not_approved");
+  if (!input.createdAt || formatIsoDate(input.createdAt) !== input.targetDate) blockers.push("capture_created_date_mismatch");
+  if (!capturedAt || parseCuiabaDate(capturedAt) !== input.targetDate) blockers.push("captured_at_date_mismatch");
+  if (!input.requestedCaptureAt || !input.requestedCaptureAt.startsWith(`${input.targetDate}T`)) blockers.push("requested_capture_date_mismatch");
+  if (!input.uploadedUrl || input.uploadedUrl !== input.evidenceUrl) blockers.push("capture_artifact_mismatch");
+  if (!comparableUrl(input.matchedMediaUrl) || comparableUrl(input.matchedMediaUrl) !== comparableUrl(input.expectedMediaUrl)) {
+    blockers.push("capture_media_mismatch");
+  }
+  return {
+    ok: blockers.length === 0,
+    blockers,
+    sourceJobId,
+    capturedAt,
+  };
+}
+
 const SERVER_CAPTURE_PROVENANCE = Symbol("serverCaptureProvenance");
 
 export type ServerCaptureProvenance = {

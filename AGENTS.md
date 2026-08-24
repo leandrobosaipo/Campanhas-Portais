@@ -8,13 +8,7 @@ Raiz oficial:
 /Users/leandrobosaipo/Projetos/AdOps
 ```
 
-Origem histórica migrada:
-
-```bash
-/Users/leandrobosaipo/.openclaw/Campanhas-Portais
-```
-
-Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para código, documentação, scripts, `.env` locais e runbooks.
+O repositório anterior do OpenClaw é apenas registro de migração. Ele não é entrada de comandos, código, documentação, configuração ou deploy. Use exclusivamente a raiz oficial acima; consulte `docs/MIGRATION_FROM_OPENCLAW_ADOPS.md` somente para histórico.
 
 ## Postura obrigatória
 
@@ -144,6 +138,7 @@ Bloqueia publicação ou regeneração em lote se houver:
 - A reconciliação só cadastra/publica; ela nunca captura evidência do próprio dia. Após a confirmação do HTML público, a primeira captura continua exclusiva do `print-batch` das 18h.
 - Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
 - Toda captura deve preservar uma classificação imutável: `scheduled` (rotina do dia), `same_day_retry` (nova tentativa ainda no mesmo dia) ou `historical_recovery` (recuperação posterior). O registro guarda `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`; uma captura `scheduled` não vira retroativa só porque o calendário avançou.
+- Uma execução antiga `inline-*` só pode ser reconciliada como `same_day_retry` pela rota interna, em `dryRun` antes de `apply`, quando log, arquivo, mídia, inserção, período e data em `America/Cuiaba` coincidirem. A reconciliação nunca troca a evidência nem sua URL.
 - A aprovação exige proveniência correlacionável entre banco (`capture_proof_logs`), job original e artefato armazenado. Reconciliar um registro antigo pode corrigir sua classificação, mas não recaptura, substitui ou atribui arquivo a outra inserção. Sem correlação suficiente, o estado permanece bloqueado.
 - Após o lote das 18h, itens `missing` ou `invalid` recebem recuperação individual persistida em +5, +10 e +15 minutos. Cada tentativa tem inserção, data, causa humana/técnica, job, horário e próxima ação; aprovação interrompe o ciclo, evidência aprovada nunca é tocada e a terceira falha abre bloqueio sem retry adicional.
 - O status histórico deve respeitar `?date=YYYY-MM-DD`: não use a última rotina para responder outra data. A rotina normal é determinística e não chama IA; ao final pode emitir somente JSON compacto `complete`, `retryable` ou `blocked` para o avaliador econômico.

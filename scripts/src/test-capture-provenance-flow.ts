@@ -54,6 +54,11 @@ test("reconciliação exige batch diário concluído e não troca URL de evidên
   assert.match(reconcile, /metadata: previousMetadata/);
   assert.match(reconcile, /adopsInternalAuth !== true/);
   assert.match(reconcile, /catch \(error\)/);
+  assert.match(reconcile, /sourceKind === "same_day_inline"/);
+  assert.match(reconcile, /CAPTURE_CLASS_SAME_DAY_RETRY/);
+  assert.match(reconcile, /mode === "dryRun"/);
+  assert.match(reconcile, /unchangedEvidence: true/);
+  assert.doesNotMatch(reconcile, /update\(evidencesTable\)/);
 });
 
 test("pre-upload é gate preliminar e auditoria final preserva prova temporal", async () => {

@@ -5,6 +5,103 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+export type CaptureProofReconciliationRequestMode =
+  (typeof CaptureProofReconciliationRequestMode)[keyof typeof CaptureProofReconciliationRequestMode];
+
+export const CaptureProofReconciliationRequestMode = {
+  dryRun: "dryRun",
+  apply: "apply",
+} as const;
+
+export type CaptureProofReconciliationRequestSourceKind =
+  (typeof CaptureProofReconciliationRequestSourceKind)[keyof typeof CaptureProofReconciliationRequestSourceKind];
+
+export const CaptureProofReconciliationRequestSourceKind = {
+  daily_batch: "daily_batch",
+  same_day_inline: "same_day_inline",
+} as const;
+
+export interface CaptureProofReconciliationRequest {
+  date: string;
+  /** @minItems 1 */
+  insertionIds: number[];
+  mode: CaptureProofReconciliationRequestMode;
+  sourceKind: CaptureProofReconciliationRequestSourceKind;
+  /** Required for daily_batch and omitted for same_day_inline. */
+  sourceJobId?: string;
+}
+
+export type CaptureProofReconciliationItemStatus =
+  (typeof CaptureProofReconciliationItemStatus)[keyof typeof CaptureProofReconciliationItemStatus];
+
+export const CaptureProofReconciliationItemStatus = {
+  ready: "ready",
+  ok: "ok",
+  ok_best_effort: "ok_best_effort",
+  blocked: "blocked",
+} as const;
+
+/**
+ * @nullable
+ */
+export type CaptureProofReconciliationItemCaptureClass =
+  | (typeof CaptureProofReconciliationItemCaptureClass)[keyof typeof CaptureProofReconciliationItemCaptureClass]
+  | null;
+
+export const CaptureProofReconciliationItemCaptureClass = {
+  scheduled: "scheduled",
+  same_day_retry: "same_day_retry",
+  historical_recovery: "historical_recovery",
+} as const;
+
+export interface CaptureProofReconciliationItem {
+  insertionId: number;
+  status: CaptureProofReconciliationItemStatus;
+  /** @nullable */
+  reason?: string | null;
+  blockers?: string[];
+  /** @nullable */
+  logId?: string | null;
+  /** @nullable */
+  evidenceId?: number | null;
+  /** @nullable */
+  captureClass?: CaptureProofReconciliationItemCaptureClass;
+  /** @nullable */
+  sourceJobId?: string | null;
+  /** @nullable */
+  capturedAt?: string | null;
+  unchangedEvidence?: boolean;
+  [key: string]: unknown;
+}
+
+export type CaptureProofReconciliationResponseMode =
+  (typeof CaptureProofReconciliationResponseMode)[keyof typeof CaptureProofReconciliationResponseMode];
+
+export const CaptureProofReconciliationResponseMode = {
+  dryRun: "dryRun",
+  apply: "apply",
+} as const;
+
+export type CaptureProofReconciliationResponseSourceKind =
+  (typeof CaptureProofReconciliationResponseSourceKind)[keyof typeof CaptureProofReconciliationResponseSourceKind];
+
+export const CaptureProofReconciliationResponseSourceKind = {
+  daily_batch: "daily_batch",
+  same_day_inline: "same_day_inline",
+} as const;
+
+export interface CaptureProofReconciliationResponse {
+  ok: boolean;
+  date: string;
+  mode: CaptureProofReconciliationResponseMode;
+  sourceKind: CaptureProofReconciliationResponseSourceKind;
+  /** @nullable */
+  sourceJobId?: string | null;
+  /** @minimum 0 */
+  reconciled: number;
+  items: CaptureProofReconciliationItem[];
+}
+
 export type DailyPrintAttemptStatus =
   (typeof DailyPrintAttemptStatus)[keyof typeof DailyPrintAttemptStatus];
 
@@ -1338,14 +1435,6 @@ export type ListInsertionsParams = {
 export type GetCaptureProofStatusParams = {
   date: string;
 };
-
-export type ReconcileScheduledCaptureProofsBody = {
-  date: string;
-  sourceJobId: string;
-  insertionIds: number[];
-};
-
-export type ReconcileScheduledCaptureProofs200 = { [key: string]: unknown };
 
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;

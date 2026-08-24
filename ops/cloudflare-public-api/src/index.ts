@@ -3355,8 +3355,19 @@ export default {
         if (!auth.ok) return auth.response;
         if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
         const body = await readBody(request);
+        const sourceKind = body.sourceKind === "same_day_inline" ? "same_day_inline" : "daily_batch";
         const sourceJobId = typeof body.sourceJobId === "string" ? body.sourceJobId : "";
         const targetDate = typeof body.date === "string" ? body.date : "";
+        if (sourceKind === "same_day_inline") {
+          const requestedInsertionIds = Array.isArray(body.insertionIds)
+            ? body.insertionIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+            : [];
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || requestedInsertionIds.length === 0) {
+            return badRequest("date e insertionIds são obrigatórios para same_day_inline.");
+          }
+          const enrichedRequest = new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify({ ...body, sourceKind }) });
+          return proxyToPrivateApi(enrichedRequest, env, url, { noStore: true });
+        }
         const sourceJob = sourceJobId ? await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id=? AND kind='print-batch' LIMIT 1`).bind(sourceJobId).first<OpsJobRecord>() : null;
         if (!sourceJob) return badRequest("sourceJobId não identifica um print-batch persistido.");
         const described = describeJob(sourceJob);

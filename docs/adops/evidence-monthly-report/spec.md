@@ -35,6 +35,8 @@ Variaveis opcionais:
 - Dias com imagem auditada aparecem como thumb.
 - Dias sem evidencia aparecem como celula de data com tooltip e detalhe no modal.
 - Dias invalidos aparecem como celula de erro com tooltip e detalhe no modal.
+- O relatório somente apresenta o status canônico retornado pela auditoria da API. Ele não cria, promove, reclassifica ou aprova evidências.
+- `same_day_retry` permanece uma captura do próprio dia; somente `historical_recovery` exige prova editorial retroativa.
 
 ## Saida
 

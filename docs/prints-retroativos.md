@@ -447,6 +447,8 @@ Endpoint da previa:
 
 ## Contrato editorial retroativo v2 — 2026-07-31
 
+Este contrato se aplica exclusivamente a `historical_recovery`, isto é, captura executada em data posterior à data-alvo. `scheduled` e `same_day_retry` executados na própria data em `America/Cuiaba` não são retroativos e não podem passar a exigir esta prova apenas porque o calendário avançou. Registros legados só recebem essa classificação por reconciliação interna auditável; a presença de um arquivo, sozinha, nunca autoriza aprovação.
+
 Alterar apenas a data da moldura ou do cabeçalho não comprova veiculação retroativa. Toda captura com `requestedCaptureAt` deve provar também o conteúdo editorial visível naquele corte.
 
 Requisitos:

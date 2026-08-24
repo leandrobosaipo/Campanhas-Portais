@@ -29,6 +29,7 @@ import {
 } from "../lib/adrotate-sites";
 import {
   AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE,
+  CAPTURE_CLASS_SAME_DAY_RETRY,
   CAPTURE_CLASS_SCHEDULED,
   buildRetroCaptureAt,
   eachIsoDay,
@@ -42,6 +43,7 @@ import {
   resolveRegenerationCaptureAt,
   safeFileName,
   summarizeAuditRootCauses,
+  validateLegacySameDayInlineCorrelation,
 } from "../lib/capture-audit";
 import {
   loadAuditChecklistMetadata,
@@ -2064,13 +2066,15 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     return;
   }
   const targetDate = typeof req.body?.date === "string" ? req.body.date : "";
+  const mode = req.body?.mode === "apply" ? "apply" : "dryRun";
+  const sourceKind = req.body?.sourceKind === "same_day_inline" ? "same_day_inline" : "daily_batch";
   const sourceJobId = typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId.trim() : "";
   const insertionIds: number[] = Array.isArray(req.body?.insertionIds)
     ? Array.from(new Set<number>(req.body.insertionIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0)))
     : [];
   const sourceCaptures = Array.isArray(req.body?.sourceCaptures) ? req.body.sourceCaptures as Array<Record<string, unknown>> : [];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !sourceJobId || insertionIds.length === 0) {
-    res.status(400).json({ error: "Informe date, sourceJobId e insertionIds." });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || (sourceKind === "daily_batch" && !sourceJobId) || insertionIds.length === 0) {
+    res.status(400).json({ error: "Informe date, insertionIds e sourceJobId para daily_batch." });
     return;
   }
 
@@ -2086,11 +2090,52 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       eq(captureProofLogsTable.targetDate, targetDate),
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     )).orderBy(desc(captureProofLogsTable.createdAt));
-    const correlated = logs.find((row) => (
+    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
+    const enrichedInsertion = rawInsertion ? await enrichInsertion(rawInsertion) : null;
+    const currentAudit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    let correlationBlockers: string[] = [];
+    let correlatedCapturedAt: string | null = null;
+    let correlated = sourceKind === "daily_batch" ? logs.find((row) => (
       captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
       row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
       row.uploadedUrl && row.uploadedUrl === sourceUploadedUrl
-    ));
+    )) : null;
+    if (sourceKind === "same_day_inline" && evidence && enrichedInsertion) {
+      const periodOk = Boolean(enrichedInsertion.periodoInicio && enrichedInsertion.periodoFim && targetDate >= enrichedInsertion.periodoInicio && targetDate <= enrichedInsertion.periodoFim);
+      if (!periodOk) correlationBlockers.push("target_date_outside_contract_period");
+      const allowedBlockingCodes = new Set(["metadata_retro_content_unverified"]);
+      const blockingCodes = currentAudit?.checklistValidation.blockingIssues.map((issue) => issue.code) ?? [];
+      if (blockingCodes.some((code) => !allowedBlockingCodes.has(code))) correlationBlockers.push("non_legacy_audit_blocker");
+      const audit = currentAudit?.audit;
+      if (!audit?.mediaProof?.ok || !audit?.visualsOk || !audit?.finalPngSlotAudit?.ok || audit?.visualAudit?.identityFrameOk !== true || audit?.pageMatches !== true || audit?.desktopMatches !== true) {
+        correlationBlockers.push("capture_quality_gate_failed");
+      }
+      const candidateBlockers: string[] = [];
+      for (const row of logs) {
+        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+        const validation = validateLegacySameDayInlineCorrelation({
+          targetDate,
+          runnerJobId: row.runnerJobId,
+          status: row.status,
+          createdAt: row.createdAt,
+          capturedAt: typeof metadata.capturedAt === "string" ? metadata.capturedAt : null,
+          requestedCaptureAt: typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : row.captureAt,
+          uploadedUrl: row.uploadedUrl,
+          evidenceUrl: evidence.arquivoUrl,
+          matchedMediaUrl: typeof metadata.matchedMediaUrl === "string" ? metadata.matchedMediaUrl : null,
+          expectedMediaUrl: enrichedInsertion.mediaUrl,
+        });
+        if (validation.ok && correlationBlockers.length === 0) {
+          correlated = row;
+          captureJobId = validation.sourceJobId;
+          sourceUploadedUrl = row.uploadedUrl;
+          correlatedCapturedAt = validation.capturedAt;
+          break;
+        }
+        candidateBlockers.push(...validation.blockers);
+      }
+      if (!correlated) correlationBlockers = Array.from(new Set([...correlationBlockers, ...candidateBlockers]));
+    }
     if (!evidence || !correlated) {
       const reason = !evidence
         ? "evidence_missing"
@@ -2101,12 +2146,9 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
             : !logs.some((row) => row.uploadedUrl === sourceUploadedUrl)
               ? "capture_artifact_mismatch"
               : "capture_timestamp_mismatch";
-      items.push({ insertionId, status: "blocked", reason });
+      items.push({ insertionId, status: "blocked", reason, blockers: correlationBlockers });
       continue;
     }
-    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
-    const enrichedInsertion = rawInsertion ? await enrichInsertion(rawInsertion) : null;
-    const currentAudit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
     if (currentAudit?.status === "ok" || currentAudit?.status === "ok_best_effort") {
       items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: currentAudit.status, unchanged: true, audit: currentAudit });
       continue;
@@ -2119,13 +2161,18 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     const metadata = correlated.metadata && typeof correlated.metadata === "object"
       ? { ...correlated.metadata as Record<string, unknown> }
       : {};
-    metadata.captureClass = CAPTURE_CLASS_SCHEDULED;
+    metadata.captureClass = sourceKind === "same_day_inline" ? CAPTURE_CLASS_SAME_DAY_RETRY : CAPTURE_CLASS_SCHEDULED;
     metadata.targetDate = targetDate;
-    metadata.capturedAt = correlated.createdAt.toISOString();
+    metadata.capturedAt = correlatedCapturedAt ?? correlated.createdAt.toISOString();
     metadata.sourceJobId = captureJobId;
-    metadata.sourceBatchJobId = sourceJobId;
+    if (sourceKind === "daily_batch") metadata.sourceBatchJobId = sourceJobId;
+    metadata.reconciledFrom = sourceKind;
     metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
     metadata.evidenceUrl = correlated.uploadedUrl;
+    if (mode === "dryRun") {
+      items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: "ready", mode, sourceKind, captureClass: metadata.captureClass, sourceJobId: captureJobId, capturedAt: metadata.capturedAt, unchangedEvidence: true });
+      continue;
+    }
     await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
     let audit = null;
     try {
@@ -2140,7 +2187,9 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: audit?.status ?? "blocked", audit });
   }
   res.json({
-    ok: items.every((item) => item.status === "ok" || item.status === "ok_best_effort"),
+    ok: items.every((item) => item.status === "ok" || item.status === "ok_best_effort" || item.status === "ready"),
+    mode,
+    sourceKind,
     date: targetDate,
     sourceJobId,
     reconciled: items.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,

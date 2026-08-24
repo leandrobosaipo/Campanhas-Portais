@@ -31,6 +31,8 @@ Quando uma evidência termina aprovada, o runner registra a competência como �
 
 O relatório lê a proveniência imutável da evidência: `captureClass` (`scheduled`, `same_day_retry` ou `historical_recovery`), `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`. Uma captura do dia não se torna retroativa no dia seguinte. Registros antigos só podem ser reconciliados quando banco, job e artefato concordam; a reconciliação reutiliza o arquivo existente e não dispara nova captura.
 
+O relatório não reclassifica nem aprova evidências. Para um log legado `inline-*` capturado no próprio dia, a API pode registrar `same_day_retry` somente após `dryRun` comprovar a mesma inserção, período, mídia, URL, auditoria visual e data em Cuiabá. Divergência mantém o card inválido e exige correção na origem.
+
 Se outra aprovação ocorrer enquanto a página está sendo atualizada, ela fica registrada como uma nova revisão e é publicada depois do job em curso. Falha do relatório não invalida o print aprovado: a revisão permanece pendente para retry e a página continua exibindo o último estado público válido.
 
 Recuperações são individuais e persistidas por inserção/data. O ciclo tenta em 5, 10 e 15 minutos para `missing` ou `invalid`, para imediatamente quando aprova e encerra como bloqueado após a terceira falha. A página deve mostrar “capturando”, “nova tentativa em X minutos” ou “bloqueado após 3 tentativas”, com resumo simples e detalhe técnico no diagnóstico.

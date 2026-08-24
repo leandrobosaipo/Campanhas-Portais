@@ -45,6 +45,16 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - Duas aprovações próximas devem resultar em uma revisão com debounce de 60 segundos; uma aprovação durante a execução deve resultar em uma única revisão seguinte, sem jobs mensais concorrentes.
 - Em grupo rotativo, `relation.rotation.mode=rotating` não bloqueia por si só; `canonicalSelection.decision=confirmed`, mídia esperada observada e checklist aprovado são obrigatórios.
 - Um retry parcial deve conter somente datas sem aprovação e manter os JPEGs já auditados sem substituição.
+- Para incidentes de proveniência, o harness público deve conferir a lista exata de inserções e datas pela auditoria canônica; arquivo existente ou HTTP 200 isolado não basta.
+- A página não pode reclassificar evidência. O estado de cada dia deve ser igual ao retornado pela API.
+
+Aceite focal de 21/08:
+
+```bash
+ADOPS_EVIDENCE_TARGET_DATE=2026-08-21 \
+ADOPS_EVIDENCE_TARGET_IDS=2692,2693,2712,2713 \
+pnpm --dir scripts run test:monthly-report-target-evidences
+```
 
 ## Verificacao publica
 
