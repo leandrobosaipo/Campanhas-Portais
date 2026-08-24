@@ -17,6 +17,7 @@ import {
 } from "./adrotate-sites";
 import {
   attachServerCaptureProvenance,
+  correlateCaptureLogProvenance,
   evaluateCaptureMetadata,
   isCaptureAtInRetroWindow,
   parseDateOnly,
@@ -253,18 +254,19 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
   ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
   if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
   const metadata = { ...latestLog.metadata };
-  const declaredSourceJobId = metadataString(metadata, "sourceJobId");
-  const correlatedJobId = [latestLog.runnerJobId, latestLog.jobId]
-    .find((value) => typeof value === "string" && value === declaredSourceJobId);
   const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
   const evidenceUrl = evidenceRows.find((row) => String(row.titulo || "").includes(dateKey))?.arquivoUrl ?? null;
-  if (!correlatedJobId || !latestLog.createdAt || !latestLog.uploadedUrl || latestLog.uploadedUrl !== evidenceUrl) return metadata;
-  return attachServerCaptureProvenance(metadata, {
+  const provenance = correlateCaptureLogProvenance({
     targetDate: latestLog.targetDate,
-    sourceJobId: correlatedJobId,
-    capturedAt: latestLog.createdAt.toISOString(),
-    uploadedUrl: latestLog.uploadedUrl ?? null,
+    jobId: latestLog.jobId,
+    runnerJobId: latestLog.runnerJobId,
+    createdAt: latestLog.createdAt,
+    uploadedUrl: latestLog.uploadedUrl,
+    status: latestLog.status,
+    metadata,
+    evidenceUrl,
   });
+  return provenance ? attachServerCaptureProvenance(metadata, provenance) : metadata;
 }
 
 export async function resolveAuditChecklist(input: { insertionId: number; date: string }): Promise<AuditChecklistContract> {

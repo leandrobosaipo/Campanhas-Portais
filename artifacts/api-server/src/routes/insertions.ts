@@ -28,6 +28,8 @@ import {
   normalizeSiteMediaUrl,
 } from "../lib/adrotate-sites";
 import {
+  AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE,
+  CAPTURE_CLASS_SCHEDULED,
   buildRetroCaptureAt,
   eachIsoDay,
   evaluateCaptureMetadata,
@@ -2053,6 +2055,58 @@ router.post("/integrations/adrotate/media/sync-live", async (req, res): Promise<
     updated: updates.length,
     updates,
     skipped,
+  });
+});
+
+router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): Promise<void> => {
+  const targetDate = typeof req.body?.date === "string" ? req.body.date : "";
+  const sourceJobId = typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId.trim() : "";
+  const insertionIds: number[] = Array.isArray(req.body?.insertionIds)
+    ? Array.from(new Set<number>(req.body.insertionIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0)))
+    : [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !sourceJobId || insertionIds.length === 0) {
+    res.status(400).json({ error: "Informe date, sourceJobId e insertionIds." });
+    return;
+  }
+
+  const items = [] as Array<Record<string, unknown>>;
+  for (const insertionId of insertionIds) {
+    const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
+    const logs = await db.select().from(captureProofLogsTable).where(and(
+      eq(captureProofLogsTable.insertionId, insertionId),
+      eq(captureProofLogsTable.targetDate, targetDate),
+      inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
+    )).orderBy(desc(captureProofLogsTable.createdAt));
+    const correlated = logs.find((row) => (
+      (row.runnerJobId === sourceJobId || row.jobId === sourceJobId) &&
+      row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
+      row.uploadedUrl && row.uploadedUrl === evidence?.arquivoUrl
+    ));
+    if (!evidence || !correlated) {
+      items.push({ insertionId, status: "blocked", reason: evidence ? "source_job_or_artifact_not_correlated" : "evidence_missing" });
+      continue;
+    }
+    const metadata = correlated.metadata && typeof correlated.metadata === "object"
+      ? { ...correlated.metadata as Record<string, unknown> }
+      : {};
+    metadata.captureClass = CAPTURE_CLASS_SCHEDULED;
+    metadata.targetDate = targetDate;
+    metadata.capturedAt = correlated.createdAt.toISOString();
+    metadata.sourceJobId = sourceJobId;
+    metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
+    metadata.evidenceUrl = evidence.arquivoUrl;
+    await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
+    const audit = rawInsertion ? await resolveEvidenceAuditStatus(await enrichInsertion(rawInsertion), targetDate, evidenceRows) : null;
+    items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: audit?.status ?? "blocked", audit });
+  }
+  res.json({
+    ok: items.every((item) => item.status === "ok" || item.status === "ok_best_effort"),
+    date: targetDate,
+    sourceJobId,
+    reconciled: items.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,
+    items,
   });
 });
 

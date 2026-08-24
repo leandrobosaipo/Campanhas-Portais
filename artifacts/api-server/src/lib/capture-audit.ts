@@ -182,6 +182,24 @@ export type ServerCaptureProvenance = {
   uploadedUrl: string | null;
 };
 
+export function correlateCaptureLogProvenance(input: {
+  targetDate: string;
+  jobId: string | null;
+  runnerJobId: string | null;
+  createdAt: Date | null;
+  uploadedUrl: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+  evidenceUrl: string | null;
+}) {
+  if (!["ok", "pending_audit"].includes(input.status)) return null;
+  const declaredSourceJobId = typeof input.metadata.sourceJobId === "string" ? input.metadata.sourceJobId.trim() : "";
+  const sourceJobId = [input.runnerJobId, input.jobId]
+    .find((value) => typeof value === "string" && value === declaredSourceJobId) ?? null;
+  if (!sourceJobId || !input.createdAt || !input.uploadedUrl || input.uploadedUrl !== input.evidenceUrl) return null;
+  return { targetDate: input.targetDate, sourceJobId, capturedAt: input.createdAt.toISOString(), uploadedUrl: input.uploadedUrl };
+}
+
 export function attachServerCaptureProvenance(
   metadata: Record<string, unknown>,
   provenance: ServerCaptureProvenance,
