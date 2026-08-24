@@ -60,8 +60,12 @@ router.post("/audit-checklists/validate-proof", async (req, res): Promise<void> 
     insertionId,
     date,
     metadata,
+    phase: req.body?.phase === "pre_upload" ? "pre_upload" : "final",
   });
-  res.status(validation.approved ? 200 : 422).json(validation);
+  res.status(validation.approved ? 200 : 422).json({
+    ...validation,
+    preliminary: req.body?.phase === "pre_upload",
+  });
 });
 
 router.get("/audit-checklists/metadata", async (req, res): Promise<void> => {

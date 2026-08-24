@@ -42,6 +42,7 @@ function internalApiGuard(req: Request, res: Response, next: NextFunction) {
 
   const providedInternal = req.header("x-adops-api-token")?.trim() ?? "";
   if (internalApiToken && providedInternal && providedInternal === internalApiToken) {
+    res.locals.adopsInternalAuth = true;
     next();
     return;
   }

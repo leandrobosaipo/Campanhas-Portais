@@ -470,6 +470,7 @@ export async function validateAuditChecklist(input: {
   insertionId: number;
   date: string;
   metadata?: unknown;
+  phase?: "pre_upload" | "final";
 }): Promise<AuditChecklistValidation> {
   const date = normalizeDateKey(input.date);
   const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date });
@@ -491,6 +492,16 @@ export async function validateAuditChecklist(input: {
   }
 
   addBaseAuditIssues(audit, blockingIssues);
+  if (input.phase === "pre_upload") {
+    // Temporal provenance can only be trusted after the artifact and child job
+    // are persisted.  Pre-upload is deliberately a visual/mechanical gate;
+    // the canonical audit still runs after persistence and keeps these issues.
+    for (let index = blockingIssues.length - 1; index >= 0; index -= 1) {
+      if (["metadata_retro_content_unverified", "metadata_capture_class_untrusted"].includes(blockingIssues[index]!.code)) {
+        blockingIssues.splice(index, 1);
+      }
+    }
+  }
 
   if (contract.ok && metadata) {
     const { requiredGates, expectedSelectors, expectedMedia, resolvedRule } = contract;

@@ -52,4 +52,14 @@ test("reconciliação exige batch diário concluído e não troca URL de evidên
   assert.doesNotMatch(reconcile, /update\(evidencesTable\)/);
   assert.match(reconcile, /unchanged: true/);
   assert.match(reconcile, /metadata: previousMetadata/);
+  assert.match(reconcile, /adopsInternalAuth !== true/);
+  assert.match(reconcile, /catch \(error\)/);
+});
+
+test("pre-upload é gate preliminar e auditoria final preserva prova temporal", async () => {
+  const checklist = await readFile(new URL("../../artifacts/api-server/src/lib/audit-checklist.ts", import.meta.url), "utf8");
+  assert.match(checklist, /input\.phase === "pre_upload"/);
+  assert.match(checklist, /metadata_retro_content_unverified/);
+  const route = await readFile(new URL("../../artifacts/api-server/src/routes/audit-checklists.ts", import.meta.url), "utf8");
+  assert.match(route, /preliminary: req\.body\?\.phase === "pre_upload"/);
 });

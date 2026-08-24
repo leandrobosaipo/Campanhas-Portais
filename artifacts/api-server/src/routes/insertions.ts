@@ -2059,6 +2059,10 @@ router.post("/integrations/adrotate/media/sync-live", async (req, res): Promise<
 });
 
 router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): Promise<void> => {
+  if (res.locals.adopsInternalAuth !== true) {
+    res.status(403).json({ error: "internal_auth_required", details: "A reconciliação só pode ser chamada pelo Worker autenticado da API AdOps." });
+    return;
+  }
   const targetDate = typeof req.body?.date === "string" ? req.body.date : "";
   const sourceJobId = typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId.trim() : "";
   const insertionIds: number[] = Array.isArray(req.body?.insertionIds)
@@ -2123,7 +2127,13 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
     metadata.evidenceUrl = correlated.uploadedUrl;
     await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
-    const audit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    let audit = null;
+    try {
+      audit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    } catch (error) {
+      await db.update(captureProofLogsTable).set({ metadata: previousMetadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+      throw error;
+    }
     if (audit?.status !== "ok" && audit?.status !== "ok_best_effort") {
       await db.update(captureProofLogsTable).set({ metadata: previousMetadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
     }
