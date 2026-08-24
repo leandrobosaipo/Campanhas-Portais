@@ -3350,6 +3350,21 @@ export default {
         );
       }
 
+      if (publicScheduledReconcileRoute) {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+        if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
+        const body = await readBody(request);
+        const sourceJobId = typeof body.sourceJobId === "string" ? body.sourceJobId : "";
+        const sourceJob = sourceJobId ? await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id=? AND kind='print-batch' LIMIT 1`).bind(sourceJobId).first<OpsJobRecord>() : null;
+        if (!sourceJob) return badRequest("sourceJobId não identifica um print-batch persistido.");
+        const described = describeJob(sourceJob);
+        const result = described.result && typeof described.result === "object" ? described.result as Record<string, unknown> : {};
+        const execution = result.execution && typeof result.execution === "object" ? result.execution as Record<string, unknown> : result;
+        const sourceCaptures = Array.isArray(execution.captured) ? execution.captured : [];
+        const enrichedRequest = new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify({ ...body, sourceCaptures }) });
+        return proxyToPrivateApi(enrichedRequest, env, url, { noStore: true });
+      }
       return notFound();
     }
 
@@ -3579,26 +3594,6 @@ export default {
           reason: empty ? "recovery_not_initialized" : null,
         },
       });
-    }
-
-    if (path === "/api/insertions/capture-proof/reconcile-scheduled" && request.method === "POST") {
-      const auth = requireOpsAuth(request, env);
-      if (!auth.ok) return auth.response;
-      if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
-      const body = await readBody(request);
-      const sourceJobId = typeof body.sourceJobId === "string" ? body.sourceJobId : "";
-      const sourceJob = sourceJobId ? await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id=? AND kind='print-batch' LIMIT 1`).bind(sourceJobId).first<OpsJobRecord>() : null;
-      if (!sourceJob) return badRequest("sourceJobId não identifica um print-batch persistido.");
-      const described = describeJob(sourceJob);
-      const result = described.result && typeof described.result === "object" ? described.result as Record<string, unknown> : {};
-      const execution = result.execution && typeof result.execution === "object" ? result.execution as Record<string, unknown> : result;
-      const sourceCaptures = Array.isArray(execution.captured) ? execution.captured : [];
-      const enrichedRequest = new Request(request.url, {
-        method: "POST",
-        headers: request.headers,
-        body: JSON.stringify({ ...body, sourceCaptures }),
-      });
-      return proxyToPrivateApi(enrichedRequest, env, url, { noStore: true });
     }
 
     if (path === "/api/ops/incidents") {
