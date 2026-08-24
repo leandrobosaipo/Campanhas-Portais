@@ -3551,7 +3551,7 @@ export default {
     if (path === "/api/ops/daily-print-status") {
       const requestedDate = url.searchParams.get("date");
       const jobs = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate ?? "")
-        ? (await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE kind='print-batch' AND json_extract(payload_json,'$.source')=? AND json_extract(payload_json,'$.date')=? ORDER BY created_at DESC LIMIT 20`).bind("cloudflare-cron-daily-print", requestedDate).all<OpsJobRecord>()).results
+        ? ((await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE kind='print-batch' AND json_extract(payload_json,'$.source')=? AND json_extract(payload_json,'$.date')=? ORDER BY created_at DESC LIMIT 20`).bind("cloudflare-cron-daily-print", requestedDate).all<OpsJobRecord>()).results ?? []).map(describeJob)
         : await listOpsJobsByFilter(env, { limit: 100, statuses: null, kinds: ["print-batch"], olderThanMinutes: null });
       return jsonNoStore(buildDailyPrintStatus({
         jobs,
