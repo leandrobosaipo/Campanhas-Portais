@@ -2086,8 +2086,12 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       const inferred = logs.find((row) => {
         const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
         const declared = typeof metadata.sourceJobId === "string" ? metadata.sourceJobId : null;
+        const hasImmutableChildJob = Boolean(row.runnerJobId || row.jobId);
+        const declaredChildMatches = declared
+          ? declared === row.runnerJobId || declared === row.jobId
+          : row.status === "ok" && hasImmutableChildJob;
         return row.createdAt && formatIsoDate(row.createdAt) === targetDate && row.uploadedUrl === evidence.arquivoUrl &&
-          declared && (declared === row.runnerJobId || declared === row.jobId);
+          declaredChildMatches;
       });
       captureJobId = inferred?.runnerJobId ?? inferred?.jobId ?? null;
       sourceUploadedUrl = inferred?.uploadedUrl ?? null;
@@ -2100,7 +2104,7 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     if (!evidence || !correlated) {
       const reason = !evidence
         ? "evidence_missing"
-        : !sourceCapture || !captureJobId || !sourceUploadedUrl
+        : !captureJobId || !sourceUploadedUrl
           ? "source_capture_mapping_missing"
           : !logs.some((row) => row.runnerJobId === captureJobId || row.jobId === captureJobId)
             ? "capture_job_log_missing"
