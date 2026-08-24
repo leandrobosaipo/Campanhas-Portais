@@ -245,17 +245,18 @@ async function resolvePublishedRule(siteSigla: string, groupId: number) {
 
 export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string) {
   const dateKey = normalizeDateKey(targetDate);
-  const [latestLog] = await db.select().from(captureProofLogsTable).where(
+  const logs = await db.select().from(captureProofLogsTable).where(
     and(
       eq(captureProofLogsTable.insertionId, insertionId),
       eq(captureProofLogsTable.targetDate, dateKey),
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
-  const metadata = { ...latestLog.metadata };
+  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(50);
   const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
   const evidenceUrl = evidenceRows.find((row) => String(row.titulo || "").includes(dateKey))?.arquivoUrl ?? null;
+  const latestLog = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? logs[0];
+  if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
+  const metadata = { ...latestLog.metadata };
   const provenance = correlateCaptureLogProvenance({
     targetDate: latestLog.targetDate,
     jobId: latestLog.jobId,
