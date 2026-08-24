@@ -2088,7 +2088,16 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       row.uploadedUrl && row.uploadedUrl === sourceUploadedUrl
     ));
     if (!evidence || !correlated) {
-      items.push({ insertionId, status: "blocked", reason: evidence ? "source_job_or_artifact_not_correlated" : "evidence_missing" });
+      const reason = !evidence
+        ? "evidence_missing"
+        : !sourceCapture || !captureJobId || !sourceUploadedUrl
+          ? "source_capture_mapping_missing"
+          : !logs.some((row) => row.runnerJobId === captureJobId || row.jobId === captureJobId)
+            ? "capture_job_log_missing"
+            : !logs.some((row) => row.uploadedUrl === sourceUploadedUrl)
+              ? "capture_artifact_mismatch"
+              : "capture_timestamp_mismatch";
+      items.push({ insertionId, status: "blocked", reason });
       continue;
     }
     const metadata = correlated.metadata && typeof correlated.metadata === "object"
