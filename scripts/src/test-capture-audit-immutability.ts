@@ -18,6 +18,7 @@ function buildMetadata({
   auditPolicyVersion = "audit-policy-v1",
   captureTime = `${targetDate}T10:00:00-04:00`,
   trusted = true,
+  reconstruction = null,
 }: {
   captureClass: string | null;
   targetDate: string;
@@ -29,6 +30,7 @@ function buildMetadata({
   auditPolicyVersion?: string | null;
   captureTime?: string;
   trusted?: boolean;
+  reconstruction?: unknown;
 }) {
   const metadata = {
     captureClass,
@@ -45,6 +47,7 @@ function buildMetadata({
     siteSigla: "ROO",
     contentDateSamples,
     retroContentProof,
+    reconstruction,
     mediaBasename: "creative.jpg",
     matchedMediaUrl: "https://cdn.example.com/creative.jpg",
     slotStableFrameOk: true,
@@ -218,4 +221,25 @@ test("histórico confiável sem prova retroativa continua bloqueado", () => {
   assert.equal(result.ok, false);
   assert.equal(result.captureClass, "historical_recovery");
   assert.equal(result.issues.some((issue) => issue.code === "retro_content_unverified"), true);
+});
+
+test("reconstrução tardia autorizada aceita timeline vazia sem fingir snapshot editorial", () => {
+  const targetDate = "2026-08-23";
+  const metadata = buildMetadata({
+    captureClass: "historical_recovery",
+    targetDate,
+    requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
+    captureTime: `${targetDate}T20:40:00-04:00`,
+    capturedAt: "2026-08-24T15:00:00.000Z",
+    contentDateSamples: [],
+    reconstruction: {
+      reason: "late_publication_recovery",
+      contractedDate: targetDate,
+      reconstructedAt: "2026-08-24T15:00:00.000Z",
+      mediaUrl: "https://cdn.example.com/creative.jpg",
+    },
+  });
+  const result = evaluateCaptureMetadata(metadata, targetDate, new Date("2026-08-24T16:00:00.000Z"));
+  assert.equal(result.ok, true);
+  assert.equal(result.issues.some((issue) => issue.code === "retro_content_unverified"), false);
 });

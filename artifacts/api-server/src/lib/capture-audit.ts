@@ -615,7 +615,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     (normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY ||
       (normalizedCaptureClass === null && requiresRetroEditorialProof(canonicalTargetDate ?? "", now))) &&
     !auditedLatePublicationRecovery;
-  const contentTimelineOk = contentTimeline.ok || (contentTimeline.reason === "empty_samples" && isScheduledLikeCaptureClass);
+  const contentTimelineOk = contentTimeline.ok ||
+    (contentTimeline.reason === "empty_samples" && (isScheduledLikeCaptureClass || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const captureClassContractOk = captureClassTrustContext.trusted || !explicitCaptureClass;
   const visualsOk = Boolean(
@@ -672,7 +673,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
         : `O site não exibiu a data esperada para ${canonicalTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
-  if (!contentTimeline.ok && (requireRetroContentProof || contentTimeline.reason !== "empty_samples" || !isScheduledLikeCaptureClass)) {
+  if (!contentTimelineOk) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
       label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
