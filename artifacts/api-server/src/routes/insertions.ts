@@ -2073,8 +2073,8 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
   const items = [] as Array<Record<string, unknown>>;
   for (const insertionId of insertionIds) {
     const sourceCapture = sourceCaptures.find((item) => Number(item.insertionId) === insertionId);
-    const captureJobId = typeof sourceCapture?.captureJobId === "string" ? sourceCapture.captureJobId : null;
-    const sourceUploadedUrl = typeof sourceCapture?.uploadedUrl === "string" ? sourceCapture.uploadedUrl : null;
+    let captureJobId = typeof sourceCapture?.captureJobId === "string" ? sourceCapture.captureJobId : null;
+    let sourceUploadedUrl = typeof sourceCapture?.uploadedUrl === "string" ? sourceCapture.uploadedUrl : null;
     const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
     const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
     const logs = await db.select().from(captureProofLogsTable).where(and(
@@ -2082,6 +2082,16 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       eq(captureProofLogsTable.targetDate, targetDate),
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     )).orderBy(desc(captureProofLogsTable.createdAt));
+    if (!captureJobId && evidence) {
+      const inferred = logs.find((row) => {
+        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+        const declared = typeof metadata.sourceJobId === "string" ? metadata.sourceJobId : null;
+        return row.createdAt && formatIsoDate(row.createdAt) === targetDate && row.uploadedUrl === evidence.arquivoUrl &&
+          declared && (declared === row.runnerJobId || declared === row.jobId);
+      });
+      captureJobId = inferred?.runnerJobId ?? inferred?.jobId ?? null;
+      sourceUploadedUrl = inferred?.uploadedUrl ?? null;
+    }
     const correlated = logs.find((row) => (
       captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
       row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
