@@ -2,7 +2,7 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-21
+> Última validação: 2026-08-24
 > Release anterior: b00779340442; confirmar a correção mensal pelo readback
 > Fonte autoritativa: job `evidence-monthly-report`, fonte mensal agregada e relatório público
 
@@ -29,11 +29,17 @@ O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `prin
 
 Quando uma evidência termina aprovada, o runner registra a competência como “suja”. O Worker aguarda 60 segundos desde a última aprovação próxima e executa uma revisão incremental única por competência. Ela reconsulta a fonte mensal e auditorias, atualiza HTML, `data.json`, miniaturas, contadores e modais, mas não solicita print, JPEG, ZIP nem pacote novo.
 
+O relatório lê a proveniência imutável da evidência: `captureClass` (`scheduled`, `same_day_retry` ou `historical_recovery`), `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`. Uma captura do dia não se torna retroativa no dia seguinte. Registros antigos só podem ser reconciliados quando banco, job e artefato concordam; a reconciliação reutiliza o arquivo existente e não dispara nova captura.
+
 Se outra aprovação ocorrer enquanto a página está sendo atualizada, ela fica registrada como uma nova revisão e é publicada depois do job em curso. Falha do relatório não invalida o print aprovado: a revisão permanece pendente para retry e a página continua exibindo o último estado público válido.
+
+Recuperações são individuais e persistidas por inserção/data. O ciclo tenta em 5, 10 e 15 minutos para `missing` ou `invalid`, para imediatamente quando aprova e encerra como bloqueado após a terceira falha. A página deve mostrar “capturando”, “nova tentativa em X minutos” ou “bloqueado após 3 tentativas”, com resumo simples e detalhe técnico no diagnóstico.
 
 Uma evidência `invalid` também não bloqueia a publicação da revisão: ela precisa continuar visível no card e no modal como erro operacional, com a data e o motivo para recuperação. O bloqueio só é permitido quando a fonte mensal ou o artefato gerado estiver estruturalmente inconsistente.
 
 O relatório abre visualmente em `Ativas`, mas o artefato mensal sempre contém também `Encerradas`. Antes das 18h de Cuiabá ou durante fila/execução do lote diário, o corte termina no dia anterior. A restauração de encerradas reutiliza evidências existentes e nunca cria captura.
+
+O gerador e o ciclo de recuperação são determinísticos e não dependem de IA. Ao fim de cada rotina, a API produz somente um resultado compacto (`complete`, `retryable` ou `blocked`); modelos são usados apenas para análise posterior quando houver incidente, nunca para mutar dados.
 
 ## Execução
 

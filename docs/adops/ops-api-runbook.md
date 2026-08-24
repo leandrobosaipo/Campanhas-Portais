@@ -2,7 +2,7 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-13
+> Última validação: 2026-08-24
 > Release-base: c71350e; política sem PDF validada no commit que contém este documento
 > Fonte autoritativa: OpenAPI vivo e runtime público
 
@@ -75,6 +75,18 @@ A API canônica `adops-api.codigo5.com.br` encaminha criação, listagem e progr
 
 Uma falha individual não interrompe as demais inserções do lote. No PERRENGUE, o ativo institucional pequeno `/assets/perrengue-sublogo.png` não é uma peça publicitária e não conta como mídia concorrente; qualquer outro banner ou vídeo adicional no slot continua bloqueando a aprovação.
 4. **22h15 Cuiabá:** o relatório consulta a fonte mensal, não a fonte diária. Campanhas encerradas continuam visíveis e suas datas continuam auditáveis.
+
+### Proveniência e recuperação automática
+
+Cada evidência mantém uma classificação permanente: `scheduled`, `same_day_retry` ou `historical_recovery`. O registro deve conter `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`. A data atual nunca reclassifica uma captura feita no dia como retroativa. A política editorial adicional é exigida somente em `historical_recovery`.
+
+A auditoria só confia no arquivo quando consegue correlacionar banco (`capture_proof_logs`), job que o gerou, inserção, data-alvo e URL do artefato. A reconciliação de 22/08 reutiliza os 18 arquivos originais e ajusta somente metadados comprovados; não gera print, não sobrescreve artefato e não promove uma evidência de outra inserção. Falta de correlação resulta em `blocked`.
+
+Ao terminar o lote diário, o Worker compara cada inserção elegível com a auditoria aprovada. Para cada `missing` ou `invalid`, cria uma recuperação individual idempotente, persistida na mesma chave de data + inserção, com tentativas em 5, 10 e 15 minutos. A aprovação encerra a recuperação; evidência aprovada não recebe novo job. Depois da terceira falha, o item permanece bloqueado com causa humana e técnica, job, horário e próxima ação; não há retry cego.
+
+`GET /api/ops/daily-print-status?date=YYYY-MM-DD` deve filtrar a rotina pedida pela data informada. A resposta compacta expõe estado, contagens, última tentativa e próxima ação, sem payload bruto ou segredo. O script de recuperação é determinístico e não usa IA; seu avaliador de baixo custo recebe apenas `{"status":"complete|retryable|blocked"}`. `retryable` retorna ao loop via API e `blocked` abre incidente para intervenção.
+
+Em 24/08/2026, a rotina diária não deve capturar antes das 18h de Cuiabá. Antes da janela, o dia corrente aparece como `aguardando captura`; depois do lote, ausências entram no ciclo de recuperação.
 
 O Worker grava a transição terminal do job e o incidente em um único `D1Database.batch`. Se o incidente falhar, a transição também é revertida. O fingerprint inclui job, tipo, data-alvo, competência, portal/inserção e causa normalizada; payload e resultado são redigidos recursivamente antes de entrar no incidente.
 

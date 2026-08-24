@@ -143,6 +143,10 @@ Bloqueia publicação ou regeneração em lote se houver:
 - `campaign-publication-reconcile` aceita `mode=preflight|apply`. Eventos do Drive e cron só aplicam quando o gate explícito está ativo; com ele desligado retornam plano e bloqueios, sem mutar campanha, AdRotate ou evidência.
 - A reconciliação só cadastra/publica; ela nunca captura evidência do próprio dia. Após a confirmação do HTML público, a primeira captura continua exclusiva do `print-batch` das 18h.
 - Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
+- Toda captura deve preservar uma classificação imutável: `scheduled` (rotina do dia), `same_day_retry` (nova tentativa ainda no mesmo dia) ou `historical_recovery` (recuperação posterior). O registro guarda `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`; uma captura `scheduled` não vira retroativa só porque o calendário avançou.
+- A aprovação exige proveniência correlacionável entre banco (`capture_proof_logs`), job original e artefato armazenado. Reconciliar um registro antigo pode corrigir sua classificação, mas não recaptura, substitui ou atribui arquivo a outra inserção. Sem correlação suficiente, o estado permanece bloqueado.
+- Após o lote das 18h, itens `missing` ou `invalid` recebem recuperação individual persistida em +5, +10 e +15 minutos. Cada tentativa tem inserção, data, causa humana/técnica, job, horário e próxima ação; aprovação interrompe o ciclo, evidência aprovada nunca é tocada e a terceira falha abre bloqueio sem retry adicional.
+- O status histórico deve respeitar `?date=YYYY-MM-DD`: não use a última rotina para responder outra data. A rotina normal é determinística e não chama IA; ao final pode emitir somente JSON compacto `complete`, `retryable` ou `blocked` para o avaliador econômico.
 - Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
 - Cada evidência aprovada por `print-single`, `print-backfill` ou `print-batch` marca a competência como suja. O Worker agrupa aprovações por 60 segundos, mantém somente um job mensal ativo por competência e republica em modo incremental sem criar captura ou exportação nova.
 - Se uma aprovação chegar enquanto a revisão incremental estiver executando, ela cria a próxima revisão após o job atual. Falha de revisão mantém a competência suja e agenda retry; não esconda pendências para “destravar” o relatório.
@@ -154,6 +158,7 @@ Bloqueia publicação ou regeneração em lote se houver:
 - `bannerPublicadoNoSite=true` é somente publicação reportada. Confirmação pública exige a relação AdRotate e a mídia no HTML público.
 - `GET /api/ops/daily-print-status` é a leitura compacta da última rotina diária e da próxima execução. Não exponha payloads, tokens ou logs internos nessa resposta.
 - Uma falha terminal de job deve ser gravada junto do incidente na mesma operação transacional. Incidentes e logs nunca podem persistir credenciais.
+- Em 24/08/2026, a captura regular só é elegível após 18h de Cuiabá. Antes disso o dia corrente é `aguardando captura`; não crie backfill antecipado nem marque pendência.
 
 ## Serviços relacionados
 

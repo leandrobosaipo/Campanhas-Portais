@@ -2,12 +2,21 @@
 
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
-> Última validação operacional completa: 2026-08-17
+> Última validação operacional completa: 2026-08-24 (correção em release isolado em andamento)
 > Última observação de disponibilidade: 2026-08-18 06:18 America/Cuiaba
 > Release ativa validada: b78ddf4e07dacdb819e7cc6c71fd971ab31e6b59
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
+
+### Recuperação de evidências de 22 e 23/08 — 24/08/2026
+
+- O diagnóstico confirmou 18 capturas geradas em 22/08 que foram reclassificadas indevidamente como retroativas quando o calendário avançou, e três ausências em 23/08. A correção grava `captureClass`, `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion` de forma imutável.
+- A reconciliação dos 18 arquivos de 22/08 reutiliza artefatos existentes e só restaura a aprovação quando banco, job e URL do arquivo comprovam a mesma inserção/data. Nenhum print é recapturado ou sobrescrito.
+- #2643/AFL, #1940/OMT e #2641/ROO seguem recuperação individual pela API; a causa confirmada de #2643 é `creative_not_found`. As outras duas só podem ser classificadas depois da revalidação de mídia, relação pública e HTML.
+- O ciclo automático persiste tentativas em +5, +10 e +15 minutos para cada data ausente ou inválida. Após três falhas iguais, abre bloqueio e interrompe novos retries. A falha de uma inserção não interrompe as demais.
+- O relatório mensal é atualizado incrementalmente após cada aprovação, com debounce de 60 segundos. Antes das 18h de Cuiabá, 24/08 permanece `aguardando captura`.
+- O fluxo normal é determinístico e não usa IA. O avaliador recebe somente JSON compacto `complete`, `retryable` ou `blocked`; intervenção de modelo ocorre apenas quando um incidente exige diagnóstico.
 
 ### Automação determinística de cadastro e publicação — 21/08/2026
 
