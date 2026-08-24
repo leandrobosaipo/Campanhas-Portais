@@ -2074,6 +2074,7 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
   for (const insertionId of insertionIds) {
     const sourceCapture = sourceCaptures.find((item) => Number(item.insertionId) === insertionId);
     const captureJobId = typeof sourceCapture?.captureJobId === "string" ? sourceCapture.captureJobId : null;
+    const sourceUploadedUrl = typeof sourceCapture?.uploadedUrl === "string" ? sourceCapture.uploadedUrl : null;
     const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
     const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
     const logs = await db.select().from(captureProofLogsTable).where(and(
@@ -2084,7 +2085,7 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     const correlated = logs.find((row) => (
       captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
       row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
-      row.uploadedUrl && row.uploadedUrl === evidence?.arquivoUrl
+      row.uploadedUrl && row.uploadedUrl === sourceUploadedUrl
     ));
     if (!evidence || !correlated) {
       items.push({ insertionId, status: "blocked", reason: evidence ? "source_job_or_artifact_not_correlated" : "evidence_missing" });
@@ -2099,7 +2100,11 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     metadata.sourceJobId = captureJobId;
     metadata.sourceBatchJobId = sourceJobId;
     metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
-    metadata.evidenceUrl = evidence.arquivoUrl;
+    metadata.evidenceUrl = correlated.uploadedUrl;
+    if (evidence.arquivoUrl !== correlated.uploadedUrl) {
+      await db.update(evidencesTable).set({ arquivoUrl: correlated.uploadedUrl }).where(eq(evidencesTable.id, evidence.id));
+      evidence.arquivoUrl = correlated.uploadedUrl;
+    }
     await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
     const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
     const audit = rawInsertion ? await resolveEvidenceAuditStatus(await enrichInsertion(rawInsertion), targetDate, evidenceRows) : null;
