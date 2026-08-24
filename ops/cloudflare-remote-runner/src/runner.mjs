@@ -6178,12 +6178,17 @@ async function executePrintSingle(job) {
     throw new Error("print-single sem insertionId.");
   }
   const date = String(payload?.date || payload?.captureAt || todayInCuiaba()).slice(0, 10);
+  const preAudit = await privateApiGet(`/api/insertions/capture-proof/audit?date=${encodeURIComponent(date)}&insertionIds=${Number(payload.insertionId)}`);
+  const preItem = Array.isArray(preAudit?.items) ? preAudit.items[0] : null;
+  if (preItem && ["ok", "ok_best_effort"].includes(preItem.status)) {
+    return { ok: true, skipped: true, reason: "evidencia_auditada", date, capture: null };
+  }
   const capture = await enqueueAndWaitCaptureProof({
     outerJobId: job.id,
     insertionId: Number(payload.insertionId),
     date,
     captureAt: payload?.captureAt ?? null,
-    replace: payload?.replace === true,
+    replace: payload?.replace === true || ["invalid_audit", "invalid_url"].includes(preItem?.status),
     force: payload?.force === true,
     reconstructionReason: payload?.reconstructionReason === "late_publication_recovery"
       ? "late_publication_recovery"

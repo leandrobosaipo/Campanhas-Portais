@@ -564,6 +564,82 @@ async function fetchPrivateApiJson<T>(env: Env, pathname: string): Promise<T | n
   return (await response.json()) as T;
 }
 
+async function postPrivateApiJson<T>(env: Env, pathname: string, body: unknown): Promise<T | null> {
+  const base = env.PRIVATE_ADOPS_API_BASE_URL?.trim();
+  if (!base) return null;
+  const response = await fetch(`${base.replace(/\/$/, "")}${pathname}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-adops-api-token": env.PRIVATE_ADOPS_API_TOKEN?.trim() ?? "" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return null;
+  return await response.json() as T;
+}
+
+type RecoveryAuditItem = { insertionId: number; status: string; audit?: { issues?: Array<{ code?: string; detail?: string }> } };
+type RecoveryAuditResponse = { items?: RecoveryAuditItem[] };
+const RECOVERY_DELAYS_MINUTES = [5, 10, 15] as const;
+
+async function scheduleRecoveryAttempt(env: Env, input: {
+  targetDate: string; insertionId: number; sourceBatchJobId: string; attempt: number; cause: string;
+}) {
+  if (input.attempt > RECOVERY_DELAYS_MINUTES.length) return null;
+  const notBefore = new Date(Date.now() + RECOVERY_DELAYS_MINUTES[input.attempt - 1] * 60_000).toISOString();
+  const idempotencyKey = `daily-print-recovery:${input.targetDate}:${input.insertionId}:attempt:${input.attempt}`;
+  const created = await createIdempotentOpsJob(env, "print-single", {
+    insertionId: input.insertionId,
+    date: input.targetDate,
+    replace: false,
+    force: false,
+    source: "daily-print-recovery",
+    notBefore,
+    captureClass: "historical_recovery",
+    recovery: { ...input, maxAttempts: 3 },
+  }, "daily-print-recovery", idempotencyKey);
+  await env.adops_ops.prepare(
+    `INSERT INTO daily_print_recoveries (target_date,insertion_id,source_batch_job_id,status,attempt,active_job_id,next_attempt_at,human_cause,technical_cause,updated_at)
+     VALUES (?,?,?,'retry_scheduled',?,?,?,?,?,?)
+     ON CONFLICT(target_date,insertion_id) DO UPDATE SET status='retry_scheduled',attempt=excluded.attempt,active_job_id=excluded.active_job_id,next_attempt_at=excluded.next_attempt_at,human_cause=excluded.human_cause,technical_cause=excluded.technical_cause,updated_at=excluded.updated_at`,
+  ).bind(input.targetDate, input.insertionId, input.sourceBatchJobId, input.attempt, created.jobId, notBefore,
+    "O print não foi aprovado; a API programou uma nova tentativa.", input.cause.slice(0, 1000), nowIso()).run();
+  return created;
+}
+
+async function reconcileDailyPrintRecovery(env: Env, job: OpsJobRecord) {
+  const payload = parseJobPayload(job);
+  if (job.kind === "print-batch" && payload.source === "cloudflare-cron-daily-print") {
+    const targetDate = String(payload.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return;
+    const audit = await fetchPrivateApiJson<RecoveryAuditResponse>(env, `/api/insertions/capture-proof/audit?date=${targetDate}`);
+    for (const item of audit?.items ?? []) {
+      if (!["missing", "invalid_audit", "invalid_url"].includes(item.status)) continue;
+      const cause = item.audit?.issues?.map((issue) => issue.code || issue.detail).filter(Boolean).join(",") || item.status;
+      await scheduleRecoveryAttempt(env, { targetDate, insertionId: item.insertionId, sourceBatchJobId: job.id, attempt: 1, cause });
+    }
+    return;
+  }
+  const recovery = payload.recovery && typeof payload.recovery === "object" ? payload.recovery as Record<string, unknown> : null;
+  if (job.kind !== "print-single" || !recovery) return;
+  const targetDate = String(recovery.targetDate || "");
+  const insertionId = Number(recovery.insertionId);
+  const attempt = Number(recovery.attempt || 0);
+  const sourceBatchJobId = String(recovery.sourceBatchJobId || "");
+  const audit = await fetchPrivateApiJson<RecoveryAuditResponse>(env, `/api/insertions/capture-proof/audit?date=${targetDate}&insertionIds=${insertionId}`);
+  const item = audit?.items?.[0];
+  if (item && ["ok", "ok_best_effort"].includes(item.status)) {
+    await env.adops_ops.prepare(`UPDATE daily_print_recoveries SET status='completed',active_job_id=NULL,next_attempt_at=NULL,human_cause=?,technical_cause=NULL,updated_at=? WHERE target_date=? AND insertion_id=?`)
+      .bind("Print aprovado; nenhuma nova tentativa será feita.", nowIso(), targetDate, insertionId).run();
+    return;
+  }
+  const cause = item?.audit?.issues?.map((issue) => issue.code || issue.detail).filter(Boolean).join(",") || job.error_text || item?.status || "audit_unavailable";
+  if (attempt >= 3) {
+    await env.adops_ops.prepare(`UPDATE daily_print_recoveries SET status='blocked',active_job_id=NULL,next_attempt_at=NULL,human_cause=?,technical_cause=?,updated_at=? WHERE target_date=? AND insertion_id=?`)
+      .bind("Três tentativas falharam; é necessária análise humana.", String(cause).slice(0, 1000), nowIso(), targetDate, insertionId).run();
+    return;
+  }
+  await scheduleRecoveryAttempt(env, { targetDate, insertionId, sourceBatchJobId, attempt: attempt + 1, cause: String(cause) });
+}
+
 function describeJob(record: OpsJobRecord) {
   return {
     id: record.id,
@@ -3198,7 +3274,10 @@ export default {
           expectedStatus: "running",
           expectedRunnerId: runnerId,
         });
-        if (updated) await settleMonthlyReportRefresh(env, updated as OpsJobRecord, "completed", null);
+        if (updated) {
+          await settleMonthlyReportRefresh(env, updated as OpsJobRecord, "completed", null);
+          await reconcileDailyPrintRecovery(env, updated as OpsJobRecord);
+        }
         return updated ? json({ ok: true, job: describeJob(updated as OpsJobRecord) }) : notFound("Job not found");
       }
 
@@ -3237,6 +3316,7 @@ export default {
         );
         if (!failed) return notFound("Job not found");
         await settleMonthlyReportRefresh(env, failed.job, "failed", typeof body.error === "string" ? body.error : null);
+        await reconcileDailyPrintRecovery(env, failed.job);
         return json({ ok: true, job: describeJob(failed.job), incident: failed.incident });
       }
 
@@ -3463,6 +3543,24 @@ export default {
         now: new Date(),
         targetDate: url.searchParams.get("date"),
       }));
+    }
+
+    if (path === "/api/ops/daily-print-recoveries") {
+      const date = url.searchParams.get("date") ?? "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return badRequest("Informe date em YYYY-MM-DD.");
+      const rows = await env.adops_ops.prepare(`SELECT * FROM daily_print_recoveries WHERE target_date = ? ORDER BY insertion_id`).bind(date).all<Record<string, unknown>>();
+      const items = rows.results ?? [];
+      const blocked = items.filter((item) => item.status === "blocked").length;
+      const pending = items.filter((item) => item.status === "retry_scheduled").length;
+      return jsonNoStore({
+        date,
+        items,
+        evaluator: {
+          status: blocked ? "blocked" : pending ? "retryable" : "complete",
+          pending,
+          blocked,
+        },
+      });
     }
 
     if (path === "/api/ops/incidents") {

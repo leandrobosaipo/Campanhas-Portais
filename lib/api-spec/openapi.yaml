@@ -175,6 +175,14 @@ paths:
       operationId: getDailyPrintStatus
       tags: [operations]
       summary: Get the sanitized status of the canonical daily evidence routine
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: When informed, returns the attempt for this historical date instead of the latest routine.
+          schema:
+            type: string
+            format: date
       responses:
         "200":
           description: Last attempt, last fully approved day and next scheduled run
@@ -182,6 +190,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DailyPrintStatus"
+
+  /ops/daily-print-recoveries:
+    get:
+      operationId: getDailyPrintRecoveries
+      tags: [operations]
+      summary: Get persisted retries and the compact evaluator result for one date
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Recovery items plus complete, retryable or blocked evaluator status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
 
   /ops/incidents:
     get:
@@ -912,6 +937,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /insertions/capture-proof/reconcile-scheduled:
+    post:
+      operationId: reconcileScheduledCaptureProofs
+      tags: [insertions, operations]
+      summary: Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date, sourceJobId, insertionIds]
+              properties:
+                date: { type: string, format: date }
+                sourceJobId: { type: string }
+                insertionIds:
+                  type: array
+                  items: { type: integer }
+      responses:
+        "200":
+          description: Per-insertion reconciliation and canonical audit result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
 
   /audit-checklists/validate-proof:
     post:

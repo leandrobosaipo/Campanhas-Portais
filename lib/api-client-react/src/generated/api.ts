@@ -58,6 +58,9 @@ import type {
   GetActiveCampaignOperationsParams,
   GetCampaignEvidenceExportJob200,
   GetCaptureProofStatusParams,
+  GetDailyPrintRecoveries200,
+  GetDailyPrintRecoveriesParams,
+  GetDailyPrintStatusParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
@@ -81,6 +84,8 @@ import type {
   MediaConsistencyResult,
   OpsJobAccepted,
   OpsRuntimeTopology,
+  ReconcileScheduledCaptureProofs200,
+  ReconcileScheduledCaptureProofsBody,
   Site,
   SiteBreakdown,
   UpdateAgencyBody,
@@ -528,41 +533,63 @@ export function useListOpsJobs<
 /**
  * @summary Get the sanitized status of the canonical daily evidence routine
  */
-export const getGetDailyPrintStatusUrl = () => {
-  return `/api/ops/daily-print-status`;
+export const getGetDailyPrintStatusUrl = (
+  params?: GetDailyPrintStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/daily-print-status?${stringifiedParams}`
+    : `/api/ops/daily-print-status`;
 };
 
 export const getDailyPrintStatus = async (
+  params?: GetDailyPrintStatusParams,
   options?: RequestInit,
 ): Promise<DailyPrintStatus> => {
-  return customFetch<DailyPrintStatus>(getGetDailyPrintStatusUrl(), {
+  return customFetch<DailyPrintStatus>(getGetDailyPrintStatusUrl(params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetDailyPrintStatusQueryKey = () => {
-  return [`/api/ops/daily-print-status`] as const;
+export const getGetDailyPrintStatusQueryKey = (
+  params?: GetDailyPrintStatusParams,
+) => {
+  return [`/api/ops/daily-print-status`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetDailyPrintStatusQueryOptions = <
   TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getDailyPrintStatus>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
+>(
+  params?: GetDailyPrintStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetDailyPrintStatusQueryKey();
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDailyPrintStatusQueryKey(params);
 
   const queryFn: QueryFunction<
     Awaited<ReturnType<typeof getDailyPrintStatus>>
-  > = ({ signal }) => getDailyPrintStatus({ signal, ...requestOptions });
+  > = ({ signal }) =>
+    getDailyPrintStatus(params, { signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
     Awaited<ReturnType<typeof getDailyPrintStatus>>,
@@ -583,15 +610,124 @@ export type GetDailyPrintStatusQueryError = ErrorType<unknown>;
 export function useGetDailyPrintStatus<
   TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
   TError = ErrorType<unknown>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getDailyPrintStatus>>,
+>(
+  params?: GetDailyPrintStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDailyPrintStatusQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+export const getGetDailyPrintRecoveriesUrl = (
+  params: GetDailyPrintRecoveriesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/daily-print-recoveries?${stringifiedParams}`
+    : `/api/ops/daily-print-recoveries`;
+};
+
+export const getDailyPrintRecoveries = async (
+  params: GetDailyPrintRecoveriesParams,
+  options?: RequestInit,
+): Promise<GetDailyPrintRecoveries200> => {
+  return customFetch<GetDailyPrintRecoveries200>(
+    getGetDailyPrintRecoveriesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDailyPrintRecoveriesQueryKey = (
+  params?: GetDailyPrintRecoveriesParams,
+) => {
+  return [
+    `/api/ops/daily-print-recoveries`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDailyPrintRecoveriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDailyPrintRecoveriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDailyPrintRecoveriesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDailyPrintRecoveries>>
+  > = ({ signal }) =>
+    getDailyPrintRecoveries(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
     TError,
     TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetDailyPrintStatusQueryOptions(options);
+  > & { queryKey: QueryKey };
+};
+
+export type GetDailyPrintRecoveriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDailyPrintRecoveries>>
+>;
+export type GetDailyPrintRecoveriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+
+export function useGetDailyPrintRecoveries<
+  TData = Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDailyPrintRecoveriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDailyPrintRecoveriesQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -3114,6 +3250,98 @@ export function useGetCaptureProofStatus<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+export const getReconcileScheduledCaptureProofsUrl = () => {
+  return `/api/insertions/capture-proof/reconcile-scheduled`;
+};
+
+export const reconcileScheduledCaptureProofs = async (
+  reconcileScheduledCaptureProofsBody: ReconcileScheduledCaptureProofsBody,
+  options?: RequestInit,
+): Promise<ReconcileScheduledCaptureProofs200> => {
+  return customFetch<ReconcileScheduledCaptureProofs200>(
+    getReconcileScheduledCaptureProofsUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(reconcileScheduledCaptureProofsBody),
+    },
+  );
+};
+
+export const getReconcileScheduledCaptureProofsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    TError,
+    { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+  TError,
+  { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+  TContext
+> => {
+  const mutationKey = ["reconcileScheduledCaptureProofs"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    { data: BodyType<ReconcileScheduledCaptureProofsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return reconcileScheduledCaptureProofs(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReconcileScheduledCaptureProofsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>
+>;
+export type ReconcileScheduledCaptureProofsMutationBody =
+  BodyType<ReconcileScheduledCaptureProofsBody>;
+export type ReconcileScheduledCaptureProofsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+export const useReconcileScheduledCaptureProofs = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    TError,
+    { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+  TError,
+  { data: BodyType<ReconcileScheduledCaptureProofsBody> },
+  TContext
+> => {
+  return useMutation(
+    getReconcileScheduledCaptureProofsMutationOptions(options),
+  );
+};
 
 /**
  * @summary Validate capture proof, including strict readiness gates

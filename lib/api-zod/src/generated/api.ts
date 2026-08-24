@@ -123,6 +123,15 @@ export const ListOpsJobsResponse = zod.record(zod.string(), zod.unknown());
 /**
  * @summary Get the sanitized status of the canonical daily evidence routine
  */
+export const GetDailyPrintStatusQueryParams = zod.object({
+  date: zod
+    .date()
+    .optional()
+    .describe(
+      "When informed, returns the attempt for this historical date instead of the latest routine.",
+    ),
+});
+
 export const getDailyPrintStatusResponseLastAttemptOneExpectedMin = 0;
 
 export const getDailyPrintStatusResponseLastAttemptOneApprovedMin = 0;
@@ -166,6 +175,18 @@ export const GetDailyPrintStatusResponse = zod.object({
     zod.null(),
   ]),
 });
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+export const GetDailyPrintRecoveriesQueryParams = zod.object({
+  date: zod.date(),
+});
+
+export const GetDailyPrintRecoveriesResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
 
 /**
  * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
@@ -1188,6 +1209,20 @@ export const GetCaptureProofStatusResponse = zod.object({
     "missing",
   ]),
 });
+
+/**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+export const ReconcileScheduledCaptureProofsBody = zod.object({
+  date: zod.coerce.date(),
+  sourceJobId: zod.string(),
+  insertionIds: zod.array(zod.number()),
+});
+
+export const ReconcileScheduledCaptureProofsResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
 
 /**
  * @summary Validate capture proof, including strict readiness gates

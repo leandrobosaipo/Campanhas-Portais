@@ -1130,6 +1130,19 @@ export type ListOpsJobsParams = {
 
 export type ListOpsJobs200 = { [key: string]: unknown };
 
+export type GetDailyPrintStatusParams = {
+  /**
+   * When informed, returns the attempt for this historical date instead of the latest routine.
+   */
+  date?: string;
+};
+
+export type GetDailyPrintRecoveriesParams = {
+  date: string;
+};
+
+export type GetDailyPrintRecoveries200 = { [key: string]: unknown };
+
 export type ListOpsIncidentsParams = {
   /**
    * @minimum 1
@@ -1325,6 +1338,14 @@ export type ListInsertionsParams = {
 export type GetCaptureProofStatusParams = {
   date: string;
 };
+
+export type ReconcileScheduledCaptureProofsBody = {
+  date: string;
+  sourceJobId: string;
+  insertionIds: number[];
+};
+
+export type ReconcileScheduledCaptureProofs200 = { [key: string]: unknown };
 
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;
