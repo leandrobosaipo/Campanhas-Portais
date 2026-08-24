@@ -2571,6 +2571,7 @@ export default {
     const path = url.pathname.replace(/\/$/, "") || "/";
     const analyticsRoute = isAnalyticsRoute(path);
     const publicInsertionBackfillRoute = request.method === "POST" && path === "/api/insertions/capture-proof/backfill-overdue/jobs";
+    const publicScheduledReconcileRoute = request.method === "POST" && path === "/api/insertions/capture-proof/reconcile-scheduled";
     const publicSingleCaptureMatch = request.method === "POST" ? path.match(/^\/api\/insertions\/(\d+)\/capture-proof$/) : null;
     const publicOperationalDocumentsRoute =
       (request.method === "POST" && /^\/api\/insertions\/\d+\/operational-documents\/regenerate$/.test(path)) ||
@@ -2600,7 +2601,7 @@ export default {
         );
       }
 
-      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs/batch" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
+      if (!path.startsWith("/api/ops/") && path !== "/api/pi-site-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs" && path !== "/api/campaign-evidence-exports/jobs/batch" && !analyticsRoute && !isSettingsProxyPath(path) && !publicInsertionBackfillRoute && !publicScheduledReconcileRoute && !publicSingleCaptureMatch && !publicOperationalDocumentsRoute) {
         const auth = requireOpsAuth(request, env);
         if (!auth.ok) return auth.response;
         if (privateApiEnabled(env)) {
