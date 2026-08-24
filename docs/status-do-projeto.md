@@ -2,9 +2,9 @@
 
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
-> Última validação operacional completa: 2026-08-24 (correção em release isolado em andamento)
-> Última observação de disponibilidade: 2026-08-18 06:18 America/Cuiaba
-> Release ativa validada: b78ddf4e07dacdb819e7cc6c71fd971ab31e6b59
+> Última validação operacional completa: 2026-08-24 12:51 America/Cuiaba
+> Última observação de disponibilidade: 2026-08-24 12:51 America/Cuiaba
+> Release ativa validada: ad27323b2be7fe24c0d8497b629445d7f357a4d6
 > Fonte autoritativa: runtime público, Portainer, API AdOps e consumidores reais
 
 ## Resumo executivo
@@ -13,6 +13,8 @@
 
 - `#2692`, `#2693`, `#2712` e `#2713` possuíam evidência e log `inline-*` correlacionados, mas sem proveniência imutável. A rota interna agora oferece `dryRun|apply` para `same_day_inline`, exige coincidência de arquivo, mídia, período, auditoria visual e data em Cuiabá, e registra `same_day_retry` sem trocar a evidência.
 - OpenAPI, cliente gerado, harness mensal, contrato documental, runbooks e a skill `adops-pi-sync` foram alinhados. A raiz antiga do OpenClaw deixou de ser orientação operacional e o relatório permanece consumidor, nunca aprovador de evidências.
+- Produção foi reconciliada uma única vez após `dryRun`: 4/4 registros reauditaram em modo estrito, com `missing=0` e `invalid=0`. O relatório incremental terminou no job `47575730-91da-48d8-976a-52ab58994275` e publicou o snapshot `2026-08-24T16-51-24-466Z` com os quatro cards em `3/3`.
+- O readback de release confirmou a API em `ad27323b2be7fe24c0d8497b629445d7f357a4d6` e o Worker público na versão `e66aafab-f7e8-4f27-b9aa-9eeffa099c0c`. No consumidor público, os quatro JPEGs retornaram `200 image/jpeg`, as miniaturas carregaram com largura natural e não restou card inválido.
 
 ### Recuperação de evidências de 22 e 23/08 — 24/08/2026
 
