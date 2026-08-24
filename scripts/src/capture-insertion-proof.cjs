@@ -7815,6 +7815,7 @@ async function main() {
       const title = `Print ${isoDate} - ${titleDate} [semi-auto]`;
       await upsertEvidence(args.apiBase, insertion, publicUrl, title, args.replaceExisting);
     }
+    metadata.evidenceUrl = publicUrl;
     if (args.apiBase && internalCaptureToken) {
       await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
     }
@@ -7874,6 +7875,23 @@ async function main() {
 
     const auditStage = trace.start("audit_evaluated");
     const shouldFetchRemoteAuditStatus = args.apiBase && internalCaptureToken && args.upload && args.saveEvidence;
+    if (shouldFetchRemoteAuditStatus) {
+      const provisionalLog = await persistCaptureLogWithRetry(args.apiBase, insertion.id, {
+        date: isoDate,
+        log: {
+          jobId: args.jobId || null,
+          runnerJobId: args.runnerJobId || null,
+          captureAt: effectiveCaptureAt,
+          siteSigla: insertion.siteSigla,
+          status: "pending_audit",
+          uploadedUrl: publicUrl,
+          cacheBustedUrl: publicUrl,
+          metadata,
+          summary: { phase: "pending_audit" },
+        },
+      }, { maxAttempts: 3, baseBackoffMs: 450 });
+      logId = provisionalLog?.logId || null;
+    }
     const auditPayload = shouldFetchRemoteAuditStatus
       ? await fetchCaptureAuditStatus(args.apiBase, insertion.id, isoDate)
       : null;

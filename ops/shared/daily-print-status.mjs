@@ -53,11 +53,14 @@ function summarize(counts, status) {
   return `${counts.approved} de ${counts.expected} inserções tiveram o print aprovado; ${pending} ${pending === 1 ? "precisa" : "precisam"} de nova tentativa.`;
 }
 
-export function buildDailyPrintStatus({ jobs = [], now = new Date() } = {}) {
+export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate = null } = {}) {
   const dailyJobs = (Array.isArray(jobs) ? jobs : [])
     .filter((job) => job?.payload?.source === DAILY_SOURCE && /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.date || "")))
     .sort((left, right) => Date.parse(right.createdAt || right.updatedAt || 0) - Date.parse(left.createdAt || left.updatedAt || 0));
-  const latest = dailyJobs[0] ?? null;
+  const requestedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || "")) ? String(targetDate) : null;
+  const latest = (requestedDate
+    ? dailyJobs.filter((job) => String(job.payload.date) === requestedDate)
+    : dailyJobs)[0] ?? null;
   const counts = latest ? safeCounts(latest) : null;
   const rawStatus = String(latest?.status || "");
   const terminal = ["completed", "failed"].includes(rawStatus);
@@ -92,6 +95,7 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date() } = {}) {
     timeZone: TIME_ZONE,
     schedule: "18:00",
     nextRunAt: nextRunAt(now),
+    ...(requestedDate ? { requestedDate } : {}),
     lastAttempt,
     lastFullyApproved: approvedJob ? { targetDate: approvedJob.payload.date, finishedAt: approvedJob.updatedAt ?? null } : null,
   };

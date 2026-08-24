@@ -3458,7 +3458,11 @@ export default {
 
     if (path === "/api/ops/daily-print-status") {
       const jobs = await listOpsJobsByFilter(env, { limit: 100, statuses: null, kinds: ["print-batch"], olderThanMinutes: null });
-      return jsonNoStore(buildDailyPrintStatus({ jobs, now: new Date() }));
+      return jsonNoStore(buildDailyPrintStatus({
+        jobs,
+        now: new Date(),
+        targetDate: url.searchParams.get("date"),
+      }));
     }
 
     if (path === "/api/ops/incidents") {

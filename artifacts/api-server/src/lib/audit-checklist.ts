@@ -1,9 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   campaignsTable,
   captureProofLogsTable,
   captureRulesTable,
   db,
+  evidencesTable,
   insertionsTable,
   sitesTable,
 } from "@workspace/db";
@@ -247,7 +248,7 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
     and(
       eq(captureProofLogsTable.insertionId, insertionId),
       eq(captureProofLogsTable.targetDate, dateKey),
-      eq(captureProofLogsTable.status, "ok"),
+      inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     ),
   ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
   if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
@@ -255,7 +256,9 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
   const declaredSourceJobId = metadataString(metadata, "sourceJobId");
   const correlatedJobId = [latestLog.runnerJobId, latestLog.jobId]
     .find((value) => typeof value === "string" && value === declaredSourceJobId);
-  if (!correlatedJobId || !latestLog.createdAt) return metadata;
+  const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+  const evidenceUrl = evidenceRows.find((row) => String(row.titulo || "").includes(dateKey))?.arquivoUrl ?? null;
+  if (!correlatedJobId || !latestLog.createdAt || !latestLog.uploadedUrl || latestLog.uploadedUrl !== evidenceUrl) return metadata;
   return attachServerCaptureProvenance(metadata, {
     targetDate: latestLog.targetDate,
     sourceJobId: correlatedJobId,

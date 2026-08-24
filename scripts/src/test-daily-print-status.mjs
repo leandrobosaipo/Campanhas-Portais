@@ -62,3 +62,14 @@ test("preserva estados em fila e em execução sem declarar aprovação antecipa
     assert.match(result.lastAttempt.summary, expectedStatus === "running" ? /agora/ : /fila/);
   }
 });
+
+test("consulta histórica respeita a data solicitada", () => {
+  const jobs = [
+    { id: "job-23", status: "failed", createdAt: "2026-08-23T22:00:00.000Z", updatedAt: "2026-08-23T22:10:00.000Z", payload: { source: "cloudflare-cron-daily-print", date: "2026-08-23" }, result: { canonicalAudit: { expected: 15, approved: 12, missing: 3, invalid: 0 } } },
+    { id: "job-22", status: "completed", createdAt: "2026-08-22T22:00:00.000Z", updatedAt: "2026-08-22T22:10:00.000Z", payload: { source: "cloudflare-cron-daily-print", date: "2026-08-22" }, result: { canonicalAudit: { expected: 18, approved: 18, missing: 0, invalid: 0 } } },
+  ];
+  const result = buildDailyPrintStatus({ jobs, targetDate: "2026-08-22", now: new Date("2026-08-24T12:00:00.000Z") });
+  assert.equal(result.requestedDate, "2026-08-22");
+  assert.equal(result.lastAttempt.jobId, "job-22");
+  assert.equal(result.lastAttempt.targetDate, "2026-08-22");
+});
