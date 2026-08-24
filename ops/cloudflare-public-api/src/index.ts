@@ -3356,12 +3356,26 @@ export default {
         if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
         const body = await readBody(request);
         const sourceJobId = typeof body.sourceJobId === "string" ? body.sourceJobId : "";
+        const targetDate = typeof body.date === "string" ? body.date : "";
         const sourceJob = sourceJobId ? await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id=? AND kind='print-batch' LIMIT 1`).bind(sourceJobId).first<OpsJobRecord>() : null;
         if (!sourceJob) return badRequest("sourceJobId não identifica um print-batch persistido.");
         const described = describeJob(sourceJob);
+        const sourcePayload = described.payload && typeof described.payload === "object" && !Array.isArray(described.payload)
+          ? described.payload as Record<string, unknown>
+          : {};
+        if (sourceJob.status !== "completed" || sourcePayload.source !== "cloudflare-cron-daily-print" || sourcePayload.date !== targetDate) {
+          return badRequest("sourceJobId deve identificar o lote diário concluído da data solicitada.");
+        }
         const result = described.result && typeof described.result === "object" ? described.result as Record<string, unknown> : {};
         const execution = result.execution && typeof result.execution === "object" ? result.execution as Record<string, unknown> : result;
         const sourceCaptures = Array.isArray(execution.captured) ? execution.captured : [];
+        const requestedInsertionIds = Array.isArray(body.insertionIds)
+          ? body.insertionIds.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+          : [];
+        const capturedInsertionIds = new Set(sourceCaptures.map((item) => Number((item as Record<string, unknown>).insertionId)));
+        if (requestedInsertionIds.length === 0 || requestedInsertionIds.some((insertionId) => !capturedInsertionIds.has(insertionId))) {
+          return badRequest("O lote diário não contém o vínculo persistido de todas as inserções solicitadas.");
+        }
         const enrichedRequest = new Request(request.url, { method: "POST", headers: request.headers, body: JSON.stringify({ ...body, sourceCaptures }) });
         return proxyToPrivateApi(enrichedRequest, env, url, { noStore: true });
       }

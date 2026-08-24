@@ -2082,20 +2082,6 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       eq(captureProofLogsTable.targetDate, targetDate),
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     )).orderBy(desc(captureProofLogsTable.createdAt));
-    if (!captureJobId && evidence) {
-      const inferred = logs.find((row) => {
-        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
-        const declared = typeof metadata.sourceJobId === "string" ? metadata.sourceJobId : null;
-        const hasImmutableChildJob = Boolean(row.runnerJobId || row.jobId);
-        const declaredChildMatches = declared
-          ? declared === row.runnerJobId || declared === row.jobId
-          : row.status === "ok" && hasImmutableChildJob;
-        return row.createdAt && formatIsoDate(row.createdAt) === targetDate && row.uploadedUrl === evidence.arquivoUrl &&
-          declaredChildMatches;
-      });
-      captureJobId = inferred?.runnerJobId ?? inferred?.jobId ?? null;
-      sourceUploadedUrl = inferred?.uploadedUrl ?? null;
-    }
     const correlated = logs.find((row) => (
       captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
       row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
@@ -2114,6 +2100,18 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
       items.push({ insertionId, status: "blocked", reason });
       continue;
     }
+    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
+    const enrichedInsertion = rawInsertion ? await enrichInsertion(rawInsertion) : null;
+    const currentAudit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    if (currentAudit?.status === "ok" || currentAudit?.status === "ok_best_effort") {
+      items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: currentAudit.status, unchanged: true, audit: currentAudit });
+      continue;
+    }
+    if (evidence.arquivoUrl !== correlated.uploadedUrl) {
+      items.push({ insertionId, status: "blocked", reason: "capture_artifact_mismatch" });
+      continue;
+    }
+    const previousMetadata = correlated.metadata;
     const metadata = correlated.metadata && typeof correlated.metadata === "object"
       ? { ...correlated.metadata as Record<string, unknown> }
       : {};
@@ -2124,13 +2122,11 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
     metadata.sourceBatchJobId = sourceJobId;
     metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
     metadata.evidenceUrl = correlated.uploadedUrl;
-    if (evidence.arquivoUrl !== correlated.uploadedUrl) {
-      await db.update(evidencesTable).set({ arquivoUrl: correlated.uploadedUrl }).where(eq(evidencesTable.id, evidence.id));
-      evidence.arquivoUrl = correlated.uploadedUrl;
-    }
     await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
-    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
-    const audit = rawInsertion ? await resolveEvidenceAuditStatus(await enrichInsertion(rawInsertion), targetDate, evidenceRows) : null;
+    const audit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    if (audit?.status !== "ok" && audit?.status !== "ok_best_effort") {
+      await db.update(captureProofLogsTable).set({ metadata: previousMetadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+    }
     items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: audit?.status ?? "blocked", audit });
   }
   res.json({

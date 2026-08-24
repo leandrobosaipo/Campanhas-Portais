@@ -30,3 +30,26 @@ test("runner persiste provenance provisória antes de consultar auditoria e fina
   assert.ok(audit > provisional, "audit must run after provisional persistence");
   assert.ok(final > audit, "final ok log must be persisted only after audit");
 });
+
+test("pre-upload não cria provenance confiável a partir do próprio request", async () => {
+  const source = await readFile(new URL("../../artifacts/api-server/src/routes/audit-checklists.ts", import.meta.url), "utf8");
+  const preUpload = source.slice(source.indexOf('req.body?.phase === "pre_upload"'), source.indexOf("const validation =", source.indexOf('req.body?.phase === "pre_upload"')));
+  assert.doesNotMatch(preUpload, /attachServerCaptureProvenance/);
+  assert.match(preUpload, /delete item\[key\]/);
+  assert.match(preUpload, /"reconstruction"/);
+});
+
+test("reconciliação exige batch diário concluído e não troca URL de evidência", async () => {
+  const worker = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
+  const route = worker.slice(worker.indexOf("if (publicScheduledReconcileRoute)"), worker.indexOf("return notFound();", worker.indexOf("if (publicScheduledReconcileRoute)")));
+  assert.match(route, /sourceJob\.status !== "completed"/);
+  assert.match(route, /sourcePayload\.source !== "cloudflare-cron-daily-print"/);
+  assert.match(route, /sourcePayload\.date !== targetDate/);
+  assert.match(route, /capturedInsertionIds/);
+
+  const api = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
+  const reconcile = api.slice(api.indexOf('router.post("/insertions/capture-proof/reconcile-scheduled"'), api.indexOf('router.get("/insertions/capture-proof/audit"'));
+  assert.doesNotMatch(reconcile, /update\(evidencesTable\)/);
+  assert.match(reconcile, /unchanged: true/);
+  assert.match(reconcile, /metadata: previousMetadata/);
+});

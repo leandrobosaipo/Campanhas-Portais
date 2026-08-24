@@ -4,7 +4,6 @@ import {
   resolveAuditChecklist,
   validateAuditChecklist,
 } from "../lib/audit-checklist";
-import { attachServerCaptureProvenance } from "../lib/capture-audit";
 
 const router: IRouter = Router();
 
@@ -48,15 +47,14 @@ router.post("/audit-checklists/validate-proof", async (req, res): Promise<void> 
 
   let metadata = Object.prototype.hasOwnProperty.call(req.body ?? {}, "metadata") ? req.body.metadata : undefined;
   if (req.body?.phase === "pre_upload" && metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    // Pre-upload data is still supplied by the runner and has no persisted
+    // job/artifact correlation.  It may validate the visual capture, but it
+    // must never mint immutable provenance or authorize reconstructed history.
     const item = { ...metadata as Record<string, unknown> };
-    if (typeof item.targetDate === "string" && typeof item.sourceJobId === "string" && typeof item.capturedAt === "string") {
-      metadata = attachServerCaptureProvenance(item, {
-        targetDate: item.targetDate,
-        sourceJobId: item.sourceJobId,
-        capturedAt: item.capturedAt,
-        uploadedUrl: null,
-      });
+    for (const key of ["captureClass", "targetDate", "sourceJobId", "capturedAt", "auditPolicyVersion", "evidenceUrl", "reconstruction"]) {
+      delete item[key];
     }
+    metadata = item;
   }
   const validation = await validateAuditChecklist({
     insertionId,
