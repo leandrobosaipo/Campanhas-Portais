@@ -15,7 +15,8 @@ function nextRunAt(now) {
 }
 
 function safeCounts(job) {
-  const result = job?.result && typeof job.result === "object" ? job.result : {};
+  const root = job?.result && typeof job.result === "object" ? job.result : {};
+  const result = root.execution && typeof root.execution === "object" ? root.execution : root;
   const direct = result.canonicalAudit && typeof result.canonicalAudit === "object" ? result.canonicalAudit : result.audit;
   if (direct && typeof direct === "object") {
     return {

@@ -73,3 +73,13 @@ test("consulta histórica respeita a data solicitada", () => {
   assert.equal(result.lastAttempt.jobId, "job-22");
   assert.equal(result.lastAttempt.targetDate, "2026-08-22");
 });
+
+test("lê auditoria de jobs legados aninhada em execution", () => {
+  const result = buildDailyPrintStatus({ jobs: [{
+    id: "legacy", status: "completed", createdAt: "2026-08-22T22:00:00.000Z", updatedAt: "2026-08-22T22:10:00.000Z",
+    payload: { source: "cloudflare-cron-daily-print", date: "2026-08-22" },
+    result: { execution: { canonicalAudit: { expected: 18, approved: 18, missing: 0, invalid: 0 } } },
+  }], targetDate: "2026-08-22" });
+  assert.equal(result.lastAttempt.approved, 18);
+  assert.equal(result.lastAttempt.status, "completed");
+});
