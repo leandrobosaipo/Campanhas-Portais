@@ -1873,7 +1873,7 @@ async function validateCaptureChecklist(apiBase, insertionId, targetDate, metada
   const response = await fetch(`${apiBase}/audit-checklists/validate-proof`, {
     method: "POST",
     headers: buildApiHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ insertionId, date: targetDate, metadata }),
+    body: JSON.stringify({ insertionId, date: targetDate, metadata, phase: "pre_upload" }),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.approved !== true) {
@@ -2772,21 +2772,31 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
 
 function buildStaticRetroSlotPlan(mapping) {
   const domain = String(mapping?.domain || "").toLowerCase();
-  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com"]).has(domain)) return null;
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "roonoticias.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
-  const contextSelector = new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
+  let contextSelector = new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
     ? "#block-9"
     : configuredContextSelector;
-  if (!slotSelector || !contextSelector || slotSelector === contextSelector) return null;
+  if (slotSelector === contextSelector) {
+    contextSelector = domain === "omatogrossense.com"
+      ? ".homepage-banner-single"
+      : domain === "afolhalivre.com"
+        ? "#block-9, header"
+        : domain === "roonoticias.com"
+          ? "header, main"
+          : "#block-9, header";
+  }
+  if (!slotSelector || !contextSelector) return null;
   const matches = Array.from(slotSelector.matchAll(/\.g-(\d+)\b/g));
   if (matches.length !== 1) return null;
   const groupId = Number(matches[0][1]);
   if (!Number.isInteger(groupId) || groupId < 1) return null;
-  if (domain === "omatogrossense.com" && groupId !== 1) return null;
+  if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "afolhalivre.com" && groupId !== 2) return null;
   if (domain === "portalnortemt.com" && groupId !== 2) return null;
+  if (domain === "roonoticias.com" && groupId !== 1) return null;
   return { contextSelector, groupClass: `g g-${groupId}`, groupId };
 }
 
@@ -2812,7 +2822,8 @@ function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart
 }
 
 async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasename, options = {}) {
-  const allowExplicitStaticInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1";
+  const allowExplicitStaticInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1" ||
+    (mapping?.auditConfig?.allowAuditedReconstruction === true && options.reconstructionReason === "late_publication_recovery");
   if (!allowExplicitStaticInjection) return false;
   if (options.reconstructionReason !== "late_publication_recovery") return false;
   const domain = String(mapping?.domain || "").toLowerCase();
@@ -2889,9 +2900,8 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     };
     const createConfiguredHomeSlot = () => {
       if (!missingSlotPlan) return null;
-      const hosts = Array.from(document.querySelectorAll(missingSlotPlan.contextSelector));
-      if (hosts.length !== 1 || !(hosts[0] instanceof HTMLElement)) return null;
-      const host = hosts[0];
+      const host = document.querySelector(missingSlotPlan.contextSelector);
+      if (!(host instanceof HTMLElement)) return null;
       const slot = document.createElement("div");
       slot.className = missingSlotPlan.groupClass;
       slot.setAttribute("data-adops-reconstructed-slot", String(missingSlotPlan.groupId));

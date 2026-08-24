@@ -4,6 +4,7 @@ import {
   resolveAuditChecklist,
   validateAuditChecklist,
 } from "../lib/audit-checklist";
+import { attachServerCaptureProvenance } from "../lib/capture-audit";
 
 const router: IRouter = Router();
 
@@ -45,12 +46,22 @@ router.post("/audit-checklists/validate-proof", async (req, res): Promise<void> 
     return;
   }
 
+  let metadata = Object.prototype.hasOwnProperty.call(req.body ?? {}, "metadata") ? req.body.metadata : undefined;
+  if (req.body?.phase === "pre_upload" && metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const item = { ...metadata as Record<string, unknown> };
+    if (typeof item.targetDate === "string" && typeof item.sourceJobId === "string" && typeof item.capturedAt === "string") {
+      metadata = attachServerCaptureProvenance(item, {
+        targetDate: item.targetDate,
+        sourceJobId: item.sourceJobId,
+        capturedAt: item.capturedAt,
+        uploadedUrl: null,
+      });
+    }
+  }
   const validation = await validateAuditChecklist({
     insertionId,
     date,
-    metadata: Object.prototype.hasOwnProperty.call(req.body ?? {}, "metadata")
-      ? req.body.metadata
-      : undefined,
+    metadata,
   });
   res.status(validation.approved ? 200 : 422).json(validation);
 });

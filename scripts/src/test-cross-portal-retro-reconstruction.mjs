@@ -39,7 +39,11 @@ assert.equal(buildStaticRetroSlotPlan({ ...pnmtHome2, domain: config.PNMT.domain
 assert.equal(buildStaticRetroSlotPlan({ domain: "example.com", page: "home", slotSelector: ".g.g-2", contextSelector: "main" }), null);
 assert.equal(buildStaticRetroSlotPlan({ domain: config.AFL.domain, page: "article", slotSelector: ".g.g-2", contextSelector: "#block-9" }), null);
 assert.equal(buildStaticRetroSlotPlan({ domain: config.AFL.domain, page: "home", slotSelector: ".g.g-3", contextSelector: ".g.g-3" }), null);
-assert.equal(buildStaticRetroSlotPlan({ domain: config.OMT.domain, page: "home", slotSelector: ".homepage-banner-single .g.g-2", contextSelector: ".homepage-banner-single" }), null);
+assert.deepEqual(buildStaticRetroSlotPlan({ domain: config.OMT.domain, page: "home", slotSelector: ".homepage-banner-single .g.g-2", contextSelector: ".homepage-banner-single" }), {
+  contextSelector: ".homepage-banner-single",
+  groupClass: "g g-2",
+  groupId: 2,
+});
 
 assert.equal(shouldAllowConfiguredRetroSlotReconstruction({ captureDate: "2026-08-15", periodStart: "2026-08-01", periodEnd: "2026-08-15", currentDate: "2026-08-17", explicitCaptureAt: true }), true);
 assert.equal(shouldAllowConfiguredRetroSlotReconstruction({ captureDate: "2026-08-15", periodStart: "2026-08-01", periodEnd: "2026-08-15", currentDate: "2026-08-17", explicitCaptureAt: false }), false);
