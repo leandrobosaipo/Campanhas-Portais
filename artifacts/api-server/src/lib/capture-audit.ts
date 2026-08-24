@@ -166,9 +166,130 @@ export function formatIsoDate(value = new Date()) {
   return value.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
 }
 
+const ISO_DATE_REGEXP = /^\d{4}-\d{2}-\d{2}$/;
+
 export const CAPTURE_CLASS_SAME_DAY_RETRY = "same_day_retry";
+export const CAPTURE_CLASS_SCHEDULED = "scheduled";
 export const CAPTURE_CLASS_HISTORICAL_RECOVERY = "historical_recovery";
 export const AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE = "audit-policy-v1";
+
+function parseCuiabaDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
+}
+
+function normalizeCaptureClassValue(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : null;
+  if (raw === CAPTURE_CLASS_HISTORICAL_RECOVERY) return CAPTURE_CLASS_HISTORICAL_RECOVERY;
+  if (raw === CAPTURE_CLASS_SAME_DAY_RETRY) return CAPTURE_CLASS_SAME_DAY_RETRY;
+  if (raw === CAPTURE_CLASS_SCHEDULED) return CAPTURE_CLASS_SCHEDULED;
+  return null;
+}
+
+function hasKnownCapturePolicy(version: unknown) {
+  return typeof version === "string" && version.trim() === AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
+}
+
+function buildCaptureClassTrustContext({
+  canonicalTargetDate,
+  metadataTargetDate,
+  captureClass,
+  sourceJobId,
+  capturedAt,
+  auditPolicyVersion,
+}: {
+  canonicalTargetDate: string | null;
+  metadataTargetDate: string | null;
+  captureClass: string | null;
+  sourceJobId: string | null;
+  capturedAt: string | null;
+  auditPolicyVersion: string | null;
+}) {
+  const canonical = typeof canonicalTargetDate === "string" && ISO_DATE_REGEXP.test(canonicalTargetDate)
+    ? canonicalTargetDate
+    : null;
+  const persisted = typeof metadataTargetDate === "string" && ISO_DATE_REGEXP.test(metadataTargetDate)
+    ? metadataTargetDate
+    : null;
+  const capturedAtDate = parseCuiabaDate(capturedAt);
+  const hasSourceJobId = typeof sourceJobId === "string" && sourceJobId.trim().length > 0;
+  const hasValidPolicy = hasKnownCapturePolicy(auditPolicyVersion);
+  const hasCanonicalTarget = !!canonical;
+  const hasPersistedTarget = !!persisted;
+  const hasCapturedAtDate = !!capturedAtDate;
+  const targetDateMatches = hasCanonicalTarget && hasPersistedTarget && canonical === persisted;
+  const targetDateMatchesForDaily = hasCapturedAtDate && targetDateMatches && capturedAtDate === canonical;
+  if (!captureClass) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["capture_class_missing"],
+    };
+  }
+  if (!hasCanonicalTarget) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_invalid"],
+    };
+  }
+  if (!hasPersistedTarget) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_persisted_invalid_or_missing"],
+    };
+  }
+  if (!hasSourceJobId) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["source_job_id_missing"],
+    };
+  }
+  if (!hasValidPolicy) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["audit_policy_version_unknown"],
+    };
+  }
+  if (!hasCapturedAtDate) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["captured_at_invalid_or_missing"],
+    };
+  }
+  if (!targetDateMatches) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_mismatch"],
+    };
+  }
+  if (captureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY) {
+    return {
+      trusted: true,
+      trustedClass: captureClass,
+      reasons: [],
+    };
+  }
+  if (!targetDateMatchesForDaily) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["captured_at_date_mismatch"],
+    };
+  }
+  return {
+    trusted: true,
+    trustedClass: captureClass,
+    reasons: [],
+  };
+}
 
 // Editorial timeline proof is meaningful only when reconstructing a past day.
 // A live capture for the current Cuiabá day cannot contain a retroactive page
@@ -217,7 +338,7 @@ export function getEvidenceDateKey(title: string | null | undefined) {
   return match?.[1] ?? null;
 }
 
-export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
+export function evaluateCaptureMetadata(metadata: any, targetDate: string, now = new Date()) {
   if (!metadata) {
     return {
       requestedCaptureAt: null,
@@ -277,20 +398,27 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       ok: false,
     };
   }
-  const capturedTargetDate = typeof metadata.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(metadata.targetDate)
+  const persistedTargetDate = typeof metadata.targetDate === "string" && ISO_DATE_REGEXP.test(metadata.targetDate)
     ? metadata.targetDate
-    : targetDate;
-  const captureClass = typeof metadata.captureClass === "string" ? metadata.captureClass.trim() : null;
-  const normalizedCaptureClass = captureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
-    ? CAPTURE_CLASS_HISTORICAL_RECOVERY
-    : captureClass === CAPTURE_CLASS_SAME_DAY_RETRY
-      ? CAPTURE_CLASS_SAME_DAY_RETRY
-      : null;
+    : null;
+  const canonicalTargetDate = ISO_DATE_REGEXP.test(targetDate) ? targetDate : null;
+  const recordedCaptureClassRaw = typeof metadata.captureClass === "string" ? metadata.captureClass.trim() : "";
+  const recordedCaptureClass = normalizeCaptureClassValue(recordedCaptureClassRaw);
+  const explicitCaptureClass = typeof metadata.captureClass === "string" && metadata.captureClass.trim().length > 0;
   const sourceJobId = typeof metadata.sourceJobId === "string" && metadata.sourceJobId.trim()
     ? metadata.sourceJobId.trim()
     : null;
   const auditPolicyVersion = typeof metadata.auditPolicyVersion === "string" ? metadata.auditPolicyVersion.trim() : null;
   const capturedAt = typeof metadata.capturedAt === "string" ? metadata.capturedAt : null;
+  const captureClassTrustContext = buildCaptureClassTrustContext({
+    canonicalTargetDate,
+    metadataTargetDate: persistedTargetDate,
+    captureClass: recordedCaptureClass,
+    sourceJobId,
+    capturedAt,
+    auditPolicyVersion,
+  });
+  const normalizedCaptureClass = captureClassTrustContext.trusted ? recordedCaptureClass : null;
   const requestedCaptureAt = typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : null;
   const systemDateTime = typeof metadata.systemDateTime === "string" ? metadata.systemDateTime : "";
   const pageDateText = typeof metadata.pageDateText === "string" ? metadata.pageDateText : "";
@@ -347,16 +475,17 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     : null;
   const auditedLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
     reconstruction?.reason === "late_publication_recovery" &&
-    reconstruction?.contractedDate === capturedTargetDate &&
+    reconstruction?.contractedDate === canonicalTargetDate &&
     typeof reconstruction?.reconstructedAt === "string" &&
     typeof reconstruction?.mediaUrl === "string" &&
     reconstruction.mediaUrl.trim().length > 0;
+  const expectedEvaluationDate = canonicalTargetDate ? canonicalTargetDate.split("-").reverse().join("/") : "";
   const desktopMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
-    : systemDateTime.includes(capturedTargetDate.split("-").reverse().join("/"));
+    : Boolean(expectedEvaluationDate) && systemDateTime.includes(expectedEvaluationDate);
   const pageMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(pageDateReference, requestedCaptureAt)
-    : pageTextMatchesTargetDate(pageDateReference, capturedTargetDate);
+    : canonicalTargetDate ? pageTextMatchesTargetDate(pageDateReference, canonicalTargetDate) : false;
   const viewportImagesTotal = Number(visualAudit.viewportImagesTotal ?? 0);
   const viewportImagesLoaded = Number(visualAudit.viewportImagesLoaded ?? 0);
   const allowViewportImageMisses = Math.max(0, Number(effectiveAuditConfig.allowViewportImageMisses ?? 0));
@@ -434,13 +563,14 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
+  const isScheduledLikeCaptureClass = normalizedCaptureClass === CAPTURE_CLASS_SCHEDULED || normalizedCaptureClass === CAPTURE_CLASS_SAME_DAY_RETRY;
   const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true &&
     (normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY ||
-      (normalizedCaptureClass === null && requiresRetroEditorialProof(capturedTargetDate))) &&
+      (normalizedCaptureClass === null && requiresRetroEditorialProof(canonicalTargetDate ?? "", now))) &&
     !auditedLatePublicationRecovery;
-  const contentTimelineOk = contentTimeline.ok || (contentTimeline.reason === "future_samples" &&
-    (!requireRetroContentProof || auditedLatePublicationRecovery));
+  const contentTimelineOk = contentTimeline.ok || (contentTimeline.reason === "empty_samples" && isScheduledLikeCaptureClass);
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
+  const captureClassContractOk = captureClassTrustContext.trusted || !explicitCaptureClass;
   const visualsOk = Boolean(
     visualAuditAvailable &&
     viewportImagesOk &&
@@ -455,13 +585,35 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
   );
   const issues: Array<{ code: string; label: string; detail: string }> = [];
+  if (!captureClassTrustContext.trusted && explicitCaptureClass) {
+    const trustIssues: Array<{ code: string; label: string; detail: string }> = captureClassTrustContext.reasons
+      .map((reason) => {
+        const codeMap: Record<string, string> = {
+          target_date_invalid: "capture_class_target_date_invalid",
+          target_date_persisted_invalid_or_missing: "capture_class_target_date_missing",
+          source_job_id_missing: "capture_class_source_job_missing",
+          audit_policy_version_unknown: "capture_class_policy_version_unknown",
+          captured_at_invalid_or_missing: "capture_class_capture_at_invalid",
+          target_date_mismatch: "capture_class_target_date_mismatch",
+          captured_at_date_mismatch: "capture_class_capture_at_date_mismatch",
+          capture_class_missing: "capture_class_missing",
+        };
+        const code = codeMap[reason] ?? "capture_class_untrusted";
+        return {
+          code,
+          label: "Classificação de captura não confiável",
+          detail: `A evidência definiu ${recordedCaptureClassRaw}, porém o contrato não foi validado: ${reason}.`,
+        };
+      });
+    issues.push(...trustIssues.slice(0, 6));
+  }
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
       label: "Hora da moldura divergente",
       detail: requestedCaptureAt
         ? `A moldura do sistema não mostrou o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
-        : `A moldura do sistema não mostrou a data esperada para ${capturedTargetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
+        : `A moldura do sistema não mostrou a data esperada para ${canonicalTargetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
     });
   }
   if (!pageMatches) {
@@ -470,11 +622,10 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       label: "Hora do site divergente",
       detail: requestedCaptureAt
         ? `O site não exibiu o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${pageDateReference || "não encontrado"}.`
-        : `O site não exibiu a data esperada para ${capturedTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
+        : `O site não exibiu a data esperada para ${canonicalTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
-  if (!contentTimeline.ok && (requireRetroContentProof ||
-    (contentTimeline.reason !== "future_samples" && !auditedLatePublicationRecovery))) {
+  if (!contentTimeline.ok && (requireRetroContentProof || contentTimeline.reason !== "empty_samples" || !isScheduledLikeCaptureClass)) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
       label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
@@ -634,7 +785,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   }
   return {
     captureClass: normalizedCaptureClass,
-    targetDate: capturedTargetDate,
+    targetDate: canonicalTargetDate,
     auditPolicyVersion,
     capturedAt,
     sourceJobId,
@@ -721,7 +872,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
     visualsOk,
     issues,
-    ok: desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

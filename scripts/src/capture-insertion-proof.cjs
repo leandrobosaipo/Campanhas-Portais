@@ -6791,11 +6791,12 @@ async function main() {
   const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
+  const capturedAt = new Date().toISOString();
   const captureClass = isoDate < currentDateInCuiaba()
     ? "historical_recovery"
     : (args.reconstructionReason === "late_publication_recovery"
       ? "historical_recovery"
-      : "same_day_retry");
+      : (args.captureAttempt > 1 ? "same_day_retry" : "scheduled"));
   const sourceJobId = args.runnerJobId || args.jobId || null;
   const allowConfiguredRetroSlotReconstruction = shouldAllowConfiguredRetroSlotReconstruction({
     captureDate: isoDate,
@@ -6815,7 +6816,7 @@ async function main() {
     ? {
         reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
         contractedDate: isoDate,
-        reconstructedAt: new Date().toISOString(),
+        reconstructedAt: capturedAt,
         mediaUrl: insertion.mediaUrl,
         mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
       }
@@ -7697,7 +7698,7 @@ async function main() {
       stickyHeaderViewportAudit,
       finalPngStickyHeaderAudit,
       finalViewportTargetAudit,
-      capturedAt: new Date().toISOString(),
+      capturedAt,
       pageScrollMetrics,
       frameTheme: desktopFrameMetadata.frameTheme,
       frameTemplateVersion: desktopFrameMetadata.frameTemplateVersion ?? null,
