@@ -42,6 +42,7 @@ import {
   summarizeAuditRootCauses,
 } from "../lib/capture-audit";
 import {
+  loadAuditChecklistMetadata,
   resolveAuditChecklist,
   validateAuditChecklist,
 } from "../lib/audit-checklist";
@@ -1129,18 +1130,7 @@ function serializeCaptureProofLog(row: typeof captureProofLogsTable.$inferSelect
 }
 
 async function loadCaptureMetadataForAudit(insertionId: number, targetDate: string) {
-  const localMetadata = loadLocalCaptureMetadata(insertionId, targetDate);
-  if (localMetadata && typeof localMetadata === "object") return localMetadata;
-
-  const [latestLog] = await db.select().from(captureProofLogsTable).where(
-    and(
-      eq(captureProofLogsTable.insertionId, insertionId),
-      eq(captureProofLogsTable.targetDate, targetDate),
-      eq(captureProofLogsTable.status, "ok"),
-    ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  const metadata = latestLog?.metadata;
-  return metadata && typeof metadata === "object" ? metadata : null;
+  return loadAuditChecklistMetadata(insertionId, targetDate);
 }
 
 async function listLegacyAuditCandidates(options?: {

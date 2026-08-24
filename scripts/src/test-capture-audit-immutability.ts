@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 process.chdir(rootDir);
-const { evaluateCaptureMetadata } = await import("../../artifacts/api-server/src/lib/capture-audit.ts");
+const { attachServerCaptureProvenance, evaluateCaptureMetadata } = await import("../../artifacts/api-server/src/lib/capture-audit.ts");
 
 function buildMetadata({
   captureClass,
@@ -17,6 +17,7 @@ function buildMetadata({
   capturedAt = "2026-08-24T10:00:00.000Z",
   auditPolicyVersion = "audit-policy-v1",
   captureTime = `${targetDate}T10:00:00-04:00`,
+  trusted = true,
 }: {
   captureClass: string | null;
   targetDate: string;
@@ -27,8 +28,9 @@ function buildMetadata({
   capturedAt?: string | null;
   auditPolicyVersion?: string | null;
   captureTime?: string;
+  trusted?: boolean;
 }) {
-  return {
+  const metadata = {
     captureClass,
     targetDate,
     auditPolicyVersion,
@@ -63,6 +65,13 @@ function buildMetadata({
       visibleRatio: 1,
     },
   };
+  if (!trusted || !sourceJobId || !capturedAt) return metadata;
+  return attachServerCaptureProvenance(metadata, {
+    targetDate,
+    sourceJobId,
+    capturedAt,
+    uploadedUrl: "https://cdn.example.com/evidence.png",
+  });
 }
 
 test("captura do dia contratado pode ser reavaliada no dia seguinte sem virar retroativa", () => {
@@ -128,14 +137,22 @@ test("falha explícita quando campos críticos de contrato estão ausentes/invá
   const targetDate = "2026-08-24";
   const requestedCaptureAt = `${targetDate}T10:00:00-04:00`;
 
-  const sourceJobMissing = evaluateCaptureMetadata(
-    buildMetadata({
+  const sourceJobMissingMetadata = buildMetadata({
       captureClass: "scheduled",
       targetDate,
       requestedCaptureAt,
       contentDateSamples: [`${targetDate}T10:00:00-04:00`],
       sourceJobId: null,
-    }),
+      trusted: false,
+    });
+  attachServerCaptureProvenance(sourceJobMissingMetadata, {
+    targetDate,
+    sourceJobId: "persisted-job",
+    capturedAt: "2026-08-24T14:00:00.000Z",
+    uploadedUrl: "https://cdn.example.com/evidence.png",
+  });
+  const sourceJobMissing = evaluateCaptureMetadata(
+    sourceJobMissingMetadata,
     targetDate,
     new Date(`${targetDate}T12:00:00-04:00`),
   );
@@ -169,4 +186,36 @@ test("falha explícita quando campos críticos de contrato estão ausentes/invá
   );
   assert.equal(targetDateMismatch.ok, false);
   assert.equal(targetDateMismatch.issues.some((issue) => issue.code === "capture_class_target_date_mismatch"), true);
+});
+
+test("metadata autodeclarada ou job não correlacionado nunca autoriza scheduled", () => {
+  const targetDate = "2026-08-24";
+  const requestedCaptureAt = `${targetDate}T10:00:00-04:00`;
+  const untrusted = buildMetadata({
+    captureClass: "scheduled",
+    targetDate,
+    requestedCaptureAt,
+    contentDateSamples: [],
+    trusted: false,
+  });
+  const result = evaluateCaptureMetadata(untrusted, targetDate, new Date(`${targetDate}T12:00:00-04:00`));
+  assert.equal(result.ok, false);
+  assert.equal(result.captureClass, null);
+  assert.equal(result.issues.some((issue) => issue.code === "capture_class_target_date_missing"), true);
+});
+
+test("histórico confiável sem prova retroativa continua bloqueado", () => {
+  const targetDate = "2026-08-22";
+  const metadata = buildMetadata({
+    captureClass: "historical_recovery",
+    targetDate,
+    requestedCaptureAt: `${targetDate}T10:00:00-04:00`,
+    captureTime: `${targetDate}T10:00:00-04:00`,
+    capturedAt: "2026-08-24T14:00:00.000Z",
+    contentDateSamples: [],
+  });
+  const result = evaluateCaptureMetadata(metadata, targetDate, new Date("2026-08-24T15:00:00.000Z"));
+  assert.equal(result.ok, false);
+  assert.equal(result.captureClass, "historical_recovery");
+  assert.equal(result.issues.some((issue) => issue.code === "retro_content_unverified"), true);
 });

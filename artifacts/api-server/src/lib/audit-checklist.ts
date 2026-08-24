@@ -15,11 +15,11 @@ import {
   normalizeSiteMediaUrl,
 } from "./adrotate-sites";
 import {
+  attachServerCaptureProvenance,
   evaluateCaptureMetadata,
   isCaptureAtInRetroWindow,
   parseDateOnly,
 } from "./capture-audit";
-import { loadLocalCaptureMetadata } from "./local-capture-runtime";
 import {
   requiresPerrengueHomeEditorialAudit,
   resolveChecklistFinalProofStyle,
@@ -243,9 +243,6 @@ async function resolvePublishedRule(siteSigla: string, groupId: number) {
 
 export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string) {
   const dateKey = normalizeDateKey(targetDate);
-  const localMetadata = loadLocalCaptureMetadata(insertionId, dateKey);
-  if (isPlainObject(localMetadata)) return localMetadata;
-
   const [latestLog] = await db.select().from(captureProofLogsTable).where(
     and(
       eq(captureProofLogsTable.insertionId, insertionId),
@@ -253,7 +250,18 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
       eq(captureProofLogsTable.status, "ok"),
     ),
   ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  return isPlainObject(latestLog?.metadata) ? latestLog.metadata : null;
+  if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
+  const metadata = { ...latestLog.metadata };
+  const declaredSourceJobId = metadataString(metadata, "sourceJobId");
+  const correlatedJobId = [latestLog.runnerJobId, latestLog.jobId]
+    .find((value) => typeof value === "string" && value === declaredSourceJobId);
+  if (!correlatedJobId || !latestLog.createdAt) return metadata;
+  return attachServerCaptureProvenance(metadata, {
+    targetDate: latestLog.targetDate,
+    sourceJobId: correlatedJobId,
+    capturedAt: latestLog.createdAt.toISOString(),
+    uploadedUrl: latestLog.uploadedUrl ?? null,
+  });
 }
 
 export async function resolveAuditChecklist(input: { insertionId: number; date: string }): Promise<AuditChecklistContract> {

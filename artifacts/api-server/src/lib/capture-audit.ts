@@ -173,6 +173,35 @@ export const CAPTURE_CLASS_SCHEDULED = "scheduled";
 export const CAPTURE_CLASS_HISTORICAL_RECOVERY = "historical_recovery";
 export const AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE = "audit-policy-v1";
 
+const SERVER_CAPTURE_PROVENANCE = Symbol("serverCaptureProvenance");
+
+export type ServerCaptureProvenance = {
+  targetDate: string;
+  sourceJobId: string;
+  capturedAt: string;
+  uploadedUrl: string | null;
+};
+
+export function attachServerCaptureProvenance(
+  metadata: Record<string, unknown>,
+  provenance: ServerCaptureProvenance,
+) {
+  Object.defineProperty(metadata, SERVER_CAPTURE_PROVENANCE, {
+    value: provenance,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  return metadata;
+}
+
+function readServerCaptureProvenance(metadata: unknown): ServerCaptureProvenance | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const value = (metadata as Record<PropertyKey, unknown>)[SERVER_CAPTURE_PROVENANCE];
+  if (!value || typeof value !== "object") return null;
+  return value as ServerCaptureProvenance;
+}
+
 function parseCuiabaDate(value: string | null | undefined) {
   if (!value) return null;
   const parsed = new Date(String(value));
@@ -398,18 +427,20 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
       ok: false,
     };
   }
-  const persistedTargetDate = typeof metadata.targetDate === "string" && ISO_DATE_REGEXP.test(metadata.targetDate)
-    ? metadata.targetDate
-    : null;
+  const serverProvenance = readServerCaptureProvenance(metadata);
+  const persistedTargetDate = serverProvenance?.targetDate ?? null;
   const canonicalTargetDate = ISO_DATE_REGEXP.test(targetDate) ? targetDate : null;
   const recordedCaptureClassRaw = typeof metadata.captureClass === "string" ? metadata.captureClass.trim() : "";
   const recordedCaptureClass = normalizeCaptureClassValue(recordedCaptureClassRaw);
   const explicitCaptureClass = typeof metadata.captureClass === "string" && metadata.captureClass.trim().length > 0;
-  const sourceJobId = typeof metadata.sourceJobId === "string" && metadata.sourceJobId.trim()
+  const declaredSourceJobId = typeof metadata.sourceJobId === "string" && metadata.sourceJobId.trim()
     ? metadata.sourceJobId.trim()
     : null;
+  const sourceJobId = serverProvenance && declaredSourceJobId === serverProvenance.sourceJobId
+    ? serverProvenance.sourceJobId
+    : null;
   const auditPolicyVersion = typeof metadata.auditPolicyVersion === "string" ? metadata.auditPolicyVersion.trim() : null;
-  const capturedAt = typeof metadata.capturedAt === "string" ? metadata.capturedAt : null;
+  const capturedAt = serverProvenance?.capturedAt ?? null;
   const captureClassTrustContext = buildCaptureClassTrustContext({
     canonicalTargetDate,
     metadataTargetDate: persistedTargetDate,
@@ -449,10 +480,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     ...(getSiteIntegration(siteSigla)?.auditConfig ?? {}),
     ...(resolvedMapping?.auditOverrides ?? {}),
   };
-  const storedAuditConfig = metadata.auditConfig && typeof metadata.auditConfig === "object" ? metadata.auditConfig : {};
   const effectiveAuditConfig = {
     ...fallbackAuditConfig,
-    ...storedAuditConfig,
   } as {
     allowViewportImageMisses?: number;
     requireStableFrame?: boolean;
