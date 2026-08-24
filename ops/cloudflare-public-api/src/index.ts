@@ -643,7 +643,13 @@ async function reconcileDailyPrintRecovery(env: Env, job: OpsJobRecord) {
       .bind("Três tentativas falharam; é necessária análise humana.", String(cause).slice(0, 1000), nowIso(), targetDate, insertionId).run();
     return;
   }
-  await scheduleRecoveryAttempt(env, { targetDate, insertionId, sourceBatchJobId, attempt: attempt + 1, cause: String(cause) });
+  try {
+    await scheduleRecoveryAttempt(env, { targetDate, insertionId, sourceBatchJobId, attempt: attempt + 1, cause: String(cause) });
+  } catch (error) {
+    const technical = error instanceof Error ? error.message : String(error);
+    await env.adops_ops.prepare(`UPDATE daily_print_recoveries SET status='blocked',active_job_id=NULL,next_attempt_at=NULL,human_cause=?,technical_cause=?,updated_at=? WHERE target_date=? AND insertion_id=?`)
+      .bind("A próxima tentativa não pôde ser agendada; é necessária análise humana.", technical.slice(0, 1000), nowIso(), targetDate, insertionId).run();
+  }
 }
 
 function describeJob(record: OpsJobRecord) {

@@ -25,5 +25,6 @@ test("status oferece JSON compacto para avaliação econômica", () => {
   assert.match(worker, /status: blocked \|\| empty \? "blocked" : pending \? "retryable" : "complete"/);
   assert.match(worker, /daily_print_recovery_audit_unavailable/);
   assert.match(worker, /A tentativa não pôde ser agendada; as demais campanhas continuaram/);
+  assert.match(worker, /A próxima tentativa não pôde ser agendada; é necessária análise humana/);
   assert.match(worker, /json_extract\(payload_json,'\$\.date'\)=\?/);
 });
