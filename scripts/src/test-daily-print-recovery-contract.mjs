@@ -22,5 +22,8 @@ test("aprovação interrompe retries e runner não recaptura evidência válida"
 });
 
 test("status oferece JSON compacto para avaliação econômica", () => {
-  assert.match(worker, /status: blocked \? "blocked" : pending \? "retryable" : "complete"/);
+  assert.match(worker, /status: blocked \|\| empty \? "blocked" : pending \? "retryable" : "complete"/);
+  assert.match(worker, /daily_print_recovery_audit_unavailable/);
+  assert.match(worker, /A tentativa não pôde ser agendada; as demais campanhas continuaram/);
+  assert.match(worker, /json_extract\(payload_json,'\$\.date'\)=\?/);
 });

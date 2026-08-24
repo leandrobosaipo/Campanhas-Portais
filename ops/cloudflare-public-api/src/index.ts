@@ -564,18 +564,6 @@ async function fetchPrivateApiJson<T>(env: Env, pathname: string): Promise<T | n
   return (await response.json()) as T;
 }
 
-async function postPrivateApiJson<T>(env: Env, pathname: string, body: unknown): Promise<T | null> {
-  const base = env.PRIVATE_ADOPS_API_BASE_URL?.trim();
-  if (!base) return null;
-  const response = await fetch(`${base.replace(/\/$/, "")}${pathname}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-adops-api-token": env.PRIVATE_ADOPS_API_TOKEN?.trim() ?? "" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) return null;
-  return await response.json() as T;
-}
-
 type RecoveryAuditItem = { insertionId: number; status: string; audit?: { issues?: Array<{ code?: string; detail?: string }> } };
 type RecoveryAuditResponse = { items?: RecoveryAuditItem[] };
 const RECOVERY_DELAYS_MINUTES = [5, 10, 15] as const;
@@ -611,10 +599,28 @@ async function reconcileDailyPrintRecovery(env: Env, job: OpsJobRecord) {
     const targetDate = String(payload.date || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return;
     const audit = await fetchPrivateApiJson<RecoveryAuditResponse>(env, `/api/insertions/capture-proof/audit?date=${targetDate}`);
+    if (!audit?.items) {
+      console.error("daily_print_recovery_audit_unavailable", { jobId: job.id, targetDate });
+      await env.adops_ops.prepare(
+        `INSERT INTO daily_print_recoveries (target_date,insertion_id,source_batch_job_id,status,attempt,human_cause,technical_cause,updated_at)
+         VALUES (?,0,?,'blocked',0,?,?,?)
+         ON CONFLICT(target_date,insertion_id) DO UPDATE SET status='blocked',human_cause=excluded.human_cause,technical_cause=excluded.technical_cause,updated_at=excluded.updated_at`,
+      ).bind(targetDate, job.id, "A API de auditoria não respondeu; nenhuma campanha foi considerada concluída.", "audit_unavailable", nowIso()).run();
+      return;
+    }
     for (const item of audit?.items ?? []) {
       if (!["missing", "invalid_audit", "invalid_url"].includes(item.status)) continue;
       const cause = item.audit?.issues?.map((issue) => issue.code || issue.detail).filter(Boolean).join(",") || item.status;
-      await scheduleRecoveryAttempt(env, { targetDate, insertionId: item.insertionId, sourceBatchJobId: job.id, attempt: 1, cause });
+      try {
+        await scheduleRecoveryAttempt(env, { targetDate, insertionId: item.insertionId, sourceBatchJobId: job.id, attempt: 1, cause });
+      } catch (error) {
+        const technical = error instanceof Error ? error.message : String(error);
+        await env.adops_ops.prepare(
+          `INSERT INTO daily_print_recoveries (target_date,insertion_id,source_batch_job_id,status,attempt,human_cause,technical_cause,updated_at)
+           VALUES (?,?,?,'blocked',0,?,?,?)
+           ON CONFLICT(target_date,insertion_id) DO UPDATE SET status='blocked',human_cause=excluded.human_cause,technical_cause=excluded.technical_cause,updated_at=excluded.updated_at`,
+        ).bind(targetDate, item.insertionId, job.id, "A tentativa não pôde ser agendada; as demais campanhas continuaram.", technical.slice(0, 1000), nowIso()).run();
+      }
     }
     return;
   }
@@ -3537,7 +3543,10 @@ export default {
     }
 
     if (path === "/api/ops/daily-print-status") {
-      const jobs = await listOpsJobsByFilter(env, { limit: 100, statuses: null, kinds: ["print-batch"], olderThanMinutes: null });
+      const requestedDate = url.searchParams.get("date");
+      const jobs = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate ?? "")
+        ? (await env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE kind='print-batch' AND json_extract(payload_json,'$.source')=? AND json_extract(payload_json,'$.date')=? ORDER BY created_at DESC LIMIT 20`).bind("cloudflare-cron-daily-print", requestedDate).all<OpsJobRecord>()).results
+        : await listOpsJobsByFilter(env, { limit: 100, statuses: null, kinds: ["print-batch"], olderThanMinutes: null });
       return jsonNoStore(buildDailyPrintStatus({
         jobs,
         now: new Date(),
@@ -3552,15 +3561,24 @@ export default {
       const items = rows.results ?? [];
       const blocked = items.filter((item) => item.status === "blocked").length;
       const pending = items.filter((item) => item.status === "retry_scheduled").length;
+      const empty = items.length === 0;
       return jsonNoStore({
         date,
         items,
         evaluator: {
-          status: blocked ? "blocked" : pending ? "retryable" : "complete",
+          status: blocked || empty ? "blocked" : pending ? "retryable" : "complete",
           pending,
           blocked,
+          reason: empty ? "recovery_not_initialized" : null,
         },
       });
+    }
+
+    if (path === "/api/insertions/capture-proof/reconcile-scheduled" && request.method === "POST") {
+      const auth = requireOpsAuth(request, env);
+      if (!auth.ok) return auth.response;
+      if (!privateApiEnabled(env)) return jsonNoStore({ error: "private_api_unavailable" }, { status: 503 });
+      return proxyToPrivateApi(request, env, url, { noStore: true });
     }
 
     if (path === "/api/ops/incidents") {
