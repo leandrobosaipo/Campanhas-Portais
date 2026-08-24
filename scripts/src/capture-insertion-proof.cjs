@@ -6791,6 +6791,12 @@ async function main() {
   const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
+  const captureClass = isoDate < currentDateInCuiaba()
+    ? "historical_recovery"
+    : (args.reconstructionReason === "late_publication_recovery"
+      ? "historical_recovery"
+      : "same_day_retry");
+  const sourceJobId = args.runnerJobId || args.jobId || null;
   const allowConfiguredRetroSlotReconstruction = shouldAllowConfiguredRetroSlotReconstruction({
     captureDate: isoDate,
     periodStart: insertion.periodoInicio,
@@ -6805,9 +6811,9 @@ async function main() {
     allowConfiguredSlotReconstruction: allowConfiguredRetroSlotReconstruction,
     reconstructionReason: args.reconstructionReason,
   };
-  const reconstruction = args.reconstructionReason === "late_publication_recovery"
+  const reconstruction = captureClass === "historical_recovery"
     ? {
-        reason: "late_publication_recovery",
+        reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
         contractedDate: isoDate,
         reconstructedAt: new Date().toISOString(),
         mediaUrl: insertion.mediaUrl,
@@ -7435,8 +7441,8 @@ async function main() {
     // o editorial original se o portal não possui snapshot assinado daquela
     // data; exigir essa amostra vazia só bloqueia uma prova visual válida do
     // banner. As capturas históricas normais continuam exigindo essa prova.
-    const isHistoricalCapture = requiresRetroEditorialProof(isoDate)
-      && args.reconstructionReason !== "late_publication_recovery";
+    const isHistoricalCapture = captureClass === "historical_recovery" &&
+      args.reconstructionReason !== "late_publication_recovery";
     const retroContentEvidence = isHistoricalCapture
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
@@ -7638,6 +7644,10 @@ async function main() {
 
     metadata = {
       auditContractVersion: "audit-checklist-v1",
+      auditPolicyVersion: "audit-policy-v1",
+      captureClass,
+      targetDate: isoDate,
+      sourceJobId,
       resolvedRuleVersionHash: mapping.ruleVersionHash || null,
       requiredGates: {
         requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true,

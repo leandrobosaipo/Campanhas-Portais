@@ -166,6 +166,10 @@ export function formatIsoDate(value = new Date()) {
   return value.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
 }
 
+export const CAPTURE_CLASS_SAME_DAY_RETRY = "same_day_retry";
+export const CAPTURE_CLASS_HISTORICAL_RECOVERY = "historical_recovery";
+export const AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE = "audit-policy-v1";
+
 // Editorial timeline proof is meaningful only when reconstructing a past day.
 // A live capture for the current Cuiabá day cannot contain a retroactive page
 // timeline yet; the remaining visual, slot, media and clock gates still apply.
@@ -273,6 +277,20 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       ok: false,
     };
   }
+  const capturedTargetDate = typeof metadata.targetDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(metadata.targetDate)
+    ? metadata.targetDate
+    : targetDate;
+  const captureClass = typeof metadata.captureClass === "string" ? metadata.captureClass.trim() : null;
+  const normalizedCaptureClass = captureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
+    ? CAPTURE_CLASS_HISTORICAL_RECOVERY
+    : captureClass === CAPTURE_CLASS_SAME_DAY_RETRY
+      ? CAPTURE_CLASS_SAME_DAY_RETRY
+      : null;
+  const sourceJobId = typeof metadata.sourceJobId === "string" && metadata.sourceJobId.trim()
+    ? metadata.sourceJobId.trim()
+    : null;
+  const auditPolicyVersion = typeof metadata.auditPolicyVersion === "string" ? metadata.auditPolicyVersion.trim() : null;
+  const capturedAt = typeof metadata.capturedAt === "string" ? metadata.capturedAt : null;
   const requestedCaptureAt = typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : null;
   const systemDateTime = typeof metadata.systemDateTime === "string" ? metadata.systemDateTime : "";
   const pageDateText = typeof metadata.pageDateText === "string" ? metadata.pageDateText : "";
@@ -329,16 +347,16 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     : null;
   const auditedLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
     reconstruction?.reason === "late_publication_recovery" &&
-    reconstruction?.contractedDate === targetDate &&
+    reconstruction?.contractedDate === capturedTargetDate &&
     typeof reconstruction?.reconstructedAt === "string" &&
     typeof reconstruction?.mediaUrl === "string" &&
     reconstruction.mediaUrl.trim().length > 0;
   const desktopMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
-    : systemDateTime.includes(targetDate.split("-").reverse().join("/"));
+    : systemDateTime.includes(capturedTargetDate.split("-").reverse().join("/"));
   const pageMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(pageDateReference, requestedCaptureAt)
-    : pageTextMatchesTargetDate(pageDateReference, targetDate);
+    : pageTextMatchesTargetDate(pageDateReference, capturedTargetDate);
   const viewportImagesTotal = Number(visualAudit.viewportImagesTotal ?? 0);
   const viewportImagesLoaded = Number(visualAudit.viewportImagesLoaded ?? 0);
   const allowViewportImageMisses = Math.max(0, Number(effectiveAuditConfig.allowViewportImageMisses ?? 0));
@@ -417,10 +435,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
   const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
   const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true &&
-    requiresRetroEditorialProof(targetDate) &&
+    (normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY ||
+      (normalizedCaptureClass === null && requiresRetroEditorialProof(capturedTargetDate))) &&
     !auditedLatePublicationRecovery;
-  const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof &&
-    (contentTimeline.reason !== "future_samples" || auditedLatePublicationRecovery));
+  const contentTimelineOk = contentTimeline.ok || (contentTimeline.reason === "future_samples" &&
+    (!requireRetroContentProof || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
   const visualsOk = Boolean(
     visualAuditAvailable &&
@@ -442,7 +461,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       label: "Hora da moldura divergente",
       detail: requestedCaptureAt
         ? `A moldura do sistema não mostrou o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
-        : `A moldura do sistema não mostrou a data esperada para ${targetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
+        : `A moldura do sistema não mostrou a data esperada para ${capturedTargetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
     });
   }
   if (!pageMatches) {
@@ -451,11 +470,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       label: "Hora do site divergente",
       detail: requestedCaptureAt
         ? `O site não exibiu o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${pageDateReference || "não encontrado"}.`
-        : `O site não exibiu a data esperada para ${targetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
+        : `O site não exibiu a data esperada para ${capturedTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
   if (!contentTimeline.ok && (requireRetroContentProof ||
-    (contentTimeline.reason === "future_samples" && !auditedLatePublicationRecovery))) {
+    (contentTimeline.reason !== "future_samples" && !auditedLatePublicationRecovery))) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
       label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
@@ -614,6 +633,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     });
   }
   return {
+    captureClass: normalizedCaptureClass,
+    targetDate: capturedTargetDate,
+    auditPolicyVersion,
+    capturedAt,
+    sourceJobId,
     requestedCaptureAt,
     systemDateTime,
     pageDateText,
