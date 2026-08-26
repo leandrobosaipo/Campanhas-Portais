@@ -116,6 +116,14 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O navegador não registrou erros de console durante o fluxo.
 - O relatório continua classificando 24/08 e 25/08 como evidências inválidas; isso é o bloqueio auditado de reconstrução, não uma ausência silenciosa da evidência válida de 26/08.
 
+## Reconciliação explícita de 24/08 e 25/08
+
+- A auditoria atual de cada data encontra `11` elegíveis, `4` aprovadas, `0` ausentes e `7` inválidas.
+- A cardinalidade atual é maior que a do job matinal original (`9`) porque a auditoria viva passou a considerar também `1860` e `1944`; o resultado do job original foi preservado e não foi reescrito.
+- Em ambas as datas, os IDs bloqueados são `1860`, `1861`, `1944`, `2192`, `2296`, `2712` e `2713`.
+- Todos os sete artefatos estão acessíveis, mas o checklist final reprova com `metadata_retro_content_unverified`: não há amostras editoriais retroativas válidas (`empty_samples`, `0/0`).
+- A causa é explícita e acionável. Nenhuma dessas reconstruções pode ser promovida sem a prova editorial exigida pela regra publicada.
+
 ## Deploy e rollback
 
 - Deploy por volumes versionados e stack Portainer.
