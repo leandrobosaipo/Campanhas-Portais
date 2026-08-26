@@ -99,6 +99,14 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - A consulta ao histórico confirmou zero registros com `scheduleId=daily-print-recovery:2026-08-26:19:00`.
 - A fila permaneceu vazia e os três runners mantiveram heartbeat recente.
 
+## Readback incremental do relatório público
+
+- Às `18:24:12 America/Cuiaba`, o relatório público já refletia o lote natural `742044b2-cfcc-4ac2-8d6a-3fe0294bd08d`.
+- A rotina diária passou a mostrar `8 de 8` aprovadas, `0` ausentes e `0` inválidas.
+- O resumo passou a mostrar `0` campanhas com prints atuais pendentes.
+- As pendências históricas de 24/08 e 25/08 continuaram separadas como retroativas; nenhuma foi convertida silenciosamente em sucesso.
+- O consumidor respondeu HTTP 200 com `cache-control: no-store`. O readback definitivo de miniaturas, modal, downloads e filtro permanece reservado ao job natural das 22h15.
+
 ## Deploy e rollback
 
 - Deploy por volumes versionados e stack Portainer.
