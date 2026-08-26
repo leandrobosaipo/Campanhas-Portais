@@ -28,7 +28,7 @@ Mutações exigem o token operacional em variável de ambiente. Nunca copie seu 
 | Pendências compactas | `GET /api/campaign-operations/pending-publication` | pública | `date` | fatos e `resolutionStatus` | identidade ambígua continua bloqueada |
 | Fonte mensal | `GET /api/campaign-operations/evidence-monthly-source` | pública | `date` + competência correspondente | todas as inserções canônicas cujo período toca o mês, inclusive encerradas | rejeita competência divergente; não infira datas fora da resposta |
 | Auditoria por data | `GET /api/insertions/{id}/capture-proof/status` | pública | `date` | estado, URL e checklist | leitura não aprova evidência |
-| Fila resumida | `GET /api/ops/queue/overview` | protegida | nenhuma | contagens e atividade | usar visão completa só em incidente |
+| Fila resumida | `GET /api/ops/queue/overview` | protegida | nenhuma | contagens, runners e agenda canônica | usar visão completa só em incidente |
 | Incidentes operacionais | `GET /api/ops/incidents` | protegida | nenhuma | causa, job, camada e evidências sanitizadas | não contém tokens ou logs brutos |
 
 Exemplo seguro:
@@ -63,17 +63,17 @@ Para qualquer criação de job:
 - leia o objeto completo apenas ao concluir ou diagnosticar;
 - não reenvie enquanto o mesmo job estiver ativo.
 
-Jobs destinados ao runner nascem em D1 como `ready_for_runner`. A Cloudflare Queue continua somente para compatibilidade com jobs antigos. O watchdog promove uma vez um legado preso em `queued`; falhas seguintes ficam visíveis. Jobs diários `failed` podem ser repetidos, mas jobs ativos ou concluídos não são duplicados.
+Jobs destinados ao runner nascem no Postgres como `ready_for_runner`. A API do Mac Mini decide a agenda, cria o job idempotente, concede o claim e recebe heartbeat até o estado terminal. D1 e Cloudflare Queue ficam somente como rollback temporário e não recebem escrita normal com `ADOPS_CONTROL_PLANE_PROVIDER=macmini`.
 
-A API canônica `adops-api.codigo5.com.br` encaminha criação, listagem e progresso desses jobs ao Worker/D1. Não grave um job operacional somente na tabela PostgreSQL legada: os runners atuais não consomem essa fila. O teste integrado de release deve criar um job pela API canônica e confirmar que o mesmo ID aparece no `/progress` e na fila D1.
+O trigger chama `POST /api/ops/schedules/reconcile` sem informar data ou rotina. A API usa `America/Cuiaba`, gera `scheduleId` e chave idempotente e devolve `created`, `duplicate`, `not_due` ou `blocked`. O teste integrado de release deve confirmar o mesmo `jobId` no `/progress` e no Postgres.
 
 ### Rotina diária
 
 1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.
 2. **18h00 Cuiabá:** `print-batch` consulta as inserções canônicas, cria capturas assíncronas por inserção e acompanha somente o progresso. Não mantém uma requisição HTTP aberta durante todo o lote.
-3. **18h30 até 21h30, a cada 30 minutos:** o Worker consulta a auditoria canônica. Se estiver completa, não cria job. Se houver pendências, cria outro `print-batch` idempotente limitado aos IDs faltantes ou inválidos; um job ainda ativo impede concorrência.
+3. **18h30 até 21h30, a cada 30 minutos:** a API canônica agenda outro `print-batch` idempotente. O runner consulta a auditoria real e trabalha somente nos IDs faltantes ou inválidos; evidência aprovada é ignorada.
 4. **08h00 do dia seguinte:** pendências de ontem entram como `late_publication_recovery`, sempre em candidato isolado. A promoção exige `allowAuditedReconstruction=true` na regra publicada e checklist final aprovado; caso contrário permanece bloqueada, sem fabricar evidência.
-5. **Após cada lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o Worker registra incidente idempotente com camada provável, job, versão, duração, IDs afetados e próxima ação.
+5. **Após cada lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o job preserva resultados parciais, camada provável, versão, duração, IDs afetados e próxima ação.
 
 Uma falha individual não interrompe as demais inserções do lote. No PERRENGUE, o ativo institucional pequeno `/assets/perrengue-sublogo.png` não é uma peça publicitária e não conta como mídia concorrente; qualquer outro banner ou vídeo adicional no slot continua bloqueando a aprovação.
 6. **22h15 Cuiabá:** o relatório consulta a fonte mensal e o estado canônico da rotina. Pendências aparecem como incidente de geração, com job, IDs, causa e próxima recuperação; campanhas encerradas continuam visíveis e suas datas continuam auditáveis.

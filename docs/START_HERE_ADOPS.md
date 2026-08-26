@@ -2,8 +2,8 @@
 
 > Estado: vigente
 > Público: equipe operacional e agentes
-> Última validação: 2026-08-17
-> Release-base anterior em produção: b00779340442; confirmar o SHA da correção mensal no readback
+> Última validação: 2026-08-26
+> Release-base em produção antes do corte do scheduler: be813b54147df8d75ac98c69d6ad91ae4ea623b9
 > Fonte autoritativa: runtime público, OpenAPI e runbooks deste repositório
 
 ## Objetivo
@@ -28,6 +28,7 @@ A pasta `/Users/leandrobosaipo/.openclaw/Campanhas-Portais` é somente históric
 | Manter, publicar ou reverter a plataforma | `docs/adops/system/RUNBOOK.md` | How-to |
 | Conhecer o estado confirmado | `docs/status-do-projeto.md` | Explicação |
 | Diagnosticar regras de captura | `docs/adops/capture-config/README.md` | Referência |
+| Operar o scheduler canônico | `docs/adops/macmini-control-plane-scheduler-runbook.md` | How-to |
 
 ## Fluxo canônico
 
@@ -66,8 +67,8 @@ Conflito de identidade bloqueia publicação. Não escolha PI, portal, período 
 | `adops-runner-print-single` | Print individual e exportações de evidências |
 | `adops-drive-pi-monitor-stack` | Credenciais Google e inventário do Drive |
 | `adops-web` | Painel web |
-| Worker `adops-api-public` | API pública, D1, fila e agendamento |
-| PostgreSQL | Fonte operacional persistente |
+| Worker `adops-api-public` | Proxy público e shadow/rollback temporário; não decide nem grava jobs no modo `macmini` |
+| PostgreSQL | Fonte canônica de jobs, claims, heartbeats e alertas operacionais |
 
 Painel: `https://adops.codigo5.com.br`
 API: `https://adops-api.codigo5.com.br`

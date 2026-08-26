@@ -6909,7 +6909,7 @@ async function executeCampaignPublicationReconcile(job) {
     ? String(job.payload.targetDate)
     : todayInCuiaba();
   const cod5_source = String(job?.payload?.source || "").trim();
-  const cod5_automaticSource = ["google-drive-monitor", "cloudflare-cron-campaign-publication-reconcile"].includes(cod5_source);
+  const cod5_automaticSource = isAutomaticCampaignReconcileSource(cod5_source);
   const cod5_requestedMode = job?.payload?.mode === "preflight" ? "preflight" : "apply";
   const cod5_apply = cod5_requestedMode === "apply" && (!cod5_automaticSource || ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED);
   const cod5_mode = cod5_apply ? "apply" : "preflight";
@@ -7814,6 +7814,10 @@ async function runSchedulerTrigger(provider, requester = (path, body) => private
   return requester("/api/ops/schedules/reconcile", {});
 }
 
+function isAutomaticCampaignReconcileSource(source) {
+  return ["google-drive-monitor", "cloudflare-cron-campaign-publication-reconcile", "macmini-canonical-scheduler"].includes(source);
+}
+
 async function runSchedulerIfDue(force = false) {
   const now = Date.now();
   if (!force && now - lastSchedulerAt < SCHEDULER_INTERVAL_MS) return null;
@@ -7945,6 +7949,7 @@ export {
   isCacheMaintenanceDegraded,
   isAdrotatePublicationConfirmed,
   isAdrotateSnapshotPublicationConfirmed,
+  isAutomaticCampaignReconcileSource,
   isDiscardableDraftCampaign,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,

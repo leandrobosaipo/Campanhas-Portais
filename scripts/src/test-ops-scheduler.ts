@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildRootIdempotencyKey,
   buildRetryJobInput,
+  buildSchedulerReadback,
   buildScheduleId,
   reconcileDueSchedules,
   resolveCanonicalSchedule,
@@ -68,6 +69,14 @@ test("preserva ausencia de contagem como null", () => {
   assert.equal(serializeOptionalCount(null), null);
   assert.equal(serializeOptionalCount(0), 0);
   assert.equal(serializeOptionalCount("3"), 3);
+});
+
+test("readback identifica o control plane e a proxima decisao canonica", () => {
+  const readback = buildSchedulerReadback(new Date("2026-08-26T21:29:00.000Z"), "macmini");
+  assert.equal(readback.provider, "macmini");
+  assert.equal(readback.timezone, "America/Cuiaba");
+  assert.equal(readback.nextDecision?.routineKind, "campaign-publication-reconcile");
+  assert.equal(readback.nextDecision?.scheduledFor, "2026-08-26T21:30:00.000Z");
 });
 
 test("duas reconciliacoes concorrentes retornam o mesmo job", async () => {
@@ -182,7 +191,7 @@ test("runner mantém heartbeat do job durante execução longa", async () => {
 test("trigger do Mac Mini apenas pede reconciliacao para a API", async () => {
   process.env.ADOPS_RUNNER_TEST_MODE = "1";
   // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
-  const { runSchedulerTrigger } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  const { isAutomaticCampaignReconcileSource, runSchedulerTrigger } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
   const calls: Array<{ path: string; body: unknown }> = [];
   const result = await runSchedulerTrigger("macmini", async (path: string, body: unknown) => {
     calls.push({ path, body });
@@ -192,6 +201,8 @@ test("trigger do Mac Mini apenas pede reconciliacao para a API", async () => {
   assert.equal(result?.ok, true);
   assert.deepEqual(calls, [{ path: "/api/ops/schedules/reconcile", body: {} }]);
   assert.equal(await runSchedulerTrigger("disabled", async () => ({ ok: false })), null);
+  assert.equal(isAutomaticCampaignReconcileSource("macmini-canonical-scheduler"), true);
+  assert.equal(isAutomaticCampaignReconcileSource("manual-operator"), false);
 });
 
 test("Cloudflare em modo Mac Mini observa sem escrever no D1", () => {

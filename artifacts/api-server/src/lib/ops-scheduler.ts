@@ -204,3 +204,15 @@ export function resolveCanonicalSchedule(now: Date): CanonicalScheduleDecision[]
     return { ...decision, nextRecoveryAt: next?.scheduledFor ?? null };
   });
 }
+
+export function buildSchedulerReadback(now: Date, provider: string) {
+  const decisions = resolveCanonicalSchedule(now);
+  const nextDecision = decisions.find((decision) => Date.parse(decision.scheduledFor) >= now.getTime()) ?? null;
+  return {
+    provider: provider || null,
+    timezone: COD5_SCHEDULER_TIMEZONE,
+    evaluatedAt: now.toISOString(),
+    nextDecision,
+    decisions,
+  };
+}

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
-import { buildRetryJobInput, reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
+import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
 
 type JobKind =
@@ -1284,7 +1284,39 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
       hasRecentRunner: heartbeats[0]?.updated_at ? (Date.now() - Date.parse(heartbeats[0].updated_at)) <= 30 * 60_000 : null,
       count: heartbeats.length || null,
     },
+    scheduler: buildSchedulerReadback(new Date(), ADOPS_CONTROL_PLANE_PROVIDER),
   });
+});
+
+router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => {
+  const date = readOptionalString(req.body?.date);
+  const state = readOptionalString(req.body?.state);
+  const pendingInsertionIds = Array.isArray(req.body?.pendingInsertionIds)
+    ? (req.body.pendingInsertionIds as unknown[])
+      .map((item: unknown) => readOptionalNumber(item))
+      .filter((item: number | null): item is number => item !== null)
+      .sort((a: number, b: number) => a - b)
+    : [];
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !state) {
+    res.status(400).json({ error: "bad_request", details: "date e state são obrigatórios." });
+    return;
+  }
+  const previous = await pool.query<{ total: string | number }>(
+    "SELECT COUNT(*) AS total FROM daily_print_alerts WHERE target_date = $1",
+    [date],
+  );
+  if (state === "resolved" && Number(previous.rows[0]?.total ?? 0) === 0) {
+    res.json({ ok: true, claimed: false, reason: "no_previous_incident" });
+    return;
+  }
+  const fingerprint = `${date}:${state}:${pendingInsertionIds.join(",")}`;
+  const inserted = await pool.query(
+    `INSERT INTO daily_print_alerts (fingerprint, target_date, state, pending_ids_json, claimed_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (fingerprint) DO NOTHING`,
+    [fingerprint, date, state, JSON.stringify(pendingInsertionIds), nowIso()],
+  );
+  res.json({ ok: true, claimed: inserted.rowCount === 1 });
 });
 
 router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
@@ -1409,9 +1441,25 @@ function buildOpsApiCatalog() {
         id: "queue-overview",
         method: "GET",
         path: "/api/ops/queue/overview",
-        purpose: "Ver jobs ativos, fila e totais do dia.",
+        purpose: "Ver jobs ativos, fila, runners e decisões do scheduler canônico do Mac Mini.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/queue/overview`,
+      },
+      {
+        id: "schedule-reconcile",
+        method: "POST",
+        path: "/api/ops/schedules/reconcile",
+        purpose: "Reconciliar a janela atual na API canônica; a API calcula data, horário e idempotência.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/schedules/reconcile -d '{}'`,
+      },
+      {
+        id: "daily-print-alert-claim",
+        method: "POST",
+        path: "/api/ops/daily-print-alerts/claim",
+        purpose: "Reservar idempotentemente uma transição de alerta diário no Postgres.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/daily-print-alerts/claim -d '{"date":"2026-08-26","state":"incident","pendingInsertionIds":[2713]}'`,
       },
       {
         id: "runtime-readiness",
