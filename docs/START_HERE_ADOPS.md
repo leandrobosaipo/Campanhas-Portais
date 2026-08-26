@@ -29,6 +29,7 @@ A pasta `/Users/leandrobosaipo/.openclaw/Campanhas-Portais` é somente históric
 | Conhecer o estado confirmado | `docs/status-do-projeto.md` | Explicação |
 | Diagnosticar regras de captura | `docs/adops/capture-config/README.md` | Referência |
 | Operar o scheduler canônico | `docs/adops/macmini-control-plane-scheduler-runbook.md` | How-to |
+| Acompanhar o rollout do scheduler | `docs/adops/macmini-control-plane-scheduler-rollout-2026-08-26.md` | Evidência |
 
 ## Fluxo canônico
 

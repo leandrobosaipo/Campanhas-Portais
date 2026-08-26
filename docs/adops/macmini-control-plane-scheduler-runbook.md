@@ -1,8 +1,9 @@
 # Runbook — scheduler canônico no Mac Mini
 
-> Estado: pronto para cutover controlado
+> Estado: em rollout controlado de 72 horas
 > Timezone editorial: `America/Cuiaba`
 > Autoridade: API AdOps + PostgreSQL no Mac Mini
+> Evidências do rollout: `docs/adops/macmini-control-plane-scheduler-rollout-2026-08-26.md`
 
 ## Contrato
 
