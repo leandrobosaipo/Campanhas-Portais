@@ -6,7 +6,7 @@ Rollout ativo e em monitoramento. Este documento registra somente evidências co
 
 ## Release ativo
 
-- SHA: `08f453d3c77d634a05642860971c625aefe81cfc`
+- SHA: `ae62c02e27b1c034f8034099e7ec29f57eb26d44`
 - Fonte de decisão: API AdOps no Mac Mini (`scheduler.provider=macmini`)
 - Worker público: proxy/shadow do control plane
 - Telegram Worker: adaptador de entrega
@@ -89,6 +89,15 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Canário durante execução: duas chamadas criaram/reutilizaram um único sucessor `7af631fd-cd90-4358-b5e3-0bcd4d2247ee` enquanto o primeiro estava `running`.
 - Ambos os jobs chegaram a `completed`.
 - O `notBefore` persistido foi preservado nas respostas duplicadas.
+
+## Gate de recuperação completa
+
+- Release: `ae62c02e27b1c034f8034099e7ec29f57eb26d44`
+- Backup: `adops-before-ae62c02e27b1-20260826T224714Z.sql.gz`
+- O readback da janela já vencida de 18h30 retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e nenhum job criado.
+- O canário natural das 19h retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e nenhum job criado.
+- A consulta ao histórico confirmou zero registros com `scheduleId=daily-print-recovery:2026-08-26:19:00`.
+- A fila permaneceu vazia e os três runners mantiveram heartbeat recente.
 
 ## Deploy e rollback
 
