@@ -180,10 +180,13 @@ export async function reconcileDueSchedules(
 export function resolveCanonicalSchedule(now: Date): CanonicalScheduleDecision[] {
   const today = cod5_date_formatter.format(now);
   const yesterday = previousDate(today);
-  const currentLocalMinute = localDateTime(now);
-  const scheduled = COD5_SCHEDULER_ROUTINES.map((routine) => {
+  const routines = localDateTime(now).slice(11, 16) <= "08:00"
+    ? [{ routineKind: "evidence-monthly-report" as const, jobKind: "evidence-monthly-report" as const, dispatchWindow: "22:15", targetDate: "yesterday" as const, maxAttempts: 1 }, ...COD5_SCHEDULER_ROUTINES]
+    : COD5_SCHEDULER_ROUTINES;
+  const scheduled = routines.map((routine, routineIndex) => {
     const targetDate = routine.targetDate === "yesterday" ? yesterday : today;
-    const scheduleDate = routine.targetDate === "yesterday" ? today : targetDate;
+    const previousDayReport = routineIndex === 0 && routines.length > COD5_SCHEDULER_ROUTINES.length;
+    const scheduleDate = previousDayReport ? yesterday : routine.targetDate === "yesterday" ? today : targetDate;
     const scheduledFor = localScheduleToUtc(scheduleDate, routine.dispatchWindow);
     return {
       routineKind: routine.routineKind,
@@ -192,13 +195,28 @@ export function resolveCanonicalSchedule(now: Date): CanonicalScheduleDecision[]
       timezone: COD5_SCHEDULER_TIMEZONE,
       scheduledFor: scheduledFor.toISOString(),
       dispatchWindow: routine.dispatchWindow,
-      due: currentLocalMinute === `${scheduleDate}T${routine.dispatchWindow}`,
+      due: false,
       maxAttempts: routine.maxAttempts,
       nextRecoveryAt: null,
     } satisfies CanonicalScheduleDecision;
   });
 
-  return scheduled.map((decision, index) => {
+  const activeJobIndexes = new Map<string, number>();
+  scheduled.forEach((decision, index) => {
+    if (!decision.jobKind || Date.parse(decision.scheduledFor) > now.getTime()) return;
+    const family = decision.jobKind === "print-batch" ? "evidence" : decision.jobKind;
+    activeJobIndexes.set(family, index);
+  });
+  const activeSignalIndex = scheduled.reduce((latest, decision, index) => (
+    !decision.jobKind && Date.parse(decision.scheduledFor) <= now.getTime() ? index : latest
+  ), -1);
+
+  return scheduled.map((rawDecision, index) => {
+    const decision = {
+      ...rawDecision,
+      due: [...activeJobIndexes.values()].includes(index)
+        || (activeSignalIndex > Math.max(-1, ...activeJobIndexes.values()) && index === activeSignalIndex),
+    };
     if (decision.routineKind !== "daily-print" && decision.routineKind !== "daily-print-recovery") return decision;
     const next = scheduled.slice(index + 1).find((candidate) => candidate.routineKind === "daily-print-recovery");
     return { ...decision, nextRecoveryAt: next?.scheduledFor ?? null };

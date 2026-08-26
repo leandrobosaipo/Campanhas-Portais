@@ -4,6 +4,7 @@ import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "./sched
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
+import { resolveDailyPrintAlertDecision } from "../../shared/daily-print-alert-decision.mjs";
 import { buildDailyPrintRecoveryWindow } from "./daily-print-recovery-window";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
@@ -3687,6 +3688,10 @@ export default {
 
     if (path === "/api/ops/queue/overview") {
       return jsonNoStore(await getQueueOverview(env));
+    }
+
+    if (path === "/api/ops/daily-print-alerts/evaluate") {
+      return jsonNoStore(resolveDailyPrintAlertDecision(new Date()));
     }
 
     if (path === "/api/ops/daily-print-alerts/claim") {

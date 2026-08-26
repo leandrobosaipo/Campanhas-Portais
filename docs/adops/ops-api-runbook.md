@@ -67,6 +67,8 @@ Jobs destinados ao runner nascem no Postgres como `ready_for_runner`. A API do M
 
 O trigger chama `POST /api/ops/schedules/reconcile` sem informar data ou rotina. A API usa `America/Cuiaba`, gera `scheduleId` e chave idempotente e devolve `created`, `duplicate`, `not_due` ou `blocked`. O teste integrado de release deve confirmar o mesmo `jobId` no `/progress` e no Postgres.
 
+O Telegram de migração é apenas entregador: `GET /api/ops/daily-print-alerts/evaluate` informa `due`, `targetDate` e `escalation`; o claim idempotente continua em `POST /api/ops/daily-print-alerts/claim`, persistido no Postgres.
+
 ### Rotina diária
 
 1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.

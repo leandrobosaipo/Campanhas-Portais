@@ -11,6 +11,7 @@ import {
   serializeOptionalCount,
   validateDryRunNow,
 } from "../../artifacts/api-server/src/lib/ops-scheduler";
+import { resolveDailyPrintAlertDecision } from "../../ops/shared/daily-print-alert-decision.mjs";
 import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "../../ops/cloudflare-public-api/src/scheduler-shadow";
 
 test("resolve o lote das 18h de Cuiaba a partir de UTC", () => {
@@ -59,6 +60,43 @@ test("nao considera uma janela futura como devida", () => {
   assert.equal(dailyPrint?.scheduledFor, "2026-08-26T22:00:00.000Z");
 });
 
+test("recupera a ultima janela perdida sem criar todos os lotes anteriores", () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T23:37:00.000Z"));
+  const duePrints = decisions.filter((decision) => decision.due && ["daily-print", "daily-print-recovery"].includes(decision.routineKind));
+  assert.deepEqual(duePrints.map((decision) => decision.dispatchWindow), ["19:30"]);
+});
+
+test("payload matinal usa ontem e caminho de reconstrução auditada", () => {
+  const decision = resolveCanonicalSchedule(new Date("2026-08-27T12:04:00.000Z"))
+    .find((item) => item.routineKind === "daily-print-morning-recovery");
+  assert.equal(decision?.due, true);
+  assert.equal(decision?.targetDate, "2026-08-26");
+});
+
+test("escalonamento das 08h30 não suprime a recuperação matinal", () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-27T12:30:00.000Z"));
+  assert.equal(decisions.find((item) => item.routineKind === "daily-print-morning-recovery")?.due, true);
+  assert.equal(decisions.find((item) => item.routineKind === "daily-print-escalation")?.due, true);
+});
+
+test("relatório perdido antes da meia-noite continua recuperável até 08h", () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-27T05:00:00.000Z"));
+  const due = decisions.filter((item) => item.due && item.routineKind === "evidence-monthly-report");
+  assert.equal(due.length, 1);
+  assert.equal(due[0]?.targetDate, "2026-08-26");
+  assert.equal(due[0]?.scheduledFor, "2026-08-27T02:15:00.000Z");
+});
+
+test("catch-up preserva relatório e recuperação como famílias independentes", () => {
+  const late = resolveCanonicalSchedule(new Date("2026-08-27T02:16:00.000Z"));
+  assert.equal(late.find((item) => item.routineKind === "daily-print-recovery" && item.dispatchWindow === "21:30")?.due, true);
+  assert.equal(late.find((item) => item.routineKind === "evidence-monthly-report")?.due, true);
+
+  const morning = resolveCanonicalSchedule(new Date("2026-08-27T12:00:00.000Z"));
+  assert.equal(morning.find((item) => item.routineKind === "daily-print-morning-recovery")?.due, true);
+  assert.equal(morning.find((item) => item.routineKind === "evidence-monthly-report" && item.targetDate === "2026-08-26")?.due, true);
+});
+
 test("gera identificadores estaveis por rotina data e janela", () => {
   assert.equal(buildScheduleId("daily-print", "2026-08-26", "18:00"), "daily-print:2026-08-26:18:00");
   assert.equal(buildRootIdempotencyKey("daily-print", "2026-08-26", "18:00"), "daily-print:2026-08-26:18:00");
@@ -69,6 +107,17 @@ test("preserva ausencia de contagem como null", () => {
   assert.equal(serializeOptionalCount(null), null);
   assert.equal(serializeOptionalCount(0), 0);
   assert.equal(serializeOptionalCount("3"), 3);
+});
+
+test("API canônica decide a janela de alerta Telegram", () => {
+  assert.deepEqual(resolveDailyPrintAlertDecision(new Date("2026-08-27T12:30:00.000Z")), {
+    due: true,
+    localTime: "08:30",
+    escalation: true,
+    targetDate: "2026-08-26",
+    timezone: "America/Cuiaba",
+  });
+  assert.equal(resolveDailyPrintAlertDecision(new Date("2026-08-27T12:35:00.000Z")).due, false);
 });
 
 test("readback identifica o control plane e a proxima decisao canonica", () => {
@@ -99,12 +148,12 @@ test("duas reconciliacoes concorrentes retornam o mesmo job", async () => {
   const firstDaily = first.find((decision) => decision.scheduleId === "daily-print:2026-08-26:18:00");
   const secondDaily = second.find((decision) => decision.scheduleId === "daily-print:2026-08-26:18:00");
 
-  assert.equal(jobs.size, 1);
+  assert.equal(jobs.size, 2);
   assert.equal(firstDaily?.jobId, secondDaily?.jobId);
   assert.deepEqual(new Set([firstDaily?.outcome, secondDaily?.outcome]), new Set(["created", "duplicate"]));
 });
 
-test("reconciliacao nao cria job fora da janela", async () => {
+test("reconciliacao recupera somente a janela ativa", async () => {
   const decisions = resolveCanonicalSchedule(new Date("2026-08-26T21:59:00.000Z"));
   let creates = 0;
   const result = await reconcileDueSchedules(decisions, async () => {
@@ -112,8 +161,11 @@ test("reconciliacao nao cria job fora da janela", async () => {
     return { jobId: "unexpected", created: true };
   });
 
-  assert.equal(creates, 0);
-  assert.ok(result.every((decision) => decision.outcome === "not_due"));
+  assert.equal(creates, 2);
+  assert.deepEqual(result.filter((decision) => decision.outcome === "created").map((decision) => decision.scheduleId), [
+    "daily-print-morning-recovery:2026-08-25:08:00",
+    "campaign-publication-reconcile:2026-08-26:17:30",
+  ]);
 });
 
 test("instante informado pelo caller só é aceito em dry-run", () => {
@@ -186,6 +238,69 @@ test("runner mantém heartbeat do job durante execução longa", async () => {
   assert.equal(result, "completed");
   assert.ok(heartbeats.length >= 2);
   assert.deepEqual(new Set(heartbeats), new Set(["job-lease"]));
+});
+
+test("runner não conclui job depois de perder o lease", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { runWithJobHeartbeat } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  let calls = 0;
+  await assert.rejects(
+    runWithJobHeartbeat(
+      "job-lost",
+      async (assertLease: () => void) => {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        assertLease();
+        return "unexpected";
+      },
+      async () => {
+        calls += 1;
+        if (calls > 1) throw new Error("lease_lost");
+      },
+      5,
+    ),
+    /lease_lost/,
+  );
+});
+
+test("runner expira lease local após heartbeat sem resposta", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { runWithJobHeartbeat } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  let calls = 0;
+  await assert.rejects(runWithJobHeartbeat(
+    "job-network-partition",
+    async (assertLease: () => void) => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertLease();
+    },
+    async () => {
+      calls += 1;
+      if (calls > 1) throw new Error("network_unavailable");
+    },
+    5,
+    12,
+  ), /network_unavailable/);
+});
+
+test("runner expira lease mesmo com fetch de heartbeat pendurado", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { runWithJobHeartbeat } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  let calls = 0;
+  await assert.rejects(runWithJobHeartbeat(
+    "job-hanging-heartbeat",
+    async (assertLease: () => void) => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assertLease();
+    },
+    async () => {
+      calls += 1;
+      if (calls > 1) await new Promise(() => undefined);
+    },
+    5,
+    12,
+  ), /lease_timeout/);
 });
 
 test("trigger do Mac Mini apenas pede reconciliacao para a API", async () => {

@@ -146,6 +146,7 @@ function startRunnerHealthServer() {
 async function request(pathname, init = {}) {
   const response = await fetch(`${OPS_API_BASE_URL}${pathname}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(30_000),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${OPS_API_TOKEN}`,
@@ -202,8 +203,9 @@ async function markMonthlyReportRefreshAfterApproval(date, insertionId) {
   }
 }
 
-async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null }) {
+async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null, assertLease = () => undefined }) {
   if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
+  assertLease();
   const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
   const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
     date,
@@ -219,6 +221,7 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
 
   const deadline = Date.now() + 30 * 60_000;
   while (Date.now() < deadline) {
+    assertLease();
     const job = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/jobs/${encodeURIComponent(jobId)}`);
     await progressJob(outerJobId, {
       stage: "capture_async_wait",
@@ -238,6 +241,7 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
       throw new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
     }
     await sleep(5000);
+    assertLease();
   }
   throw new Error(`Timeout aguardando captura assíncrona ${jobId} para ${insertionId}/${date}.`);
 }
@@ -262,13 +266,27 @@ async function sendRunnerHeartbeat(force = false, jobId = null) {
   });
 }
 
-async function runWithJobHeartbeat(jobId, operation, sender, intervalMs) {
+async function runWithJobHeartbeat(jobId, operation, sender, intervalMs, leaseTimeoutMs = Math.max(intervalMs * 3, 60_000)) {
   await sender(jobId);
+  let leaseError = null;
+  let lastAcceptedAt = Date.now();
+  const assertLease = () => {
+    if (leaseError) throw leaseError;
+    if (Date.now() - lastAcceptedAt >= leaseTimeoutMs) throw new Error("lease_timeout");
+  };
   const timer = setInterval(() => {
-    void sender(jobId).catch(() => null);
+    void sender(jobId).then(() => {
+      lastAcceptedAt = Date.now();
+    }).catch((error) => {
+      if (String(error instanceof Error ? error.message : error).includes("lease_lost") || Date.now() - lastAcceptedAt >= leaseTimeoutMs) {
+        leaseError = error instanceof Error ? error : new Error(String(error));
+      }
+    });
   }, intervalMs);
   try {
-    return await operation();
+    const result = await operation(assertLease);
+    assertLease();
+    return result;
   } finally {
     clearInterval(timer);
   }
@@ -5919,7 +5937,7 @@ async function executeDrivePiIngest(payload) {
   };
 }
 
-async function executePrintBatch(job) {
+async function executePrintBatch(job, assertLease = () => undefined) {
   const startedAtMs = Date.now();
   const payload = job?.payload || {};
   const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.date || ""))
@@ -5950,6 +5968,7 @@ async function executePrintBatch(job) {
   const failed = [];
   let transportError = null;
   for (const [index, item] of candidates.entries()) {
+    assertLease();
     const insertionId = readPositiveInteger(item?.adops?.insertionId);
     const missingDates = Array.isArray(item?.evidence?.missingDates) ? item.evidence.missingDates : [];
     const invalidDates = Array.isArray(item?.evidence?.invalidDates) ? item.evidence.invalidDates : [];
@@ -5975,7 +5994,9 @@ async function executePrintBatch(job) {
         candidate: payload?.recoveryMode === "late_publication_recovery",
         promote: payload?.recoveryMode === "late_publication_recovery",
         reconstructionReason: payload?.recoveryMode === "late_publication_recovery" ? "late_publication_recovery" : null,
+        assertLease,
       });
+      assertLease();
       captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
@@ -7685,7 +7706,7 @@ async function executeCampaignEvidenceExport(job) {
   };
 }
 
-async function handleJob(job) {
+async function handleJob(job, assertLease = () => undefined) {
   const payload = job?.payload || {};
   if (!job?.kind) {
     throw new Error("Job sem kind.");
@@ -7694,7 +7715,7 @@ async function handleJob(job) {
     return executeSyncPlanilha(payload);
   }
   if (job.kind === "print-batch") {
-    return executePrintBatch(job);
+    return executePrintBatch(job, assertLease);
   }
   if (job.kind === "print-backfill") {
     return executePrintBackfill(job);
@@ -7835,7 +7856,7 @@ async function runOnce(poolKinds = kinds) {
   try {
     const result = await runWithJobHeartbeat(
       job.id,
-      () => handleJob(job),
+      (assertLease) => handleJob(job, assertLease),
       (jobId) => sendRunnerHeartbeat(true, jobId),
       Math.max(5_000, Math.floor(RUNNER_HEARTBEAT_INTERVAL_MS / 2)),
     );
@@ -7864,7 +7885,6 @@ async function runPool(pool, workerIndex) {
     try {
       if (pool.maintenance && workerIndex === 0) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
-        await runSchedulerIfDue(false).catch((error) => console.warn("[runner] scheduler falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
       }
       const handled = await runOnce(pool.kinds);
@@ -7877,6 +7897,13 @@ async function runPool(pool, workerIndex) {
       console.error(`[runner] pool ${poolLabel} com erro`, runnerLastCycleError);
       await sleep(POLL_INTERVAL_MS);
     }
+  }
+}
+
+async function runSchedulerLoop() {
+  for (;;) {
+    await runSchedulerIfDue(false).catch((error) => console.warn("[runner] scheduler falhou", error instanceof Error ? error.message : String(error)));
+    await sleep(Math.min(SCHEDULER_INTERVAL_MS, 30_000));
   }
 }
 
@@ -7919,6 +7946,7 @@ async function main() {
   const workers = pools.flatMap((pool) => (
     Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex))
   ));
+  if (CONTROL_PLANE_PROVIDER === "macmini") workers.push(runSchedulerLoop());
   if (DRIVE_PI_MONITOR_ENABLED) workers.push(runDrivePiMonitorLoop());
   await Promise.all(workers);
 }

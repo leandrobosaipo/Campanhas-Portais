@@ -1594,18 +1594,11 @@ export default {
 
   async scheduled(controller: { cron?: string; scheduledTime?: number }, env: Env): Promise<void> {
     if (normalizeText(env.TELEGRAM_NOTIFICATIONS_ENABLED) === "false") return;
-    const scheduled = new Date(controller.scheduledTime ?? Date.now());
-    const localTime = new Intl.DateTimeFormat("pt-BR", { timeZone: env.TELEGRAM_TIMEZONE ?? "America/Cuiaba", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(scheduled);
-    const alertTimes = new Set(["18:45", "19:15", "19:45", "20:15", "20:45", "21:15", "21:45", "22:00", "08:30"]);
-    if (!alertTimes.has(localTime)) return;
-    const today = currentDateInTimezone(env.TELEGRAM_TIMEZONE ?? "America/Cuiaba");
-    const escalation = localTime === "08:30";
-    const alertDate = escalation
-      ? new Date(`${today}T12:00:00Z`).toLocaleDateString("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" })
-      : today;
-    const targetDate = escalation
-      ? new Date(Date.parse(`${alertDate}T00:00:00-04:00`) - 24 * 60 * 60_000).toLocaleDateString("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" })
-      : alertDate;
+    const decision = await adopsFetch(env, "/api/ops/daily-print-alerts/evaluate") as { due?: boolean; localTime?: string; escalation?: boolean; targetDate?: string };
+    if (decision.due !== true || !decision.targetDate) return;
+    const localTime = String(decision.localTime ?? "");
+    const escalation = decision.escalation === true;
+    const targetDate = decision.targetDate;
     try {
       await sendDailyPrintAlert(env, targetDate, escalation);
     } catch (error) {

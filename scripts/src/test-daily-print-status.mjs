@@ -25,6 +25,7 @@ test("resume a última rotina usando somente a auditoria canônica do próprio l
     startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z",
     expected: 16, approved: 14, missing: 2, invalid: 0,
     summary: "14 de 16 inserções tiveram o print aprovado; 2 precisam de nova tentativa.",
+    errorCode: null, failedInsertionIds: [], nextRecoveryAt: "2026-08-18T01:30:00.000Z",
   });
   assert.deepEqual(result.lastFullyApproved, { targetDate: "2026-08-16", finishedAt: "2026-08-16T22:10:00.000Z" });
   assert.equal(JSON.stringify(result).includes("daily_print_audit_incomplete"), false);
@@ -82,4 +83,14 @@ test("lê auditoria de jobs legados aninhada em execution", () => {
   }], targetDate: "2026-08-22" });
   assert.equal(result.lastAttempt.approved, 18);
   assert.equal(result.lastAttempt.status, "completed");
+});
+
+test("lê o contrato canônico do scheduler Mac Mini", () => {
+  const result = buildDailyPrintStatus({ jobs: [{
+    id: "macmini", status: "failed", createdAt: "2026-08-26T22:00:00.000Z", updatedAt: "2026-08-26T22:10:00.000Z",
+    payload: { source: "macmini-canonical-scheduler", targetDate: "2026-08-26", routineKind: "daily-print" },
+    result: { canonicalAudit: { expected: 9, approved: 8, missing: 1, invalid: 0 } },
+  }], targetDate: "2026-08-26" });
+  assert.equal(result.lastAttempt.jobId, "macmini");
+  assert.equal(result.lastAttempt.targetDate, "2026-08-26");
 });

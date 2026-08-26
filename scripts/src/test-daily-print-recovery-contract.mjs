@@ -25,7 +25,8 @@ test("alerta operacional usa claim idempotente e só resolve incidente já abert
   assert.match(worker, /no_previous_incident/);
   assert.match(worker, /INSERT OR IGNORE INTO daily_print_alerts/);
   assert.match(telegram, /daily-print-alerts\/claim/);
-  assert.match(telegram, /const alertTimes = new Set\(\["18:45".+"08:30"\]\)/);
+  assert.match(telegram, /\/api\/ops\/daily-print-alerts\/evaluate/);
+  assert.match(telegram, /decision\.due !== true/);
 });
 
 test("aprovação interrompe retries e runner não recaptura evidência válida", () => {

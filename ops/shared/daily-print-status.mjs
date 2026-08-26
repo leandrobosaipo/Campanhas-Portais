@@ -1,6 +1,14 @@
 const TIME_ZONE = "America/Cuiaba";
 const DAILY_SOURCE = "cloudflare-cron-daily-print";
 
+function dailyTargetDate(job) {
+  if (job?.payload?.source === DAILY_SOURCE) return job?.payload?.date;
+  if (job?.payload?.source === "macmini-canonical-scheduler" && ["daily-print", "daily-print-recovery", "daily-print-morning-recovery"].includes(job?.payload?.routineKind)) {
+    return job?.payload?.targetDate;
+  }
+  return null;
+}
+
 function dateInCuiaba(value) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
   const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
@@ -83,11 +91,11 @@ function summarize(counts, status) {
 
 export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate = null } = {}) {
   const dailyJobs = (Array.isArray(jobs) ? jobs : [])
-    .filter((job) => job?.payload?.source === DAILY_SOURCE && /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.date || "")))
+    .filter((job) => /^\d{4}-\d{2}-\d{2}$/.test(String(dailyTargetDate(job) || "")))
     .sort((left, right) => Date.parse(right.createdAt || right.updatedAt || 0) - Date.parse(left.createdAt || left.updatedAt || 0));
   const requestedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(targetDate || "")) ? String(targetDate) : null;
   const latest = (requestedDate
-    ? dailyJobs.filter((job) => String(job.payload.date) === requestedDate)
+      ? dailyJobs.filter((job) => String(dailyTargetDate(job)) === requestedDate)
     : dailyJobs)[0] ?? null;
   const counts = latest ? safeCounts(latest) : null;
   const rawStatus = String(latest?.status || "");
@@ -104,7 +112,7 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
           : "failed";
   const lastAttempt = latest ? {
     jobId: String(latest.id),
-    targetDate: String(latest.payload.date),
+    targetDate: String(dailyTargetDate(latest)),
     status: displayStatus,
     startedAt: latest.startedAt ?? latest.createdAt ?? null,
     finishedAt: ["completed", "failed"].includes(String(latest.status)) ? latest.updatedAt ?? null : null,
@@ -127,6 +135,6 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
     nextRunAt: nextRunAt(now),
     ...(requestedDate ? { requestedDate } : {}),
     lastAttempt,
-    lastFullyApproved: approvedJob ? { targetDate: approvedJob.payload.date, finishedAt: approvedJob.updatedAt ?? null } : null,
+    lastFullyApproved: approvedJob ? { targetDate: dailyTargetDate(approvedJob), finishedAt: approvedJob.updatedAt ?? null } : null,
   };
 }

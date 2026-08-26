@@ -4,6 +4,10 @@ import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
 import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
+// @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
+import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
+// @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
+import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
 
 type JobKind =
   | "print-batch"
@@ -890,6 +894,13 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
   }
 }
 
+function competenciaForDate(date: string) {
+  const match = date.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  const months = ["", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+  return `${months[Number(match[2])]}\/${match[1]}`;
+}
+
 router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
   const dryRun = req.body?.dryRun === true || req.body?.shadow === true;
   const requestedNow = validateDryRunNow(dryRun, req.body?.now);
@@ -903,6 +914,9 @@ router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
     if (!input.jobKind) throw new Error(`Rotina sem jobKind: ${input.routineKind}`);
     const created = await createIdempotentOpsJob(input.jobKind, {
       ...input,
+      date: input.targetDate,
+      ...(input.routineKind === "daily-print-morning-recovery" ? { recoveryMode: "late_publication_recovery" } : {}),
+      ...(input.jobKind === "evidence-monthly-report" ? { competencia: competenciaForDate(input.targetDate) } : {}),
       source: "macmini-canonical-scheduler",
     }, req.body?.shadow === true ? "cloudflare-shadow" : "macmini-scheduler", input.idempotencyKey);
     return { jobId: created.jobId, created: !created.duplicate };
@@ -920,7 +934,15 @@ async function getOpsJob(id: string) {
   return result.rows[0] ? describeJob(result.rows[0]) : null;
 }
 
-async function updateOpsJob(id: string, patch: { status?: JobStatus; result?: unknown; error?: string | null; runnerId?: string | null }) {
+async function updateOpsJob(id: string, patch: {
+  status?: JobStatus;
+  result?: unknown;
+  error?: string | null;
+  runnerId?: string | null;
+  expectedStatus?: JobStatus;
+  expectedRunnerId?: string | null;
+  expectedUpdatedAt?: string;
+}) {
   const current = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [id]);
   const record = current.rows[0];
   if (!record) return null;
@@ -933,8 +955,11 @@ async function updateOpsJob(id: string, patch: { status?: JobStatus; result?: un
     `UPDATE ops_jobs
        SET status = $1, result_json = $2, error_text = $3, runner_id = $4, updated_at = $5
      WHERE id = $6
+       AND ($7::text IS NULL OR status = $7)
+       AND ($8::text IS NULL OR runner_id = $8)
+       AND ($9::text IS NULL OR updated_at = $9)
      RETURNING *`,
-    [status, resultJson, errorText, runnerId, updatedAt, id],
+    [status, resultJson, errorText, runnerId, updatedAt, id, patch.expectedStatus ?? null, patch.expectedRunnerId ?? null, patch.expectedUpdatedAt ?? null],
   );
   return updated.rows[0] ?? null;
 }
@@ -1155,6 +1180,7 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
      WHERE id = (
        SELECT id FROM ops_jobs
        WHERE status = 'ready_for_runner' ${kindFilter}
+         AND (payload_json::jsonb ->> 'notBefore' IS NULL OR payload_json::jsonb ->> 'notBefore' <= $${values.length + 2})
        ORDER BY created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
@@ -1166,31 +1192,52 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
 });
 
 router.post("/ops/runner/jobs/:id/progress", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     result: req.body?.result ?? null,
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     status: "completed",
     result: req.body?.result ?? { ok: true },
     error: null,
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     status: "failed",
     result: req.body?.result ?? null,
     error: readOptionalString(req.body?.error) ?? "Runner reportou falha sem detalhe.",
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
@@ -1205,7 +1252,15 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
   if (!dryRun) {
     for (const record of stale) {
       const failure = buildWatchdogFailure(record, nowIso());
-      await updateOpsJob(record.id, { status: "failed", error: failure.error, result: failure.result, runnerId: record.runner_id });
+      const failed = await updateOpsJob(record.id, {
+        status: "failed",
+        error: failure.error,
+        result: failure.result,
+        runnerId: record.runner_id,
+        expectedStatus: record.status,
+        expectedUpdatedAt: record.updated_at,
+      });
+      if (!failed) continue;
       if (record.status !== "running") continue;
       const retry = buildRetryJobInput({
         parentJobId: record.id,
@@ -1217,7 +1272,10 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
       if (!retry || !OPS_JOB_KINDS.includes(retry.jobKind as JobKind)) continue;
       const created = await createIdempotentOpsJob(
         retry.jobKind as JobKind,
-        retry.payload,
+        {
+          ...retry.payload,
+          notBefore: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
         "watchdog-recovery",
         retry.idempotencyKey,
       );
@@ -1286,6 +1344,25 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
     },
     scheduler: buildSchedulerReadback(new Date(), ADOPS_CONTROL_PLANE_PROVIDER),
   });
+});
+
+router.get("/ops/daily-print-status", async (req, res): Promise<void> => {
+  const targetDate = readOptionalString(req.query.date);
+  if (targetDate && !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "date deve estar em YYYY-MM-DD." });
+    return;
+  }
+  const result = await pool.query<OpsJobRecord>(
+    `SELECT * FROM ops_jobs
+      WHERE kind = 'print-batch'
+      ORDER BY created_at DESC
+      LIMIT 100`,
+  );
+  res.json(buildDailyPrintStatus({ jobs: result.rows.map(describeJob), now: new Date(), targetDate }));
+});
+
+router.get("/ops/daily-print-alerts/evaluate", (_req, res): void => {
+  res.json(resolveDailyPrintAlertDecision(new Date()));
 });
 
 router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => {
@@ -1366,7 +1443,13 @@ router.post("/ops/runner/heartbeat", async (req, res): Promise<void> => {
     );
     jobLease = { jobId, accepted: updated.rowCount === 1 };
   }
-  res.status(jobLease && !jobLease.accepted ? 409 : 200).json({ ok: !jobLease || jobLease.accepted, runnerId, receivedAt: nowIso(), jobLease });
+  res.status(jobLease && !jobLease.accepted ? 409 : 200).json({
+    ok: !jobLease || jobLease.accepted,
+    ...(jobLease && !jobLease.accepted ? { error: "lease_lost" } : {}),
+    runnerId,
+    receivedAt: nowIso(),
+    jobLease,
+  });
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {
@@ -2189,8 +2272,123 @@ router.get("/ops/quickstart.html", (_req, res): void => {
 </html>`);
 });
 
-router.post("/ops/jobs/campaign-publication-reconcile", (req, res) => void proxyPublicWorkerJob(req, res));
-router.get("/ops/incidents", (req, res) => void proxyPublicWorkerJob(req, res));
+router.post("/ops/jobs/campaign-publication-reconcile", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate) ?? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba" }).format(new Date());
+  const insertionId = readOptionalNumber(req.body?.insertionId);
+  const mode = req.body?.mode === "preflight" ? "preflight" : "apply";
+  const idempotencyKey = `campaign-publication-reconcile:${targetDate}:${insertionId || "all"}:${mode}`;
+  const created = await createIdempotentOpsJob("campaign-publication-reconcile", {
+    targetDate,
+    insertionId,
+    mode,
+    source: "macmini-protected-api",
+  }, "ops-api", idempotencyKey);
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "campaign-publication-reconcile", ...created });
+});
+
+router.post("/ops/jobs/evidence-monthly-report", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate);
+  const competencia = readOptionalString(req.body?.competencia)?.toUpperCase() ?? null;
+  if (!targetDate || !competencia || competencia !== competenciaForDate(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "Informe targetDate e competência correspondente." });
+    return;
+  }
+  const idempotencyKey = readOptionalString(req.body?.idempotencyKey) ?? `evidence-monthly-report:${targetDate}:22:15`;
+  const created = await createIdempotentOpsJob("evidence-monthly-report", {
+    targetDate,
+    competencia,
+    source: readOptionalString(req.body?.source) ?? "macmini-protected-api",
+  }, "ops-api", idempotencyKey);
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "evidence-monthly-report", ...created });
+});
+
+router.post("/ops/monthly-report-refreshes", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate);
+  const competencia = readOptionalString(req.body?.competencia)?.toUpperCase() ?? null;
+  if (!targetDate || !competencia || competencia !== competenciaForDate(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "Informe targetDate e competência correspondente." });
+    return;
+  }
+  const now = new Date();
+  const minuteBucket = now.toISOString().slice(0, 16);
+  const notBefore = new Date(now.getTime() + 60_000).toISOString();
+  // ponytail: one idempotent refresh per minute; add persisted revisions only if report volume proves this insufficient.
+  const idempotencyKey = `evidence-monthly-report:${competencia}:incremental:${minuteBucket}`;
+  const created = await createIdempotentOpsJob("evidence-monthly-report", {
+    targetDate,
+    competencia,
+    incremental: true,
+    notBefore,
+    source: readOptionalString(req.body?.source) ?? "evidence-approved-refresh",
+  }, "evidence-approved-refresh", idempotencyKey);
+  res.status(202).json({ ok: true, competencia, targetDate, debounceSeconds: 60, ...created, notBefore });
+});
+
+router.get("/ops/daily-print-recoveries", async (req, res): Promise<void> => {
+  const date = readOptionalString(req.query.date);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "bad_request", details: "Informe date em YYYY-MM-DD." });
+    return;
+  }
+  const jobs = await pool.query<OpsJobRecord>(
+    `SELECT * FROM ops_jobs
+      WHERE kind = 'print-batch' AND payload_json::jsonb ->> 'targetDate' = $1
+      ORDER BY created_at DESC LIMIT 20`,
+    [date],
+  );
+  const latest = jobs.rows[0] ? describeJob(jobs.rows[0]) : null;
+  const items = latest ? [latest] : [];
+  const active = latest && ["queued", "ready_for_runner", "running"].includes(latest.status) ? 1 : 0;
+  const failed = latest?.status === "failed" ? 1 : 0;
+  res.json({
+    date,
+    items,
+    evaluator: {
+      status: active ? "retryable" : failed ? "blocked" : items.length ? "complete" : "blocked",
+      pending: active,
+      blocked: failed,
+      reason: items.length ? null : "recovery_not_initialized",
+    },
+  });
+});
+
+router.get("/ops/incidents", async (req, res): Promise<void> => {
+  const configuredToken = process.env.OPS_API_TOKEN?.trim() ?? "";
+  const bearer = req.header("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  if (configuredToken && bearer !== configuredToken) {
+    res.status(401).json({ error: "unauthorized", details: "OPS_API_TOKEN inválido ou ausente." });
+    return;
+  }
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const result = await pool.query<OpsJobRecord>(
+    "SELECT * FROM ops_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT $1",
+    [limit],
+  );
+  const incidentLayer = (record: OpsJobRecord) => {
+    const persisted = (parseJson(record.result_json) as Record<string, unknown> | null)?.incidentLayer;
+    if (["scheduling", "queue_or_runner", "api_or_runner_transport", "audit", "portal", "job_execution"].includes(String(persisted))) return persisted;
+    const error = String(record.error_text ?? "").toLowerCase();
+    if (error.includes("watchdog") || error.includes("expired")) return "queue_or_runner";
+    if (error.includes("checklist") || error.includes("audit")) return "audit";
+    if (error.includes("transport") || error.includes("timeout") || error.includes("network")) return "api_or_runner_transport";
+    if (error.includes("portal") || error.includes("adrotate")) return "portal";
+    return "job_execution";
+  };
+  res.json({ items: result.rows.map((record) => ({
+    id: `job-incident:${record.id}`,
+    fingerprint: createHash("sha256").update(`${record.id}:${record.error_text ?? "failed"}`).digest("hex"),
+    status: "open",
+    layer: incidentLayer(record),
+    jobId: record.id,
+    jobKind: record.kind,
+    summary: sanitizeJobText(record.error_text, 500),
+    error: sanitizeJobText(record.error_text, 1000),
+    evidence: describeJob(record).result,
+    attempts: Number((parseJson(record.payload_json) as Record<string, unknown> | null)?.attempt ?? 1),
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  })) });
+});
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
   const insertionId = typeof req.body?.insertionId === "number" ? req.body.insertionId : null;

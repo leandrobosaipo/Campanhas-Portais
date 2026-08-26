@@ -8,7 +8,9 @@
 
 O runner local chama `POST /api/ops/schedules/reconcile`. O caller não escolhe data, rotina ou comando. A API calcula a janela e cria no máximo um job por `routineKind + targetDate + dispatchWindow`.
 
-Janelas: 08h00 recuperação de ontem; 08h30 escalonamento; 17h30 reconciliação de publicação; 18h00 lote diário; 18h30–21h30 recuperações; 22h15 relatório mensal.
+Janelas: 08h00 recuperação de ontem; 08h30 escalonamento; 17h30 reconciliação de publicação; 18h00 lote diário; 18h30–21h30 recuperações; 22h15 relatório mensal. A última janela operacional continua elegível até a seguinte, evitando perda por reinício ou job longo. Relatório perdido após 22h15 pode ser recuperado até 08h.
+
+Durante as 72 horas de migração, o Worker Telegram continua somente como adaptador de entrega. Ele não decide mais o horário: consulta `GET /api/ops/daily-print-alerts/evaluate` e envia apenas quando a API do Mac Mini responde `due=true`.
 
 `GET /api/ops/queue/overview` mostra `scheduler.provider`, timezone, próxima decisão, todas as decisões do dia, jobs ativos, contagens reais e heartbeat dos runners. Dado ausente aparece como `null`.
 
@@ -31,6 +33,7 @@ Janelas: 08h00 recuperação de ontem; 08h30 escalonamento; 17h30 reconciliaçã
 - evidência auditada não muda de URL;
 - relatório/Telegram leem o estado canônico;
 - Worker shadow não grava D1.
+- Telegram recebe data, escalonamento e decisão de envio da API canônica.
 
 ## Rollback
 
