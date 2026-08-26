@@ -47,3 +47,15 @@ test("claim do runner falha fechado e limita os tipos no Postgres", () => {
   assert.match(ops, /runnerId e ao menos um kind válido são obrigatórios/);
   assert.match(ops, /kind = ANY\(\$\$\{values\.length\}::text\[\]\)/);
 });
+
+test("OpenAPI publica os contratos operacionais do control plane", () => {
+  for (const path of [
+    "/api/ops/daily-print-status",
+    "/api/ops/incidents",
+    "/api/ops/runner/claim-next",
+    "/api/ops/runner/heartbeat",
+    "/api/ops/runner/jobs/{jobId}/progress",
+  ]) {
+    assert(ops.includes(`path: "${path}"`), `catálogo/OpenAPI sem ${path}`);
+  }
+});
