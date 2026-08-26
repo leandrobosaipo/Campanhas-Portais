@@ -6,7 +6,7 @@ Rollout ativo e em monitoramento. Este documento registra somente evidências co
 
 ## Release ativo
 
-- SHA: `ae62c02e27b1c034f8034099e7ec29f57eb26d44`
+- SHA: `02093aadb0eb672aecc97fa5e47f77fc571ba54e`
 - Fonte de decisão: API AdOps no Mac Mini (`scheduler.provider=macmini`)
 - Worker público: proxy/shadow do control plane
 - Telegram Worker: adaptador de entrega
@@ -61,6 +61,8 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 7. A primeira recuperação das 18h30 criou o job desnecessário `95a1c303-8927-4126-856f-fa298e39dac1`, que apenas preservou as oito evidências existentes. A decisão passou a consultar a mesma elegibilidade do runner e a auditoria final dos mesmos IDs antes de criar uma recuperação.
 8. O gate falha aberto para a recuperação (`due=true`) quando a auditoria está indisponível, exige cardinalidade exata entre candidatos e auditados e limita cada `HEAD` a dez segundos.
 9. O resultado do gate é reutilizado por janela; a recuperação matinal reavalia a cada cinco minutos até 08h30 para detectar publicação tardia.
+10. A telemetria do `print-batch` passou a separar fila, captura, upload e auditoria sem converter tempos ausentes em zero (`18ece9a28ebbfb4c0afb00559b08f7b34936f3bd`).
+11. O corte revelou que `campaign-evidence-export` já estava no compose, runner e Worker, mas faltava no allowlist da API canônica. O release `02093aadb0eb672aecc97fa5e47f77fc571ba54e` alinhou tipo, allowlist, labels e timeout longo; o claim permaneceu fechado para tipos desconhecidos.
 
 ## Lote natural das 18h
 
@@ -97,7 +99,20 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O readback da janela já vencida de 18h30 retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e nenhum job criado.
 - O canário natural das 19h retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e nenhum job criado.
 - A consulta ao histórico confirmou zero registros com `scheduleId=daily-print-recovery:2026-08-26:19:00`.
+- O canário natural das 19h30 também retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null`; nenhum registro com `scheduleId=daily-print-recovery:2026-08-26:19:30` foi persistido.
 - A fila permaneceu vazia e os três runners mantiveram heartbeat recente.
+
+## Observabilidade de estágios e correção do runner de exportação
+
+- Release de timings: `18ece9a28ebbfb4c0afb00559b08f7b34936f3bd`.
+- Backup: `adops-before-18ece9a28ebb-20260826T233120Z.sql.gz`.
+- Os estágios públicos persistem somente `stage`, `status`, `startedAt`, `finishedAt` e `durationMs`; ausências permanecem `null`.
+- Após esse deploy, o log do runner individual mostrou a rejeição repetida do pool `campaign-evidence-export` pela API canônica. A causa foi localizada no allowlist, não no transporte nem na fila.
+- Release corretivo: `02093aadb0eb672aecc97fa5e47f77fc571ba54e`.
+- Backup: `adops-before-02093aadb0eb-20260826T234314Z.sql.gz`.
+- O timeout preserva o contrato anterior: `30` minutos enquanto aguarda e `120` minutos em execução.
+- Readback após o deploy: API, PostgreSQL e web saudáveis; runners principal e individual ativos. O runner individual passou a registrar `nenhum job pronto` para o pool de exportação, sem o erro de tipo inválido.
+- Revisão independente encontrou o drift de timeout antes do deploy; após a correção, não restou P0/P1.
 
 ## Readback incremental do relatório público
 
@@ -134,7 +149,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 
 ## Gates pendentes
 
-Linha de base do consumidor antes do job das 22h15: HTTP 200, `cache-control=no-store`, atualizado em `26/08/2026 12:31:01`. O HTML ainda mostra o job original de 25/08 (`0/9`) e a antiga promessa de recuperação às 18h30; portanto o consumidor permanece explicitamente pendente de regeneração e readback após o job natural.
+O refresh incremental já atualizou o consumidor para `8/8`, sem pendências atuais. O job natural das 22h15 e seu readback posterior continuam pendentes como gate independente.
 
 - [x] Reconciliação natural das 17h30 chega a estado terminal.
 - [x] Lote natural das 18h chega a estado terminal.
@@ -142,7 +157,7 @@ Linha de base do consumidor antes do job das 22h15: HTTP 200, `cache-control=no-
 - [ ] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
 - [ ] Recuperação/escalonamento de 08h00/08h30 é validada no próximo dia.
 - [ ] Três ciclos, totalizando 72 horas, permanecem sem regressão.
-- [ ] URLs, miniaturas, modal, downloads e filtro `evidence=missing` são validados no relatório público.
+- [x] URLs, miniaturas, modal, downloads e filtro `evidence=missing` são validados no relatório público após o refresh incremental.
 - [ ] Branch é integrada por worktree limpa sem tocar no checkout principal sujo.
 - [ ] Monitor recorrente é desativado e o handoff final é publicado.
 
