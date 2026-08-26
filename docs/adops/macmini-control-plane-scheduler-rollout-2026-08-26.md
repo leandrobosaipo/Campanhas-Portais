@@ -6,7 +6,7 @@ Rollout ativo e em monitoramento. Este documento registra somente evidências co
 
 ## Release ativo
 
-- SHA: `665450f433571e7aff8c1f7d907a55213602c463`
+- SHA: `08f453d3c77d634a05642860971c625aefe81cfc`
 - Fonte de decisão: API AdOps no Mac Mini (`scheduler.provider=macmini`)
 - Worker público: proxy/shadow do control plane
 - Telegram Worker: adaptador de entrega
@@ -75,6 +75,17 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 - O status diário removeu corretamente a recuperação: `nextRecoveryAt=null`.
 
 Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis refreshes incrementais do relatório. Eles foram drenados serialmente e terminaram sem erro. A causa foi a chave de idempotência conter o minuto. O hotfix foi escrito com teste vermelho, passou por revisão independente e coalesce somente jobs ainda aguardando; um job já `running` recebe no máximo um sucessor para não perder evidência aprovada depois do snapshot.
+
+## Hotfix de coalescência do relatório
+
+- Release: `08f453d3c77d634a05642860971c625aefe81cfc`
+- Backup: `adops-before-08f453d3c77d-20260826T221434Z.sql.gz`
+- API, web, PostgreSQL e monitor do Drive: `running/healthy`
+- Runners principal e individual: `running`
+- Canário aguardando: duas chamadas retornaram o mesmo job `9c923dce-f6c7-4631-b316-27914a27319c`; a primeira criou e a segunda coalesceu.
+- Canário durante execução: duas chamadas criaram/reutilizaram um único sucessor `7af631fd-cd90-4358-b5e3-0bcd4d2247ee` enquanto o primeiro estava `running`.
+- Ambos os jobs chegaram a `completed`.
+- O `notBefore` persistido foi preservado nas respostas duplicadas.
 
 ## Deploy e rollback
 
