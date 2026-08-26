@@ -10,6 +10,7 @@ import {
   serializeOptionalCount,
   validateDryRunNow,
 } from "../../artifacts/api-server/src/lib/ops-scheduler";
+import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "../../ops/cloudflare-public-api/src/scheduler-shadow";
 
 test("resolve o lote das 18h de Cuiaba a partir de UTC", () => {
   const decisions = resolveCanonicalSchedule(new Date("2026-08-26T22:00:00.000Z"));
@@ -26,6 +27,16 @@ test("resolve o lote das 18h de Cuiaba a partir de UTC", () => {
     maxAttempts: 8,
     nextRecoveryAt: "2026-08-26T22:30:00.000Z",
   });
+});
+
+test("resolve a reconciliacao editorial das 17h30 no Mac Mini", () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T21:30:00.000Z"));
+  const reconcile = decisions.find((decision) => decision.routineKind === "campaign-publication-reconcile");
+
+  assert.equal(reconcile?.jobKind, "campaign-publication-reconcile");
+  assert.equal(reconcile?.dispatchWindow, "17:30");
+  assert.equal(reconcile?.targetDate, "2026-08-26");
+  assert.equal(reconcile?.due, true);
 });
 
 test("resolve a recuperacao das 08h para o dia anterior em Cuiaba", () => {
@@ -166,4 +177,41 @@ test("runner mantém heartbeat do job durante execução longa", async () => {
   assert.equal(result, "completed");
   assert.ok(heartbeats.length >= 2);
   assert.deepEqual(new Set(heartbeats), new Set(["job-lease"]));
+});
+
+test("trigger do Mac Mini apenas pede reconciliacao para a API", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { runSchedulerTrigger } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  const calls: Array<{ path: string; body: unknown }> = [];
+  const result = await runSchedulerTrigger("macmini", async (path: string, body: unknown) => {
+    calls.push({ path, body });
+    return { ok: true, decisions: [] };
+  });
+
+  assert.equal(result?.ok, true);
+  assert.deepEqual(calls, [{ path: "/api/ops/schedules/reconcile", body: {} }]);
+  assert.equal(await runSchedulerTrigger("disabled", async () => ({ ok: false })), null);
+});
+
+test("Cloudflare em modo Mac Mini observa sem escrever no D1", () => {
+  assert.deepEqual(buildCloudflareSchedulerAction("macmini", 1787763600000), {
+    mode: "shadow",
+    writeD1: false,
+    path: "/api/ops/schedules/reconcile",
+    body: { shadow: true, dryRun: true, now: "2026-08-26T17:00:00.000Z" },
+  });
+  assert.deepEqual(buildCloudflareSchedulerAction("cloudflare", 1787763600000), {
+    mode: "legacy",
+    writeD1: true,
+    path: null,
+    body: null,
+  });
+});
+
+test("Worker encaminha todo contrato ops para o control plane Mac Mini", () => {
+  assert.equal(shouldProxyOpsToMacMini("macmini", "/api/ops/jobs/print-batch"), true);
+  assert.equal(shouldProxyOpsToMacMini("macmini", "/api/ops/queue/overview"), true);
+  assert.equal(shouldProxyOpsToMacMini("cloudflare", "/api/ops/jobs/print-batch"), false);
+  assert.equal(shouldProxyOpsToMacMini("macmini", "/api/insertions/2713"), false);
 });

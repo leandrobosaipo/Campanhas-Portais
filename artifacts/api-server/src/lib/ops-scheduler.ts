@@ -1,8 +1,8 @@
 const COD5_SCHEDULER_TIMEZONE = "America/Cuiaba" as const;
 
 type SchedulerRoutine = {
-  routineKind: "daily-print" | "daily-print-recovery" | "daily-print-morning-recovery" | "daily-print-escalation" | "evidence-monthly-report";
-  jobKind: "print-batch" | "evidence-monthly-report" | null;
+  routineKind: "campaign-publication-reconcile" | "daily-print" | "daily-print-recovery" | "daily-print-morning-recovery" | "daily-print-escalation" | "evidence-monthly-report";
+  jobKind: "campaign-publication-reconcile" | "print-batch" | "evidence-monthly-report" | null;
   dispatchWindow: string;
   targetDate: "today" | "yesterday";
   maxAttempts: number;
@@ -11,6 +11,7 @@ type SchedulerRoutine = {
 const COD5_SCHEDULER_ROUTINES: readonly SchedulerRoutine[] = [
   { routineKind: "daily-print-morning-recovery", jobKind: "print-batch", dispatchWindow: "08:00", targetDate: "yesterday", maxAttempts: 1 },
   { routineKind: "daily-print-escalation", jobKind: null, dispatchWindow: "08:30", targetDate: "yesterday", maxAttempts: 1 },
+  { routineKind: "campaign-publication-reconcile", jobKind: "campaign-publication-reconcile", dispatchWindow: "17:30", targetDate: "today", maxAttempts: 1 },
   { routineKind: "daily-print", jobKind: "print-batch", dispatchWindow: "18:00", targetDate: "today", maxAttempts: 8 },
   ...["18:30", "19:00", "19:30", "20:00", "20:30", "21:00", "21:30"].map((dispatchWindow) => ({
     routineKind: "daily-print-recovery" as const,

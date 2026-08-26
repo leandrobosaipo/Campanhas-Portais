@@ -52,6 +52,7 @@ services:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
       ADOPS_FASTAPI_DOCS_URL: http://127.0.0.1:4013
       ADOPS_PUBLIC_BASE_URL: https://adops-api.codigo5.com.br
       DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-monitor}
@@ -122,7 +123,7 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api-public.leandro471.workers.dev
+      OPS_API_BASE_URL: http://adops-api:4011
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -149,6 +150,8 @@ services:
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
+      ADOPS_SCHEDULER_INTERVAL_MS: ${ADOPS_SCHEDULER_INTERVAL_MS:-60000}
       OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,analytics-report,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
@@ -214,7 +217,8 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api-public.leandro471.workers.dev
+      OPS_API_BASE_URL: http://adops-api:4011
+      ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -316,7 +320,8 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api-public.leandro471.workers.dev
+      OPS_API_BASE_URL: http://adops-api:4011
+      ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}

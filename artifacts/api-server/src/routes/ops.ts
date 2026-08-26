@@ -88,6 +88,7 @@ const OPS_JOB_KINDS: JobKind[] = [
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
 const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
+const ADOPS_CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "cloudflare").trim();
 
 async function proxyPublicWorkerJob(req: Request, res: Response, targetPath = req.originalUrl): Promise<void> {
   const controller = new AbortController();
@@ -141,6 +142,10 @@ const D1_JOB_POST_PATHS = new Set([
 ]);
 
 router.use((req, res, next) => {
+  if (ADOPS_CONTROL_PLANE_PROVIDER === "macmini") {
+    next();
+    return;
+  }
   const method = req.method.toUpperCase();
   if (method === "POST" && req.path === "/ops/jobs/pi-site-export") {
     void proxyPublicWorkerJob(req, res, "/api/pi-site-exports/jobs");

@@ -1,5 +1,6 @@
 import { snapshot } from "./snapshot-fallback";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
+import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "./scheduler-shadow";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
@@ -144,6 +145,7 @@ type Env = {
   OPS_API_TOKEN?: string;
   PRIVATE_ADOPS_API_BASE_URL?: string;
   PRIVATE_ADOPS_API_TOKEN?: string;
+  ADOPS_CONTROL_PLANE_PROVIDER?: string;
   adops_ops: D1Database;
   adops_ops_queue: Queue<JobQueueMessage>;
 };
@@ -2637,6 +2639,14 @@ export default {
 
     if (path.startsWith("/api/internal/")) return notFound();
 
+    if (shouldProxyOpsToMacMini(env.ADOPS_CONTROL_PLANE_PROVIDER, path)) {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) {
+        const auth = requireOpsAuth(request, env);
+        if (!auth.ok) return auth.response;
+      }
+      return proxyToPrivateApi(request, env, url, { noStore: true });
+    }
+
     if (["POST", "PATCH", "DELETE"].includes(request.method)) {
       if (isSettingsProxyPath(path)) {
         if (privateApiEnabled(env)) {
@@ -3906,6 +3916,28 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const schedulerAction = buildCloudflareSchedulerAction(env.ADOPS_CONTROL_PLANE_PROVIDER, controller.scheduledTime);
+    if (!schedulerAction.writeD1 && schedulerAction.path && schedulerAction.body) {
+      const base = env.PRIVATE_ADOPS_API_BASE_URL?.trim();
+      if (!base) {
+        console.error("canonical_scheduler_shadow_failed", { error: "private_api_unavailable" });
+        return;
+      }
+      ctx.waitUntil(fetch(`${base.replace(/\/$/, "")}${schedulerAction.path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-adops-api-token": env.PRIVATE_ADOPS_API_TOKEN?.trim() ?? "",
+        },
+        body: JSON.stringify(schedulerAction.body),
+      }).then(async (response) => {
+        const result = await response.json().catch(() => null);
+        console.log("canonical_scheduler_shadow", { status: response.status, result });
+      }).catch((error) => {
+        console.error("canonical_scheduler_shadow_failed", { error: error instanceof Error ? error.message : String(error) });
+      }));
+      return;
+    }
     const localTime = new Intl.DateTimeFormat("pt-BR", { timeZone: DAILY_PRINT_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(controller.scheduledTime));
     const recovery = buildDailyPrintRecoveryWindow(controller.cron, controller.scheduledTime);
     if (recovery) {

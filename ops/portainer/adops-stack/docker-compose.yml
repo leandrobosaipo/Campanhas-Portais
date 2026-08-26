@@ -35,6 +35,7 @@ services:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
       DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-monitor}
       ADOPS_DRIVE_INVENTORY_STALE_MS: ${ADOPS_DRIVE_INVENTORY_STALE_MS:-600000}
       ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
@@ -86,7 +87,7 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api-public.leandro471.workers.dev}
+      OPS_API_BASE_URL: http://adops-api:4011
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -112,6 +113,8 @@ services:
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
+      ADOPS_SCHEDULER_INTERVAL_MS: ${ADOPS_SCHEDULER_INTERVAL_MS:-60000}
       OPS_JOB_KINDS: ${OPS_JOB_KINDS:-sync-planilha,print-batch,print-backfill,analytics-report,campaign-evidence-export,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe}
       OPS_CAMPAIGN_EXPORT_CONCURRENCY: ${OPS_CAMPAIGN_EXPORT_CONCURRENCY:-3}
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
@@ -171,7 +174,8 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: ${OPS_API_BASE_URL:-https://adops-api-public.leandro471.workers.dev}
+      OPS_API_BASE_URL: http://adops-api:4011
+      ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}

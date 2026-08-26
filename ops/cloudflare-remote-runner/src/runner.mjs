@@ -25,6 +25,8 @@ const OPS_CAMPAIGN_EXPORT_CONCURRENCY = Number.parseInt(process.env.OPS_CAMPAIGN
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
 const RUNNER_HEARTBEAT_INTERVAL_MS = Number.parseInt(process.env.ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS || "60000", 10);
+const SCHEDULER_INTERVAL_MS = Number.parseInt(process.env.ADOPS_SCHEDULER_INTERVAL_MS || "60000", 10);
+const CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "disabled").trim();
 const RUNNER_VERSION = (process.env.ADOPS_RELEASE_SHA || process.env.ADOPS_IMAGE_TAG || "development").trim();
 const ANALYTICS_REPORT_PROJECT_ROOT = process.env.ANALYTICS_REPORT_PROJECT_ROOT || "/Users/leandrobosaipo/.openclaw/workspace-codigo5-manutencao/projects/perrengue-ga4-relatorio-analytics";
 const ANALYTICS_REPORT_PYTHON = process.env.ANALYTICS_REPORT_PYTHON || path.join(ANALYTICS_REPORT_PROJECT_ROOT, ".venv/bin/python");
@@ -98,6 +100,7 @@ const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-bac
   .map((item) => item.trim())
   .filter(Boolean);
 let lastWatchdogAt = 0;
+let lastSchedulerAt = 0;
 let lastDrivePiMonitorAt = 0;
 let lastRunnerHeartbeatAt = 0;
 let runnerLastCycleError = null;
@@ -7806,6 +7809,18 @@ async function runWatchdogIfDue(force = false) {
   return payload;
 }
 
+async function runSchedulerTrigger(provider, requester = (path, body) => privateApi(path, body)) {
+  if (provider !== "macmini") return null;
+  return requester("/api/ops/schedules/reconcile", {});
+}
+
+async function runSchedulerIfDue(force = false) {
+  const now = Date.now();
+  if (!force && now - lastSchedulerAt < SCHEDULER_INTERVAL_MS) return null;
+  lastSchedulerAt = now;
+  return runSchedulerTrigger(CONTROL_PLANE_PROVIDER);
+}
+
 async function runOnce(poolKinds = kinds) {
   const job = await claimNext(poolKinds);
   if (!job) {
@@ -7845,6 +7860,7 @@ async function runPool(pool, workerIndex) {
     try {
       if (pool.maintenance && workerIndex === 0) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
+        await runSchedulerIfDue(false).catch((error) => console.warn("[runner] scheduler falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
       }
       const handled = await runOnce(pool.kinds);
@@ -7952,6 +7968,7 @@ export {
   resolveOperationalDestination,
   resolveOptionalOperationalDestination,
   runWithJobHeartbeat,
+  runSchedulerTrigger,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectCanonicalSnapshotAd,
