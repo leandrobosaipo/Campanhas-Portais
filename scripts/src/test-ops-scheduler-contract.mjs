@@ -65,3 +65,13 @@ test("overview diferencia runners ativos de registros históricos", () => {
   assert.match(ops, /count: recentHeartbeats\.length \|\| null/);
   assert.match(ops, /registeredCount: heartbeatRows\.length \|\| null/);
 });
+
+test("refresh incremental mensal mantém somente um job ativo por competência", () => {
+  assert.match(ops, /activeOnly = false/);
+  assert.match(ops, /NOT \$3::boolean OR status IN \('queued', 'ready_for_runner'\)/);
+  assert.doesNotMatch(ops, /NOT \$3::boolean OR status IN \('queued', 'ready_for_runner', 'running'\)/);
+  assert.match(ops, /`evidence-monthly-report:\$\{competencia\}:incremental`/);
+  assert.match(ops, /"evidence-approved-refresh", idempotencyKey, true\)/);
+  assert.match(ops, /existingNotBefore/);
+  assert.doesNotMatch(ops, /incremental:\$\{minuteBucket\}/);
+});

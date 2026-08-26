@@ -859,23 +859,29 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
   return id;
 }
 
-async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string) {
+async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string, activeOnly = false) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ops-job:${kind}:${idempotencyKey}`]);
-    const existing = await client.query<{ id: string; status: JobStatus }>(
-      `SELECT id, status
+    const existing = await client.query<{ id: string; status: JobStatus; not_before: string | null }>(
+      `SELECT id, status, payload_json::jsonb ->> 'notBefore' AS not_before
          FROM ops_jobs
         WHERE kind = $1
           AND payload_json::jsonb ->> 'idempotencyKey' = $2
+          AND (NOT $3::boolean OR status IN ('queued', 'ready_for_runner'))
         ORDER BY created_at DESC
         LIMIT 1`,
-      [kind, idempotencyKey],
+      [kind, idempotencyKey, activeOnly],
     );
     if (existing.rows[0]) {
       await client.query("COMMIT");
-      return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+      return {
+        jobId: existing.rows[0].id,
+        status: existing.rows[0].status,
+        duplicate: true,
+        existingNotBefore: existing.rows[0].not_before,
+      };
     }
     const jobId = randomUUID();
     const createdAt = nowIso();
@@ -885,7 +891,7 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
       [jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, createdAt, createdAt],
     );
     await client.query("COMMIT");
-    return { jobId, status: "ready_for_runner" as const, duplicate: false };
+    return { jobId, status: "ready_for_runner" as const, duplicate: false, existingNotBefore: null };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -2358,18 +2364,24 @@ router.post("/ops/monthly-report-refreshes", async (req, res): Promise<void> => 
     return;
   }
   const now = new Date();
-  const minuteBucket = now.toISOString().slice(0, 16);
   const notBefore = new Date(now.getTime() + 60_000).toISOString();
-  // ponytail: one idempotent refresh per minute; add persisted revisions only if report volume proves this insufficient.
-  const idempotencyKey = `evidence-monthly-report:${competencia}:incremental:${minuteBucket}`;
+  const idempotencyKey = `evidence-monthly-report:${competencia}:incremental`;
   const created = await createIdempotentOpsJob("evidence-monthly-report", {
     targetDate,
     competencia,
     incremental: true,
     notBefore,
     source: readOptionalString(req.body?.source) ?? "evidence-approved-refresh",
-  }, "evidence-approved-refresh", idempotencyKey);
-  res.status(202).json({ ok: true, competencia, targetDate, debounceSeconds: 60, ...created, notBefore });
+  }, "evidence-approved-refresh", idempotencyKey, true);
+  const { existingNotBefore, ...createdResponse } = created;
+  res.status(created.duplicate ? 200 : 202).json({
+    ok: true,
+    competencia,
+    targetDate,
+    debounceSeconds: 60,
+    ...createdResponse,
+    notBefore: created.duplicate ? existingNotBefore : notBefore,
+  });
 });
 
 router.get("/ops/daily-print-recoveries", async (req, res): Promise<void> => {

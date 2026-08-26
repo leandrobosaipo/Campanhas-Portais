@@ -57,6 +57,24 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 3. Próxima recuperação é calculada para a data alvo, sem reutilizar a janela do dia atual em consulta histórica.
 4. OpenAPI passou a publicar os contratos do control plane.
 5. Contagem de runners passou a diferenciar ativos de registros históricos.
+6. O refresh incremental do relatório passou a manter uma chave estável por competência: aprovações coalescem em um job ainda aguardando, mas criam um único sucessor quando o relatório anterior já está executando.
+
+## Lote natural das 18h
+
+- Data alvo: `2026-08-26`
+- `scheduleId`: `daily-print:2026-08-26:18:00`
+- `jobId`: `742044b2-cfcc-4ac2-8d6a-3fe0294bd08d`
+- Runner: `runner-1`
+- Estado terminal: `completed`
+- Duração real: `448903 ms`
+- Elegíveis/aprovadas: `8/8`
+- Capturadas: `6`
+- Preservadas como `skipped_existing`: `2`
+- Ausentes/inválidas/falhas: `0/0/0`
+- Auditoria canônica: `expected=8`, `approved=8`, `missing=0`, `invalid=0`
+- O status diário removeu corretamente a recuperação: `nextRecoveryAt=null`.
+
+Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis refreshes incrementais do relatório. Eles foram drenados serialmente e terminaram sem erro. A causa foi a chave de idempotência conter o minuto. O hotfix foi escrito com teste vermelho, passou por revisão independente e coalesce somente jobs ainda aguardando; um job já `running` recebe no máximo um sucessor para não perder evidência aprovada depois do snapshot.
 
 ## Deploy e rollback
 
@@ -71,7 +89,7 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 Linha de base do consumidor antes do job das 22h15: HTTP 200, `cache-control=no-store`, atualizado em `26/08/2026 12:31:01`. O HTML ainda mostra o job original de 25/08 (`0/9`) e a antiga promessa de recuperação às 18h30; portanto o consumidor permanece explicitamente pendente de regeneração e readback após o job natural.
 
 - [x] Reconciliação natural das 17h30 chega a estado terminal.
-- [ ] Lote natural das 18h chega a estado terminal.
+- [x] Lote natural das 18h chega a estado terminal.
 - [ ] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
 - [ ] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
 - [ ] Recuperação/escalonamento de 08h00/08h30 é validada no próximo dia.
