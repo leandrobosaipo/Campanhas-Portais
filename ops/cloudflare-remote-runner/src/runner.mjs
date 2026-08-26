@@ -6149,31 +6149,45 @@ async function executePrintBackfill(job) {
         continue;
       }
 
-      const capture = await enqueueAndWaitCaptureProof({
-        outerJobId: job.id,
-        insertionId,
-        date,
-        captureAt,
-        replace: replaceRequested || !isAuditApprovedStatus(before),
-        force,
-        candidate: true,
-        promote: true,
-        reconstructionReason: "late_publication_recovery",
-      });
-      const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
-        status: "status_error",
-        error: error instanceof Error ? error.message : String(error),
-      }));
-      items.push({
-        insertionId,
-        date,
-        status: isAuditApprovedStatus(after) ? "ok" : "error",
-        approved: isAuditApprovedStatus(after),
-        captureSkipped: false,
-        evidenceUrl: after?.arquivoUrl ?? capture?.item?.uploadedUrl ?? null,
-        checklistStatus: after?.status ?? null,
-        error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
-      });
+      try {
+        const capture = await enqueueAndWaitCaptureProof({
+          outerJobId: job.id,
+          insertionId,
+          date,
+          captureAt,
+          replace: replaceRequested || !isAuditApprovedStatus(before),
+          force,
+          candidate: true,
+          promote: true,
+          reconstructionReason: "late_publication_recovery",
+        });
+        const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
+          status: "status_error",
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        items.push({
+          insertionId,
+          date,
+          status: isAuditApprovedStatus(after) ? "ok" : "error",
+          approved: isAuditApprovedStatus(after),
+          captureSkipped: false,
+          evidenceUrl: after?.arquivoUrl ?? capture?.item?.uploadedUrl ?? null,
+          checklistStatus: after?.status ?? null,
+          error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
+        });
+      } catch (error) {
+        items.push({
+          insertionId,
+          date,
+          status: "error",
+          approved: false,
+          captureSkipped: false,
+          evidenceUrl: before?.arquivoUrl ?? null,
+          checklistStatus: before?.status ?? null,
+          error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+        });
+        continue;
+      }
   }
 
   const errors = items.filter((item) => item.status === "error");

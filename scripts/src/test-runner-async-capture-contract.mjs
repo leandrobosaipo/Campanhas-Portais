@@ -9,6 +9,7 @@ const worker = await readFile(path.join(repoRoot, "ops/cloudflare-public-api/src
 
 assert.match(runner, /async function enqueueAndWaitCaptureProof/);
 assert.match(runner, /candidate: true,[\s\S]*?promote: true,[\s\S]*?reconstructionReason: "late_publication_recovery"/);
+assert.match(runner, /catch \(error\) \{[\s\S]*?items\.push\(\{[\s\S]*?captureSkipped: false,[\s\S]*?continue;/);
 assert.match(runner, /runner-capture:\$\{outerJobId\}:\$\{insertionId\}:\$\{date\}/);
 assert.doesNotMatch(runner.match(/async function enqueueAndWaitCaptureProof[\s\S]*?async function sendRunnerHeartbeat/)?.[0] ?? "", /randomUUID/);
 assert.match(runner, /capture-proof\/jobs/);
