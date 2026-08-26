@@ -20,6 +20,7 @@ type JobKind =
   | "sync-planilha"
   | "analytics-report"
   | "pi-site-export"
+  | "campaign-evidence-export"
   | "drive-pi-ingest"
   | "drive-inventory-refresh"
   | "operational-documents"
@@ -81,6 +82,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "sync-planilha",
   "analytics-report",
   "pi-site-export",
+  "campaign-evidence-export",
   "drive-pi-ingest",
   "drive-inventory-refresh",
   "operational-documents",
@@ -498,6 +500,18 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Concluido",
     failed: "Falhou",
   },
+  "campaign-evidence-export": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    queue_received: "Fila recebida",
+    running: "Gerando ZIP completo da campanha",
+    preparing: "Conferindo evidências",
+    compiling: "Montando ZIP por portal e formato",
+    upload_started: "Publicando pacote",
+    completed: "Pacote completo concluído",
+    failed: "Falha no pacote completo da campanha",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -800,7 +814,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
