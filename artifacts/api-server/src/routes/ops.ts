@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
+import { reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
 
 type JobKind =
@@ -19,6 +20,7 @@ type JobKind =
   | "adrotate-publish"
   | "drive-pi-reconcile"
   | "campaign-publication-reconcile"
+  | "evidence-monthly-report"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -79,6 +81,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "adrotate-publish",
   "drive-pi-reconcile",
   "campaign-publication-reconcile",
+  "evidence-monthly-report",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
@@ -532,6 +535,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Retomada de campanhas conferida",
     failed: "Falha na retomada de campanhas",
   },
+  "evidence-monthly-report": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Gerando relatório de evidências",
+    completed: "Concluído",
+    failed: "Falhou",
+  },
   "telegram-send-evidence": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -837,21 +847,64 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
 }
 
 async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string) {
-  const existing = await pool.query<{ id: string; status: JobStatus }>(
-    `SELECT id, status
-       FROM ops_jobs
-      WHERE kind = $1
-        AND payload_json::jsonb ->> 'idempotencyKey' = $2
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [kind, idempotencyKey],
-  );
-  if (existing.rows[0]) {
-    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ops-job:${kind}:${idempotencyKey}`]);
+    const existing = await client.query<{ id: string; status: JobStatus }>(
+      `SELECT id, status
+         FROM ops_jobs
+        WHERE kind = $1
+          AND payload_json::jsonb ->> 'idempotencyKey' = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [kind, idempotencyKey],
+    );
+    if (existing.rows[0]) {
+      await client.query("COMMIT");
+      return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+    }
+    const jobId = randomUUID();
+    const createdAt = nowIso();
+    await client.query(
+      `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+       VALUES ($1, $2, 'ready_for_runner', $3, NULL, NULL, $4, NULL, $5, $6)`,
+      [jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, createdAt, createdAt],
+    );
+    await client.query("COMMIT");
+    return { jobId, status: "ready_for_runner" as const, duplicate: false };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
-  const jobId = await createOpsJob(kind, { ...payload, idempotencyKey }, requestedBy);
-  return { jobId, status: "ready_for_runner" as const, duplicate: false };
 }
+
+router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
+  const dryRun = req.body?.dryRun === true || req.body?.shadow === true;
+  const requestedNow = validateDryRunNow(dryRun, req.body?.now);
+  if (requestedNow === undefined) {
+    res.status(400).json({ error: "bad_request", details: "now deve ser um instante ISO válido e só é aceito em dry-run." });
+    return;
+  }
+  const decisions = resolveCanonicalSchedule(requestedNow ?? new Date());
+  const results = await reconcileDueSchedules(decisions, async (input) => {
+    if (dryRun) return { jobId: `dry-run:${input.scheduleId}`, created: true };
+    if (!input.jobKind) throw new Error(`Rotina sem jobKind: ${input.routineKind}`);
+    const created = await createIdempotentOpsJob(input.jobKind, {
+      ...input,
+      source: "macmini-canonical-scheduler",
+    }, req.body?.shadow === true ? "cloudflare-shadow" : "macmini-scheduler", input.idempotencyKey);
+    return { jobId: created.jobId, created: !created.duplicate };
+  });
+  res.status(dryRun || results.every((item) => item.outcome !== "created") ? 200 : 202).json({
+    ok: true,
+    dryRun,
+    timezone: "America/Cuiaba",
+    decisions: results,
+  });
+});
 
 async function getOpsJob(id: string) {
   const result = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [id]);

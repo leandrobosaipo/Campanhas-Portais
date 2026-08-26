@@ -34,6 +34,22 @@ export type CanonicalScheduleDecision = {
   nextRecoveryAt: string | null;
 };
 
+export type ScheduledJobInput = CanonicalScheduleDecision & {
+  scheduleId: string;
+  rootIdempotencyKey: string;
+  idempotencyKey: string;
+  parentJobId: null;
+  attempt: 1;
+};
+
+export type ScheduleReconcileResult = {
+  outcome: "created" | "duplicate" | "not_due" | "blocked";
+  scheduleId: string;
+  idempotencyKey: string;
+  jobId: string | null;
+  nextRecoveryAt: string | null;
+};
+
 const cod5_date_formatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: COD5_SCHEDULER_TIMEZONE,
   year: "numeric",
@@ -85,6 +101,47 @@ export function serializeOptionalCount(value: number | string | null | undefined
   if (value === null || value === undefined || value === "") return null;
   const count = Number(value);
   return Number.isFinite(count) ? count : null;
+}
+
+export function validateDryRunNow(dryRun: boolean, value: unknown) {
+  if (!dryRun || typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+export async function reconcileDueSchedules(
+  decisions: readonly CanonicalScheduleDecision[],
+  createIfAbsent: (input: ScheduledJobInput) => Promise<{ jobId: string; created: boolean }>,
+) {
+  const results: ScheduleReconcileResult[] = [];
+  for (const decision of decisions) {
+    const scheduleId = buildScheduleId(decision.routineKind, decision.targetDate, decision.dispatchWindow);
+    const idempotencyKey = buildRootIdempotencyKey(decision.routineKind, decision.targetDate, decision.dispatchWindow);
+    if (!decision.due) {
+      results.push({ outcome: "not_due", scheduleId, idempotencyKey, jobId: null, nextRecoveryAt: decision.nextRecoveryAt });
+      continue;
+    }
+    if (!decision.jobKind) {
+      results.push({ outcome: "blocked", scheduleId, idempotencyKey, jobId: null, nextRecoveryAt: decision.nextRecoveryAt });
+      continue;
+    }
+    const created = await createIfAbsent({
+      ...decision,
+      scheduleId,
+      rootIdempotencyKey: idempotencyKey,
+      idempotencyKey,
+      parentJobId: null,
+      attempt: 1,
+    });
+    results.push({
+      outcome: created.created ? "created" : "duplicate",
+      scheduleId,
+      idempotencyKey,
+      jobId: created.jobId,
+      nextRecoveryAt: decision.nextRecoveryAt,
+    });
+  }
+  return results;
 }
 
 export function resolveCanonicalSchedule(now: Date): CanonicalScheduleDecision[] {
