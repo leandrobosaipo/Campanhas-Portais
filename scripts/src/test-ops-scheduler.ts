@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildRootIdempotencyKey,
+  buildRetryJobInput,
   buildScheduleId,
   reconcileDueSchedules,
   resolveCanonicalSchedule,
@@ -99,4 +100,70 @@ test("instante informado pelo caller só é aceito em dry-run", () => {
   assert.equal(validateDryRunNow(false, "2026-08-26T22:00:00.000Z"), null);
   assert.equal(validateDryRunNow(true, "invalid"), undefined);
   assert.equal(validateDryRunNow(true, "2026-08-26T22:00:00.000Z")?.toISOString(), "2026-08-26T22:00:00.000Z");
+});
+
+test("expiracao cria filho sem reabrir o job pai", () => {
+  const retry = buildRetryJobInput({
+    parentJobId: "job-parent",
+    jobKind: "print-batch",
+    payload: {
+      routineKind: "daily-print",
+      targetDate: "2026-08-26",
+      dispatchWindow: "18:00",
+      rootIdempotencyKey: "daily-print:2026-08-26:18:00",
+      attempt: 1,
+      maxAttempts: 8,
+    },
+    failedAt: "2026-08-26T23:00:00.000Z",
+    errorCode: "expired",
+  });
+
+  assert.deepEqual(retry, {
+    jobKind: "print-batch",
+    idempotencyKey: "daily-print:2026-08-26:18:00:attempt:2",
+    payload: {
+      routineKind: "daily-print",
+      targetDate: "2026-08-26",
+      dispatchWindow: "18:00",
+      rootIdempotencyKey: "daily-print:2026-08-26:18:00",
+      parentJobId: "job-parent",
+      attempt: 2,
+      maxAttempts: 8,
+      recoveryReason: "expired",
+      previousFailedAt: "2026-08-26T23:00:00.000Z",
+    },
+  });
+});
+
+test("nao cria retry acima do limite ou para bloqueio de seguranca", () => {
+  const base = {
+    parentJobId: "job-parent",
+    jobKind: "print-batch" as const,
+    failedAt: "2026-08-26T23:00:00.000Z",
+    errorCode: "expired",
+  };
+  assert.equal(buildRetryJobInput({ ...base, payload: { rootIdempotencyKey: "root", attempt: 8, maxAttempts: 8 } }), null);
+  assert.equal(buildRetryJobInput({ ...base, errorCode: "blocked_security", payload: { rootIdempotencyKey: "root", attempt: 1, maxAttempts: 8 } }), null);
+});
+
+test("runner mantém heartbeat do job durante execução longa", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { runWithJobHeartbeat } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  const heartbeats: string[] = [];
+  const result = await runWithJobHeartbeat(
+    "job-lease",
+    async () => {
+      await new Promise((resolve) => setTimeout(resolve, 24));
+      return "completed";
+    },
+    async (jobId: string) => {
+      heartbeats.push(jobId);
+    },
+    5,
+  );
+
+  assert.equal(result, "completed");
+  assert.ok(heartbeats.length >= 2);
+  assert.deepEqual(new Set(heartbeats), new Set(["job-lease"]));
 });

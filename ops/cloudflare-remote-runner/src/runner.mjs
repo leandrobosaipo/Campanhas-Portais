@@ -239,7 +239,7 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
   throw new Error(`Timeout aguardando captura assíncrona ${jobId} para ${insertionId}/${date}.`);
 }
 
-async function sendRunnerHeartbeat(force = false) {
+async function sendRunnerHeartbeat(force = false, jobId = null) {
   const now = Date.now();
   if (!force && now - lastRunnerHeartbeatAt < RUNNER_HEARTBEAT_INTERVAL_MS) return null;
   lastRunnerHeartbeatAt = now;
@@ -254,7 +254,21 @@ async function sendRunnerHeartbeat(force = false) {
     lastCycleAt: new Date(now).toISOString(),
     lastSuccessAt: runnerLastSuccessAt,
     lastError: runnerLastCycleError,
+    jobId,
+    heartbeatAt: new Date(now).toISOString(),
   });
+}
+
+async function runWithJobHeartbeat(jobId, operation, sender, intervalMs) {
+  await sender(jobId);
+  const timer = setInterval(() => {
+    void sender(jobId).catch(() => null);
+  }, intervalMs);
+  try {
+    return await operation();
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 async function privateApiPatch(pathname, body) {
@@ -7800,7 +7814,12 @@ async function runOnce(poolKinds = kinds) {
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
   try {
-    const result = await handleJob(job);
+    const result = await runWithJobHeartbeat(
+      job.id,
+      () => handleJob(job),
+      (jobId) => sendRunnerHeartbeat(true, jobId),
+      Math.max(5_000, Math.floor(RUNNER_HEARTBEAT_INTERVAL_MS / 2)),
+    );
     await completeJob(job.id, {
       ok: true,
       runnerId: RUNNER_ID,
@@ -7932,6 +7951,7 @@ export {
   resolveDrivePiClickUrl,
   resolveOperationalDestination,
   resolveOptionalOperationalDestination,
+  runWithJobHeartbeat,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
   selectCanonicalSnapshotAd,

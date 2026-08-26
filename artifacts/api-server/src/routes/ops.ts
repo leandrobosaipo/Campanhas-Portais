@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
-import { reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
+import { buildRetryJobInput, reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
 
 type JobKind =
@@ -785,12 +785,16 @@ function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
 }
 
 function buildWatchdogFailure(record: OpsJobRecord, detectedAt: string) {
+  const errorCode = record.status === "running" ? "expired" : "queue_timeout";
   return {
     error: `Watchdog marcou falha automatica: ${record.status} excedeu o tempo limite de ${record.kind}.`,
     result: {
       ok: false,
       watchdog: true,
+      incidentLayer: record.status === "running" ? "runner" : "queue",
+      errorCode,
       previousStatus: record.status,
+      partialResult: parseJson(record.result_json),
       detectedAt,
       ageMinutes: Math.round(getJobAgeMs(record) / 60_000),
       timeoutMinutes: Math.round(getJobTimeoutMs(record.kind, record.status) / 60_000),
@@ -1135,9 +1139,14 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
     values.push(requestedKinds);
     kindFilter = `AND kind = ANY($${values.length})`;
   }
+  const claimedAt = nowIso();
   const result = await pool.query<OpsJobRecord>(
     `UPDATE ops_jobs
-       SET status = 'running', runner_id = $${values.length + 1}, error_text = NULL, updated_at = $${values.length + 2}
+       SET status = 'running',
+           runner_id = $${values.length + 1},
+           error_text = NULL,
+           payload_json = (payload_json::jsonb || jsonb_build_object('claimedAt', $${values.length + 2}::text, 'heartbeatAt', $${values.length + 2}::text))::text,
+           updated_at = $${values.length + 2}
      WHERE id = (
        SELECT id FROM ops_jobs
        WHERE status = 'ready_for_runner' ${kindFilter}
@@ -1146,7 +1155,7 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
        FOR UPDATE SKIP LOCKED
      )
      RETURNING *`,
-    [...values, runnerId, nowIso()],
+    [...values, runnerId, claimedAt],
   );
   res.json({ ok: true, job: result.rows[0] ? describeJob(result.rows[0]) : null });
 });
@@ -1187,10 +1196,29 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     [limit],
   );
   const stale: OpsJobRecord[] = active.rows.filter((record: OpsJobRecord) => getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
+  const recoveries: Array<{ parentJobId: string; jobId: string; attempt: number }> = [];
   if (!dryRun) {
     for (const record of stale) {
       const failure = buildWatchdogFailure(record, nowIso());
       await updateOpsJob(record.id, { status: "failed", error: failure.error, result: failure.result, runnerId: record.runner_id });
+      if (record.status !== "running") continue;
+      const retry = buildRetryJobInput({
+        parentJobId: record.id,
+        jobKind: record.kind,
+        payload: (parseJson(record.payload_json) ?? {}) as Record<string, unknown>,
+        failedAt: failure.result.detectedAt,
+        errorCode: failure.result.errorCode,
+      });
+      if (!retry || !OPS_JOB_KINDS.includes(retry.jobKind as JobKind)) continue;
+      const created = await createIdempotentOpsJob(
+        retry.jobKind as JobKind,
+        retry.payload,
+        "watchdog-recovery",
+        retry.idempotencyKey,
+      );
+      if (!created.duplicate) {
+        recoveries.push({ parentJobId: record.id, jobId: created.jobId, attempt: Number(retry.payload.attempt) });
+      }
     }
   }
   res.json({
@@ -1199,6 +1227,7 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     checked: active.rows.length,
     staleCount: stale.length,
     failedCount: dryRun ? 0 : stale.length,
+    recoveries,
     stale: stale.map((record: OpsJobRecord) => ({
       id: record.id,
       kind: record.kind,
@@ -1287,7 +1316,20 @@ router.post("/ops/runner/heartbeat", async (req, res): Promise<void> => {
     lastSuccessAt: parseIsoTimestamp(req.body?.lastSuccessAt),
     lastError: sanitizeJobText(readOptionalString(req.body?.lastError), 1000) as string | null,
   });
-  res.json({ ok: true, runnerId, receivedAt: nowIso() });
+  const jobId = readOptionalString(req.body?.jobId);
+  const heartbeatAt = parseIsoTimestamp(req.body?.heartbeatAt) ?? nowIso();
+  let jobLease: { jobId: string; accepted: boolean } | null = null;
+  if (jobId) {
+    const updated = await pool.query(
+      `UPDATE ops_jobs
+          SET payload_json = (payload_json::jsonb || jsonb_build_object('heartbeatAt', $1::text))::text,
+              updated_at = $1
+        WHERE id = $2 AND runner_id = $3 AND status = 'running'`,
+      [heartbeatAt, jobId, runnerId],
+    );
+    jobLease = { jobId, accepted: updated.rowCount === 1 };
+  }
+  res.status(jobLease && !jobLease.accepted ? 409 : 200).json({ ok: !jobLease || jobLease.accepted, runnerId, receivedAt: nowIso(), jobLease });
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {

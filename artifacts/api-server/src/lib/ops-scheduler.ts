@@ -109,6 +109,38 @@ export function validateDryRunNow(dryRun: boolean, value: unknown) {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
+const COD5_RETRYABLE_ERROR_CODES = new Set(["expired", "runner_interrupted", "external_transient"]);
+
+export function buildRetryJobInput(input: {
+  parentJobId: string;
+  jobKind: string;
+  payload: Record<string, unknown>;
+  failedAt: string;
+  errorCode: string;
+}) {
+  const rootIdempotencyKey = typeof input.payload.rootIdempotencyKey === "string" ? input.payload.rootIdempotencyKey : null;
+  const attempt = Number(input.payload.attempt);
+  const maxAttempts = Number(input.payload.maxAttempts);
+  if (!rootIdempotencyKey || !Number.isInteger(attempt) || !Number.isInteger(maxAttempts)) return null;
+  if (attempt < 1 || maxAttempts < 1 || attempt >= maxAttempts) return null;
+  if (!COD5_RETRYABLE_ERROR_CODES.has(input.errorCode)) return null;
+
+  const nextAttempt = attempt + 1;
+  const { idempotencyKey: _previousIdempotencyKey, parentJobId: _previousParentJobId, ...previousPayload } = input.payload;
+  return {
+    jobKind: input.jobKind,
+    idempotencyKey: `${rootIdempotencyKey}:attempt:${nextAttempt}`,
+    payload: {
+      ...previousPayload,
+      parentJobId: input.parentJobId,
+      attempt: nextAttempt,
+      maxAttempts,
+      recoveryReason: input.errorCode,
+      previousFailedAt: input.failedAt,
+    },
+  };
+}
+
 export async function reconcileDueSchedules(
   decisions: readonly CanonicalScheduleDecision[],
   createIfAbsent: (input: ScheduledJobInput) => Promise<{ jobId: string; created: boolean }>,
