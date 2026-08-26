@@ -20,6 +20,7 @@ Rollout ativo e em monitoramento. Este documento registra somente evidências co
 - API pública e API do Mac Mini apresentam o mesmo estado da fila.
 - Reinícios do stack não recriaram o job matinal já reconciliado.
 - OpenAPI de produção expõe status diário, incidentes, reconcile, claim, heartbeat e progresso com lease.
+- Consulta remota somente leitura ao D1 confirmou `0` jobs criados após o primeiro cutover (`2026-08-26T19:21:26Z`); o último job legado é anterior ao corte.
 
 ## Canário de recuperação matinal
 
