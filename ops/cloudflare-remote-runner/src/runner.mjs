@@ -6156,6 +6156,8 @@ async function executePrintBackfill(job) {
         captureAt,
         replace: replaceRequested || !isAuditApprovedStatus(before),
         force,
+        candidate: true,
+        promote: true,
         reconstructionReason: "late_publication_recovery",
       });
       const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
@@ -6213,6 +6215,8 @@ async function executePrintSingle(job) {
     captureAt: payload?.captureAt ?? null,
     replace: payload?.replace === true || ["invalid_audit", "invalid_url"].includes(preItem?.status),
     force: payload?.force === true,
+    candidate: payload?.reconstructionReason === "late_publication_recovery",
+    promote: payload?.reconstructionReason === "late_publication_recovery",
     reconstructionReason: payload?.reconstructionReason === "late_publication_recovery"
       ? "late_publication_recovery"
       : null,
