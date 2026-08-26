@@ -56,6 +56,8 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 
 ## Gates pendentes
 
+Linha de base do consumidor antes do job das 22h15: HTTP 200, `cache-control=no-store`, atualizado em `26/08/2026 12:31:01`. O HTML ainda mostra o job original de 25/08 (`0/9`) e a antiga promessa de recuperação às 18h30; portanto o consumidor permanece explicitamente pendente de regeneração e readback após o job natural.
+
 - [ ] Reconciliação natural das 17h30 chega a estado terminal.
 - [ ] Lote natural das 18h chega a estado terminal.
 - [ ] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
