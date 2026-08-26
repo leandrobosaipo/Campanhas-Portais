@@ -42,3 +42,8 @@ test("scheduler entrega payload executável e terminais respeitam o lease", () =
   assert.match(ops, /return "job_execution"/);
   assert.doesNotMatch(ops, /incidentLayer \?\? "job"/);
 });
+
+test("claim do runner falha fechado e limita os tipos no Postgres", () => {
+  assert.match(ops, /runnerId e ao menos um kind válido são obrigatórios/);
+  assert.match(ops, /kind = ANY\(\$\$\{values\.length\}::text\[\]\)/);
+});

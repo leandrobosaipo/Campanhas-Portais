@@ -1163,12 +1163,14 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
     ? req.body.kinds.filter((item: unknown): item is JobKind => OPS_JOB_KINDS.includes(String(item) as JobKind))
     : null;
   const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId || !requestedKinds?.length) {
+    res.status(400).json({ error: "bad_request", details: "runnerId e ao menos um kind válido são obrigatórios." });
+    return;
+  }
   const values: unknown[] = [];
   let kindFilter = "";
-  if (requestedKinds?.length) {
-    values.push(requestedKinds);
-    kindFilter = `AND kind = ANY($${values.length})`;
-  }
+  values.push(requestedKinds);
+  kindFilter = `AND kind = ANY($${values.length}::text[])`;
   const claimedAt = nowIso();
   const result = await pool.query<OpsJobRecord>(
     `UPDATE ops_jobs
