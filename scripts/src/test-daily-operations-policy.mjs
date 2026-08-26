@@ -65,3 +65,13 @@ test("auditoria não pode omitir uma inserção do lote", () => {
   assert.equal(result.status, "incident_required");
   assert.equal(result.incident?.layer, "audit");
 });
+
+test("falha do checklist é classificada como contrato e não transporte", () => {
+  const result = classifyDailyPrintOutcome({
+    jobId: "daily-checklist",
+    expectedTotal: 1,
+    audit: { date: "2026-08-25", totalEligible: 1, ok: 0, missing: 1, invalid: 0 },
+    transportError: "capture_audit_failed: checklist_pre_upload_failed: []",
+  });
+  assert.equal(result.incident?.layer, "api_checklist_contract");
+});

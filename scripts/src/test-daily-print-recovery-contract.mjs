@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 const worker = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
 const runner = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
 const migration = await readFile(new URL("../../ops/cloudflare-public-api/migrations/0006_daily_print_recoveries.sql", import.meta.url), "utf8");
+const alertMigration = await readFile(new URL("../../ops/cloudflare-public-api/migrations/0007_daily_print_alerts.sql", import.meta.url), "utf8");
+const telegram = await readFile(new URL("../../ops/cloudflare-telegram-bot/src/index.ts", import.meta.url), "utf8");
 
 test("recuperação persiste três tentativas em 5, 10 e 15 minutos", () => {
   assert.match(worker, /RECOVERY_DELAYS_MINUTES\s*=\s*\[5, 10, 15\]/);
@@ -12,6 +14,14 @@ test("recuperação persiste três tentativas em 5, 10 e 15 minutos", () => {
   assert.match(worker, /attempt >= 3/);
   assert.match(worker, /status='blocked'/);
   assert.match(migration, /PRIMARY KEY \(target_date, insertion_id\)/);
+});
+
+test("alerta operacional usa claim idempotente e só resolve incidente já aberto", () => {
+  assert.match(alertMigration, /fingerprint TEXT PRIMARY KEY/);
+  assert.match(worker, /no_previous_incident/);
+  assert.match(worker, /INSERT OR IGNORE INTO daily_print_alerts/);
+  assert.match(telegram, /daily-print-alerts\/claim/);
+  assert.match(telegram, /controller\.cron !== "45 22 \* \* \*"/);
 });
 
 test("aprovação interrompe retries e runner não recaptura evidência válida", () => {

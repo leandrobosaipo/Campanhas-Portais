@@ -199,7 +199,7 @@ async function markMonthlyReportRefreshAfterApproval(date, insertionId) {
   }
 }
 
-async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, reconstructionReason = null }) {
+async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null }) {
   if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
   const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
   const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
@@ -207,6 +207,8 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
     captureAt,
     replace: replace || force,
     force,
+    candidate,
+    promote,
     reconstructionReason,
   }, { "Idempotency-Key": idempotencyKey });
   const jobId = String(accepted?.jobId || "").trim();
@@ -5901,6 +5903,7 @@ async function executeDrivePiIngest(payload) {
 }
 
 async function executePrintBatch(job) {
+  const startedAtMs = Date.now();
   const payload = job?.payload || {};
   const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.date || ""))
     ? String(payload.date)
@@ -5914,9 +5917,11 @@ async function executePrintBatch(job) {
     params.set("siteSigla", String(site.sigla));
   }
   const operations = await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
+  const pendingInsertionIds = new Set((Array.isArray(payload?.pendingInsertionIds) ? payload.pendingInsertionIds : []).map(readPositiveInteger).filter(Boolean));
   const candidates = (Array.isArray(operations?.items) ? operations.items : [])
     .filter((item) => {
       const insertionId = readPositiveInteger(item?.adops?.insertionId);
+      if (pendingInsertionIds.size > 0 && !pendingInsertionIds.has(insertionId)) return false;
       if (competencia && String(item?.adops?.competencia || "").toUpperCase() !== competencia) return false;
       const publicConfirmed = item?.adops?.publicConfirmation === "confirmed";
       if (!insertionId || (item?.adops?.bannerPublicadoNoSite !== true && !publicConfirmed) || !item?.adops?.mediaUrl) return false;
@@ -5932,7 +5937,7 @@ async function executePrintBatch(job) {
     const missingDates = Array.isArray(item?.evidence?.missingDates) ? item.evidence.missingDates : [];
     const invalidDates = Array.isArray(item?.evidence?.invalidDates) ? item.evidence.invalidDates : [];
     if (!missingDates.includes(targetDate) && !invalidDates.includes(targetDate)) {
-      skipped.push({ insertionId, reason: "evidencia_auditada" });
+      skipped.push({ insertionId, status: "skipped_existing", reason: "evidencia_auditada" });
       continue;
     }
     await progressJob(job.id, {
@@ -5950,11 +5955,16 @@ async function executePrintBatch(job) {
         date: targetDate,
         captureAt: payload?.captureAt ?? null,
         replace: invalidDates.includes(targetDate),
+        candidate: payload?.recoveryMode === "late_publication_recovery",
+        promote: payload?.recoveryMode === "late_publication_recovery",
+        reconstructionReason: payload?.recoveryMode === "late_publication_recovery" ? "late_publication_recovery" : null,
       });
-      captured.push({ insertionId, captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
+      captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
-      failed.push({ insertionId, error: safeProcessOutput(transportError, 800) });
+      const blockedReconstruction = payload?.recoveryMode === "late_publication_recovery"
+        && /reconstruction|reconstru|retro|candidate|promot/i.test(transportError);
+      failed.push({ insertionId, status: blockedReconstruction ? "blocked_reconstruction" : "failed", error: safeProcessOutput(transportError, 800) });
       // A bad portal or audit gate must not suppress the remaining portals.
       // The canonical audit below determines the batch outcome after every
       // eligible insertion had its own documented attempt.
@@ -5987,12 +5997,18 @@ async function executePrintBatch(job) {
       incidentLayer: incident.layer ?? "audit",
       incidentSummary: incident.summary ?? null,
       transportError: transportError ?? null,
+      errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
       date: targetDate,
       expectedTotal: candidates.length,
       totalEligible: audit?.totalEligible ?? null,
       ok: audit?.ok ?? null,
       missing: audit?.missing ?? null,
       invalid: audit?.invalid ?? null,
+      failedInsertionIds: failed.map((item) => item.insertionId),
+      nextRecoveryAt: payload?.nextRecoveryAt ?? null,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAtMs,
     })}`);
   }
   return {
@@ -6016,6 +6032,13 @@ async function executePrintBatch(job) {
       invalid: Number(audit.invalid ?? 0),
     },
     transportError,
+    incidentLayer: null,
+    errorCode: null,
+    failedInsertionIds: [],
+    nextRecoveryAt: null,
+    startedAt: new Date(startedAtMs).toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAtMs,
   };
 }
 

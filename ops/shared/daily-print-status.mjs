@@ -14,6 +14,33 @@ function nextRunAt(now) {
   return candidate.toISOString();
 }
 
+function nextRecoveryAt(now) {
+  const date = dateInCuiaba(now);
+  const candidates = ["18:30", "19:00", "19:30", "20:00", "20:30", "21:00", "21:30"]
+    .map((time) => new Date(`${date}T${time}:00-04:00`))
+    .filter((item) => item.getTime() > now.getTime());
+  if (candidates[0]) return candidates[0].toISOString();
+  const tomorrow = new Date(`${date}T08:00:00-04:00`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return tomorrow.toISOString();
+}
+
+function safeIncident(job) {
+  const error = String(job?.error || "");
+  const prefix = "daily_print_audit_incomplete:";
+  const index = error.indexOf(prefix);
+  if (index < 0) return { errorCode: null, failedInsertionIds: [] };
+  try {
+    const parsed = JSON.parse(error.slice(index + prefix.length));
+    return {
+      errorCode: typeof parsed.errorCode === "string" ? parsed.errorCode : null,
+      failedInsertionIds: Array.isArray(parsed.failedInsertionIds) ? parsed.failedInsertionIds.filter(Number.isInteger) : [],
+    };
+  } catch {
+    return { errorCode: null, failedInsertionIds: [] };
+  }
+}
+
 function safeCounts(job) {
   const root = job?.result && typeof job.result === "object" ? job.result : {};
   const result = root.execution && typeof root.execution === "object" ? root.execution : root;
@@ -86,6 +113,8 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
     missing: counts?.missing ?? 0,
     invalid: counts?.invalid ?? 0,
     summary: summarize(counts, String(latest.status)),
+    ...safeIncident(latest),
+    nextRecoveryAt: full ? null : nextRecoveryAt(now),
   } : null;
   const approvedJob = dailyJobs.find((job) => {
     const item = safeCounts(job);

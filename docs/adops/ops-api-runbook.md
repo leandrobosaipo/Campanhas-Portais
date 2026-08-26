@@ -71,10 +71,12 @@ A API canônica `adops-api.codigo5.com.br` encaminha criação, listagem e progr
 
 1. **17h30 Cuiabá:** cria `sync-planilha` e faz o reconciliador depender da conclusão desse job. A comparação planilha → Drive → AdOps classifica cada linha como ausente, rascunho, pronta, publicação reportada, publicação confirmada ou bloqueada. `public_confirmed` exige AdRotate e HTML público; o booleano do AdOps sozinho resulta em `reported_published`.
 2. **18h00 Cuiabá:** `print-batch` consulta as inserções canônicas, cria capturas assíncronas por inserção e acompanha somente o progresso. Não mantém uma requisição HTTP aberta durante todo o lote.
-3. **Após o lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o Worker registra incidente idempotente com camada provável, job, versão, duração, dados de auditoria e próxima ação.
+3. **18h30 até 21h30, a cada 30 minutos:** o Worker consulta a auditoria canônica. Se estiver completa, não cria job. Se houver pendências, cria outro `print-batch` idempotente limitado aos IDs faltantes ou inválidos; um job ainda ativo impede concorrência.
+4. **08h00 do dia seguinte:** pendências de ontem entram como `late_publication_recovery`, sempre em candidato isolado. A promoção exige `allowAuditedReconstruction=true` na regra publicada e checklist final aprovado; caso contrário permanece bloqueada, sem fabricar evidência.
+5. **Após cada lote:** a auditoria agregada decide a conclusão. Se houver `missing` ou `invalid`, o Worker registra incidente idempotente com camada provável, job, versão, duração, IDs afetados e próxima ação.
 
 Uma falha individual não interrompe as demais inserções do lote. No PERRENGUE, o ativo institucional pequeno `/assets/perrengue-sublogo.png` não é uma peça publicitária e não conta como mídia concorrente; qualquer outro banner ou vídeo adicional no slot continua bloqueando a aprovação.
-4. **22h15 Cuiabá:** o relatório consulta a fonte mensal, não a fonte diária. Campanhas encerradas continuam visíveis e suas datas continuam auditáveis.
+6. **22h15 Cuiabá:** o relatório consulta a fonte mensal e o estado canônico da rotina. Pendências aparecem como incidente de geração, com job, IDs, causa e próxima recuperação; campanhas encerradas continuam visíveis e suas datas continuam auditáveis.
 
 ### Proveniência e recuperação automática
 
@@ -84,7 +86,9 @@ Cada evidência mantém uma classificação permanente: `scheduled`, `same_day_r
 
 A auditoria só confia no arquivo quando consegue correlacionar banco (`capture_proof_logs`), job que o gerou, inserção, data-alvo e URL do artefato. A reconciliação de 22/08 reutiliza os 18 arquivos originais e ajusta somente metadados comprovados; não gera print, não sobrescreve artefato e não promove uma evidência de outra inserção. Falta de correlação resulta em `blocked`.
 
-Ao terminar o lote diário, o Worker compara cada inserção elegível com a auditoria aprovada. Para cada `missing` ou `invalid`, cria uma recuperação individual idempotente, persistida na mesma chave de data + inserção, com tentativas em 5, 10 e 15 minutos. A aprovação encerra a recuperação; evidência aprovada não recebe novo job. Depois da terceira falha, o item permanece bloqueado com causa humana e técnica, job, horário e próxima ação; não há retry cego.
+Ao terminar o lote diário, o Worker compara cada inserção elegível com a auditoria aprovada. A recuperação curta existente em 5, 10 e 15 minutos continua como primeira resposta. As janelas fixas de 18h30 a 21h30 fazem nova conferência global e trabalham somente nos IDs ainda pendentes. A aprovação encerra a recuperação; evidência aprovada não recebe novo job. Depois da terceira falha curta, o item permanece rastreado, e as janelas posteriores continuam partindo da auditoria real, sem retry cego nem sobrescrita de evidência aprovada.
+
+O checklist aceita `phase=pre_upload|final`. No pré-upload, `approved=true` significa somente que contrato, metadata e gates mecânicos/visuais disponíveis passaram; proveniência, URL persistida e correlação do job continuam obrigatórias no `final`. Toda reprovação contém ao menos um `blockingIssues` estruturado.
 
 `GET /api/ops/daily-print-status?date=YYYY-MM-DD` deve filtrar a rotina pedida pela data informada. A resposta compacta expõe estado, contagens, última tentativa e próxima ação, sem payload bruto ou segredo. O script de recuperação é determinístico e não usa IA; seu avaliador de baixo custo recebe apenas `{"status":"complete|retryable|blocked"}`. `retryable` retorna ao loop via API e `blocked` abre incidente para intervenção.
 

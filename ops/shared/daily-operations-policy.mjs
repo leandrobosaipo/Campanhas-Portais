@@ -46,7 +46,9 @@ export function classifyDailyPrintOutcome(input) {
   const complete = Boolean(audit && exactScope && audit.totalEligible > 0 && audit.ok === audit.totalEligible && audit.missing === 0 && audit.invalid === 0);
   if (complete) return { status: input.transportError ? "recovered" : "completed", incident: null };
   const affectedDates = uniqueDates([...(audit?.missingDates ?? []), ...(audit?.invalidDates ?? []), audit?.date]);
-  const layer = input.transportError ? "api_or_runner_transport" : "audit";
+  const layer = String(input.transportError ?? "").includes("checklist_pre_upload_failed")
+    ? "api_checklist_contract"
+    : input.transportError ? "api_or_runner_transport" : "audit";
   return {
     status: "incident_required",
     incident: {

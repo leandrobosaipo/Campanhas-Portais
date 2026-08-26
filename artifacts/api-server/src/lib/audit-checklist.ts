@@ -121,6 +121,7 @@ export type AuditChecklistContract = AuditChecklistContractOk | AuditChecklistCo
 
 export type AuditChecklistValidation = {
   approved: boolean;
+  preliminary: boolean;
   version: typeof AUDIT_CHECKLIST_VERSION;
   insertionId: number;
   date: string;
@@ -141,6 +142,39 @@ function issue(
   severity: Severity = "blocking",
 ): AuditChecklistIssue {
   return { code, severity, gate, label, detail };
+}
+
+export function decideAuditChecklistApproval(input: {
+  phase?: "pre_upload" | "final";
+  contractOk: boolean;
+  metadataPresent: boolean;
+  auditOk: boolean;
+  blockingIssues: AuditChecklistIssue[];
+}) {
+  const blockingIssues = [...input.blockingIssues];
+  const preliminary = input.phase === "pre_upload";
+  const approved = input.contractOk
+    && input.metadataPresent
+    && blockingIssues.length === 0
+    && (preliminary || input.auditOk);
+
+  if (!approved && blockingIssues.length === 0) {
+    blockingIssues.push(input.contractOk && input.metadataPresent && !preliminary && !input.auditOk
+      ? issue(
+          "audit_not_approved",
+          "captureMetadata",
+          "Auditoria final ainda não aprovada",
+          "A captura passou pelos gates mecânicos, mas a auditoria final ainda não confirmou a proveniência persistida.",
+        )
+      : issue(
+          "checklist_decision_inconsistent",
+          "checklist",
+          "Checklist bloqueado sem causa resolvida",
+          "O contrato não pôde aprovar a captura e não informou outro bloqueio estruturado.",
+        ));
+  }
+
+  return { approved, blockingIssues };
 }
 
 function normalizeDateKey(value: string) {
@@ -810,10 +844,17 @@ export async function validateAuditChecklist(input: {
     }
   }
 
-  const issues = [...blockingIssues, ...warnings];
-  const approved = blockingIssues.length === 0 && audit?.ok === true && contract.ok === true;
+  const decision = decideAuditChecklistApproval({
+    phase: input.phase,
+    contractOk: contract.ok,
+    metadataPresent: Boolean(metadata),
+    auditOk: audit?.ok === true,
+    blockingIssues,
+  });
+  const issues = [...decision.blockingIssues, ...warnings];
   return {
-    approved,
+    approved: decision.approved,
+    preliminary: input.phase === "pre_upload",
     version: AUDIT_CHECKLIST_VERSION,
     insertionId: input.insertionId,
     date,
@@ -821,8 +862,8 @@ export async function validateAuditChecklist(input: {
     metadataPresent: Boolean(metadata),
     audit,
     issues,
-    blockingIssues,
+    blockingIssues: decision.blockingIssues,
     warnings,
-    evidenceStatus: approved ? "approved" : "blocked",
+    evidenceStatus: decision.approved ? "approved" : "blocked",
   };
 }

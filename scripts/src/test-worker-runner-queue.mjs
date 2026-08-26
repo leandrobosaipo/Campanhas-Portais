@@ -128,6 +128,8 @@ test("status diário público expõe somente o resumo canônico e não vaza payl
   assert.equal("payload" in payload.lastAttempt, false);
   assert.equal(JSON.stringify(payload).includes("segredo"), false);
   assert.match(payload.lastAttempt.summary, /14 de 16 inserções.*2 precisam/);
+  assert.equal(payload.lastAttempt.errorCode, null);
+  assert.match(payload.lastAttempt.nextRecoveryAt, /T(22:30|23:00|23:30|00:00|00:30|01:00|01:30|12:00):00\.000Z$/);
 });
 
 test("job destinado ao runner nasce pronto no D1 sem depender da Cloudflare Queue", async () => {

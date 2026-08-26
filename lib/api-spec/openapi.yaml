@@ -1680,6 +1680,11 @@ components:
         missing: { type: integer, minimum: 0 }
         invalid: { type: integer, minimum: 0 }
         summary: { type: string }
+        errorCode: { type: [string, "null"] }
+        failedInsertionIds:
+          type: array
+          items: { type: integer }
+        nextRecoveryAt: { type: [string, "null"], format: date-time }
 
     DailyPrintStatus:
       type: object
@@ -2970,14 +2975,22 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        phase:
+          type: string
+          enum: [pre_upload, final]
+          default: final
       required:
         - insertionId
         - date
 
     AuditChecklistValidation:
       type: object
+      description: A blocked response always contains at least one structured blockingIssues entry.
       properties:
         approved:
+          type: boolean
+          description: Preliminary approval in pre_upload; terminal approval only in final.
+        preliminary:
           type: boolean
         version:
           type: string
@@ -3014,6 +3027,7 @@ components:
             additionalProperties: true
       required:
         - approved
+        - preliminary
         - version
         - insertionId
         - date

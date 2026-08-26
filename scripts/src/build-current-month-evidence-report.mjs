@@ -934,6 +934,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
   const routineSummary = recoveredAfterAttempt
     ? `${historicalAttemptIssues} prints precisaram de nova tentativa na rotina de ${datePt(dailyPrintStatus.lastAttempt.targetDate)}; as campanhas publicadas estão em dia agora.`
     : dailyPrintStatus?.lastAttempt?.summary || "A rotina diária ainda não possui uma tentativa registrada.";
+  const generationIncident = currentEvidenceIssues > 0 && dailyPrintStatus?.lastAttempt?.status !== "completed";
   const attentionActions = [
     Number(summary.pending || 0) > 0
       ? `<button type="button" class="attention-action warn" data-quick-evidence="missing">${icon("warn")}<span>Ver ${summary.pending} ${summary.pending === 1 ? "campanha com print pendente" : "campanhas com prints pendentes"}</span></button>`
@@ -1297,8 +1298,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
   </header>
   <section class="operations-bar" aria-label="Resumo operacional">
     <div class="operations-summary">
-      <div class="operations-state"><strong>${escapeHtml(currentAttentionCount === 0 ? "Campanhas publicadas conferidas" : `${currentAttentionCount} ${currentAttentionCount === 1 ? "campanha precisa" : "campanhas precisam"} de atenção`)}</strong><span>Rotina diária de ${escapeHtml(dailyPrintStatus?.lastAttempt?.targetDate ? datePt(dailyPrintStatus.lastAttempt.targetDate) : "data ainda não registrada")}</span></div>
-      <div class="operations-next"><span>Próxima captura</span><strong><time id="dailyCountdown" data-next-run="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}" datetime="${escapeHtml(dailyPrintStatus?.nextRunAt || "")}">calculando</time></strong></div>
+      <div class="operations-state"><strong>${escapeHtml(generationIncident ? "Incidente de geração" : currentAttentionCount === 0 ? "Campanhas publicadas conferidas" : `${currentAttentionCount} ${currentAttentionCount === 1 ? "campanha precisa" : "campanhas precisam"} de atenção`)}</strong><span>Rotina diária de ${escapeHtml(dailyPrintStatus?.lastAttempt?.targetDate ? datePt(dailyPrintStatus.lastAttempt.targetDate) : "data ainda não registrada")}</span></div>
+      <div class="operations-next"><span>${escapeHtml(generationIncident ? "Próxima recuperação" : "Próxima captura")}</span><strong><time id="dailyCountdown" data-next-run="${escapeHtml(generationIncident ? dailyPrintStatus?.lastAttempt?.nextRecoveryAt || "" : dailyPrintStatus?.nextRunAt || "")}" datetime="${escapeHtml(generationIncident ? dailyPrintStatus?.lastAttempt?.nextRecoveryAt || "" : dailyPrintStatus?.nextRunAt || "")}">calculando</time></strong></div>
     </div>
     <div class="operations-buttons" aria-label="Detalhes operacionais">
       <button class="operations-button" type="button" data-operations-section="routine" aria-label="Abrir rotina diária" aria-controls="operationsPanel" aria-expanded="false">${icon("clock")}<span>Rotina</span></button>
@@ -1325,6 +1326,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
             <dt>Resultado original</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.approved} de ${dailyPrintStatus.lastAttempt.expected} campanhas aprovadas · ${dailyPrintStatus.lastAttempt.missing} ausentes · ${dailyPrintStatus.lastAttempt.invalid} inválidas` : "—")}</dd>
             <dt>Último dia completo</dt><dd>${escapeHtml(dailyPrintStatus?.lastFullyApproved?.targetDate ? datePt(dailyPrintStatus.lastFullyApproved.targetDate) : "Ainda não registrado no histórico compacto")}</dd>
             <dt>Job</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.jobId || "—")}</dd>
+            <dt>Inserções afetadas</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.failedInsertionIds?.length ? dailyPrintStatus.lastAttempt.failedInsertionIds.join(", ") : "—")}</dd>
+            <dt>Causa resumida</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.errorCode || "—")}</dd>
           </dl>
         </section>
         <section class="operations-section" data-operations-content="sources" hidden>

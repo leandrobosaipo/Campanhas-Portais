@@ -1158,9 +1158,10 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
 });
 
 router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
-  const active = await pool.query<OpsJobRecord>(
-    "SELECT * FROM ops_jobs WHERE status IN ('running','queued','ready_for_runner') ORDER BY created_at ASC",
-  );
+  const [active, heartbeats] = await Promise.all([
+    pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE status IN ('running','queued','ready_for_runner') ORDER BY created_at ASC"),
+    listRunnerHeartbeats().catch(() => []),
+  ]);
   const described: Array<ReturnType<typeof describeJob>> = active.rows.map(describeJob);
   const running = described.filter((job: ReturnType<typeof describeJob>) => job.status === "running");
   const queue = described.filter((job: ReturnType<typeof describeJob>) => job.status === "queued" || job.status === "ready_for_runner");
@@ -1190,6 +1191,11 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
       readyForRunner: Number(row.ready_for_runner ?? 0) || 0,
       completedToday: Number(row.completed_today ?? 0) || 0,
       failedToday: Number(row.failed_today ?? 0) || 0,
+    },
+    runners: {
+      lastHeartbeatAt: heartbeats[0]?.updated_at ?? null,
+      hasRecentRunner: heartbeats[0]?.updated_at ? (Date.now() - Date.parse(heartbeats[0].updated_at)) <= 30 * 60_000 : null,
+      count: heartbeats.length || null,
     },
   });
 });

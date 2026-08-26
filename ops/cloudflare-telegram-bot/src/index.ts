@@ -962,23 +962,11 @@ async function sendDailySummary(
     ? preflight.failed.slice(0, 8).map((item) => `- #${item.insertionId}: ${item.status}${item.issues.length ? ` (${item.issues.join(", ")})` : ""}`).join("\n")
     : "- nenhuma";
   const dailyPrintJobLine = formatDailyPrintJobState(dailyPrintJob);
-  const dailyPrintFailure = dailyPrintJob?.status === "failed"
-    ? [
-        "",
-        "Alerta de falha do lote diário:",
-        `- Data: ${dailyPrintJob.date}`,
-        `- Job: ${dailyPrintJob.job?.id ?? "—"}`,
-        `- Erro: ${dailyPrintJob.error ?? "sem detalhe registrado"}`,
-        "- Próximo passo: abrir painel > Inserções > gerar retroativos/corrigir falhas.",
-      ]
-    : [];
-
   const text = [
     `Resumo diário AdOps`,
     `Data: ${date}`,
     `Competência: ${competencia}`,
     dailyPrintJobLine,
-    ...dailyPrintFailure,
     "",
     `Total elegíveis: ${effectiveAudit.totalEligible}`,
     `Auditados: ${effectiveAudit.ok}`,
@@ -996,6 +984,26 @@ async function sendDailySummary(
     scheduled.text,
   ].join("\n");
 
+  await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
+}
+
+async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
+  const audit = await adopsFetch(env, `/api/insertions/capture-proof/audit?date=${encodeURIComponent(date)}`) as CaptureAuditSummary;
+  const pending = audit.items.filter((item) => !["ok", "ok_best_effort"].includes(item.status)).map((item) => item.insertionId).sort((a, b) => a - b);
+  const resolved = audit.totalEligible > 0 && audit.ok === audit.totalEligible && audit.missing === 0 && audit.invalid === 0;
+  const state = resolved ? "resolved" : escalation ? "blocked_0830" : "recovery_in_progress";
+  const claim = await adopsFetch(env, "/api/ops/daily-print-alerts/claim", {
+    method: "POST",
+    body: JSON.stringify({ date, state, pendingInsertionIds: pending }),
+  }, true) as { claimed?: boolean };
+  if (claim.claimed !== true) return;
+  const text = resolved
+    ? `AdOps: auditoria de ${date} concluída. ${audit.ok} de ${audit.totalEligible} prints aprovados.`
+    : [
+        escalation ? `AdOps: bloqueio mantido às 08h30 para ${date}.` : `AdOps: recuperação automática em andamento para ${date}.`,
+        `Elegíveis: ${audit.totalEligible} · auditados: ${audit.ok} · pendentes: ${audit.missing} · inválidos: ${audit.invalid}`,
+        `Inserções: ${pending.length ? pending.join(", ") : "causa ainda sem IDs"}`,
+      ].join("\n");
   await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
 }
 
@@ -1584,8 +1592,22 @@ export default {
     return json({ ok: false, error: "not_found" }, { status: 404 });
   },
 
-  async scheduled(_controller: unknown, env: Env): Promise<void> {
+  async scheduled(controller: { cron?: string }, env: Env): Promise<void> {
     if (normalizeText(env.TELEGRAM_NOTIFICATIONS_ENABLED) === "false") return;
+    const today = currentDateInTimezone(env.TELEGRAM_TIMEZONE ?? "America/Cuiaba");
+    const escalation = controller.cron === "30 12 * * *";
+    const alertDate = escalation
+      ? new Date(`${today}T12:00:00Z`).toLocaleDateString("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" })
+      : today;
+    const targetDate = escalation
+      ? new Date(Date.parse(`${alertDate}T00:00:00-04:00`) - 24 * 60 * 60_000).toLocaleDateString("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" })
+      : alertDate;
+    try {
+      await sendDailyPrintAlert(env, targetDate, escalation);
+    } catch (error) {
+      console.error("daily_print_alert_failed", error);
+    }
+    if (controller.cron !== "45 22 * * *") return;
     try {
       await adopsFetch(env, "/api/ops/jobs/watchdog", {
         method: "POST",

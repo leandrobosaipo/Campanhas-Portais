@@ -3,6 +3,7 @@ import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from 
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
+import { buildDailyPrintRecoveryWindow } from "./daily-print-recovery-window";
 
 type Json = Record<string, unknown> | unknown[] | string | number | boolean | null;
 
@@ -52,6 +53,11 @@ type QueueOverview = {
     readyForRunner: number;
     completedToday: number;
     failedToday: number;
+  };
+  runners: {
+    lastHeartbeatAt: string | null;
+    hasRecentRunner: boolean | null;
+    count: number | null;
   };
 };
 
@@ -1029,12 +1035,19 @@ async function getQueueOverview(env: Env): Promise<QueueOverview> {
     completedToday: Number(totalsRaw?.completed_today ?? 0) || 0,
     failedToday: Number(totalsRaw?.failed_today ?? 0) || 0,
   };
+  const readiness = await fetchPrivateApiJson<{ runnerLiveness?: { lastRunnerSeenAt?: string | null; hasRecentRunner?: boolean; runners?: unknown[] } }>(env, "/api/ops/runtime-readiness");
+  const liveness = readiness?.runnerLiveness;
 
   return {
     now: running.at(0) ?? null,
     queue,
     scheduled,
     totals,
+    runners: {
+      lastHeartbeatAt: liveness?.lastRunnerSeenAt ?? null,
+      hasRecentRunner: typeof liveness?.hasRecentRunner === "boolean" ? liveness.hasRecentRunner : null,
+      count: Array.isArray(liveness?.runners) ? liveness.runners.length : null,
+    },
   };
 }
 
@@ -2271,6 +2284,40 @@ async function scheduleDailyPrintBatch(
   };
   console.log("daily_print_batch_scheduled", result);
   return result;
+}
+
+async function scheduleDailyPrintRecoveryBatch(env: Env, cron: string, scheduledTime: number) {
+  const recovery = buildDailyPrintRecoveryWindow(cron, scheduledTime);
+  if (!recovery) return null;
+  const existing = await findExistingDailyPrintBatchJob(env, recovery.date);
+  if (existing && ["queued", "ready_for_runner", "running", "completed"].includes(existing.status)) {
+    return { ok: true, skipped: true, reason: "daily_print_already_active_or_complete", existingJobId: existing.id };
+  }
+  const audit = await fetchPrivateApiJson<RecoveryAuditResponse>(env, `/api/insertions/capture-proof/audit?date=${recovery.date}`);
+  const pendingIds = (audit?.items ?? [])
+    .filter((item) => ["missing", "invalid_audit", "invalid_url"].includes(item.status))
+    .map((item) => item.insertionId);
+  if (pendingIds.length === 0) return { ok: true, skipped: true, reason: "daily_print_audit_complete" };
+  const payload = {
+    competencia: competenciaForDate(recovery.date),
+    siteId: null,
+    date: recovery.date,
+    captureAt: null,
+    captureWindow: DAILY_PRINT_CAPTURE_WINDOW,
+    source: DAILY_PRINT_SOURCE,
+    recoveryMode: recovery.mode,
+    recoveryWindow: recovery.window,
+    pendingInsertionIds: pendingIds,
+    scheduledAt: new Date(scheduledTime).toISOString(),
+    timeZone: DAILY_PRINT_TIME_ZONE,
+  };
+  return createIdempotentOpsJob(
+    env,
+    "print-batch",
+    payload,
+    "cloudflare-scheduled",
+    `daily-print:${recovery.date}:${recovery.window}`,
+  );
 }
 
 function computeDelay(ins: any): boolean {
@@ -3632,6 +3679,25 @@ export default {
       return jsonNoStore(await getQueueOverview(env));
     }
 
+    if (path === "/api/ops/daily-print-alerts/claim") {
+      const auth = requireOpsAuth(request, env);
+      if (!auth.ok) return auth.response;
+      if (request.method !== "POST") return jsonNoStore({ error: "method_not_allowed" }, { status: 405 });
+      const body = await readBody(request);
+      const date = typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date) ? body.date : null;
+      const state = typeof body.state === "string" ? body.state : null;
+      const pendingInsertionIds = Array.isArray(body.pendingInsertionIds)
+        ? body.pendingInsertionIds.map(readOptionalNumber).filter((item): item is number => Boolean(item)).sort((a, b) => a - b)
+        : [];
+      if (!date || !state) return badRequest("date e state são obrigatórios.");
+      const previous = await env.adops_ops.prepare(`SELECT COUNT(*) AS total FROM daily_print_alerts WHERE target_date=?`).bind(date).first<{ total: number }>();
+      if (state === "resolved" && Number(previous?.total ?? 0) === 0) return jsonNoStore({ ok: true, claimed: false, reason: "no_previous_incident" });
+      const fingerprint = `${date}:${state}:${pendingInsertionIds.join(",")}`;
+      const inserted = await env.adops_ops.prepare(`INSERT OR IGNORE INTO daily_print_alerts (fingerprint,target_date,state,pending_ids_json,claimed_at) VALUES (?,?,?,?,?)`)
+        .bind(fingerprint, date, state, JSON.stringify(pendingInsertionIds), nowIso()).run();
+      return jsonNoStore({ ok: true, claimed: (inserted.meta?.changes ?? 0) > 0 });
+    }
+
     const opsJobProgressMatch = path.match(/^\/api\/ops\/jobs\/([^/]+)\/progress$/);
     if (opsJobProgressMatch) {
       const job = await getOpsJob(env, opsJobProgressMatch[1]);
@@ -3840,6 +3906,13 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const recovery = buildDailyPrintRecoveryWindow(controller.cron, controller.scheduledTime);
+    if (recovery) {
+      ctx.waitUntil(scheduleDailyPrintRecoveryBatch(env, controller.cron, controller.scheduledTime).catch((error) => {
+        console.error("daily_print_recovery_schedule_failed", { error: error instanceof Error ? error.message : String(error) });
+      }));
+      return;
+    }
     if (isMonthlyEvidenceReportCron(controller.cron)) {
       const payload = buildMonthlyEvidenceReportSchedule(new Date(controller.scheduledTime));
       ctx.waitUntil(
