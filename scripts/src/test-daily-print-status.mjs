@@ -75,6 +75,19 @@ test("consulta histórica respeita a data solicitada", () => {
   assert.equal(result.lastAttempt.targetDate, "2026-08-22");
 });
 
+test("consulta histórica não promete recuperação de outra data", () => {
+  const result = buildDailyPrintStatus({
+    now: new Date("2026-08-26T19:48:00.000Z"),
+    targetDate: "2026-08-25",
+    jobs: [{
+      id: "morning-25", status: "failed", createdAt: "2026-08-26T12:00:00.000Z", updatedAt: "2026-08-26T12:10:00.000Z",
+      payload: { source: "macmini-canonical-scheduler", targetDate: "2026-08-25", routineKind: "daily-print-morning-recovery" },
+      result: { canonicalAudit: { expected: 9, approved: 4, missing: 0, invalid: 5 } },
+    }],
+  });
+  assert.equal(result.lastAttempt.nextRecoveryAt, null);
+});
+
 test("lê auditoria de jobs legados aninhada em execution", () => {
   const result = buildDailyPrintStatus({ jobs: [{
     id: "legacy", status: "completed", createdAt: "2026-08-22T22:00:00.000Z", updatedAt: "2026-08-22T22:10:00.000Z",

@@ -22,8 +22,14 @@ function nextRunAt(now) {
   return candidate.toISOString();
 }
 
-function nextRecoveryAt(now) {
+function nextRecoveryAt(now, targetDate) {
   const date = dateInCuiaba(now);
+  if (targetDate !== date) {
+    const yesterday = dateInCuiaba(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    if (targetDate !== yesterday) return null;
+    const morning = new Date(`${date}T08:00:00-04:00`);
+    return morning.getTime() > now.getTime() ? morning.toISOString() : null;
+  }
   const candidates = ["18:30", "19:00", "19:30", "20:00", "20:30", "21:00", "21:30"]
     .map((time) => new Date(`${date}T${time}:00-04:00`))
     .filter((item) => item.getTime() > now.getTime());
@@ -122,7 +128,7 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
     invalid: counts?.invalid ?? 0,
     summary: summarize(counts, String(latest.status)),
     ...safeIncident(latest),
-    nextRecoveryAt: full ? null : nextRecoveryAt(now),
+    nextRecoveryAt: full ? null : nextRecoveryAt(now, String(dailyTargetDate(latest))),
   } : null;
   const approvedJob = dailyJobs.find((job) => {
     const item = safeCounts(job);

@@ -6,7 +6,7 @@ const runnerUrl = new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", i
 
 test("lote diário usa jobs assíncronos por inserção e fecha pela auditoria agregada", async () => {
   const source = await readFile(runnerUrl, "utf8");
-  const start = source.indexOf("async function executePrintBatch(job)");
+  const start = source.indexOf("async function executePrintBatch(job,");
   const end = source.indexOf("async function executePrintBackfill", start);
   const flow = start >= 0 && end > start ? source.slice(start, end) : "";
 
@@ -17,6 +17,7 @@ test("lote diário usa jobs assíncronos por inserção e fecha pela auditoria a
   assert.match(flow, /incidentLayer: incident\.layer/);
   assert.match(flow, /transportError: transportError/);
   assert.match(flow, /expectedTotal: candidates\.length/);
+  assert.match(flow, /error\.jobResult = executionResult/);
   assert.match(flow, /item\?\.adops\?\.competencia/);
   assert.match(flow, /auditQuery\.set\("insertionIds", candidates\.map/);
   assert.doesNotMatch(flow, /capture-proof\/batch/);

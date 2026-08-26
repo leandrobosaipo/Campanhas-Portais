@@ -240,6 +240,17 @@ test("runner mantém heartbeat do job durante execução longa", async () => {
   assert.deepEqual(new Set(heartbeats), new Set(["job-lease"]));
 });
 
+test("runner preserva o resultado parcial quando o job termina com incidente", async () => {
+  process.env.ADOPS_RUNNER_TEST_MODE = "1";
+  // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.
+  const { jobResultFromError } = await import("../../ops/cloudflare-remote-runner/src/runner.mjs");
+  const error = Object.assign(new Error("daily_print_audit_incomplete"), {
+    jobResult: { captured: [{ insertionId: 2713 }], failed: [{ insertionId: 2192 }] },
+  });
+  assert.deepEqual(jobResultFromError(error), error.jobResult);
+  assert.equal(jobResultFromError(new Error("transport")), null);
+});
+
 test("runner não conclui job depois de perder o lease", async () => {
   process.env.ADOPS_RUNNER_TEST_MODE = "1";
   // @ts-expect-error runner de produção é um módulo JavaScript sem declarations.

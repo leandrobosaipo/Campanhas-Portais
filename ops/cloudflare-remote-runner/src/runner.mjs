@@ -6029,28 +6029,8 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     },
     transportError,
   });
-  if (outcome.status === "incident_required") {
-    const incident = outcome.incident ?? {};
-    throw new Error(`daily_print_audit_incomplete:${JSON.stringify({
-      incidentLayer: incident.layer ?? "audit",
-      incidentSummary: incident.summary ?? null,
-      transportError: transportError ?? null,
-      errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
-      date: targetDate,
-      expectedTotal: candidates.length,
-      totalEligible: audit?.totalEligible ?? null,
-      ok: audit?.ok ?? null,
-      missing: audit?.missing ?? null,
-      invalid: audit?.invalid ?? null,
-      failedInsertionIds: failed.map((item) => item.insertionId),
-      nextRecoveryAt: payload?.nextRecoveryAt ?? null,
-      startedAt: new Date(startedAtMs).toISOString(),
-      finishedAt: new Date().toISOString(),
-      durationMs: Date.now() - startedAtMs,
-    })}`);
-  }
-  return {
-    stage: outcome.status === "recovered" ? "recovered_after_transport_error" : "completed",
+  const executionResult = {
+    stage: outcome.status === "recovered" ? "recovered_after_transport_error" : outcome.status === "incident_required" ? "failed" : "completed",
     targetDate,
     mode: "async_per_insertion",
     totalCandidates: candidates.length,
@@ -6070,14 +6050,43 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       invalid: Number(audit.invalid ?? 0),
     },
     transportError,
-    incidentLayer: null,
-    errorCode: null,
-    failedInsertionIds: [],
-    nextRecoveryAt: null,
+    incidentLayer: outcome.incident?.layer ?? null,
+    errorCode: outcome.status === "incident_required" ? "daily_print_audit_incomplete" : null,
+    failedInsertionIds: failed.map((item) => item.insertionId),
+    nextRecoveryAt: payload?.nextRecoveryAt ?? null,
     startedAt: new Date(startedAtMs).toISOString(),
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAtMs,
   };
+  if (outcome.status === "incident_required") {
+    const incident = outcome.incident ?? {};
+    const error = new Error(`daily_print_audit_incomplete:${JSON.stringify({
+      incidentLayer: incident.layer ?? "audit",
+      incidentSummary: incident.summary ?? null,
+      transportError: transportError ?? null,
+      errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
+      date: targetDate,
+      expectedTotal: candidates.length,
+      totalEligible: audit?.totalEligible ?? null,
+      ok: audit?.ok ?? null,
+      missing: audit?.missing ?? null,
+      invalid: audit?.invalid ?? null,
+      failedInsertionIds: failed.map((item) => item.insertionId),
+      nextRecoveryAt: payload?.nextRecoveryAt ?? null,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAtMs,
+    })}`);
+    error.jobResult = executionResult;
+    throw error;
+  }
+  return executionResult;
+}
+
+function jobResultFromError(error) {
+  return error && typeof error === "object" && error.jobResult && typeof error.jobResult === "object"
+    ? error.jobResult
+    : null;
 }
 
 function isAuditApprovedStatus(status) {
@@ -7873,6 +7882,7 @@ async function runOnce(poolKinds = kinds) {
       ok: false,
       runnerId: RUNNER_ID,
       failedAt: new Date().toISOString(),
+      execution: jobResultFromError(error),
     });
     console.error(`[runner] job falhou`, job.id, message);
   }
@@ -7978,6 +7988,7 @@ export {
   isAdrotatePublicationConfirmed,
   isAdrotateSnapshotPublicationConfirmed,
   isAutomaticCampaignReconcileSource,
+  jobResultFromError,
   isDiscardableDraftCampaign,
   mediaKindFromUrl,
   hasHttpsDrivePiDestination,
