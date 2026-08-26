@@ -1328,6 +1328,11 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
      FROM ops_jobs`,
   );
   const row = totals.rows[0] ?? {};
+  const heartbeatRows = heartbeats as Awaited<ReturnType<typeof listRunnerHeartbeats>>;
+  const recentHeartbeatWindowMs = 30 * 60_000;
+  const recentHeartbeats = heartbeatRows.filter((heartbeat) => (
+    heartbeat.updated_at && Date.now() - Date.parse(heartbeat.updated_at) <= recentHeartbeatWindowMs
+  ));
   res.json({
     now: running[0] ?? null,
     queue,
@@ -1340,9 +1345,10 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
       failedToday: Number(row.failed_today ?? 0) || 0,
     },
     runners: {
-      lastHeartbeatAt: heartbeats[0]?.updated_at ?? null,
-      hasRecentRunner: heartbeats[0]?.updated_at ? (Date.now() - Date.parse(heartbeats[0].updated_at)) <= 30 * 60_000 : null,
-      count: heartbeats.length || null,
+      lastHeartbeatAt: heartbeatRows[0]?.updated_at ?? null,
+      hasRecentRunner: heartbeatRows.length ? recentHeartbeats.length > 0 : null,
+      count: recentHeartbeats.length || null,
+      registeredCount: heartbeatRows.length || null,
     },
     scheduler: buildSchedulerReadback(new Date(), ADOPS_CONTROL_PLANE_PROVIDER),
   });

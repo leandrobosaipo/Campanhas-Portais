@@ -59,3 +59,9 @@ test("OpenAPI publica os contratos operacionais do control plane", () => {
     assert(ops.includes(`path: "${path}"`), `catálogo/OpenAPI sem ${path}`);
   }
 });
+
+test("overview diferencia runners ativos de registros históricos", () => {
+  assert.match(ops, /recentHeartbeats = heartbeatRows\.filter/);
+  assert.match(ops, /count: recentHeartbeats\.length \|\| null/);
+  assert.match(ops, /registeredCount: heartbeatRows\.length \|\| null/);
+});
