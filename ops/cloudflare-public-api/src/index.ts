@@ -3906,6 +3906,7 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const localTime = new Intl.DateTimeFormat("pt-BR", { timeZone: DAILY_PRINT_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(controller.scheduledTime));
     const recovery = buildDailyPrintRecoveryWindow(controller.cron, controller.scheduledTime);
     if (recovery) {
       ctx.waitUntil(scheduleDailyPrintRecoveryBatch(env, controller.cron, controller.scheduledTime).catch((error) => {
@@ -3913,7 +3914,7 @@ export default {
       }));
       return;
     }
-    if (isMonthlyEvidenceReportCron(controller.cron)) {
+    if (localTime === "22:15" || isMonthlyEvidenceReportCron(controller.cron)) {
       const payload = buildMonthlyEvidenceReportSchedule(new Date(controller.scheduledTime));
       ctx.waitUntil(
         createIdempotentOpsJob(
@@ -3929,7 +3930,7 @@ export default {
       );
       return;
     }
-    if (isCampaignPublicationReconcileCron(controller.cron)) {
+    if (localTime === "17:30" || isCampaignPublicationReconcileCron(controller.cron)) {
       const targetDate = dateInTimeZone(new Date(controller.scheduledTime), DAILY_PRINT_TIME_ZONE);
       let schedulingKind: JobKind = "sync-planilha";
       ctx.waitUntil(
@@ -3964,6 +3965,7 @@ export default {
       );
       return;
     }
+    if (localTime !== "18:00") return;
     ctx.waitUntil(
       scheduleDailyPrintBatch(env, {
         requestedBy: "cloudflare-scheduled",

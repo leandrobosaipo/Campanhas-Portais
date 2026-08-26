@@ -1592,10 +1592,14 @@ export default {
     return json({ ok: false, error: "not_found" }, { status: 404 });
   },
 
-  async scheduled(controller: { cron?: string }, env: Env): Promise<void> {
+  async scheduled(controller: { cron?: string; scheduledTime?: number }, env: Env): Promise<void> {
     if (normalizeText(env.TELEGRAM_NOTIFICATIONS_ENABLED) === "false") return;
+    const scheduled = new Date(controller.scheduledTime ?? Date.now());
+    const localTime = new Intl.DateTimeFormat("pt-BR", { timeZone: env.TELEGRAM_TIMEZONE ?? "America/Cuiaba", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(scheduled);
+    const alertTimes = new Set(["18:45", "19:15", "19:45", "20:15", "20:45", "21:15", "21:45", "22:00", "08:30"]);
+    if (!alertTimes.has(localTime)) return;
     const today = currentDateInTimezone(env.TELEGRAM_TIMEZONE ?? "America/Cuiaba");
-    const escalation = controller.cron === "30 12 * * *";
+    const escalation = localTime === "08:30";
     const alertDate = escalation
       ? new Date(`${today}T12:00:00Z`).toLocaleDateString("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" })
       : today;
@@ -1607,7 +1611,7 @@ export default {
     } catch (error) {
       console.error("daily_print_alert_failed", error);
     }
-    if (controller.cron !== "45 22 * * *") return;
+    if (localTime !== "18:45") return;
     try {
       await adopsFetch(env, "/api/ops/jobs/watchdog", {
         method: "POST",
