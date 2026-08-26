@@ -41,6 +41,13 @@ export type PrintRunnerJobResultItem = {
   readinessAudit?: Record<string, unknown> | null;
   retroContentProof?: Record<string, unknown> | null;
   manifestHash?: string | null;
+  stages?: Array<{
+    stage: string;
+    status: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    durationMs: number | null;
+  }>;
   reason?: string;
   error?: string;
 };

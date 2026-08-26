@@ -8025,6 +8025,7 @@ async function main() {
       reconstruction,
       manifestHash: retroContentManifest ? crypto.createHash("sha256").update(JSON.stringify(retroContentManifest)).digest("hex") : null,
       probableCause: analysis.probableCause,
+      stages: trace.stages,
     }, null, 2));
   } catch (error) {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";

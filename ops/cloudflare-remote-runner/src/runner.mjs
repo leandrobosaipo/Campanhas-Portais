@@ -12,6 +12,7 @@ import { buildRunnerPools } from "./runner-concurrency.mjs";
 import { planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
+import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -235,11 +236,13 @@ async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captu
       const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
       if (!item || item.status !== "ok") throw new Error(item?.error || `Captura assíncrona ${jobId} concluiu sem item aprovado.`);
       await markMonthlyReportRefreshAfterApproval(date, insertionId);
-      return { jobId, job, item };
+      return { jobId, job, item, timings: summarizeCaptureJobTimings(job) };
     }
     if (["failed", "cancelled"].includes(String(job?.status || ""))) {
       const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
-      throw new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
+      const error = new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
+      error.captureTimings = summarizeCaptureJobTimings(job);
+      throw error;
     }
     await sleep(5000);
     assertLease();
@@ -5992,12 +5995,17 @@ async function executePrintBatch(job, assertLease = () => undefined) {
         assertLease,
       });
       assertLease();
-      captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null });
+      captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null, timings: capture.timings });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
       const blockedReconstruction = payload?.recoveryMode === "late_publication_recovery"
         && /reconstruction|reconstru|retro|candidate|promot/i.test(transportError);
-      failed.push({ insertionId, status: blockedReconstruction ? "blocked_reconstruction" : "failed", error: safeProcessOutput(transportError, 800) });
+      failed.push({
+        insertionId,
+        status: blockedReconstruction ? "blocked_reconstruction" : "failed",
+        error: safeProcessOutput(transportError, 800),
+        timings: error && typeof error === "object" ? error.captureTimings ?? null : null,
+      });
       // A bad portal or audit gate must not suppress the remaining portals.
       // The canonical audit below determines the batch outcome after every
       // eligible insertion had its own documented attempt.
@@ -6008,7 +6016,10 @@ async function executePrintBatch(job, assertLease = () => undefined) {
   if (competencia) auditQuery.set("competencia", competencia);
   if (readPositiveInteger(payload?.siteId)) auditQuery.set("siteId", String(payload.siteId));
   auditQuery.set("insertionIds", candidates.map((item) => readPositiveInteger(item?.adops?.insertionId)).filter(Boolean).join(","));
+  const finalAuditStartedAtMs = Date.now();
   const audit = await privateApiGet(`/api/insertions/capture-proof/audit?${auditQuery.toString()}`);
+  const finalAuditMs = Date.now() - finalAuditStartedAtMs;
+  const captureTimings = aggregateCaptureTimings([...captured, ...failed], finalAuditMs);
   const outcome = classifyDailyPrintOutcome({
     jobId: job.id,
     childJobId: captured.at(-1)?.captureJobId ?? null,
@@ -6049,6 +6060,17 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     errorCode: outcome.status === "incident_required" ? "daily_print_audit_incomplete" : null,
     failedInsertionIds: failed.map((item) => item.insertionId),
     nextRecoveryAt: payload?.nextRecoveryAt ?? null,
+    timings: {
+      queueMs: (() => {
+        const createdAtMs = Date.parse(String(job?.createdAt ?? ""));
+        const claimedAtMs = Date.parse(String(payload?.claimedAt ?? ""));
+        return Number.isFinite(createdAtMs) && Number.isFinite(claimedAtMs) && claimedAtMs >= createdAtMs
+          ? claimedAtMs - createdAtMs
+          : null;
+      })(),
+      ...captureTimings,
+      totalMs: Date.now() - startedAtMs,
+    },
     startedAt: new Date(startedAtMs).toISOString(),
     finishedAt: new Date().toISOString(),
     durationMs: Date.now() - startedAtMs,

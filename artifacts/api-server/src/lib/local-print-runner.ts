@@ -1,6 +1,7 @@
 import { db, printJobsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { runLocalCaptureProof } from "./local-capture-runtime";
+import { buildFailedCaptureStage } from "../../../../ops/shared/capture-stage-timings.mjs";
 import type {
   PrintRunnerJobPayload,
   PrintRunnerJobResult,
@@ -112,6 +113,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     target: PrintRunnerJobPayload["targets"][number],
     kind: PrintRunnerJobPayload["kind"],
   ): Promise<PrintRunnerJobResultItem> {
+    const targetStartedAt = new Date().toISOString();
     let lastError = "Falha desconhecida na captura.";
     for (let attempt = 1; attempt <= PRINT_TARGET_MAX_ATTEMPTS; attempt += 1) {
       try {
@@ -137,6 +139,15 @@ class LocalPrintRunner implements PrintRunnerPort {
             : null,
           retroContentProof: capture.retroContentProof ?? null,
           manifestHash: capture.manifestHash ?? null,
+          stages: (Array.isArray(capture.stages) ? capture.stages : []).map((stage: any) => ({
+            stage: typeof stage?.stage === "string" ? stage.stage : "unknown",
+            status: typeof stage?.status === "string" ? stage.status : "unknown",
+            startedAt: typeof stage?.startedAt === "string" ? stage.startedAt : null,
+            finishedAt: typeof stage?.finishedAt === "string" ? stage.finishedAt : null,
+            durationMs: typeof stage?.durationMs === "number" && Number.isFinite(stage.durationMs) && stage.durationMs >= 0
+              ? stage.durationMs
+              : null,
+          })),
         };
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
@@ -146,12 +157,14 @@ class LocalPrintRunner implements PrintRunnerPort {
         }
       }
     }
+    const targetFinishedAt = new Date().toISOString();
     return {
       insertionId: target.insertionId,
       targetDate: target.targetDate,
       captureAt: target.captureAt ?? null,
       status: "error",
       error: `${lastError} (${PRINT_TARGET_MAX_ATTEMPTS} tentativa(s))`,
+      stages: [buildFailedCaptureStage(targetStartedAt, targetFinishedAt)],
     };
   }
 
