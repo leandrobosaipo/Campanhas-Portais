@@ -11,6 +11,7 @@ import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
 import { planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
+import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -5953,16 +5954,10 @@ async function executePrintBatch(job, assertLease = () => undefined) {
   }
   const operations = await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
   const pendingInsertionIds = new Set((Array.isArray(payload?.pendingInsertionIds) ? payload.pendingInsertionIds : []).map(readPositiveInteger).filter(Boolean));
-  const candidates = (Array.isArray(operations?.items) ? operations.items : [])
-    .filter((item) => {
-      const insertionId = readPositiveInteger(item?.adops?.insertionId);
-      if (pendingInsertionIds.size > 0 && !pendingInsertionIds.has(insertionId)) return false;
-      if (competencia && String(item?.adops?.competencia || "").toUpperCase() !== competencia) return false;
-      const publicConfirmed = item?.adops?.publicConfirmation === "confirmed";
-      if (!insertionId || (item?.adops?.bannerPublicadoNoSite !== true && !publicConfirmed) || !item?.adops?.mediaUrl) return false;
-      const requiredDates = Array.isArray(item?.evidence?.requiredDates) ? item.evidence.requiredDates : [];
-      return requiredDates.includes(targetDate);
-    });
+  const candidates = selectDailyPrintCandidates(operations?.items, targetDate, {
+    pendingInsertionIds: [...pendingInsertionIds],
+    competencia,
+  });
   const captured = [];
   const skipped = [];
   const failed = [];

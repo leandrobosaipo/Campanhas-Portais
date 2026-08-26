@@ -9,9 +9,11 @@ import {
   reconcileDueSchedules,
   resolveCanonicalSchedule,
   serializeOptionalCount,
+  suppressCompletedPrintRecoveries,
   validateDryRunNow,
 } from "../../artifacts/api-server/src/lib/ops-scheduler";
 import { resolveDailyPrintAlertDecision } from "../../ops/shared/daily-print-alert-decision.mjs";
+import { selectDailyPrintCandidates, summarizeDailyPrintCandidates } from "../../ops/shared/daily-print-candidates.mjs";
 import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "../../ops/cloudflare-public-api/src/scheduler-shadow";
 
 test("resolve o lote das 18h de Cuiaba a partir de UTC", () => {
@@ -58,6 +60,109 @@ test("nao considera uma janela futura como devida", () => {
   assert.equal(dailyPrint?.targetDate, "2026-08-26");
   assert.equal(dailyPrint?.due, false);
   assert.equal(dailyPrint?.scheduledFor, "2026-08-26T22:00:00.000Z");
+});
+
+test("recuperacao nao cria job quando a auditoria viva ja esta completa", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T22:30:00.000Z"));
+  const gated = await suppressCompletedPrintRecoveries(decisions, async () => ({
+    expectedTotal: 8,
+    totalEligible: 8,
+    ok: 8,
+    missing: 0,
+    invalid: 0,
+  }));
+  const recovery = gated.find((item) => item.routineKind === "daily-print-recovery" && item.dispatchWindow === "18:30");
+
+  assert.equal(recovery?.due, false);
+  assert.equal(recovery?.nextRecoveryAt, null);
+});
+
+test("recuperacao continua devida quando surge nova pendencia na auditoria viva", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T23:00:00.000Z"));
+  const gated = await suppressCompletedPrintRecoveries(decisions, async () => ({
+    expectedTotal: 9,
+    totalEligible: 9,
+    ok: 8,
+    missing: 1,
+    invalid: 0,
+  }));
+  const recovery = gated.find((item) => item.routineKind === "daily-print-recovery" && item.dispatchWindow === "19:00");
+
+  assert.equal(recovery?.due, true);
+});
+
+test("lote normal das 18h nao e suprimido pelo gate de recuperacao", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T22:00:00.000Z"));
+  let reads = 0;
+  const gated = await suppressCompletedPrintRecoveries(decisions, async () => {
+    reads += 1;
+    return { expectedTotal: 8, totalEligible: 8, ok: 8, missing: 0, invalid: 0 };
+  });
+
+  assert.equal(gated.find((item) => item.routineKind === "daily-print")?.due, true);
+  assert.equal(reads, 0);
+});
+
+test("falha da auditoria mantem recuperacao devida e nao repete leitura na mesma janela", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T23:00:00.000Z"));
+  const cache = new Map();
+  let reads = 0;
+  const readAudit = async () => {
+    reads += 1;
+    throw new Error("audit_unavailable");
+  };
+  const first = await suppressCompletedPrintRecoveries(decisions, readAudit, cache);
+  const second = await suppressCompletedPrintRecoveries(decisions, readAudit, cache);
+
+  assert.equal(first.find((item) => item.dispatchWindow === "19:00")?.due, true);
+  assert.equal(second.find((item) => item.dispatchWindow === "19:00")?.due, true);
+  assert.equal(reads, 1);
+});
+
+test("recuperacao matinal reavalia publicacao tardia ate 08h30", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-27T12:00:00.000Z"));
+  const cache = new Map();
+  let reads = 0;
+  const readAudit = async () => {
+    reads += 1;
+    return reads === 1
+      ? { expectedTotal: 8, totalEligible: 8, ok: 8, missing: 0, invalid: 0 }
+      : { expectedTotal: 9, totalEligible: 9, ok: 8, missing: 1, invalid: 0 };
+  };
+  const first = await suppressCompletedPrintRecoveries(decisions, readAudit, cache, Date.parse("2026-08-27T12:00:00.000Z"));
+  const cached = await suppressCompletedPrintRecoveries(decisions, readAudit, cache, Date.parse("2026-08-27T12:04:00.000Z"));
+  const refreshed = await suppressCompletedPrintRecoveries(decisions, readAudit, cache, Date.parse("2026-08-27T12:06:00.000Z"));
+
+  assert.equal(first.find((item) => item.routineKind === "daily-print-morning-recovery")?.due, false);
+  assert.equal(cached.find((item) => item.routineKind === "daily-print-morning-recovery")?.due, false);
+  assert.equal(refreshed.find((item) => item.routineKind === "daily-print-morning-recovery")?.due, true);
+  assert.equal(reads, 2);
+});
+
+test("divergencia entre candidatos e auditoria mantem recuperacao devida", async () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-26T23:00:00.000Z"));
+  const gated = await suppressCompletedPrintRecoveries(decisions, async () => ({
+    expectedTotal: 9,
+    totalEligible: 8,
+    ok: 8,
+    missing: 0,
+    invalid: 0,
+  }));
+
+  assert.equal(gated.find((item) => item.dispatchWindow === "19:00")?.due, true);
+});
+
+test("candidatos compartilhados incluem publicacao confirmada mesmo sem booleano legado", () => {
+  const targetDate = "2026-08-26";
+  const base = {
+    adops: { insertionId: 2713, competencia: "AGOSTO/2026", bannerPublicadoNoSite: false, publicConfirmation: "confirmed", mediaUrl: "https://cdn.example/banner.gif" },
+    evidence: { requiredDates: [targetDate], missingDates: [], invalidDates: [] },
+  };
+  const candidates = selectDailyPrintCandidates([base], targetDate);
+
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(summarizeDailyPrintCandidates(candidates, targetDate), { totalEligible: 1, ok: 1, missing: 0, invalid: 0 });
+  assert.equal(selectDailyPrintCandidates([{ ...base, adops: { ...base.adops, publicConfirmation: "not_published" } }], targetDate).length, 0);
 });
 
 test("recupera a ultima janela perdida sem criar todos os lotes anteriores", () => {

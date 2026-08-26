@@ -1003,7 +1003,7 @@ async function resolveEvidenceAuditStatus(
 
   if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
     try {
-      const response = await fetch(arquivoUrl, { method: "HEAD" });
+      const response = await fetch(arquivoUrl, { method: "HEAD", signal: AbortSignal.timeout(10_000) });
       urlStatus = response.status;
       isReachable = response.ok;
     } catch {
@@ -2197,12 +2197,14 @@ router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): P
   });
 });
 
-router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
-  const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
-  const insertionIds = typeof req.query.insertionIds === "string"
-    ? new Set(req.query.insertionIds.split(",").map((value) => Number.parseInt(value, 10)).filter((value) => Number.isInteger(value) && value > 0))
-    : null;
-
+export async function getCaptureProofAuditForDate(targetDate: string, filters: {
+  competencia?: string;
+  siteId?: number;
+  clienteId?: number;
+  agenciaId?: number;
+  insertionIds?: Set<number> | null;
+} = {}) {
+  const { competencia, siteId, clienteId, agenciaId, insertionIds = null } = filters;
   let rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
   if (insertionIds) rawInsertions = rawInsertions.filter((item) => insertionIds.has(item.id));
   if (siteId) rawInsertions = rawInsertions.filter((item) => item.siteId === siteId);
@@ -2224,7 +2226,7 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
 
   const checks = await Promise.all(eligible.map((item) => resolveEvidenceAuditStatus(item, targetDate)));
 
-  res.json({
+  return {
     date: targetDate,
     totalEligible: checks.length,
     ok: checks.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,
@@ -2233,7 +2235,15 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
     missing: checks.filter((item) => item.status === "missing").length,
     invalid: checks.filter((item) => item.status === "invalid_url" || item.status === "invalid_audit").length,
     items: checks,
-  });
+  };
+}
+
+router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
+  const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
+  const insertionIds = typeof req.query.insertionIds === "string"
+    ? new Set(req.query.insertionIds.split(",").map((value) => Number.parseInt(value, 10)).filter((value) => Number.isInteger(value) && value > 0))
+    : null;
+  res.json(await getCaptureProofAuditForDate(targetDate, { competencia, siteId, clienteId, agenciaId, insertionIds }));
 });
 
 router.get("/insertions/capture-proof/audit/failures", async (req, res): Promise<void> => {

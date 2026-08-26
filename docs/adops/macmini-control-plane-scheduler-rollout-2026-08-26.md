@@ -58,6 +58,9 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 4. OpenAPI passou a publicar os contratos do control plane.
 5. Contagem de runners passou a diferenciar ativos de registros históricos.
 6. O refresh incremental do relatório passou a manter uma chave estável por competência: aprovações coalescem em um job ainda aguardando, mas criam um único sucessor quando o relatório anterior já está executando.
+7. A primeira recuperação das 18h30 criou o job desnecessário `95a1c303-8927-4126-856f-fa298e39dac1`, que apenas preservou as oito evidências existentes. A decisão passou a consultar a mesma elegibilidade do runner e a auditoria final dos mesmos IDs antes de criar uma recuperação.
+8. O gate falha aberto para a recuperação (`due=true`) quando a auditoria está indisponível, exige cardinalidade exata entre candidatos e auditados e limita cada `HEAD` a dez segundos.
+9. O resultado do gate é reutilizado por janela; a recuperação matinal reavalia a cada cinco minutos até 08h30 para detectar publicação tardia.
 
 ## Lote natural das 18h
 

@@ -177,6 +177,58 @@ export async function reconcileDueSchedules(
   return results;
 }
 
+type DailyAuditCounts = {
+  expectedTotal?: unknown;
+  totalEligible?: unknown;
+  ok?: unknown;
+  missing?: unknown;
+  invalid?: unknown;
+};
+
+type RecoveryAuditGateCacheEntry = { complete: boolean; checkedAt: number };
+
+export async function suppressCompletedPrintRecoveries(
+  decisions: readonly CanonicalScheduleDecision[],
+  readAudit: (targetDate: string) => Promise<DailyAuditCounts>,
+  windowCache = new Map<string, RecoveryAuditGateCacheEntry>(),
+  nowMs = Date.now(),
+) {
+  return Promise.all(decisions.map(async (decision) => {
+    if (!decision.due || !["daily-print-recovery", "daily-print-morning-recovery"].includes(decision.routineKind)) {
+      return decision;
+    }
+    const scheduleId = buildScheduleId(decision.routineKind, decision.targetDate, decision.dispatchWindow);
+    const cached = windowCache.get(scheduleId);
+    const morningRecheckUntil = Date.parse(decision.scheduledFor) + 30 * 60_000;
+    const cacheTtlMs = decision.routineKind === "daily-print-morning-recovery" && nowMs <= morningRecheckUntil
+      ? 5 * 60_000
+      : Number.POSITIVE_INFINITY;
+    let complete = cached && nowMs - cached.checkedAt < cacheTtlMs ? cached.complete : undefined;
+    if (complete === undefined) {
+      try {
+        const audit = await readAudit(decision.targetDate);
+        const expectedTotal = Number(audit.expectedTotal);
+        const totalEligible = Number(audit.totalEligible);
+        const approved = Number(audit.ok);
+        const missing = Number(audit.missing);
+        const invalid = Number(audit.invalid);
+        complete = Number.isInteger(expectedTotal)
+          && expectedTotal > 0
+          && totalEligible === expectedTotal
+          && approved === totalEligible
+          && missing === 0
+          && invalid === 0;
+      } catch {
+        complete = false;
+      }
+      // ponytail: process-local window cache; move to persisted schedule state only if the API gains multiple replicas.
+      if (windowCache.size >= 100) windowCache.delete(windowCache.keys().next().value as string);
+      windowCache.set(scheduleId, { complete, checkedAt: nowMs });
+    }
+    return complete ? { ...decision, due: false, nextRecoveryAt: null } : decision;
+  }));
+}
+
 export function resolveCanonicalSchedule(now: Date): CanonicalScheduleDecision[] {
   const today = cod5_date_formatter.format(now);
   const yesterday = previousDate(today);

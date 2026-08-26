@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const ops = await readFile(new URL("../../artifacts/api-server/src/routes/ops.ts", import.meta.url), "utf8");
 const app = await readFile(new URL("../../artifacts/api-server/src/app.ts", import.meta.url), "utf8");
 const worker = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
+const insertions = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
 const compose = await readFile(new URL("../../ops/portainer/adops-stack/docker-compose.yml", import.meta.url), "utf8");
 
 test("reconcile é protegido e a criação idempotente é atômica", () => {
@@ -74,4 +75,13 @@ test("refresh incremental mensal mantém somente um job ativo por competência",
   assert.match(ops, /"evidence-approved-refresh", idempotencyKey, true\)/);
   assert.match(ops, /existingNotBefore/);
   assert.doesNotMatch(ops, /incremental:\$\{minuteBucket\}/);
+});
+
+test("reconciliacao consulta auditoria viva antes de criar recuperacao", () => {
+  assert.match(ops, /readDailyPrintCandidateAudit/);
+  assert.match(ops, /selectDailyPrintCandidates/);
+  assert.match(ops, /getCaptureProofAuditForDate/);
+  assert.match(ops, /suppressCompletedPrintRecoveries/);
+  assert.match(ops, /auditGateEvaluated/);
+  assert.match(insertions, /method: "HEAD", signal: AbortSignal\.timeout\(10_000\)/);
 });

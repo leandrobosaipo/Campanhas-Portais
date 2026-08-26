@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
+import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
-import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, validateDryRunNow } from "../lib/ops-scheduler";
+import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, suppressCompletedPrintRecoveries, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
+// @ts-expect-error shared runtime module is JavaScript and intentionally reused by runner and API.
+import { selectDailyPrintCandidates } from "../../../../ops/shared/daily-print-candidates.mjs";
+import { getCaptureProofAuditForDate } from "./insertions";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
 import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
@@ -93,6 +97,19 @@ const OPS_JOB_KINDS: JobKind[] = [
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
 const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
 const ADOPS_CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "cloudflare").trim();
+const recoveryAuditGateByScheduleId = new Map<string, { complete: boolean; checkedAt: number }>();
+
+async function readDailyPrintCandidateAudit(targetDate: string) {
+  const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true });
+  const candidates = selectDailyPrintCandidates(operations.items, targetDate);
+  const insertionIds = new Set<number>(candidates
+    .map((item: { adops?: { insertionId?: unknown } }) => Number(item?.adops?.insertionId))
+    .filter((value: number) => Number.isInteger(value) && value > 0));
+  return {
+    ...await getCaptureProofAuditForDate(targetDate, { insertionIds }),
+    expectedTotal: candidates.length,
+  };
+}
 
 async function proxyPublicWorkerJob(req: Request, res: Response, targetPath = req.originalUrl): Promise<void> {
   const controller = new AbortController();
@@ -914,7 +931,12 @@ router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "now deve ser um instante ISO válido e só é aceito em dry-run." });
     return;
   }
-  const decisions = resolveCanonicalSchedule(requestedNow ?? new Date());
+  const scheduled = resolveCanonicalSchedule(requestedNow ?? new Date());
+  const recoveryGateRequired = scheduled.some((decision) => decision.due
+    && ["daily-print-recovery", "daily-print-morning-recovery"].includes(decision.routineKind));
+  const decisions = dryRun
+    ? scheduled
+    : await suppressCompletedPrintRecoveries(scheduled, readDailyPrintCandidateAudit, recoveryAuditGateByScheduleId);
   const results = await reconcileDueSchedules(decisions, async (input) => {
     if (dryRun) return { jobId: `dry-run:${input.scheduleId}`, created: true };
     if (!input.jobKind) throw new Error(`Rotina sem jobKind: ${input.routineKind}`);
@@ -930,6 +952,7 @@ router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
   res.status(dryRun || results.every((item) => item.outcome !== "created") ? 200 : 202).json({
     ok: true,
     dryRun,
+    auditGateEvaluated: !dryRun && recoveryGateRequired,
     timezone: "America/Cuiaba",
     decisions: results,
   });
