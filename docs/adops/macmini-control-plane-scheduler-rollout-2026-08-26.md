@@ -38,6 +38,18 @@ Rollout ativo e em monitoramento. Este documento registra somente evidências co
 
 O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não promete uma janela pertencente a `2026-08-26`.
 
+## Canário natural de reconciliação
+
+- Janela: `2026-08-26 17:30 America/Cuiaba`
+- `scheduleId`: `campaign-publication-reconcile:2026-08-26:17:30`
+- `jobId`: `1792adab-3891-4f4f-b3e9-7e9eb8609662`
+- Runner: `drive-pi-monitor`
+- Estado terminal: `completed`
+- Ações planejadas/concluídas: `3/3`
+- Bloqueios do agendador: `0`
+- Resultado operacional: as três PIs foram preservadas em `needs_review` por problemas próprios de processamento de mídia; nenhuma foi publicada automaticamente sem os requisitos necessários.
+- Após o término, a fila ficou vazia e a próxima decisão canônica passou para o lote das 18h.
+
 ## Correções durante o rollout
 
 1. Claim do runner passou a exigir `runnerId` e ao menos um tipo permitido, com filtro tipado no PostgreSQL.
@@ -58,7 +70,7 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 
 Linha de base do consumidor antes do job das 22h15: HTTP 200, `cache-control=no-store`, atualizado em `26/08/2026 12:31:01`. O HTML ainda mostra o job original de 25/08 (`0/9`) e a antiga promessa de recuperação às 18h30; portanto o consumidor permanece explicitamente pendente de regeneração e readback após o job natural.
 
-- [ ] Reconciliação natural das 17h30 chega a estado terminal.
+- [x] Reconciliação natural das 17h30 chega a estado terminal.
 - [ ] Lote natural das 18h chega a estado terminal.
 - [ ] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
 - [ ] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
