@@ -107,6 +107,15 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - As pendências históricas de 24/08 e 25/08 continuaram separadas como retroativas; nenhuma foi convertida silenciosamente em sucesso.
 - O consumidor respondeu HTTP 200 com `cache-control: no-store`. O readback definitivo de miniaturas, modal, downloads e filtro permanece reservado ao job natural das 22h15.
 
+## Readback das evidências e da interface
+
+- As oito inserções elegíveis (`2692`, `2693`, `2192`, `1861`, `2712`, `2713`, `1842`, `2278`) retornaram `status=audited`, `checklistValidation.approved=true`, `evidenceStatus=approved`, zero bloqueios e artefato HTTP 200 para 26/08.
+- O filtro público `evidence=missing` com publicações ativas renderizou `Nenhuma campanha encontrada`, sem ocultar as pendências históricas quando o filtro é removido.
+- A miniatura de `#2713` para 26/08 foi renderizada e abriu o modal com a imagem, data, navegação e links operacionais.
+- O download de `#2713` respondeu HTTP 200 como `image/jpeg`, progressive JPEG de `1600x1337`, com `216974` bytes e nome de arquivo operacional.
+- O navegador não registrou erros de console durante o fluxo.
+- O relatório continua classificando 24/08 e 25/08 como evidências inválidas; isso é o bloqueio auditado de reconstrução, não uma ausência silenciosa da evidência válida de 26/08.
+
 ## Deploy e rollback
 
 - Deploy por volumes versionados e stack Portainer.
