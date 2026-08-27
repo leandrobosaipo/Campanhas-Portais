@@ -156,13 +156,14 @@ export function buildPendingPublicationView<T extends {
     const key = operationalKey(item);
     operationalCounts.set(key, (operationalCounts.get(key) ?? 0) + 1);
   }
-  const items = input.items.filter((item) => (
+  const items = input.items.filter((item: any) => (
     item.requiredActions?.includes("publish_on_site")
     || item.requiredActions?.includes("generate_evidence")
+    || item.publicationHealth?.status === "blocked_upstream"
   )).map((item: any) => {
-    const published = Boolean(item.adops?.mediaUrl) && (
-      item.adops?.bannerPublicadoNoSite === true || item.adops?.publicConfirmation === "confirmed"
-    );
+    const published = Boolean(item.adops?.mediaUrl) && (item.publicationHealth
+      ? item.publicationHealth.status === "ok"
+      : item.adops?.bannerPublicadoNoSite === true || item.adops?.publicConfirmation === "confirmed");
     const canonicalPi = String(item.sourceIdentity?.canonicalPi ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
     const authoritativePiInPdf = Boolean(canonicalPi) && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? [])
       .map((value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""))
@@ -190,12 +191,16 @@ export function buildPendingPublicationView<T extends {
       folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
       mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
       destinationPolicyValid: textFiles.length <= 1,
+      destinationCandidateUnique: textFiles.length === 1,
       campaignConsistent: !(item.blockingIssues ?? []).some((issue: unknown) => /nome da campanha diverge/i.test(String(issue))),
       portalConsistent: !item.requiredActions?.includes("review_site_divergence"),
       periodConsistent: !item.requiredActions?.includes("review_period_divergence"),
       formatConsistent: !item.requiredActions?.includes("review_format_divergence"),
       sourceUnambiguous: item.sourceIdentity?.decision !== "needs_confirmation" && item.drive?.status !== "ambiguous",
     };
+    const gatesReady = Object.entries(gates)
+      .filter(([name]) => name !== "destinationCandidateUnique")
+      .every(([, value]) => value);
     const operationalReady = !published
       && String(item.siteSigla || "").trim().toUpperCase() === "PERRENGUE"
       && item.sourceIdentity?.decision === "insufficient_data"
@@ -203,7 +208,7 @@ export function buildPendingPublicationView<T extends {
       && item.drive?.documentStatus === "missing"
       && (item.sourceIdentity?.sources?.drivePdfPiCandidates ?? []).length === 0
       && !authoritativePiInPdf
-      && Object.values(gates).every(Boolean);
+      && gatesReady;
     const normalizeSourcePi = (value: unknown) => String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
     const sourcePis = item.sourceIdentity?.sources ?? {};
     const compositeSourcesAgree = Boolean(canonicalPi)
@@ -223,7 +228,7 @@ export function buildPendingPublicationView<T extends {
       && compositeSourcesAgree
       && item.drive?.documentStatus === "candidate_found"
       && compositePdfImmutable
-      && Object.values(gates).every(Boolean);
+      && gatesReady;
     const fingerprintInput = {
       sheet: item.sheetSource,
       siteSigla: item.siteSigla,

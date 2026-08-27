@@ -186,6 +186,48 @@ test("PDF cujo nome confirma a PI libera a publicação da inserção existente"
   assert.equal(view.items[0]?.resumeAction, "publish_existing_insertion");
 });
 
+test("#2693 bloqueada upstream permanece recuperável para publicar a inserção existente", () => {
+  const view = buildPendingPublicationView({
+    date: "2026-08-26",
+    generatedAt: "2026-08-26T16:30:00.000Z",
+    summary: { needsPublication: 0, needsEvidence: 0 },
+    items: [pendingItem({
+      piCodigo: "17191",
+      sourceIdentity: {
+        decision: "confirmed",
+        reason: "PDF e fontes concordam.",
+        canonicalPi: "17191",
+        sources: {
+          drivePdfPiCandidates: ["17191"],
+        },
+      },
+      drive: {
+        status: "matched",
+        folderId: "folder-2693",
+        folderPath: "/PERRENGUE/AGOSTO/PI 17191",
+        mediaStatus: "candidate_found",
+        documentStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        mediaFiles: [{ id: "media-2693", name: "670x90.gif", mimeType: "image/gif", modifiedTime: "2026-08-12T00:00:00.000Z", size: "65191", md5Checksum: "0123456789abcdef0123456789abcdef" }],
+        pdfFiles: [{ id: "pdf-2693", name: "PI 17191.pdf", mimeType: "application/pdf", size: "1000", md5Checksum: "0123456789abcdef0123456789abcdef" }],
+        textFiles: [],
+      },
+      adops: { status: "matched", operationalMatchCount: 1, campaignId: 999, insertionId: 2693, mediaUrl: "https://cdn.example/2693.gif", bannerPublicadoNoSite: true },
+      publicationHealth: { status: "blocked_upstream", reason: "expected_media_not_observed", expectedGroupId: 14 },
+      evidence: { status: "complete", auditedDates: ["2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25", "2026-08-26"], missingDates: [] },
+      requiredActions: [],
+    })],
+    upcomingItems: [],
+  });
+
+  assert.equal(view.items.length, 1);
+  assert.equal(view.items[0]?.adops.insertionId, 2693);
+  assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.resumeAction, "publish_existing_insertion");
+  assert.deepEqual(view.items[0]?.evidence.auditedDates, ["2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24", "2026-08-25", "2026-08-26"]);
+  assert.equal(view.items[0]?.requiredActions?.includes("generate_evidence"), false);
+});
+
 test("PI numérica no Drive ignora zeros à esquerda sem alterar o valor exibido", () => {
   assert.deepEqual(extractDrivePiCandidates("/ROO/AGOSTO/PI 009749 - QUEIMADAS"), ["9749"]);
   assert.deepEqual(extractDrivePiCandidates("PI 000 - inválida"), []);
