@@ -36,6 +36,29 @@ Durante as 72 horas de migração, o Worker Telegram continua somente como adapt
 - Worker shadow não grava D1.
 - Telegram recebe data, escalonamento e decisão de envio da API canônica.
 
+## Monitoramento durante as 72 horas
+
+Em cada janela, confirme o SHA público, containers saudáveis, `scheduler.provider=macmini`, timezone, fila e heartbeat antes de avaliar o job. Acompanhe o mesmo `jobId` até `completed` ou `failed`; `queued`, `ready_for_runner` e `running` não encerram a validação.
+
+Para prints, valide também `GET /api/ops/daily-print-status?date=AAAA-MM-DD`, `capture-proof/status` de uma amostra e o relatório público. Ausência de contagem ou heartbeat é `null`/`unknown`, nunca zero. Não crie retry quando a auditoria já estiver completa.
+
+O relatório agendado não cria pacotes opcionais. Um `pi-site-export` solicitado manualmente reutiliza somente evidência final auditada, alcançável e sem bloqueios; ele não corrige nem reconstrói prints.
+
+## Troubleshooting
+
+| Sinal | Verificação | Ação segura |
+| --- | --- | --- |
+| job sem progresso | heartbeat, dono do lease e timeout do tipo | aguardar watchdog; não criar job concorrente |
+| runner interrompido por deploy | heartbeat anterior à troca e release ativo | terminar como `runner_interrupted`, preservando resultado parcial |
+| checklist bloqueado | `blockingIssues`, `incidentLayer` e `errorCode` | corrigir a causa observada; não tratar como transporte |
+| reconstrução retroativa bloqueada | regra publicada e prova editorial | manter incidente aberto; nunca promover sem autorização e checklist final |
+| timeout do Portainer | stack persistida, volumes, containers, health e SHA | aceitar somente após readback; restaurar volumes anteriores se divergente |
+| relatório parcial | estado diário canônico, último job e próxima recuperação | publicar o incidente sem apresentar estado parcial como normal |
+
+## Encerramento e handoff
+
+Somente finalize após três ciclos naturais, 08h00/08h30, fila vazia, jobs terminais, SHA ativo, consumidor público e rollback confirmados. Registre IDs, horários, incidentes e resolução no documento de rollout. Integre a branch apenas em worktree limpa e contra um alvo Git explicitamente reconciliado; não use o checkout principal quando contiver alterações alheias.
+
 ## Rollback
 
 1. Parar os triggers/runners do Mac Mini antes de habilitar o legado.
