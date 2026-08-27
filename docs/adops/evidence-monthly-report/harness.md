@@ -57,6 +57,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - O gerador consulta cada job pela rota do próprio contrato (`pi-site-exports` ou `campaign-evidence-exports`), nunca pela rota genérica de progresso.
 - Para não disputar o mesmo runner, a fase por portal termina antes de começar a fase de todos os portais.
 - O `claim-next` da fila usa sessão D1 `first-primary` e uma única escrita atômica `UPDATE ... RETURNING`; não separar leitura e claim, pois uma réplica atrasada pode esconder jobs `ready_for_runner`.
+- `adops-runner-print-single` consome `OPS_API_BASE_URL=https://adops-api-public.leandro471.workers.dev`, pois `print-single`, `pi-site-export` e `campaign-evidence-export` nascem no D1. A API privada continua em `PRIVATE_ADOPS_API_BASE_URL`.
 - `PRIVATE_ADOPS_API_TOKEN` do Worker público deve ser o mesmo `ADOPS_INTERNAL_API_TOKEN` ativo na stack do Portainer. Após rotação, sincronizar o secret sem registrar o valor e confirmar uma leitura interna via Worker; HTTP 401 bloqueia a publicação do relatório.
 - Falha, timeout ou credencial inválida em qualquer ZIP deixa o job do relatório como `failed` e preserva integralmente o HTML/data.json público anterior.
 - Toda inserção com PI canônica e evidências completas deve possuir os dois downloads antes da troca atômica. URL vazia bloqueia a publicação e preserva o relatório anterior.
