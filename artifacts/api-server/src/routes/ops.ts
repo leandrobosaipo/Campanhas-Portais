@@ -10,7 +10,7 @@ import { getCaptureProofAuditForDate } from "./insertions";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
 import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
 import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
-import { shouldRetryFailedOpsJob } from "../lib/ops-job-retry";
+import { nextOperationalAttempt, shouldRetryFailedOpsJob } from "../lib/ops-job-retry";
 
 type JobKind =
   | "print-batch"
@@ -916,8 +916,9 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ops-job:${kind}:${idempotencyKey}`]);
-    const existing = await client.query<{ id: string; status: JobStatus; not_before: string | null }>(
-      `SELECT id, status, payload_json::jsonb ->> 'notBefore' AS not_before
+    const existing = await client.query<{ id: string; status: JobStatus; not_before: string | null; attempt: string | null }>(
+      `SELECT id, status, payload_json::jsonb ->> 'notBefore' AS not_before,
+              payload_json::jsonb ->> 'attempt' AS attempt
          FROM ops_jobs
         WHERE kind = $1
           AND payload_json::jsonb ->> 'idempotencyKey' = $2
@@ -933,7 +934,7 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
           `UPDATE ops_jobs
               SET status = 'ready_for_runner', payload_json = $1, result_json = NULL, error_text = NULL, runner_id = NULL, updated_at = $2
             WHERE id = $3 AND status = 'failed'`,
-          [JSON.stringify({ ...payload, idempotencyKey }), retriedAt, existing.rows[0].id],
+          [JSON.stringify({ ...payload, attempt: nextOperationalAttempt(existing.rows[0].attempt), idempotencyKey }), retriedAt, existing.rows[0].id],
         );
         await client.query("COMMIT");
         return { jobId: existing.rows[0].id, status: "ready_for_runner" as const, duplicate: false, existingNotBefore: null };

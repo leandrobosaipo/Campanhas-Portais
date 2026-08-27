@@ -2,7 +2,7 @@ import { snapshot } from "./snapshot-fallback";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "./scheduler-shadow";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
-import { shouldRetryFailedOpsJob } from "./ops-job-retry";
+import { nextOperationalAttempt, shouldRetryFailedOpsJob } from "./ops-job-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
 import { resolveDailyPrintAlertDecision } from "../../shared/daily-print-alert-decision.mjs";
@@ -1388,15 +1388,16 @@ async function createIdempotentOpsJob(
     .run();
   if ((inserted.meta?.changes ?? 0) === 0) {
     const existing = await env.adops_ops
-      .prepare(`SELECT id, status, result_json, updated_at FROM ops_jobs WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1`)
+      .prepare(`SELECT id, status, payload_json, result_json, updated_at FROM ops_jobs WHERE kind = ? AND json_extract(payload_json, '$.idempotencyKey') = ? LIMIT 1`)
       .bind(kind, idempotencyKey)
-      .first<{ id: string; status: JobStatus; result_json: string | null; updated_at: string }>();
+      .first<{ id: string; status: JobStatus; payload_json: string | null; result_json: string | null; updated_at: string }>();
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
     const retryCompleted = existing.status === "completed" && retryCompletedWhen?.(existing.result_json) === true;
     if (shouldRetryFailedOpsJob(existing.status, retryFailed) || retryCompleted) {
+      const existingPayload = parseJobPayload({ payload_json: existing.payload_json } as OpsJobRecord);
       const retried = await env.adops_ops.prepare(
         `UPDATE ops_jobs SET status = 'ready_for_runner', payload_json = ?, result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = ? AND result_json IS ? AND updated_at = ?`,
-      ).bind(JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id, existing.status, existing.result_json, existing.updated_at).run();
+      ).bind(JSON.stringify({ ...payload, attempt: nextOperationalAttempt(existingPayload.attempt), idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id, existing.status, existing.result_json, existing.updated_at).run();
       if ((retried.meta?.changes ?? 0) > 0) {
         return { jobId: existing.id, status: "ready_for_runner" as JobStatus, duplicate: false };
       }

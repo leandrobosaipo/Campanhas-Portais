@@ -29,6 +29,7 @@ test("retry idempotente reabre somente failed e preserva o mesmo jobId", () => {
   const apiBlock = api.slice(apiStart, apiStart + 3600);
   assert.match(apiBlock, /shouldRetryFailedOpsJob\(existing\.rows\[0\]\.status, retryFailed\)/);
   assert.match(apiBlock, /WHERE id = \$3 AND status = 'failed'/);
+  assert.match(apiBlock, /attempt: nextOperationalAttempt\(existing\.rows\[0\]\.attempt\)/);
   assert.match(apiBlock, /jobId: existing\.rows\[0\]\.id, status: "ready_for_runner" as const, duplicate: false/);
   assert.match(apiBlock, /status: existing\.rows\[0\]\.status,[\s\S]{0,80}duplicate: true/);
 
@@ -36,8 +37,18 @@ test("retry idempotente reabre somente failed e preserva o mesmo jobId", () => {
   const workerBlock = worker.slice(workerStart, workerStart + 3600);
   assert.match(workerBlock, /shouldRetryFailedOpsJob\(existing\.status, retryFailed\)/);
   assert.match(workerBlock, /WHERE id = \? AND status = \? AND result_json IS \? AND updated_at = \?/);
+  assert.match(workerBlock, /attempt: nextOperationalAttempt\(existingPayload\.attempt\)/);
   assert.match(workerBlock, /jobId: existing\.id, status: "ready_for_runner" as JobStatus, duplicate: false/);
   assert.match(workerBlock, /jobId: existing\.id, status: existing\.status, duplicate: true/);
+});
+
+test("tentativa operacional cria uma unica chave nova para o job filho", () => {
+  assert.equal(runner.buildRunnerCaptureIdempotencyKey("job-1", 1, 1861, "2026-08-24"), "runner-capture:job-1:attempt:1:1861:2026-08-24");
+  assert.equal(runner.buildRunnerCaptureIdempotencyKey("job-1", 2, 1861, "2026-08-24"), "runner-capture:job-1:attempt:2:1861:2026-08-24");
+  assert.equal(runner.buildRunnerCaptureIdempotencyKey("job-1", 2, 1861, "2026-08-24"), runner.buildRunnerCaptureIdempotencyKey("job-1", 2, 1861, "2026-08-24"));
+  const start = runnerSource.indexOf("async function executePrintBackfill");
+  const block = runnerSource.slice(start, start + 7000);
+  assert.match(block, /outerAttempt: payload\?\.attempt/);
 });
 
 test("backfill limita retry temporario e nao repete bloqueio", () => {

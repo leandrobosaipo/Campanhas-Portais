@@ -208,10 +208,14 @@ async function markMonthlyReportRefreshAfterApproval(date, insertionId) {
   }
 }
 
-async function enqueueAndWaitCaptureProof({ outerJobId, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null, assertLease = () => undefined }) {
+function buildRunnerCaptureIdempotencyKey(outerJobId, operationalAttempt, insertionId, date) {
+  return `runner-capture:${outerJobId}:attempt:${Math.max(1, Number(operationalAttempt) || 1)}:${insertionId}:${date}`;
+}
+
+async function enqueueAndWaitCaptureProof({ outerJobId, outerAttempt = 1, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null, assertLease = () => undefined }) {
   if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
   assertLease();
-  const idempotencyKey = `runner-capture:${outerJobId}:${insertionId}:${date}`;
+  const idempotencyKey = buildRunnerCaptureIdempotencyKey(outerJobId, outerAttempt, insertionId, date);
   const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
     date,
     captureAt,
@@ -6277,6 +6281,7 @@ async function executePrintBackfill(job) {
         readStatus: () => privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`),
         capture: () => enqueueAndWaitCaptureProof({
           outerJobId: job.id,
+          outerAttempt: payload?.attempt,
           insertionId,
           date,
           captureAt,
@@ -8119,6 +8124,7 @@ export {
   validateOperationalPublicationScope,
   validateOperationalDriveItem,
   executeRetroactiveTarget,
+  buildRunnerCaptureIdempotencyKey,
   isRetryableRetroactiveError,
   privateApiGet,
 };
