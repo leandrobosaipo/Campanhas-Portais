@@ -1,29 +1,6 @@
 {
-  "version": 1,
-  "reviewedAt": "2026-08-01",
+  "version": 2,
+  "reviewedAt": "2026-08-07",
   "rule": "Only exact matches are downgraded. Any changed value or new drift remains an error.",
-  "issues": [
-    {
-      "code": "json_api_alias_mismatch",
-      "key": "AFL:14",
-      "jsonAliases": [
-        "BANNER INTERNO NOTICIAS",
-        "INTERNO DE NOTICIAS",
-        "INTERNO NOTICIA"
-      ],
-      "apiAliases": [
-        "BANNER INTERNO NOTICIAS",
-        "INTERNO",
-        "INTERNO DE NOTICIAS",
-        "INTERNO NOTICIA"
-      ]
-    },
-    {
-      "code": "json_api_field_mismatch",
-      "key": "ROO:2",
-      "field": "proofStyle",
-      "json": "viewport_with_slot_inset",
-      "api": "viewport_only"
-    }
-  ]
+  "issues": []
 }

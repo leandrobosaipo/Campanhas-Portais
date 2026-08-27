@@ -50,6 +50,7 @@ export type PrintRunnerJobResultItem = {
   }>;
   reason?: string;
   error?: string;
+  timedOut?: boolean;
 };
 
 export type PrintRunnerJobResult = {
@@ -57,8 +58,13 @@ export type PrintRunnerJobResult = {
   kind: PrintRunnerJobKind;
   status: PrintRunnerJobStatus;
   createdAt: string;
+  queuedAt?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  queueWaitMs?: number | null;
+  durationMs?: number | null;
+  timedOut?: boolean;
+  runnerId?: string | null;
   totalTargets: number;
   completedTargets: number;
   failedTargets: number;

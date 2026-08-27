@@ -9,6 +9,7 @@ import {
   normalizeCampaignPiIdentity,
   selectBestAdopsMatch,
 } from "../../artifacts/api-server/src/lib/campaign-operations-matching";
+import { resolveCampaignPlacementCode } from "../../artifacts/api-server/src/lib/campaign-placement";
 
 test("duplicata cancelada deixa de ser bloqueio operacional", () => {
   assert.equal(isInactiveInsertionStatus("cancelado"), true);
@@ -42,6 +43,8 @@ function insertion(overrides: Partial<CampaignOperationMatchCandidate>): Campaig
 
 test("aceita abreviacoes comerciais da planilha", () => {
   assert.equal(isFormatCompatible("HOME 1", "MEGABANNER HOME 1"), true);
+  assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 1"), true);
+  assert.equal(isFormatCompatible("MEGABANNER HOME 1", "HOME 2"), false);
   assert.equal(isFormatCompatible("INTERNO", "INTERNO DE NOTICIAS"), true);
   assert.equal(isFormatCompatible("LATERAL 02 — SIDEBAR — 300x250", "LATERAL 02"), true);
 });
@@ -83,6 +86,20 @@ test("associa PI sem numero somente por portal, campanha e periodo exatos", () =
     periodoFim: "2026-07-31",
   }, candidates);
   assert.deepEqual(matches.map((candidate) => candidate.id), [1944]);
+});
+
+test("posição canônica é estável entre labels operacionais", () => {
+  assert.equal(resolveCampaignPlacementCode("MEGA BANNER HOME 1"), "home_1");
+  assert.equal(resolveCampaignPlacementCode("HOME 1"), "home_1");
+  assert.equal(resolveCampaignPlacementCode("MEGABANNER TOPO"), "top");
+  assert.equal(resolveCampaignPlacementCode("INTERNO DE NOTÍCIAS"), "article_internal");
+  assert.equal(isFormatCompatible("HOME 1", "MEGABANNER HOME 2"), false);
+});
+
+test("mantem a insercao canonica apos a sincronizacao normalizar HOME 1", () => {
+  const published = insertion({ id: 1854, localFormatoNormalizado: "HOME 1" });
+  const result = selectBestAdopsMatch(row("MEGABANNER HOME 1"), [published]);
+  assert.equal(result.insertion?.id, 1854);
 });
 
 test("prioriza insercao publicada em vez de duplicata cancelada", () => {

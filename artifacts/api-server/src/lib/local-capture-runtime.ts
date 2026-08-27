@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { runControlledProcess } from "./controlled-process";
+import { withPlaywrightPermit } from "./playwright-budget";
 
 function getProjectRoot() {
   return process.env.ADOPS_PROJECT_ROOT || process.cwd();
@@ -106,20 +104,22 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
     }
   }
   const cleanContextRetries = Math.min(2, Math.max(0, Number(process.env.ADOPS_CAPTURE_CLEAN_CONTEXT_RETRIES ?? 2)));
+  const timeoutMs = Math.max(30_000, Number(process.env.ADOPS_CAPTURE_TIMEOUT_MS ?? 300_000));
+  const killGraceMs = Math.max(1_000, Number(process.env.ADOPS_CAPTURE_KILL_GRACE_MS ?? 5_000));
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= cleanContextRetries + 1; attempt += 1) {
     try {
-      const { stdout } = await execFileAsync(
-        "node",
-        [...args, "--captureAttempt", String(attempt)],
-        {
+      const { stdout } = await withPlaywrightPermit(`capture:${insertionId}:${attempt}`, () =>
+        runControlledProcess("node", [...args, "--captureAttempt", String(attempt)], {
           cwd: runtime.projectRoot,
           env: {
             ...process.env,
             DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
           },
+          timeoutMs,
+          killGraceMs,
           maxBuffer: 10 * 1024 * 1024,
-        },
+        }),
       );
       return JSON.parse(stdout);
     } catch (error) {

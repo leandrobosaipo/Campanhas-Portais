@@ -18,8 +18,6 @@ jobs:
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -39,6 +37,11 @@ jobs:
         run: pnpm --dir scripts exec playwright install --with-deps chromium
       - run: pnpm --dir scripts run test:strict-capture-readiness
       - run: pnpm --dir scripts run test:retro-content-time
+      - run: pnpm --dir scripts run test:pixel-date-proof
+      - run: pnpm --dir scripts run test:adops-definitive-gates
+      - run: pnpm --dir scripts run test:afl-retro-date-config-isolation
+      - run: node --check scripts/src/capture-insertion-proof.cjs
+      - run: node --check ops/cloudflare-remote-runner/src/runner.mjs
       - run: pnpm --dir scripts run test:perrengue-static-retro-sparse
       - run: pnpm --filter @workspace/adops run build
       - run: pnpm --dir scripts run test:runtime-auth
@@ -54,6 +57,7 @@ jobs:
       - name: Validate production compose
         env:
           ADOPS_IMAGE_TAG: ci
+          ADOPS_RELEASE_SHA: ci
           ADOPS_POSTGRES_PASSWORD: ci-only
           ADOPS_INTERNAL_API_TOKEN: ci-only
           DO_SPACES_ACCESS_KEY_ID: ci-only
