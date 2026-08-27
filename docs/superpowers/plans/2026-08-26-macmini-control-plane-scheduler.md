@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-26-macmini-control-plane-scheduler-design.md`
 
+## Estado de execução em 2026-08-26
+
+- Tasks 1–6: implementadas, testadas, revisadas e publicadas no runtime.
+- Task 7, steps 1–3: concluídos; testes, preflight, shadow e corte para writer único no Mac Mini foram validados.
+- Task 7, step 4: canários diário e de recuperação chegaram a estados terminais; o alerta/escalonamento natural de 08h30 ainda precisa do ciclo seguinte.
+- Task 7, step 5: em andamento; gates de 17h30, 18h e recuperações até 20h foram validados, mas 22h15, 08h/08h30 e 72 horas ainda não ocorreram integralmente.
+- Task 7, step 6: pendente até concluir o monitoramento e integrar a branch limpa.
+- Evidência operacional e incidentes: `docs/adops/macmini-control-plane-scheduler-rollout-2026-08-26.md`.
+
 ## Global Constraints
 
 - API/Postgres Mac Mini é a única fonte canônica de agenda, decisão, job e estado.
