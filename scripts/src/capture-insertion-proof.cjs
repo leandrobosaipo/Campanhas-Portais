@@ -2340,6 +2340,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
         adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
         expectedPosts: [post].map((item) => ({
           id: Number(item.id || 0),
+          slug: postSlug(item),
           date: String(item.date || item.localDate || item.publishedAt || ""),
           url: String(item.url || `/${item.slug || ""}/`),
           title: String(item.title || "").slice(0, 240),
@@ -2512,6 +2513,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
       invalidImagePosts: invalidImagePosts.slice(0, 12),
       expectedPosts: posts.slice(0, 25).map((post) => ({
         id: Number(post.id || 0),
+        slug: postSlug(post),
         date: String(post.date || post.localDate || post.publishedAt || ""),
         url: String(post.url || `/${post.slug || ""}/`),
         title: String(post.title || "").slice(0, 240),
@@ -5371,7 +5373,7 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
   ) {
     const rendered = new Set(retroPreview.renderedLeadSlugs.map((value) => String(value || "").replace(/^\/+|\/+$/g, "")));
     collected.editorialSamples = (retroPreview.expectedPosts || [])
-      .filter((post) => rendered.has(String(post.url || "").replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+|\/+$/g, "")))
+      .filter((post) => rendered.has(String(post.slug || post.url || "").replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+|\/+$/g, "")))
       .map((post) => ({
         title: String(post.title || "").slice(0, 240),
         url: new URL(post.url, mapping.homeUrl).toString(),

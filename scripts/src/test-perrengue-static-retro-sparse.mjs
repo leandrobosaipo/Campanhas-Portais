@@ -137,7 +137,7 @@ const applyArticlePreview = (posts, captureAt) => applyPerrengueStaticRetroPrevi
 {
   const posts = [makePost(1), makePost(2), makePost(3)];
   const page = makePage(posts);
-  const expectedPosts = posts.map((post) => ({ date: post.date, url: post.url, title: post.title }));
+  const expectedPosts = posts.map((post) => ({ slug: post.url.replace(/^\/+|\/+$/g, ""), date: post.date, url: `/arquivo/2026/06${post.url}`, title: post.title }));
   const expectedLeadSlugs = posts.map((post) => post.url.replace(/^\/+|\/+$/g, ""));
   const evidence = await collectRetroContentEvidence(
     page,
