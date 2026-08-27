@@ -5,9 +5,15 @@ import {
   findDuplicateCampaignInsertions,
   findCampaignIdentityMatches,
   isFormatCompatible,
+  isInactiveInsertionStatus,
   normalizeCampaignPiIdentity,
   selectBestAdopsMatch,
 } from "../../artifacts/api-server/src/lib/campaign-operations-matching";
+
+test("duplicata cancelada deixa de ser bloqueio operacional", () => {
+  assert.equal(isInactiveInsertionStatus("cancelado"), true);
+  assert.equal(isInactiveInsertionStatus("rascunho"), false);
+});
 
 function row(localFormato: string) {
   return {

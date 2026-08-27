@@ -21,7 +21,7 @@ import {
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
 import { getAdRotateGroupId, getSiteFormatMapping, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
-import { findCampaignIdentityMatches, isFormatCompatible, selectBestAdopsMatch } from "./campaign-operations-matching";
+import { findCampaignIdentityMatches, isFormatCompatible, isInactiveInsertionStatus, selectBestAdopsMatch } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
 
@@ -76,6 +76,17 @@ export function classifyPublicationHealth(input: PublicationHealthInput): Public
     expectedMediaObserved: input.expectedMediaObserved,
     duplicateInsertionIds: input.duplicateInsertionIds,
   };
+}
+
+export function activeDuplicateInsertionIds(
+  candidates: Array<{ id: number; statusNormalizado: string | null }>,
+  canonicalInsertionId: number | null | undefined,
+) {
+  return candidates
+    .filter((candidate) => candidate.id !== canonicalInsertionId)
+    .filter((candidate) => !isInactiveInsertionStatus(candidate.statusNormalizado))
+    .map((candidate) => candidate.id)
+    .sort((left, right) => left - right);
 }
 
 type RequiredAction =
@@ -774,10 +785,7 @@ export async function getActiveCampaignOperations(options: {
       : insertion?.bannerPublicadoNoSite === true
         ? "reported_only" as const
         : "not_published" as const;
-    const duplicateInsertionIds = compatible
-      .filter((candidate) => candidate.id !== insertion?.id)
-      .map((candidate) => candidate.id)
-      .sort((left, right) => left - right);
+    const duplicateInsertionIds = activeDuplicateInsertionIds(compatible, insertion?.id);
     const publicationHealth = classifyPublicationHealth({
       inPeriod: Boolean(row.periodoInicio && row.periodoFim && date >= row.periodoInicio && date <= row.periodoFim),
       mediaUrl: insertion?.mediaUrl ?? null,
@@ -901,10 +909,7 @@ export async function getActiveCampaignOperations(options: {
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
     const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
     const publicConfirmation = insertion?.bannerPublicadoNoSite === true ? "reported_only" as const : "not_published" as const;
-    const duplicateInsertionIds = compatible
-      .filter((candidate) => candidate.id !== insertion?.id)
-      .map((candidate) => candidate.id)
-      .sort((left, right) => left - right);
+    const duplicateInsertionIds = activeDuplicateInsertionIds(compatible, insertion?.id);
     const publicationHealth = classifyPublicationHealth({
       inPeriod: false,
       mediaUrl: insertion?.mediaUrl ?? null,

@@ -3,7 +3,17 @@ import test from "node:test";
 
 process.env.DATABASE_URL ||= "postgresql://localhost/adops_publication_health_test";
 
-const { buildSuccessfulPublicationReadbacks, classifyEvidenceHealth, classifyPublicationHealth, publicationReadbackConfirms } = await import("../../artifacts/api-server/src/lib/campaign-operations");
+const { activeDuplicateInsertionIds, buildSuccessfulPublicationReadbacks, classifyEvidenceHealth, classifyPublicationHealth, publicationReadbackConfirms } = await import("../../artifacts/api-server/src/lib/campaign-operations");
+
+test("duplicidade ativa bloqueia e inativa nao bloqueia em qualquer janela", () => {
+  const candidates = [
+    { id: 2693, statusNormalizado: "publicado" },
+    { id: 2714, statusNormalizado: "cancelado" },
+    { id: 2779, statusNormalizado: "rascunho" },
+  ];
+  assert.deepEqual(activeDuplicateInsertionIds(candidates, 2693), [2779]);
+  assert.deepEqual(activeDuplicateInsertionIds(candidates.map((item) => item.id === 2779 ? { ...item, statusNormalizado: "cancelado" } : item), 2693), []);
+});
 
 test("job malformado nao elimina readback valido", () => {
   const validResult = {

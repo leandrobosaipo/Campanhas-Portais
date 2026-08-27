@@ -88,7 +88,7 @@ export function isFormatCompatible(sheetFormat: string, adopsFormat: string | nu
   return false;
 }
 
-function isInactiveInsertionStatus(value: string | null | undefined) {
+export function isInactiveInsertionStatus(value: string | null | undefined) {
   return ["CANCELADO", "CANCELADA", "INATIVO", "INATIVA", "ARQUIVADO", "ARQUIVADA"].includes(normalizeForMatch(value));
 }
 
