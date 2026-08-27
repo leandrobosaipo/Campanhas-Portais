@@ -34,3 +34,8 @@
 ## Limites
 
 Não houve deploy, job real, alteração de dependência nem alteração do arquivo alheio `task-7-rereview.md`.
+
+## Correção de revisão
+
+- `publicationBlockedIds` é deduplicado e ordenado numericamente no evaluate, claim e Telegram, tornando a lista exibida e o fingerprint estáveis para entradas repetidas ou fora de ordem.
+- `PrintBackfillJobAccepted` agora descreve somente o runtime real de aceitação: `ok`, `kind`, `jobId`, `status` e `duplicate`. `late_publication_recovery`, tentativas e `RetroactiveBackfillItem` pertencem ao payload e ao progresso/resultado do job, não à resposta imediata.

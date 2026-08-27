@@ -1618,7 +1618,7 @@ export default {
     const targetDate = decision.targetDate;
     try {
       const publicationBlockedIds = Array.isArray(decision.publicationBlockedIds)
-        ? decision.publicationBlockedIds.filter(Number.isInteger).sort((a, b) => a - b)
+        ? [...new Set(decision.publicationBlockedIds.filter(Number.isInteger))].sort((a, b) => a - b)
         : [];
       await sendDailyPrintAlert(env, targetDate, escalation, publicationBlockedIds);
     } catch (error) {

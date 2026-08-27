@@ -167,7 +167,7 @@ Na release que introduz incidentes, confirme que `0004_ops_incidents.sql` aparec
 
 A sequência canônica é: **preflight Drive -> publicação AdRotate -> confirmação viva -> print-backfill -> auditoria -> relatório**. Não inverta a publicação e a confirmação viva com a captura: `bannerPublicadoNoSite=true`, HTTP 200 ou arquivo existente isoladamente não comprovam publicação nem evidência auditada.
 
-`POST /api/ops/jobs/print-backfill` é o único caminho retroativo. Ele exige um recorte (`insertionId`, `campaignId`, `siteId`, `competencia` ou `piCodigo` com `siteSigla`), persiste `reconstructionReason=late_publication_recovery`, `attempt=1` e `maxAttempts=3`. A mesma chave lógica devolve o mesmo `jobId` com `duplicate=true`; acompanhe esse job até `completed` ou `failed`, sem criar outro enquanto ele estiver em curso.
+`POST /api/ops/jobs/print-backfill` é o único caminho retroativo. Ele exige um recorte (`insertionId`, `campaignId`, `siteId`, `competencia` ou `piCodigo` com `siteSigla`) e persiste `reconstructionReason=late_publication_recovery`, `attempt=1` e `maxAttempts=3` no payload/job. A resposta de aceitação contém apenas `ok`, `kind`, `jobId`, `status` e `duplicate`; consulte o progresso/resultado do job para tentativas e itens. A mesma chave lógica devolve o mesmo `jobId` com `duplicate=true`; acompanhe esse job até `completed` ou `failed`, sem criar outro enquanto ele estiver em curso.
 
 O resultado por inserção/data é um de `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`. Se algum item falhar ou bloquear, o job pai termina `failed` preservando os resultados parciais. Evidência já auditada não é recapturada.
 

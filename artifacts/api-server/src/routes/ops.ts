@@ -1435,10 +1435,11 @@ router.get("/ops/daily-print-status", async (req, res): Promise<void> => {
 router.get("/ops/daily-print-alerts/evaluate", async (_req, res): Promise<void> => {
   const decision = resolveDailyPrintAlertDecision(new Date());
   const operations = await getActiveCampaignOperations({ date: decision.targetDate, includeEvidence: true });
-  const publicationBlockedIds = operations.items
+  const publicationBlockedIds = [...new Set(operations.items
     .filter((item) => item.publicationHealth?.status === "blocked_upstream")
     .map((item) => item.adops.insertionId)
-    .filter((id): id is number => Number.isInteger(id));
+    .filter((id): id is number => Number.isInteger(id)))]
+    .sort((a, b) => a - b);
   res.json({ ...decision, publicationBlockedIds });
 });
 
@@ -1455,8 +1456,9 @@ router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => 
     ? (req.body.publicationBlockedIds as unknown[])
       .map((item: unknown) => readOptionalNumber(item))
       .filter((item: number | null): item is number => item !== null)
-      .sort((a: number, b: number) => a - b)
+      .filter((item: number) => item > 0)
     : [];
+  const canonicalPublicationBlockedIds = [...new Set(publicationBlockedIds)].sort((a, b) => a - b);
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !state) {
     res.status(400).json({ error: "bad_request", details: "date e state são obrigatórios." });
     return;
@@ -1469,7 +1471,7 @@ router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => 
     res.json({ ok: true, claimed: false, reason: "no_previous_incident" });
     return;
   }
-  const fingerprint = `${date}:${state}:prints=${pendingInsertionIds.join(",")}:publication=${publicationBlockedIds.join(",")}`;
+  const fingerprint = `${date}:${state}:prints=${pendingInsertionIds.join(",")}:publication=${canonicalPublicationBlockedIds.join(",")}`;
   const inserted = await pool.query(
     `INSERT INTO daily_print_alerts (fingerprint, target_date, state, pending_ids_json, claimed_at)
      VALUES ($1, $2, $3, $4, $5)

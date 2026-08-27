@@ -31,8 +31,10 @@ test("alerta operacional usa claim idempotente e só resolve incidente já abert
 
 test("alerta inclui bloqueio de publicacao no fingerprint", () => {
   assert.match(macMiniOps, /publicationBlockedIds/);
-  assert.match(macMiniOps, /publication=\$\{publicationBlockedIds\.join/);
+  assert.match(macMiniOps, /\[\.\.\.new Set\(publicationBlockedIds\)\]\.sort\(\(a, b\) => a - b\)/);
+  assert.match(macMiniOps, /publication=\$\{canonicalPublicationBlockedIds\.join/);
   assert.match(telegram, /Publicação bloqueada:/);
+  assert.match(telegram, /\[\.\.\.new Set\(decision\.publicationBlockedIds\.filter\(Number\.isInteger\)\)\]\.sort\(\(a, b\) => a - b\)/);
   assert.match(telegram, /daily-print-alerts\/claim/);
 });
 

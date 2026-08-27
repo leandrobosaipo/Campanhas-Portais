@@ -1713,13 +1713,6 @@ components:
         jobId: { type: string, format: uuid }
         status: { type: string, enum: [queued, ready_for_runner, running, completed, failed] }
         duplicate: { type: boolean }
-        reconstructionReason: { type: string, const: late_publication_recovery }
-        attempt: { type: integer, const: 1 }
-        maxAttempts: { type: integer, const: 3 }
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/RetroactiveBackfillItem"
 
     CaptureProofReconciliationRequest:
       type: object
