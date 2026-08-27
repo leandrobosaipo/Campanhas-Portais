@@ -439,8 +439,8 @@ async function loadSuccessfulPublicationReadbacks() {
       where kind = 'adrotate-publish'
         and status = 'completed'
         and payload_json::jsonb ->> 'mode' = 'apply'
-        and updated_at >= now() - interval '90 days'
       order by updated_at desc
+      limit 1000
     `);
     return buildSuccessfulPublicationReadbacks(result.rows as Array<{ payloadJson: unknown; resultJson: unknown }>);
   } catch {
