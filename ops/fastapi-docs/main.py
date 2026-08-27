@@ -484,6 +484,7 @@ def build_openapi_document() -> dict[str, Any]:
                         "jobId": {"type": "string", "format": "uuid"},
                         "status": {"$ref": "#/components/schemas/OpsJobStatus"},
                         "duplicate": {"type": "boolean"},
+                        "existingNotBefore": {"type": ["string", "null"], "format": "date-time"},
                     },
                     "additionalProperties": True,
                 },

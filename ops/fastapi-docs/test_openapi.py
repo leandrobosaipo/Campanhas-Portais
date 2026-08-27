@@ -38,7 +38,8 @@ assert schemas["RetroactiveBackfillItem"]["properties"]["status"]["enum"] == [
 ]
 assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillRequest"
 assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillJobAccepted"
-assert list(schemas["PrintBackfillJobAccepted"]["properties"]) == ["ok", "kind", "jobId", "status", "duplicate"]
+assert list(schemas["PrintBackfillJobAccepted"]["properties"]) == ["ok", "kind", "jobId", "status", "duplicate", "existingNotBefore"]
+assert schemas["PrintBackfillJobAccepted"]["properties"]["existingNotBefore"] == {"type": ["string", "null"], "format": "date-time"}
 assert len(document["x-cod5-route-fingerprint-sha256"]) == 64
 
 redoc_html = redoc().body.decode("utf-8")
