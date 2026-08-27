@@ -6824,7 +6824,7 @@ async function executeOperationalMediaPublish(payload) {
   validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
   if (destinationItem) validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
   if (payload.identityMode === "sheet_drive_composite") validateOperationalDriveItem(payload.pdfDocument, pdfItem, "PDF");
-  const mediaCandidates = filterOperationalMediaCandidates(folderItems, mediaProfile.formats);
+  const mediaCandidates = filterOperationalMediaCandidates(folderItems, mediaProfile.formats, mediaProfile);
   const pdfCandidates = folderItems.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
   if (mediaCandidates.length !== 1 || textCandidates.length > 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, um destino opcional inequívoco e o PDF esperado.");

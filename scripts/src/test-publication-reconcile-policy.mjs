@@ -221,3 +221,10 @@ test("AFL VIDEO usa MP4 validado sem compressor externo", async () => {
     { name: "estiagem_825x120.gif", mimeType: "image/gif" },
   ], ["MP4"]).map((item) => item.name), ["SANEAR ESTIAGEM_V03.mp4"]);
 });
+
+test("LATERAL operacional mantém somente a dimensão contratada", () => {
+  assert.deepEqual(filterOperationalMediaCandidates([
+    { name: "estiagem_380x120.gif", mimeType: "image/gif" },
+    { name: "estiagem_825x120.gif", mimeType: "image/gif" },
+  ], ["GIF"], { width: 380, height: 120 }).map((item) => item.name), ["estiagem_380x120.gif"]);
+});

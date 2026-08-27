@@ -2,11 +2,15 @@ function cod5_string(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function filterOperationalMediaCandidates(items, formats) {
+export function filterOperationalMediaCandidates(items, formats, dimensions = {}) {
   const allowed = new Set((Array.isArray(formats) ? formats : []).map((value) => String(value).toUpperCase()));
+  const expectedDimensions = Number(dimensions?.width) > 0 && Number(dimensions?.height) > 0
+    ? `${Number(dimensions.width)}X${Number(dimensions.height)}`
+    : null;
   return (Array.isArray(items) ? items : []).filter((item) => {
     const value = `${item?.mimeType || ""} ${item?.name || ""}`.toUpperCase();
-    return [...allowed].some((format) => value.includes(format));
+    return [...allowed].some((format) => value.includes(format))
+      && (!expectedDimensions || value.includes(expectedDimensions));
   });
 }
 
