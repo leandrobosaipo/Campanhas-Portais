@@ -67,7 +67,8 @@
     "harness:sync-planilha-v1": "node ./src/harness-sync-planilha-v1.mjs",
     "harness:reconcile-planilha-adrotate-v1": "node ./src/harness-reconcile-planilha-adrotate-v1.mjs",
     "harness:pi-import-v1": "node ./src/harness-pi-import-v1.mjs",
-    "harness:pi-automation-v3": "node ./src/harness-pi-automation-v3.mjs"
+    "harness:pi-automation-v3": "node ./src/harness-pi-automation-v3.mjs",
+    "harness:retroactive-recovery": "node ./src/harness-retroactive-recovery.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",
