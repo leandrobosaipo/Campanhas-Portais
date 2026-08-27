@@ -5,12 +5,10 @@ import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
 import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, suppressCompletedPrintRecoveries, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
-// @ts-expect-error shared runtime module is JavaScript and intentionally reused by runner and API.
 import { selectDailyPrintCandidates } from "../../../../ops/shared/daily-print-candidates.mjs";
 import { getCaptureProofAuditForDate } from "./insertions";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
 import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
-// @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
 import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
 
 type JobKind =

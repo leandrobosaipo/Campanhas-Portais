@@ -191,6 +191,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O domínio público do Worker e a API privada retornaram simultaneamente `provider=macmini`, as mesmas contagens e o mesmo `lastHeartbeatAt`; isso comprova que o deployment público está em proxy e não mantém um segundo writer.
 - Quatro `drive-pi-ingest` criados pelo monitor do Google Drive durante o readback (`424aef3d`, `d9565a6a`, `f16ff02d`, `386e31ef`) foram acompanhados até `completed`; nenhum era rotina de print e a fila voltou a zero.
 - O readback pós-deploy confirmou `#2713` no mesmo artefato, `audited`, HTTP 200, checklist final aprovado e zero bloqueios; o filtro público de faltantes continuou renderizando `Nenhuma campanha encontrada` e a data permaneceu `8/8`.
+- O typecheck completo deixou de depender de supressões para os módulos compartilhados de candidatos e decisão de alerta: declarações locais foram adicionadas, `pnpm run typecheck` passou nos quatro projetos e os testes do scheduler permaneceram `33/33` mais `16/16` contratos.
 
 ## Preflight de integração
 
