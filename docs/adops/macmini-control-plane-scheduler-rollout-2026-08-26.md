@@ -190,6 +190,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Após o corte, API, web, Postgres, runners e monitor do Drive ficaram saudáveis; fila zerada e três runners com heartbeat recente.
 - O domínio público do Worker e a API privada retornaram simultaneamente `provider=macmini`, as mesmas contagens e o mesmo `lastHeartbeatAt`; isso comprova que o deployment público está em proxy e não mantém um segundo writer.
 - Quatro `drive-pi-ingest` criados pelo monitor do Google Drive durante o readback (`424aef3d`, `d9565a6a`, `f16ff02d`, `386e31ef`) foram acompanhados até `completed`; nenhum era rotina de print e a fila voltou a zero.
+- O readback pós-deploy confirmou `#2713` no mesmo artefato, `audited`, HTTP 200, checklist final aprovado e zero bloqueios; o filtro público de faltantes continuou renderizando `Nenhuma campanha encontrada` e a data permaneceu `8/8`.
 
 ## Preflight de integração
 
