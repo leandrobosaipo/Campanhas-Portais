@@ -97,6 +97,13 @@ export function buildCampaignEvidenceExportDownloadUrl(baseUrl, jobId) {
   return `${base}/api/campaign-evidence-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
 }
 
+export function resolveMonthlyReportApiBases(env = process.env) {
+  return {
+    operationsBase: String(env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, ""),
+    deliveryBase: String(env.ADOPS_DELIVERY_API_BASE_URL || "https://adops-api.codigo5.com.br").replace(/\/$/, ""),
+  };
+}
+
 function addIsoDays(value, amount) {
   const date = new Date(`${value}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + amount);

@@ -36,6 +36,7 @@ import {
   resolveReportPortainerUrl,
   resolveReportsPublishMount,
   resolveEvidenceWindow,
+  resolveMonthlyReportApiBases,
   selectReportEvidenceDates,
   isJsonContentType,
   selectCanonicalInsertions,
@@ -43,8 +44,7 @@ import {
 } from "./monthly-evidence-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const apiBase = (process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
-const deliveryApiBase = (process.env.ADOPS_DELIVERY_API_BASE_URL || "https://adops-api.codigo5.com.br").replace(/\/$/, "");
+const { operationsBase: apiBase, deliveryBase: deliveryApiBase } = resolveMonthlyReportApiBases();
 const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops-campanhas-portais.pages.dev").replace(/\/$/, "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const opsEnvFile = process.env.OPS_ENV_FILE || path.join(repoRoot, ".env.adops-operator.local");
@@ -594,7 +594,7 @@ async function materializeCampaignExports(items) {
         timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
       });
       if (created.status === "completed") {
-        results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
+        results.set(group.key, buildPiSiteExportDownloadUrl(deliveryApiBase, created.jobId));
       } else {
         console.warn(`[monthly-report] pacote opcional em processamento para ${group.piCodigo}/${group.siteSigla}; relatório seguirá com as evidências individuais.`);
       }
@@ -653,7 +653,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
         throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
       }
       if (created.status === "completed") {
-        results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
+        results.set(group.key, buildCampaignEvidenceExportDownloadUrl(deliveryApiBase, created.jobId));
       } else {
         console.warn(`[monthly-report] pacote completo opcional em processamento para PI ${group.piCodigo}; relatório seguirá com as evidências individuais.`);
       }
@@ -881,7 +881,7 @@ function renderCampaign(campaign, portalKey) {
       <div class="campaign-identity">
         <h3>${escapeHtml(campaign.name)}</h3>
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
-        <div class="campaign-downloads">${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "Baixar todos os prints", "image") : ""}${batchDownloadUrl ? linkButton(batchDownloadUrl, "Baixar ZIP deste portal", "image") : ""}</div>
+        <div class="campaign-downloads">${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "Baixar ZIP da campanha — todos os portais", "image") : ""}${batchDownloadUrl ? linkButton(batchDownloadUrl, "Baixar ZIP da campanha — somente este portal", "image") : ""}</div>
         ${commercialExportBlocker ? `<p class="note">${escapeHtml(commercialExportBlocker)}</p>` : ""}
       </div>
       <div class="campaign-summary" aria-label="Resumo da campanha">
@@ -1375,7 +1375,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         <span class="modal-date" id="modalDate" aria-live="polite"></span>
         <div class="modal-navigation"><button class="modal-nav" type="button" id="modalPrevious">Dia anterior</button><button class="modal-nav" type="button" id="modalNext">Dia seguinte</button></div>
         <div class="modal-days" id="modalDays"></div>
-        <details class="modal-details"><summary>Detalhes da evidência</summary><dl id="modalMeta"></dl></details>
+        <details class="modal-details" open><summary>Detalhes da campanha e evidência</summary><dl id="modalMeta"></dl></details>
         <div class="links" id="modalLinks"></div>
       </aside>
     </div>
@@ -1456,9 +1456,9 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           ['Grupo', item.adrotateGroupId || '-']
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
-          iconLink(day?.downloadUrl, 'Baixar JPEG'),
-          iconLink(item.completeCampaignDownloadUrl, 'Baixar todos os prints'),
-          iconLink(item.batchDownloadUrl, 'ZIP deste portal'),
+          iconLink(day?.downloadUrl, 'Baixar JPEG deste print'),
+          iconLink(item.completeCampaignDownloadUrl, 'Baixar ZIP da campanha — todos os portais'),
+          iconLink(item.batchDownloadUrl, 'Baixar ZIP da campanha — somente este portal'),
           iconLink(item.portalUrl, 'Abrir portal'),
           iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'Ver anúncio' : 'Ver grupo do anúncio'),
           iconLink(item.mediaUrl, 'Abrir mídia'),

@@ -45,6 +45,8 @@ const insertion = {
   invalidDates: [],
   state: "ok",
   statusDetail: "Evidências auditadas.",
+  batchDownloadUrl: "https://adops-api.codigo5.com.br/api/pi-site-exports/jobs/portal-job/download",
+  completeCampaignDownloadUrl: "https://adops-api.codigo5.com.br/api/campaign-evidence-exports/jobs/campaign-job/download",
   evidenceDays: [
     { date: "2026-08-12", status: "audited", url: "https://cdn.example/12.png", downloadUrl: "https://api.example/12.jpg" },
     { date: "2026-08-13", status: "audited", url: "https://cdn.example/13.png", downloadUrl: "https://api.example/13.jpg" },
@@ -232,7 +234,15 @@ test("visualizador móvel navega por data sem IDs duplicados", () => {
   assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*#modal\s*\{[^}]*height:\s*100dvh/s);
   assert.match(output, /@media \(max-width:\s*760px\)[\s\S]*#modal \.modal-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(output, /@media \(max-width:\s*1024px\)[\s\S]*#modal/s);
-  assert.match(output, /<details class="modal-details"><summary>/);
+  assert.match(output, /<details class="modal-details" open><summary>Detalhes da campanha e evidência<\/summary>/);
+});
+
+test("downloads do modal explicam o escopo da campanha e usam origem publica", () => {
+  const output = html();
+  assert.match(output, /Baixar ZIP da campanha — todos os portais/);
+  assert.match(output, /Baixar ZIP da campanha — somente este portal/);
+  assert.match(output, /Baixar JPEG deste print/);
+  assert.doesNotMatch(output, /http:\/\/adops-api:4011/);
 });
 
 test("JavaScript inline gerado permanece sintaticamente válido", async () => {

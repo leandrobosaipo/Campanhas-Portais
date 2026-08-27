@@ -294,6 +294,15 @@ test("download completo usa o job agregado por campanha", () => {
   );
 });
 
+test("API interna de operacao nunca vira origem publica dos downloads do relatorio", () => {
+  assert.deepEqual(contract.resolveMonthlyReportApiBases({
+    ADOPS_PUBLIC_API_BASE_URL: "http://adops-api:4011/",
+  }), {
+    operationsBase: "http://adops-api:4011",
+    deliveryBase: "https://adops-api.codigo5.com.br",
+  });
+});
+
 test("relatório não solicita ZIP comercial quando a PI ainda não é canônica", () => {
   assert.equal(contract.canonicalCommercialPi("PI - TCE"), null);
   assert.equal(contract.canonicalCommercialPi(""), null);
