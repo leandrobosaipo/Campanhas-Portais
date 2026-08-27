@@ -65,6 +65,19 @@ env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$STACK_ENV_FILE"
 }
 
+wait_portainer_exec() {
+  local exec_id="$1" state exit_code
+  for _ in {1..40}; do
+    state="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
+    if [[ "$(jq -r '.Running' <<<"$state")" == "false" ]]; then
+      exit_code="$(jq -r '.ExitCode' <<<"$state")"
+      [[ "$exit_code" =~ ^[0-9]+$ ]] && { printf '%s' "$exit_code"; return 0; }
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 PREVIOUS_APP_VOLUME="$(env_value ADOPS_APP_SOURCE_VOLUME)"
 PREVIOUS_WEB_VOLUME="$(env_value ADOPS_WEB_PUBLIC_VOLUME)"
 PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
@@ -85,7 +98,7 @@ EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
 }')"
 EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
 portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
-EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/json" | jq -r '.ExitCode')"
+EXIT_CODE="$(wait_portainer_exec "$EXEC_ID" || true)"
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
 
 ALERT_MIGRATION="$STACK_DIR/migrations/2026-08-26-daily-print-alerts.sql"
@@ -97,7 +110,7 @@ MIGRATION_PAYLOAD="$(jq -n --arg sql "$ALERT_MIGRATION_B64" '{
 }')"
 MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
 portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null
-MIGRATION_EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/json" | jq -r '.ExitCode')"
+MIGRATION_EXIT_CODE="$(wait_portainer_exec "$MIGRATION_EXEC_ID" || true)"
 [[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'PostgreSQL migration failed.\n' >&2; exit 1; }
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
