@@ -544,7 +544,7 @@ async function waitForCompactJob(jobId, label, timeoutMs) {
   }
 }
 
-async function materializeCampaignExports(items) {
+async function materializeCampaignExports(items, asOfDate) {
   const preloaded = (() => {
     try {
       return JSON.parse(process.env.ADOPS_REPORT_EXPORTS_JSON || "{}");
@@ -588,7 +588,7 @@ async function materializeCampaignExports(items) {
           variant: "web",
           imageMaxWidth: 1600,
           imageQuality: 72,
-          asOfDate: monthEndForEvidence,
+          asOfDate,
           requiredDatesByInsertion: Object.fromEntries(group.items.map((item) => [item.id, item.requiredDays])),
           requestedBy: "evidence-monthly-report",
           source: "monthly-report",
@@ -1798,7 +1798,7 @@ async function main() {
 
   const exportsStartedAtMs = Date.now();
   const [exportLinks, completeExportLinks] = await Promise.all([
-    materializeCampaignExports(enriched),
+    materializeCampaignExports(enriched, monthEndForEvidence),
     materializeCompleteCampaignExports(enriched, monthEndForEvidence),
   ]);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
