@@ -221,6 +221,7 @@ test("ZIP por portal respeita as datas exatas do relatório", async () => {
   assert.match(insertionRoutes, /asOfDate/);
   assert.match(runner, /payload\.requiredDatesByInsertion/);
   assert.match(runner, /ensureInsertionCaptureCoverage\(insertion, requiredDates/);
+  assert.match(runner, /operationalInsertionIds\.filter\(\(id\) => requestedInsertionIds\.includes\(Number\(id\)\)\)/);
 });
 
 test("AFL VIDEO usa MP4 validado sem compressor externo", async () => {

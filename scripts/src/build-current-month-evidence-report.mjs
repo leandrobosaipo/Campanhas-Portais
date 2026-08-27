@@ -628,8 +628,8 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   if (!readyGroups.length) return results;
   const batchItems = [];
   try {
-    for (let index = 0; index < readyGroups.length; index += 25) {
-      const groupBatch = readyGroups.slice(index, index + 25);
+    for (let index = 0; index < readyGroups.length; index += 3) {
+      const groupBatch = readyGroups.slice(index, index + 3);
       const batch = await api("/api/campaign-evidence-exports/jobs/batch", {
         method: "POST",
         body: JSON.stringify({

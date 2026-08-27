@@ -7631,7 +7631,17 @@ async function executePiSiteExport(job) {
     throw new Error(`Nenhuma inserção encontrada para PI ${piCodigo} no site ${siteSigla}.`);
   }
 
-  const insertions = await Promise.all(operationalInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
+  const requestedInsertionIds = Object.keys(requiredDatesByInsertion)
+    .map((id) => Number.parseInt(id, 10))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const selectedInsertionIds = requestedInsertionIds.length
+    ? operationalInsertionIds.filter((id) => requestedInsertionIds.includes(Number(id)))
+    : operationalInsertionIds;
+  if (!selectedInsertionIds.length) {
+    throw new Error(`Nenhuma inserção solicitada pertence à PI ${piCodigo} no site ${siteSigla}.`);
+  }
+
+  const insertions = await Promise.all(selectedInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
   const analyticsPiStatus = [];
@@ -7639,7 +7649,7 @@ async function executePiSiteExport(job) {
   const stagePayload = {
     piCodigo,
     siteSigla,
-    insertionIds: operationalInsertionIds,
+    insertionIds: selectedInsertionIds,
     mode,
     variant,
     pdfMaxWidth,

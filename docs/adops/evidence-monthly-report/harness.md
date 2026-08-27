@@ -52,7 +52,8 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - “Baixar ZIP da campanha — somente este portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
 - Em relatório completo, inclusive o agendado, os dois jobs de ZIP devem ser acompanhados pelo mesmo `jobId` até `completed` ou `failed`; `ready_for_runner` não libera botão.
 - O ZIP por portal recebe `asOfDate` e `requiredDatesByInsertion`; não pode cobrar o dia corrente antes do corte usado pelo relatório.
-- O lote de ZIP completo aceita no máximo 25 campanhas por chamada; o gerador deve dividir lotes maiores e reunir todos os resultados antes de publicar.
+- O endpoint aceita no máximo 25 campanhas, mas o relatório envia lotes de 3 para caber no timeout do proxy e reúne todos os resultados antes de publicar.
+- Quando `requiredDatesByInsertion` estiver presente, o ZIP por portal inclui somente os IDs explicitamente solicitados; inserções antigas ou duplicadas da mesma PI/portal não entram no gate do card.
 - `PRIVATE_ADOPS_API_TOKEN` do Worker público deve ser o mesmo `ADOPS_INTERNAL_API_TOKEN` ativo na stack do Portainer. Após rotação, sincronizar o secret sem registrar o valor e confirmar uma leitura interna via Worker; HTTP 401 bloqueia a publicação do relatório.
 - Falha, timeout ou credencial inválida em qualquer ZIP deixa o job do relatório como `failed` e preserva integralmente o HTML/data.json público anterior.
 - Toda inserção com PI canônica e evidências completas deve possuir os dois downloads antes da troca atômica. URL vazia bloqueia a publicação e preserva o relatório anterior.
