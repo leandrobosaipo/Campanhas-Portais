@@ -26,6 +26,11 @@ after(async () => {
   ]);
 });
 
+test("publicacao compara o relatorio anterior antes da troca atomica", () => {
+  assert.match(source, /findHistoricalAuditRegressions\(await previousResponse\.json\(\), data\)/);
+  assert.match(source, /Publicação bloqueada:.*evidência\(s\) auditada\(s\) regrediram/);
+});
+
 const insertion = {
   id: 1944,
   modalId: "ins-1944",

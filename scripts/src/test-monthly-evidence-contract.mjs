@@ -67,6 +67,28 @@ test("classifica audited, missing e invalid sem aceitar HTTP 200 isolado", () =>
   assert.equal(contract.classifyEvidenceStatus({ status: "audited", isReachable: false, arquivoUrl: "https://example.com/prova.png", checklistValidation: { approved: true } }), "invalid");
 });
 
+test("bloqueia regressao de evidencia historica ja auditada", () => {
+  const previous = {
+    insertions: [{ id: 2713, evidenceDays: [{ date: "2026-08-24", status: "audited" }] }],
+  };
+  const next = {
+    insertions: [{ id: 2713, evidenceDays: [{ date: "2026-08-24", status: "invalid" }] }],
+  };
+
+  assert.deepEqual(contract.findHistoricalAuditRegressions(previous, next), [{
+    insertionId: 2713,
+    date: "2026-08-24",
+    previousStatus: "audited",
+    nextStatus: "invalid",
+  }]);
+  assert.deepEqual(contract.findHistoricalAuditRegressions(previous, {
+    insertions: [{ id: 2713, evidenceDays: [
+      { date: "2026-08-24", status: "audited" },
+      { date: "2026-08-25", status: "audited" },
+    ] }],
+  }), []);
+});
+
 test("calcula entradas e vencimentos nos sete dias seguintes", () => {
   const items = [
     { id: 1, periodoInicio: "2026-08-12", periodoFim: "2026-08-20" },
