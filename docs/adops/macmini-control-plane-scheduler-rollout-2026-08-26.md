@@ -179,6 +179,16 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Fila final: `running=0`, `queued=0`, `readyForRunner=0`; três runners com heartbeat recente.
 - O print `#2713` de 26/08 manteve a URL anterior, respondeu HTTP 200 e continuou `audited`, com checklist final aprovado e zero bloqueios. A data permaneceu `8/8` aprovada.
 
+### Contrato OpenAPI publicado
+
+- A auditoria do OpenAPI vivo encontrou as rotas operacionais publicadas, porém com request/response genéricos, sem os campos verificáveis do scheduler.
+- O release `988c92cda6d957311775d6208de6c9cec5fee613` publicou schemas para reconcile, overview, status diário, heartbeat e jobs do runner, preservando o gerador FastAPI existente.
+- `OpsJob` agora documenta claim, heartbeat, tentativa, camada/código do incidente, IDs pendentes, próxima recuperação e timings de fila, captura, auditoria, upload e relatório; valor ausente continua anulável.
+- Os parâmetros `id` das rotas de progresso, conclusão e falha do runner foram corrigidos no contrato para UUID, sem alterar o runtime Express.
+- Teste do gerador e compilação Python passaram; o readback de `https://adops-api.codigo5.com.br/api/openapi.json` confirmou todos os `$ref` e propriedades no consumidor público.
+- Deploy por volumes `adops_app_source_988c92cda6d9` e `adops_web_public_988c92cda6d9`, após backup `adops-before-988c92cda6d9-20260827T025739Z.sql.gz`.
+- Após o corte, API, web, Postgres, runners e monitor do Drive ficaram saudáveis; fila zerada e três runners com heartbeat recente.
+
 ## Preflight de integração
 
 - A branch do scheduler parte exatamente do commit terminal da rotina autocorretiva de prints: `be813b54147df8d75ac98c69d6ad91ae4ea623b9`.
