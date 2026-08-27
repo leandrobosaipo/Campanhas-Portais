@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import { promisify } from "node:util";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
@@ -28,6 +28,9 @@ import {
   normalizeSiteMediaUrl,
 } from "../lib/adrotate-sites";
 import {
+  AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE,
+  CAPTURE_CLASS_SAME_DAY_RETRY,
+  CAPTURE_CLASS_SCHEDULED,
   buildRetroCaptureAt,
   eachIsoDay,
   evaluateCaptureMetadata,
@@ -40,8 +43,10 @@ import {
   resolveRegenerationCaptureAt,
   safeFileName,
   summarizeAuditRootCauses,
+  validateLegacySameDayInlineCorrelation,
 } from "../lib/capture-audit";
 import {
+  loadAuditChecklistMetadata,
   resolveAuditChecklist,
   validateAuditChecklist,
 } from "../lib/audit-checklist";
@@ -52,20 +57,33 @@ import type { PrintRunnerJobPayload, PrintRunnerJobResultItem } from "../lib/pri
 import {
   buildDeliveryPackageName,
   buildDeliveryPrintFileName,
+  buildIndividualEvidenceDownloadName,
   calculateSavingsPercent,
   deliverySegment,
   EvidenceExportInputError,
-  groupByDeliveryPosition,
+  isApprovedEvidenceDownload,
+  parseIndividualEvidenceDownloadOptions,
   parseEvidenceExportOptions,
   prepareEvidenceImage,
   resolveDeliveryDateRange,
   resolveDeliveryPiCode,
-  resolveDeliveryPosition,
+  selectApprovedCanonicalEvidenceRows,
   selectCanonicalEvidencePerDate,
   type EvidenceImageVariant,
 } from "../lib/evidence-export";
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
+import { getDriveInventoryStatus } from "../lib/drive-inventory";
+import { toPublicDriveInventoryStatus } from "../lib/drive-inventory-public";
+import { getActiveCampaignOperations, getSuccessfulPublicationReadback, publicationReadbackConfirms } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
+import {
+  buildMonthlyEvidenceSource,
+  CampaignEvidenceExportConflict,
+  normalizeCampaignPi,
+  parseCampaignEvidenceIdentity,
+  selectCampaignEvidenceInsertions,
+  validateCampaignEvidenceReadiness,
+} from "../lib/campaign-evidence-export";
 
 const router: IRouter = Router();
 
@@ -439,6 +457,37 @@ function buildEvidenceExportFileName(
 
 const ANALYTICS_PUBLIC_API_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
 
+async function proxyCampaignEvidenceWorkerRequest(req: any, res: any) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const upstream = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}${req.originalUrl}`, {
+      method: req.method,
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        accept: req.header("accept") || "application/json",
+        ...(req.method === "POST" ? { "content-type": "application/json" } : {}),
+        ...(req.header("authorization") ? { authorization: req.header("authorization") } : {}),
+        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key") } : {}),
+      },
+      ...(req.method === "POST" ? { body: JSON.stringify(req.body ?? {}) } : {}),
+    });
+    for (const header of ["content-type", "cache-control", "location"]) {
+      const value = upstream.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.status(503).json({
+      error: "campaign_evidence_worker_unavailable",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
   if (!captureAt) return false;
   if (isCaptureAtInRetroWindow(captureAt)) return false;
@@ -603,6 +652,24 @@ async function createLocalPiSiteExportJob(options: {
     [options.idempotencyKey],
   );
   if (existing.rows[0]) {
+    if (existing.rows[0].status === "failed") {
+      const now = new Date().toISOString();
+      const retried = await pool.query(
+        `UPDATE ops_jobs
+            SET status = 'ready_for_runner', payload_json = $1, result_json = $2,
+                error_text = NULL, runner_id = NULL, updated_at = $3
+          WHERE id = $4 AND status = 'failed'`,
+        [
+          JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }),
+          JSON.stringify({ stage: "ready_for_runner", retryOf: existing.rows[0].id, retriedAt: now }),
+          now,
+          existing.rows[0].id,
+        ],
+      );
+      if ((retried.rowCount ?? 0) > 0) {
+        return { jobId: existing.rows[0].id, status: "ready_for_runner", duplicate: false };
+      }
+    }
     return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
   }
 
@@ -640,16 +707,6 @@ async function getLocalPiSiteExportJob(jobId: string) {
     mode: payload?.mode ?? null,
     variant: payload?.variant ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
-    pdfUrl: typeof artifactResult?.pdfUrl === "string" ? artifactResult.pdfUrl : null,
-    pdfUrls: Array.isArray(artifactResult?.pdfUrls)
-      ? artifactResult.pdfUrls.filter((value): value is string => typeof value === "string")
-      : [],
-    artifacts: artifactResult?.artifacts && typeof artifactResult.artifacts === "object" && !Array.isArray(artifactResult.artifacts)
-      ? artifactResult.artifacts
-      : null,
-    telegram: artifactResult?.telegram && typeof artifactResult.telegram === "object" && !Array.isArray(artifactResult.telegram)
-      ? artifactResult.telegram
-      : null,
     artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
     artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
     artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
@@ -946,7 +1003,7 @@ async function resolveEvidenceAuditStatus(
 
   if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
     try {
-      const response = await fetch(arquivoUrl, { method: "HEAD" });
+      const response = await fetch(arquivoUrl, { method: "HEAD", signal: AbortSignal.timeout(10_000) });
       urlStatus = response.status;
       isReachable = response.ok;
     } catch {
@@ -969,6 +1026,7 @@ async function resolveEvidenceAuditStatus(
     periodoInicio: insertion.periodoInicio,
     periodoFim: insertion.periodoFim,
     hasEvidenceForDate: Boolean(evidence),
+    evidenceId: evidence?.id ?? null,
     hasValidUrl: isValidHttpUrl(arquivoUrl),
     isReachable,
     urlStatus,
@@ -1076,18 +1134,7 @@ function serializeCaptureProofLog(row: typeof captureProofLogsTable.$inferSelect
 }
 
 async function loadCaptureMetadataForAudit(insertionId: number, targetDate: string) {
-  const localMetadata = loadLocalCaptureMetadata(insertionId, targetDate);
-  if (localMetadata && typeof localMetadata === "object") return localMetadata;
-
-  const [latestLog] = await db.select().from(captureProofLogsTable).where(
-    and(
-      eq(captureProofLogsTable.insertionId, insertionId),
-      eq(captureProofLogsTable.targetDate, targetDate),
-      eq(captureProofLogsTable.status, "ok"),
-    ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  const metadata = latestLog?.metadata;
-  return metadata && typeof metadata === "object" ? metadata : null;
+  return loadAuditChecklistMetadata(insertionId, targetDate);
 }
 
 async function listLegacyAuditCandidates(options?: {
@@ -1205,7 +1252,7 @@ function normalizeTextKey(value: string | null | undefined) {
 }
 
 function normalizePiDigitsKey(value: string | null | undefined) {
-  const digits = String(value ?? "").replace(/\D/g, "");
+  const digits = normalizeCampaignPi(value);
   return digits || null;
 }
 
@@ -1279,12 +1326,109 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
     totalInsertions: insertions.length,
     insertionIds: insertions.map((item) => item.id),
     operationalInsertionIds: operational.map((item) => item.insertion.id),
+    evidenceInsertionIds: descriptors
+      .filter((item) => item.operational && item.evidenceCount > 0)
+      .map((item) => item.insertion.id),
     label: `PI ${resolvedPi} · ${resolvedSiteSigla} · ${pluralizeInsertion(insertions.length)}`,
     downloadUrl: exportable.length
       ? `/api/pi-site-exports?piCodigo=${encodeURIComponent(resolvedPi)}&siteSigla=${encodeURIComponent(resolvedSiteSigla)}&download=1`
       : null,
     exportableInsertionIds: exportable.map((item) => item.insertion.id),
     skippedInsertions,
+  };
+}
+
+async function listCampaignEvidenceInsertions(piCodigo: string, competencia: string, includeEvidence = true, asOfDate?: string) {
+  const identity = parseCampaignEvidenceIdentity({ piCodigo, competencia });
+  const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
+  const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
+  const candidates = selectCampaignEvidenceInsertions(enriched, identity);
+  const candidateById = new Map(candidates.map((item) => [item.id, item]));
+  const operations = await getActiveCampaignOperations({ date: asOfDate, includeEvidence, sheetScope: "monthly" });
+  const matchingOperations = [...operations.items, ...operations.upcomingItems].filter((item) => (
+    normalizeCampaignPi(item.piCodigo) === identity.piCodigo
+    && (item.adops.insertionId == null || candidateById.has(item.adops.insertionId))
+  ));
+  const canonicalIds = new Set(matchingOperations.map((item) => item.adops.insertionId).filter((id): id is number => Number.isFinite(id)));
+  const requiredDatesByInsertion = new Map(operations.items
+    .filter((item) => Number.isFinite(item.adops.insertionId))
+    .map((item) => [Number(item.adops.insertionId), item.evidence.requiredDates]));
+  const publiclyConfirmedInsertionIds = new Set(operations.items
+    .filter((item) => item.adops.publicConfirmation === "confirmed")
+    .map((item) => Number(item.adops.insertionId))
+    .filter((id) => Number.isInteger(id) && id > 0));
+  return {
+    identity,
+    operations: matchingOperations,
+    requiredDatesByInsertion,
+    insertions: candidates.filter((item) => canonicalIds.has(item.id)).map((item) => ({
+      ...item,
+      bannerPublicadoNoSite: item.bannerPublicadoNoSite === true || publiclyConfirmedInsertionIds.has(item.id),
+    })).sort((left, right) => (
+      String(left.siteSigla || "").localeCompare(String(right.siteSigla || ""))
+      || String(left.periodoInicio || "").localeCompare(String(right.periodoInicio || ""))
+      || left.id - right.id
+    )),
+  };
+}
+
+function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, evidences: unknown[]) {
+  const key = process.env.ADOPS_INTERNAL_API_TOKEN?.trim();
+  if (!key) throw new Error("ADOPS_INTERNAL_API_TOKEN é obrigatório para assinar o descritor de evidências.");
+  return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
+}
+
+async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
+  const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia, true, asOfDate);
+  if (!operations.length) return null;
+  const evidenceDescriptors = [];
+  for (const insertion of insertions) {
+    const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+    const requiredDates = requiredDatesByInsertion.get(insertion.id) ?? [];
+    const statuses = await Promise.all(requiredDates.map((date) => resolveEvidenceAuditStatus(insertion, date, evidenceRows)));
+    const approved = statuses.filter((status) => status.status === "ok" || status.status === "ok_best_effort");
+    evidenceDescriptors.push({
+      insertionId: insertion.id,
+      siteSigla: insertion.siteSigla,
+      requiredDates,
+      evidenceDates: approved.map((status) => status.targetDate),
+      invalidDates: statuses.filter((status) => status.status === "invalid_audit").map((status) => status.targetDate),
+      inaccessibleDates: statuses.filter((status) => status.status === "invalid_url").map((status) => status.targetDate),
+      published: insertion.bannerPublicadoNoSite === true,
+      hasMedia: Boolean(String(insertion.mediaUrl || "").trim()),
+      evidences: approved.map((status) => ({
+        insertionId: insertion.id,
+        evidenceId: Number(status.evidenceId),
+        portal: insertion.siteSigla || "SEM-PORTAL",
+        date: status.targetDate,
+        url: status.arquivoUrl,
+        auditHash: crypto.createHash("sha256").update(JSON.stringify({
+          version: status.checklistValidation.version,
+          approved: status.checklistValidation.approved,
+          blockingIssues: status.checklistValidation.blockingIssues.map((issue) => issue.code),
+          warnings: status.checklistValidation.warnings.map((issue) => issue.code),
+        })).digest("hex"),
+      })),
+    });
+  }
+  const readiness = validateCampaignEvidenceReadiness(evidenceDescriptors);
+  const identityBlockers = operations
+    .filter((item) => item.adops.insertionId == null)
+    .map((item) => ({ siteSigla: item.siteSigla, format: item.format.normalized, reason: "canonical_insertion_missing" }));
+  if (identityBlockers.length) readiness.ready = false;
+  const evidences = evidenceDescriptors.flatMap((item) => item.evidences);
+  return {
+    ...identity,
+    asOfDate: asOfDate ?? null,
+    campaignName: operations[0]?.campaignName ?? insertions[0]?.campanhaName ?? `PI ${identity.piCodigo}`,
+    insertionIds: insertions.map((item) => item.id),
+    siteSiglas: Array.from(new Set(insertions.map((item) => item.siteSigla).filter(Boolean))).sort(),
+    evidenceCount: evidences.length,
+    evidences,
+    evidenceFingerprintSignature: signCampaignEvidenceFingerprint(identity.piCodigo, identity.competencia, evidences),
+    readiness,
+    identityBlockers,
+    requiredDatesByInsertion: Object.fromEntries(evidenceDescriptors.map((item) => [item.insertionId, item.requiredDates])),
   };
 }
 
@@ -1646,6 +1790,13 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     mediaBasename,
     adminBaseUrl,
   });
+  const publicationReadback = await getSuccessfulPublicationReadback(insertion.id);
+  const publicationJobConfirmed = publicationReadbackConfirms({
+    insertionId: insertion.id,
+    expectedGroupId: groupId,
+    expectedMediaBasename: mediaBasename,
+    readback: publicationReadback,
+  });
 
   const fallbackCandidates = planned
     .filter((item) => item.insertionId !== insertion.id)
@@ -1659,6 +1810,15 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
       ...item,
       liveMatches: item.mediaBasename ? live.items.filter((liveItem) => liveItem.groupId === item.adrotateGroupId && liveItem.mediaBasename === item.mediaBasename).map(enrichLiveItem) : [],
     }));
+
+  const otherLiveMediaInGroup = live.items
+    .filter((item) => item.groupId === groupId && item.mediaBasename && item.mediaBasename !== mediaBasename)
+    .map(enrichLiveItem);
+  const rotationMode = exactLiveMatches.length > 0 && otherLiveMediaInGroup.length > 0
+    ? "rotating"
+    : exactLiveMatches.length > 0
+      ? "exclusive_or_single_sample"
+      : "expected_media_not_observed";
 
   res.json({
     insertionId: insertion.id,
@@ -1675,6 +1835,31 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
       : [],
     mediaUrl: insertion.mediaUrl,
     mediaBasename,
+    canonicalSelection: {
+      insertionId: insertion.id,
+      expectedPiCodigo: insertion.piCodigo,
+      expectedSiteSigla: siteSigla,
+      expectedGroupId: groupId,
+      expectedFormat: insertion.localFormatoNormalizado ?? insertion.localFormato,
+      expectedPeriod: { start: insertion.periodoInicio, end: insertion.periodoFim },
+      expectedMediaUrl: insertion.mediaUrl,
+      decision: plannedSelf && groupId != null && mediaBasename ? "confirmed" : "blocked",
+      blockingReasons: plannedSelf && groupId != null && mediaBasename
+        ? []
+        : ["A inserção não possui vínculo planejado, grupo ou mídia suficientes para captura auditável."],
+    },
+    rotation: {
+      mode: rotationMode,
+      expectedMediaObserved: exactLiveMatches.length > 0,
+      otherLiveMediaInGroup,
+      capturePolicy: "Aprovar somente evidência cuja mídia observada corresponda à mídia esperada da inserção; mídia rotativa diferente exige nova tentativa da mesma data.",
+    },
+    publicationConfirmation: publicationJobConfirmed ? {
+      source: "completed_adrotate_publish_job",
+      confirmed: true,
+      groupId: publicationReadback?.groupId ?? null,
+      mediaBasename: publicationReadback?.mediaBasename ?? null,
+    } : null,
     plannedSelf,
     exactLiveMatches,
     historicalAdminMatches,
@@ -1705,6 +1890,7 @@ router.get("/insertions/:id/media-consistency", async (req, res): Promise<void> 
           siteSigla,
           piCodigo: insertion.piCodigo ?? "",
           campaignName: insertion.campanhaName ?? "",
+          periodStart: insertion.periodoInicio,
           refreshDrive: false,
         })
       : null;
@@ -1887,10 +2073,153 @@ router.post("/integrations/adrotate/media/sync-live", async (req, res): Promise<
   });
 });
 
-router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
-  const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
+router.post("/insertions/capture-proof/reconcile-scheduled", async (req, res): Promise<void> => {
+  if (res.locals.adopsInternalAuth !== true) {
+    res.status(403).json({ error: "internal_auth_required", details: "A reconciliação só pode ser chamada pelo Worker autenticado da API AdOps." });
+    return;
+  }
+  const targetDate = typeof req.body?.date === "string" ? req.body.date : "";
+  const mode = req.body?.mode === "apply" ? "apply" : "dryRun";
+  const sourceKind = req.body?.sourceKind === "same_day_inline" ? "same_day_inline" : "daily_batch";
+  const sourceJobId = typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId.trim() : "";
+  const insertionIds: number[] = Array.isArray(req.body?.insertionIds)
+    ? Array.from(new Set<number>(req.body.insertionIds.map((value: unknown) => Number(value)).filter((value: number) => Number.isInteger(value) && value > 0)))
+    : [];
+  const sourceCaptures = Array.isArray(req.body?.sourceCaptures) ? req.body.sourceCaptures as Array<Record<string, unknown>> : [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || (sourceKind === "daily_batch" && !sourceJobId) || insertionIds.length === 0) {
+    res.status(400).json({ error: "Informe date, insertionIds e sourceJobId para daily_batch." });
+    return;
+  }
 
+  const items = [] as Array<Record<string, unknown>>;
+  for (const insertionId of insertionIds) {
+    const sourceCapture = sourceCaptures.find((item) => Number(item.insertionId) === insertionId);
+    let captureJobId = typeof sourceCapture?.captureJobId === "string" ? sourceCapture.captureJobId : null;
+    let sourceUploadedUrl = typeof sourceCapture?.uploadedUrl === "string" ? sourceCapture.uploadedUrl : null;
+    const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
+    const logs = await db.select().from(captureProofLogsTable).where(and(
+      eq(captureProofLogsTable.insertionId, insertionId),
+      eq(captureProofLogsTable.targetDate, targetDate),
+      inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
+    )).orderBy(desc(captureProofLogsTable.createdAt));
+    const [rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId));
+    const enrichedInsertion = rawInsertion ? await enrichInsertion(rawInsertion) : null;
+    const currentAudit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    let correlationBlockers: string[] = [];
+    let correlatedCapturedAt: string | null = null;
+    let correlated = sourceKind === "daily_batch" ? logs.find((row) => (
+      captureJobId && (row.runnerJobId === captureJobId || row.jobId === captureJobId) &&
+      row.createdAt && formatIsoDate(row.createdAt) === targetDate &&
+      row.uploadedUrl && row.uploadedUrl === sourceUploadedUrl
+    )) : null;
+    if (sourceKind === "same_day_inline" && evidence && enrichedInsertion) {
+      const periodOk = Boolean(enrichedInsertion.periodoInicio && enrichedInsertion.periodoFim && targetDate >= enrichedInsertion.periodoInicio && targetDate <= enrichedInsertion.periodoFim);
+      if (!periodOk) correlationBlockers.push("target_date_outside_contract_period");
+      const allowedBlockingCodes = new Set(["metadata_retro_content_unverified"]);
+      const blockingCodes = currentAudit?.checklistValidation.blockingIssues.map((issue) => issue.code) ?? [];
+      if (blockingCodes.some((code) => !allowedBlockingCodes.has(code))) correlationBlockers.push("non_legacy_audit_blocker");
+      const audit = currentAudit?.audit;
+      if (!audit?.mediaProof?.ok || !audit?.visualsOk || !audit?.finalPngSlotAudit?.ok || audit?.visualAudit?.identityFrameOk !== true || audit?.pageMatches !== true || audit?.desktopMatches !== true) {
+        correlationBlockers.push("capture_quality_gate_failed");
+      }
+      const candidateBlockers: string[] = [];
+      for (const row of logs) {
+        const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
+        const validation = validateLegacySameDayInlineCorrelation({
+          targetDate,
+          runnerJobId: row.runnerJobId,
+          status: row.status,
+          createdAt: row.createdAt,
+          capturedAt: typeof metadata.capturedAt === "string" ? metadata.capturedAt : null,
+          requestedCaptureAt: typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : row.captureAt,
+          uploadedUrl: row.uploadedUrl,
+          evidenceUrl: evidence.arquivoUrl,
+          matchedMediaUrl: typeof metadata.matchedMediaUrl === "string" ? metadata.matchedMediaUrl : null,
+          expectedMediaUrl: enrichedInsertion.mediaUrl,
+        });
+        if (validation.ok && correlationBlockers.length === 0) {
+          correlated = row;
+          captureJobId = validation.sourceJobId;
+          sourceUploadedUrl = row.uploadedUrl;
+          correlatedCapturedAt = validation.capturedAt;
+          break;
+        }
+        candidateBlockers.push(...validation.blockers);
+      }
+      if (!correlated) correlationBlockers = Array.from(new Set([...correlationBlockers, ...candidateBlockers]));
+    }
+    if (!evidence || !correlated) {
+      const reason = !evidence
+        ? "evidence_missing"
+        : !captureJobId || !sourceUploadedUrl
+          ? "source_capture_mapping_missing"
+          : !logs.some((row) => row.runnerJobId === captureJobId || row.jobId === captureJobId)
+            ? "capture_job_log_missing"
+            : !logs.some((row) => row.uploadedUrl === sourceUploadedUrl)
+              ? "capture_artifact_mismatch"
+              : "capture_timestamp_mismatch";
+      items.push({ insertionId, status: "blocked", reason, blockers: correlationBlockers });
+      continue;
+    }
+    if (currentAudit?.status === "ok" || currentAudit?.status === "ok_best_effort") {
+      items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: currentAudit.status, unchanged: true, audit: currentAudit });
+      continue;
+    }
+    if (evidence.arquivoUrl !== correlated.uploadedUrl) {
+      items.push({ insertionId, status: "blocked", reason: "capture_artifact_mismatch" });
+      continue;
+    }
+    const previousMetadata = correlated.metadata;
+    const metadata = correlated.metadata && typeof correlated.metadata === "object"
+      ? { ...correlated.metadata as Record<string, unknown> }
+      : {};
+    metadata.captureClass = sourceKind === "same_day_inline" ? CAPTURE_CLASS_SAME_DAY_RETRY : CAPTURE_CLASS_SCHEDULED;
+    metadata.targetDate = targetDate;
+    metadata.capturedAt = correlatedCapturedAt ?? correlated.createdAt.toISOString();
+    metadata.sourceJobId = captureJobId;
+    if (sourceKind === "daily_batch") metadata.sourceBatchJobId = sourceJobId;
+    metadata.reconciledFrom = sourceKind;
+    metadata.auditPolicyVersion = AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
+    metadata.evidenceUrl = correlated.uploadedUrl;
+    if (mode === "dryRun") {
+      items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: "ready", mode, sourceKind, captureClass: metadata.captureClass, sourceJobId: captureJobId, capturedAt: metadata.capturedAt, unchangedEvidence: true });
+      continue;
+    }
+    await db.update(captureProofLogsTable).set({ metadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+    let audit = null;
+    try {
+      audit = enrichedInsertion ? await resolveEvidenceAuditStatus(enrichedInsertion, targetDate, evidenceRows) : null;
+    } catch (error) {
+      await db.update(captureProofLogsTable).set({ metadata: previousMetadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+      throw error;
+    }
+    if (audit?.status !== "ok" && audit?.status !== "ok_best_effort") {
+      await db.update(captureProofLogsTable).set({ metadata: previousMetadata, updatedAt: new Date() }).where(eq(captureProofLogsTable.id, correlated.id));
+    }
+    items.push({ insertionId, logId: correlated.id, evidenceId: evidence.id, status: audit?.status ?? "blocked", audit });
+  }
+  res.json({
+    ok: items.every((item) => item.status === "ok" || item.status === "ok_best_effort" || item.status === "ready"),
+    mode,
+    sourceKind,
+    date: targetDate,
+    sourceJobId,
+    reconciled: items.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,
+    items,
+  });
+});
+
+export async function getCaptureProofAuditForDate(targetDate: string, filters: {
+  competencia?: string;
+  siteId?: number;
+  clienteId?: number;
+  agenciaId?: number;
+  insertionIds?: Set<number> | null;
+} = {}) {
+  const { competencia, siteId, clienteId, agenciaId, insertionIds = null } = filters;
   let rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
+  if (insertionIds) rawInsertions = rawInsertions.filter((item) => insertionIds.has(item.id));
   if (siteId) rawInsertions = rawInsertions.filter((item) => item.siteId === siteId);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
 
@@ -1898,7 +2227,7 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
     if (competencia && item.competencia !== competencia) return false;
     if (clienteId && item.clienteId !== clienteId) return false;
     if (agenciaId && item.agenciaId !== agenciaId) return false;
-    if (!item.bannerPublicadoNoSite) return false;
+    if (!item.bannerPublicadoNoSite && !insertionIds) return false;
     if (!item.mediaUrl) return false;
     if (getAdRotateGroupId(item.siteSigla, item.localFormatoNormalizado ?? item.localFormato) == null) return false;
     const start = parseDateOnly(item.periodoInicio);
@@ -1910,14 +2239,24 @@ router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> =>
 
   const checks = await Promise.all(eligible.map((item) => resolveEvidenceAuditStatus(item, targetDate)));
 
-  res.json({
+  return {
     date: targetDate,
     totalEligible: checks.length,
-    ok: checks.filter((item) => item.status === "ok").length,
+    ok: checks.filter((item) => item.status === "ok" || item.status === "ok_best_effort").length,
+    strictOk: checks.filter((item) => item.status === "ok").length,
+    bestEffort: checks.filter((item) => item.status === "ok_best_effort").length,
     missing: checks.filter((item) => item.status === "missing").length,
     invalid: checks.filter((item) => item.status === "invalid_url" || item.status === "invalid_audit").length,
     items: checks,
-  });
+  };
+}
+
+router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
+  const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
+  const insertionIds = typeof req.query.insertionIds === "string"
+    ? new Set(req.query.insertionIds.split(",").map((value) => Number.parseInt(value, 10)).filter((value) => Number.isInteger(value) && value > 0))
+    : null;
+  res.json(await getCaptureProofAuditForDate(targetDate, { competencia, siteId, clienteId, agenciaId, insertionIds }));
 });
 
 router.get("/insertions/capture-proof/audit/failures", async (req, res): Promise<void> => {
@@ -2409,6 +2748,84 @@ router.post("/insertions/:id/capture-proof/fix-invalid", async (req, res): Promi
   });
 });
 
+router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise<void> => {
+  const cod5_insertionId = Number.parseInt(req.params.id, 10);
+  const cod5_targetDate = String(req.params.date ?? "");
+  if (!Number.isFinite(cod5_insertionId) || !/^\d{4}-\d{2}-\d{2}$/.test(cod5_targetDate)) {
+    res.status(400).json({ error: "Inserção ou data inválida." });
+    return;
+  }
+
+  let cod5_options: ReturnType<typeof parseIndividualEvidenceDownloadOptions>;
+  try {
+    cod5_options = parseIndividualEvidenceDownloadOptions(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(error instanceof EvidenceExportInputError ? error.statusCode : 400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+
+  const [cod5_rawInsertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, cod5_insertionId));
+  if (!cod5_rawInsertion) {
+    res.status(404).json({ error: "Inserção não encontrada." });
+    return;
+  }
+
+  const cod5_insertion = await enrichInsertion(cod5_rawInsertion);
+  const cod5_rows = await db.select().from(evidencesTable)
+    .where(eq(evidencesTable.insercaoId, cod5_insertionId))
+    .orderBy(evidencesTable.criadoEm);
+  const cod5_canonicalRows = selectCanonicalEvidencePerDate(cod5_rows, (row) => getEvidenceDateKey(row.titulo));
+  const cod5_evidence = cod5_canonicalRows.find((row) => getEvidenceDateKey(row.titulo) === cod5_targetDate) ?? null;
+  if (!cod5_evidence?.arquivoUrl || !isValidHttpUrl(cod5_evidence.arquivoUrl)) {
+    res.status(404).json({ error: "Evidência não encontrada para a data informada." });
+    return;
+  }
+
+  const cod5_auditStatus = await resolveEvidenceAuditStatus(cod5_insertion, cod5_targetDate, [cod5_evidence]);
+  if (!isApprovedEvidenceDownload(cod5_auditStatus)) {
+    res.status(409).json({
+      error: "A evidência existe, mas ainda não foi aprovada para download.",
+      status: cod5_auditStatus.status,
+    });
+    return;
+  }
+
+  const cod5_tempDir = await mkdtemp(join(tmpdir(), `adops-evidence-download-${cod5_insertionId}-`));
+  const cod5_fileName = buildIndividualEvidenceDownloadName(cod5_insertion, cod5_targetDate);
+  const cod5_outputPath = join(cod5_tempDir, cod5_fileName);
+  try {
+    const cod5_sourceResponse = await fetch(cod5_evidence.arquivoUrl, { redirect: "follow" });
+    if (!cod5_sourceResponse.ok) {
+      res.status(409).json({ error: "A evidência aprovada não está acessível no storage." });
+      return;
+    }
+    await prepareEvidenceImage({
+      source: Buffer.from(await cod5_sourceResponse.arrayBuffer()),
+      outputPath: cod5_outputPath,
+      variant: cod5_options.variant,
+      maxWidth: cod5_options.imageMaxWidth,
+      quality: cod5_options.imageQuality,
+    });
+    const cod5_output = await readFile(cod5_outputPath);
+    res.setHeader("cache-control", "private, max-age=300");
+    res.setHeader("content-type", "image/jpeg");
+    res.setHeader("content-disposition", `attachment; filename="${cod5_fileName}"`);
+    res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
+    res.send(cod5_output);
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
+        error: "Falha ao preparar o JPEG da evidência.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } finally {
+    await rm(cod5_tempDir, { recursive: true, force: true });
+  }
+});
+
 router.get("/insertions/:id/evidences/export.debug", async (req, res): Promise<void> => {
   const insertionId = Number.parseInt(req.params.id, 10);
   if (!Number.isFinite(insertionId)) {
@@ -2725,6 +3142,241 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
   }
 });
 
+router.post("/campaign-evidence-exports/jobs", proxyCampaignEvidenceWorkerRequest);
+router.post("/campaign-evidence-exports/jobs/batch", proxyCampaignEvidenceWorkerRequest);
+router.get("/campaign-evidence-exports/jobs/:jobId", proxyCampaignEvidenceWorkerRequest);
+router.get("/campaign-evidence-exports/jobs/:jobId/download", proxyCampaignEvidenceWorkerRequest);
+
+router.get("/campaign-operations/evidence-monthly-source", async (req, res): Promise<void> => {
+  const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : formatIsoDate(new Date());
+  const requestedCompetencia = typeof req.query.competencia === "string" ? req.query.competencia.trim() : "";
+  try {
+    const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true, sheetScope: "monthly" });
+    const canonicalCompetencia = operations.sheet.name.replace(/\s+(\d{4})$/, "/$1");
+    const normalizeCompetencia = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").toUpperCase();
+    if (requestedCompetencia && normalizeCompetencia(requestedCompetencia) !== normalizeCompetencia(canonicalCompetencia)) {
+      res.status(400).json({
+        error: "competencia_divergente",
+        details: `A data ${targetDate} pertence à competência ${canonicalCompetencia}.`,
+      });
+      return;
+    }
+    const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.id);
+    const enrichedInsertions = await Promise.all(rawInsertions.map(enrichInsertion));
+    const insertionById = new Map(enrichedInsertions.map((item) => [item.id, item]));
+    const monthlyItems = await Promise.all(operations.items.map(async (item) => {
+      const insertionId = Number(item.adops.insertionId);
+      const insertion = Number.isFinite(insertionId) ? insertionById.get(insertionId) ?? null : null;
+      if (!insertion) return { operation: item, insertion: null };
+      const evidenceRows = await db.select().from(evidencesTable)
+        .where(eq(evidencesTable.insercaoId, insertion.id))
+        .orderBy(evidencesTable.criadoEm);
+      const days = await Promise.all(item.evidence.requiredDates.map(async (date) => {
+        const status = await resolveEvidenceAuditStatus(insertion, date, evidenceRows);
+        const blockingIssues = status.checklistValidation.blockingIssues.map((issue) => issue.code);
+        const auditHash = crypto.createHash("sha256").update(JSON.stringify({
+          version: status.checklistValidation.version,
+          approved: status.checklistValidation.approved,
+          blockingIssues,
+          warnings: status.checklistValidation.warnings.map((issue) => issue.code),
+        })).digest("hex");
+        return {
+          date,
+          status: status.status === "ok"
+            ? "audited"
+            : status.status === "ok_best_effort"
+              ? "audited_best_effort"
+              : status.status === "missing"
+                ? "missing"
+                : "invalid",
+          evidenceId: status.evidenceId,
+          url: status.arquivoUrl,
+          auditHash,
+          blockingIssues,
+        };
+      }));
+      return {
+        operation: { ...item, evidence: { ...item.evidence, days } },
+        insertion: { ...insertion, evidenceDays: days },
+      };
+    }));
+    const upcomingItems = operations.upcomingItems.map((item) => {
+      const insertionId = Number(item.adops.insertionId);
+      const insertion = Number.isFinite(insertionId) ? insertionById.get(insertionId) ?? null : null;
+      return {
+        operation: item,
+        insertion: insertion ? { ...insertion, evidenceDays: [] } : null,
+      };
+    });
+    const source = buildMonthlyEvidenceSource({
+      ...operations,
+      items: monthlyItems.map((item) => item.operation),
+      upcomingItems: upcomingItems.map((item) => item.operation),
+    });
+    const inventory = await getDriveInventoryStatus();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      ...source,
+      source: {
+        sheetName: operations.sheet.name,
+        downloadedAt: operations.sheet.downloadedAt,
+        sha256: operations.sheet.sourceSha256,
+        competencia: canonicalCompetencia,
+      },
+      driveInventory: toPublicDriveInventoryStatus(inventory),
+      insertions: [...monthlyItems, ...upcomingItems].map((item) => item.insertion).filter(Boolean),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "evidence_monthly_source_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+async function handleInternalCampaignEvidenceExport(req: Request, res: Response): Promise<void> {
+  let tempDir: string | null = null;
+  let zipPath: string | null = null;
+  try {
+    const identity = parseCampaignEvidenceIdentity(req.query);
+    const asOfDate = typeof req.query.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.asOfDate)
+      ? req.query.asOfDate
+      : undefined;
+    const suppliedFingerprint = Array.isArray(req.body?.evidenceFingerprint)
+      ? req.body.evidenceFingerprint.filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      : [];
+    const suppliedSignature = typeof req.body?.evidenceFingerprintSignature === "string" ? req.body.evidenceFingerprintSignature : "";
+    const wantsImmutableDownload = String(req.query.download ?? "") === "1";
+    if (wantsImmutableDownload && !suppliedFingerprint.length) {
+      res.status(409).json({ error: "O download exige descritor imutável assinado." });
+      return;
+    }
+    if (suppliedFingerprint.length) {
+      const expectedSignature = signCampaignEvidenceFingerprint(identity.piCodigo, identity.competencia, suppliedFingerprint);
+      const validSignature = suppliedSignature.length === expectedSignature.length
+        && crypto.timingSafeEqual(Buffer.from(suppliedSignature), Buffer.from(expectedSignature));
+      if (!validSignature) {
+        res.status(409).json({ error: "Assinatura do descritor imutável é inválida." });
+        return;
+      }
+    }
+    const fingerprintByEvidenceId = new Map<number, Record<string, unknown>>(
+      suppliedFingerprint.map((item: Record<string, unknown>) => [Number(item.evidenceId), item]),
+    );
+    const requestedEvidenceIds = suppliedFingerprint.length ? new Set(fingerprintByEvidenceId.keys()) : null;
+    if (suppliedFingerprint.length && fingerprintByEvidenceId.size !== suppliedFingerprint.length) {
+      res.status(409).json({ error: "Descritor imutável contém evidências duplicadas." });
+      return;
+    }
+    const immutableDownload = wantsImmutableDownload && requestedEvidenceIds && requestedEvidenceIds.size > 0;
+    const descriptor = immutableDownload
+      ? null
+      : await describeCampaignEvidenceExport(identity.piCodigo, identity.competencia, asOfDate);
+    const immutableSelection = immutableDownload
+      ? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, false, asOfDate)
+      : null;
+    if (immutableDownload && !immutableSelection?.operations.length) {
+      res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
+      return;
+    }
+    if (!descriptor) {
+      if (!immutableDownload) {
+        res.status(404).json({ error: "Campanha canônica não encontrada para PI e competência informadas." });
+        return;
+      }
+    }
+    if (String(req.query.download ?? "") !== "1") {
+      res.json({ ...descriptor!, mode: "prints-only", variant: "web", imageDefaults: { format: "jpeg", maxWidth: 1600, quality: 72 } });
+      return;
+    }
+    if (descriptor && !descriptor.readiness.ready) {
+      res.status(409).json({ error: "Pacote bloqueado por evidências ausentes, inválidas ou inacessíveis.", ...descriptor! });
+      return;
+    }
+    const { insertions, operations } = immutableSelection ?? await listCampaignEvidenceInsertions(identity.piCodigo, identity.competencia, true, asOfDate);
+    const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
+    const imageQuality = parseBoundedInteger(req.query.imageQuality, { minimum: 45, maximum: 90, fallback: 72 });
+    const requestId = crypto.randomUUID();
+    const metrics = emptyPrintDeliveryMetrics();
+    const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
+    tempDir = await mkdtemp(join(tmpdir(), `adops-campaign-evidence-${identity.piCodigo}-`));
+    for (const insertion of insertions) {
+      const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
+      let evidences = evidenceRows.filter((evidence) => immutableDownload && requestedEvidenceIds!.has(evidence.id));
+      if (immutableDownload && suppliedFingerprint.length) {
+        const requiredDates = new Set(immutableSelection!.requiredDatesByInsertion.get(insertion.id) ?? []);
+        const seenDates = new Set<string>();
+        for (const evidence of evidences) {
+          const expected = fingerprintByEvidenceId.get(evidence.id)!;
+          const currentDate = getEvidenceDateKey(evidence.titulo);
+          if (Number(expected.insertionId) !== insertion.id
+            || String(expected.date || "") !== currentDate
+            || String(expected.url || "") !== String(evidence.arquivoUrl || "")
+            || !/^[a-f0-9]{64}$/i.test(String(expected.auditHash || ""))
+            || !currentDate
+            || !requiredDates.has(currentDate)
+            || seenDates.has(currentDate)) {
+            await rm(tempDir, { recursive: true, force: true });
+            tempDir = null;
+            res.status(409).json({ error: "A evidência mudou após a auditoria; gere um novo descritor antes do ZIP.", insertionId: insertion.id, evidenceId: evidence.id });
+            return;
+          }
+          seenDates.add(currentDate);
+        }
+        if (evidences.length !== requiredDates.size) {
+          await rm(tempDir, { recursive: true, force: true });
+          tempDir = null;
+          res.status(409).json({ error: "O descritor não cobre todas as datas canônicas da inserção.", insertionId: insertion.id });
+          return;
+        }
+      }
+      if (!immutableDownload) {
+        const requiredDates = descriptor!.requiredDatesByInsertion[insertion.id] ?? [];
+        const statusesByDate = new Map();
+        for (const date of requiredDates) statusesByDate.set(date, await resolveEvidenceAuditStatus(insertion, date, evidenceRows));
+        evidences = selectApprovedCanonicalEvidenceRows(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo), statusesByDate);
+      }
+      const portalDir = join(tempDir, deliverySegment(insertion.siteSigla, "SEM-PORTAL"), resolveOperationalPrintFolder(insertion));
+      const delivery = await writePrintDeliveryFolder({
+        rootDir: portalDir,
+        insertion,
+        evidences,
+        variant: "web",
+        maxWidth: imageMaxWidth,
+        quality: imageQuality,
+        packageNameOverride: `INSERCAO-${insertion.id}`,
+      });
+      mergePrintDeliveryMetrics(metrics, delivery.metrics);
+      failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
+    }
+    const expectedEvidenceCount = immutableDownload ? requestedEvidenceIds!.size : descriptor!.evidenceCount;
+    if (failures.length || metrics.generated !== expectedEvidenceCount) {
+      await rm(tempDir, { recursive: true, force: true });
+      tempDir = null;
+      res.status(422).json({ error: "Falha ao preparar todos os prints. Nenhum pacote parcial foi entregue.", requestId, failed: failures });
+      return;
+    }
+    await writeSha256Sums(tempDir);
+    const campaignName = descriptor?.campaignName ?? operations[0]?.campaignName ?? `PI ${identity.piCodigo}`;
+    const archiveBase = safeFileName(`${campaignName}-PI-${identity.piCodigo}-${identity.competencia}-TODOS-OS-PRINTS`, `PI-${identity.piCodigo}-TODOS-OS-PRINTS`);
+    zipPath = join(tmpdir(), `${archiveBase}-${requestId}.zip`);
+    await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
+    setPrintDeliveryHeaders(res, metrics, "web", requestId);
+    res.download(zipPath, `${archiveBase}.zip`, async () => {
+      await Promise.allSettled([rm(tempDir!, { recursive: true, force: true }), rm(zipPath!, { force: true })]);
+    });
+  } catch (error) {
+    await Promise.allSettled([tempDir ? rm(tempDir, { recursive: true, force: true }) : Promise.resolve(), zipPath ? rm(zipPath, { force: true }) : Promise.resolve()]);
+    const statusCode = error instanceof CampaignEvidenceExportConflict ? error.statusCode : 500;
+    res.status(statusCode).json({ error: statusCode === 409 && error instanceof Error ? error.message : "Falha ao gerar o pacote completo da campanha.", details: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+router.get("/internal/campaign-evidence-exports", handleInternalCampaignEvidenceExport);
+router.post("/internal/campaign-evidence-exports", handleInternalCampaignEvidenceExport);
+
 router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
   const piCodigo = typeof req.body?.piCodigo === "string" ? req.body.piCodigo.trim() : "";
   const siteSigla = typeof req.body?.siteSigla === "string" ? req.body.siteSigla.trim() : "";
@@ -2736,7 +3388,7 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
   try {
     const exportOptions = parseEvidenceExportOptions({
       ...(req.body as Record<string, unknown>),
-      mode: req.body?.mode ?? "delivery",
+      mode: req.body?.mode ?? "full-pdf",
     });
     const payload = {
       piCodigo,
@@ -2748,8 +3400,6 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       pdfResolution: parseBoundedInteger(req.body?.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 }),
       imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
       imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
-      sendTelegram: req.body?.sendTelegram !== false,
-      chatId: typeof req.body?.chatId === "string" ? req.body.chatId.trim() : null,
       source: typeof req.body?.source === "string" ? req.body.source : "api-server",
     };
     const requestedKey = typeof req.headers["idempotency-key"] === "string"
@@ -2778,7 +3428,6 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       siteSigla: siteSigla.toUpperCase(),
       mode: exportOptions.mode,
       variant: exportOptions.variant,
-      sendTelegram: payload.sendTelegram,
     });
   } catch (error) {
     res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
@@ -2830,40 +3479,6 @@ router.get("/pi-site-exports/jobs/:jobId/download", async (req, res): Promise<vo
   }
 });
 
-router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> => {
-  try {
-    const job = await getLocalPiSiteExportJob(req.params.jobId);
-    if (!job) {
-      res.status(404).json({ error: "Job PI/site não encontrado." });
-      return;
-    }
-    if (job.status !== "completed" || (!job.pdfUrl && job.pdfUrls.length === 0)) {
-      res.status(409).json({
-        error: "PDF ainda não está pronto para download.",
-        jobId: job.jobId,
-        status: job.status,
-        stage: job.stage,
-      });
-      return;
-    }
-    if (!job.pdfUrl && job.pdfUrls.length > 1) {
-      res.status(300).json({
-        message: "A campanha possui mais de uma posição. Use os PDFs separados abaixo.",
-        jobId: job.jobId,
-        pdfUrls: job.pdfUrls,
-        pdfs: (job.artifacts as Record<string, unknown> | null)?.pdfs ?? [],
-      });
-      return;
-    }
-    res.redirect(job.pdfUrl ?? job.pdfUrls[0]);
-  } catch (error) {
-    res.status(500).json({
-      error: "Falha ao redirecionar o PDF da entrega PI/site.",
-      details: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
-
 router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const piCodigo = typeof req.query.piCodigo === "string" ? req.query.piCodigo : "";
   const siteSigla = typeof req.query.siteSigla === "string" ? req.query.siteSigla : "";
@@ -2873,10 +3488,6 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   const pdfResolution = parseBoundedInteger(req.query.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 });
   const imageMaxWidth = parseBoundedInteger(req.query.imageMaxWidth ?? req.query.pdfMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 });
   const imageQuality = parseBoundedInteger(req.query.imageQuality ?? req.query.pdfQuality, { minimum: 45, maximum: 90, fallback: 72 });
-  const journalistPresentation = String(req.query.presentation ?? "").trim().toLowerCase() === "journalist";
-  const positionFilter = typeof req.query.position === "string"
-    ? deliverySegment(req.query.position, "")
-    : "";
   let exportOptions: ReturnType<typeof parseEvidenceExportOptions>;
 
   try {
@@ -2910,7 +3521,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   if (!download) {
     res.json({
       ...descriptor,
-      supportedExportModes: ["delivery", "full", "prints-only", "pdf", "full-pdf"],
+      supportedExportModes: ["full", "prints-only", "pdf", "full-pdf"],
       supportedImageVariants: ["original", "web"],
       pdfDefaults: {
         maxWidth: 1920,
@@ -2934,28 +3545,10 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     return;
   }
 
-  if (exportOptions.mode === "delivery") {
-    res.status(409).json({
-      error: "mode=delivery é assíncrono; use POST /api/pi-site-exports/jobs.",
-      piCodigo: descriptor.piCodigo,
-      siteSigla: descriptor.siteSigla,
-    });
-    return;
-  }
-
   const insertions = await listPiSiteInsertions(descriptor.piCodigo, descriptor.siteSigla);
-  const exportableInsertionIds = new Set(descriptor.exportableInsertionIds);
-  const exportableInsertions = insertions.filter((item) =>
-    exportableInsertionIds.has(item.id)
-    && (!positionFilter || resolveDeliveryPosition(item) === positionFilter));
-  if (positionFilter && !exportableInsertions.length) {
-    res.status(404).json({
-      error: "Nenhuma inserção exportável corresponde à posição informada.",
-      position: positionFilter,
-      availablePositions: Array.from(new Set(insertions.map(resolveDeliveryPosition))).sort(),
-    });
-    return;
-  }
+  const selectedInsertionIds = exportOptions.mode === "full" ? descriptor.exportableInsertionIds : descriptor.evidenceInsertionIds;
+  const exportableInsertionIds = new Set(selectedInsertionIds);
+  const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
 
   if (exportOptions.mode === "pdf" || exportOptions.mode === "full-pdf") {
@@ -2963,15 +3556,27 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     const pdfSourceDir = join(tempDir, ".pdf-source");
     const pdfOutputDir = exportOptions.mode === "full-pdf" ? join(tempDir, "01-PRINTS-PDF") : tempDir;
     const aggregateMetrics = emptyPrintDeliveryMetrics();
-    const pdfPages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number; positionKey: string }> = [];
+    const pdfPages: Array<{ inputPath: string; dateKey: string | null; evidenceId: number; insertionId: number }> = [];
     const failures: Array<{ insertionId: number; evidenceId: number; date: string | null; error: string }> = [];
     const skippedInsertionIds: number[] = [];
     const packageNameOccurrences = new Map<string, number>();
+    let pdfPath: string | null = null;
     let zipPath: string | null = null;
     try {
       for (const insertion of exportableInsertions) {
         const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
-        const evidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
+        const canonicalEvidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
+        const statusesByDate = new Map<string, Awaited<ReturnType<typeof resolveEvidenceAuditStatus>>>();
+        for (const evidence of canonicalEvidences) {
+          const dateKey = getEvidenceDateKey(evidence.titulo);
+          if (!dateKey) continue;
+          statusesByDate.set(dateKey, await resolveEvidenceAuditStatus(insertion, dateKey, [evidence]));
+        }
+        const evidences = selectApprovedCanonicalEvidenceRows(
+          evidenceRows,
+          (evidence) => getEvidenceDateKey(evidence.titulo),
+          statusesByDate,
+        );
         if (!evidences.length) {
           skippedInsertionIds.push(insertion.id);
           continue;
@@ -3006,7 +3611,6 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         pdfPages.push(...delivery.outputFiles.map((item) => ({
           ...item,
           insertionId: insertion.id,
-          positionKey: resolveDeliveryPosition(insertion),
         })));
       }
 
@@ -3024,42 +3628,30 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
       }
 
       pdfPages.sort((left, right) => {
-        const leftKey = `${left.positionKey}-${left.dateKey ?? "9999-99-99"}-${String(left.insertionId).padStart(12, "0")}-${String(left.evidenceId).padStart(12, "0")}`;
-        const rightKey = `${right.positionKey}-${right.dateKey ?? "9999-99-99"}-${String(right.insertionId).padStart(12, "0")}-${String(right.evidenceId).padStart(12, "0")}`;
+        const leftKey = `${left.dateKey ?? "9999-99-99"}-${String(left.insertionId).padStart(12, "0")}-${String(left.evidenceId).padStart(12, "0")}`;
+        const rightKey = `${right.dateKey ?? "9999-99-99"}-${String(right.insertionId).padStart(12, "0")}-${String(right.evidenceId).padStart(12, "0")}`;
         return leftKey.localeCompare(rightKey);
       });
       await mkdir(pdfOutputDir, { recursive: true });
-      const pdfResults: Array<{ position: string; baseName: string; path: string; result: CompressedEvidencePdfResult }> = [];
-      for (const { position, items: pages } of groupByDeliveryPosition(pdfPages, (page) => page.positionKey)) {
-        const positionOutputDir = join(pdfOutputDir, position);
-        await mkdir(positionOutputDir, { recursive: true });
-        const baseName = safeFileName(
-          `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-${position}`,
-          `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-${position}`,
-        );
-        const outputPath = join(positionOutputDir, `${baseName}.pdf`);
-        const result = await buildCompressedEvidencePdf({
-          tempDir,
-          outputPath,
-          pages: pages.map((page) => ({
-            ...page,
-            outputRelativePath: relative(pdfSourceDir, page.inputPath),
-          })),
-          maxWidth: pdfMaxWidth,
-          quality: pdfQuality,
-          resolution: pdfResolution,
-          imagesOutputDir: exportOptions.mode === "full-pdf"
-            ? join(positionOutputDir, "IMAGENS-INDEPENDENTES")
-            : undefined,
-        });
-        pdfResults.push({ position, baseName, path: outputPath, result });
-      }
-      const pdfResult = {
-        pageCount: pdfResults.reduce((sum, item) => sum + item.result.pageCount, 0),
-        outputBytes: pdfResults.reduce((sum, item) => sum + item.result.outputBytes, 0),
-        imageCount: pdfResults.reduce((sum, item) => sum + item.result.imageCount, 0),
-        imageBytes: pdfResults.reduce((sum, item) => sum + item.result.imageBytes, 0),
-      };
+      const pdfBaseName = safeFileName(
+        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
+        `PI-${descriptor.piCodigo}-${descriptor.siteSigla}-prints-auditados-comprimidos`,
+      );
+      pdfPath = join(pdfOutputDir, `${pdfBaseName}.pdf`);
+      const pdfResult = await buildCompressedEvidencePdf({
+        tempDir,
+        outputPath: pdfPath,
+        pages: pdfPages.map((page) => ({
+          ...page,
+          outputRelativePath: relative(pdfSourceDir, page.inputPath),
+        })),
+        maxWidth: pdfMaxWidth,
+        quality: pdfQuality,
+        resolution: pdfResolution,
+        imagesOutputDir: exportOptions.mode === "full-pdf"
+          ? join(pdfOutputDir, "IMAGENS-INDEPENDENTES")
+          : undefined,
+      });
       await rm(pdfSourceDir, { recursive: true, force: true });
 
       res.setHeader("cache-control", "no-store");
@@ -3075,7 +3667,6 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
       res.setHeader("x-adops-export-prepared-image-bytes", String(pdfResult.imageBytes));
       res.setHeader("x-adops-export-pdf-bytes", String(pdfResult.outputBytes));
       res.setHeader("x-adops-export-pages", String(pdfResult.pageCount));
-      res.setHeader("x-adops-export-pdfs", String(pdfResults.length));
       res.setHeader("x-adops-export-independent-images", String(pdfResult.imageCount));
       res.setHeader("x-adops-export-independent-image-bytes", String(pdfResult.imageBytes));
       res.setHeader("x-adops-export-savings-percent", String(calculateSavingsPercent(aggregateMetrics.originalBytes, pdfResult.outputBytes)));
@@ -3093,27 +3684,14 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         "x-adops-export-prepared-image-bytes",
         "x-adops-export-pdf-bytes",
         "x-adops-export-pages",
-        "x-adops-export-pdfs",
         "x-adops-export-independent-images",
         "x-adops-export-independent-image-bytes",
         "x-adops-export-savings-percent",
       ].join(", "));
 
       if (exportOptions.mode === "pdf") {
-        if (pdfResults.length === 1) {
-          res.download(pdfResults[0].path, `${pdfResults[0].baseName}.pdf`, async () => {
-            await rm(tempDir, { recursive: true, force: true });
-          });
-          return;
-        }
-        const pdfArchiveBase = `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}-PDFS`;
-        zipPath = join(tmpdir(), `${pdfArchiveBase}-${exportRequestId}.zip`);
-        await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: pdfOutputDir, maxBuffer: 20 * 1024 * 1024 });
-        res.download(zipPath, `${pdfArchiveBase}.zip`, async () => {
-          await Promise.allSettled([
-            rm(tempDir, { recursive: true, force: true }),
-            rm(zipPath!, { force: true }),
-          ]);
+        res.download(pdfPath, `${pdfBaseName}.pdf`, async () => {
+          await rm(tempDir, { recursive: true, force: true });
         });
         return;
       }
@@ -3124,8 +3702,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         "",
         `PI: ${descriptor.piCodigo}`,
         `Site: ${descriptor.siteSigla}`,
-        `PDFs por posição: ${pdfResults.length}`,
-        `Páginas somadas dos PDFs: ${pdfResult.pageCount}`,
+        `Páginas do PDF: ${pdfResult.pageCount}`,
         `Bytes dos PNGs originais: ${aggregateMetrics.originalBytes}`,
         `Bytes das imagens originais preparadas para o PDF: ${aggregateMetrics.outputBytes}`,
         `Bytes do PDF: ${pdfResult.outputBytes}`,
@@ -3139,10 +3716,6 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         `Inserções sem prints ignoradas: ${skippedInsertionIds.length ? skippedInsertionIds.join(", ") : "nenhuma"}`,
         "",
       ];
-      for (const pdf of pdfResults) {
-        readmeLines.push(`PDF ${pdf.position}: ${pdf.result.pageCount} página(s)`);
-      }
-      readmeLines.push("");
       for (const insertion of exportableInsertions) {
         await attachAnalyticsPdfsToExportAtPath(tempDir, insertion.id, readmeLines, join("02-ANALYTICS", `INSERCAO-${insertion.id}`));
         await attachOperationalDocumentsToExportAtPath(tempDir, insertion, readmeLines, join("03-DOCUMENTOS-OPERACIONAIS", `INSERCAO-${insertion.id}`));
@@ -3152,13 +3725,13 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         descriptor,
         insertions: exportableInsertions,
       });
-      await writeContactSheet(tempDir, pdfOutputDir);
+      await writeContactSheet(tempDir, join(pdfOutputDir, "IMAGENS-INDEPENDENTES"));
       readmeLines.push(`Provas editoriais aprovadas: ${retroAudit.approved}/${retroAudit.total}`);
       readmeLines.push(`Notícias futuras detectadas: ${retroAudit.futureCount}`);
       readmeLines.push("");
       await writeFile(join(tempDir, "00-LEIA-ME.txt"), readmeLines.join("\n"), "utf8");
       await writeSha256Sums(tempDir);
-      const archiveBase = `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}-PACOTE`;
+      const archiveBase = `${pdfBaseName}-PACOTE`;
       zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
       await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
       res.download(zipPath, `${archiveBase}.zip`, async () => {
@@ -3192,7 +3765,18 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     try {
       for (const insertion of exportableInsertions) {
         const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id)).orderBy(evidencesTable.criadoEm);
-        const evidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
+        const canonicalEvidences = selectCanonicalEvidencePerDate(evidenceRows, (evidence) => getEvidenceDateKey(evidence.titulo));
+        const statusesByDate = new Map<string, Awaited<ReturnType<typeof resolveEvidenceAuditStatus>>>();
+        for (const evidence of canonicalEvidences) {
+          const dateKey = getEvidenceDateKey(evidence.titulo);
+          if (!dateKey) continue;
+          statusesByDate.set(dateKey, await resolveEvidenceAuditStatus(insertion, dateKey, [evidence]));
+        }
+        const evidences = selectApprovedCanonicalEvidenceRows(
+          evidenceRows,
+          (evidence) => getEvidenceDateKey(evidence.titulo),
+          statusesByDate,
+        );
         for (const evidence of evidences) {
           const dateKey = getEvidenceDateKey(evidence.titulo);
           if (dateKey) allEvidenceDates.push(dateKey);
@@ -3201,12 +3785,10 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
           failures.push({ insertionId: insertion.id, evidenceId: 0, date: null, error: "no_evidence_images" });
           continue;
         }
-        const basePackageName = journalistPresentation
-          ? deliverySegment(insertion.localFormatoNormalizado ?? insertion.localFormato, "IMAGENS")
-          : buildDeliveryPackageName(
-              insertion,
-              evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
-            );
+        const basePackageName = buildDeliveryPackageName(
+          insertion,
+          evidences.map((evidence) => getEvidenceDateKey(evidence.titulo)),
+        );
         const packageOccurrence = (packageNameOccurrences.get(basePackageName) ?? 0) + 1;
         packageNameOccurrences.set(basePackageName, packageOccurrence);
         const delivery = await writePrintDeliveryFolder({
@@ -3216,9 +3798,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
           variant: exportOptions.variant,
           maxWidth: exportOptions.variant === "web" ? imageMaxWidth : undefined,
           quality: exportOptions.variant === "web" ? imageQuality : undefined,
-          packageNameOverride: packageOccurrence > 1
-            ? `${basePackageName}-${packageOccurrence}`
-            : basePackageName,
+          packageNameOverride: packageOccurrence > 1 ? `${basePackageName}-INSERCAO-${insertion.id}` : basePackageName,
         });
         mergePrintDeliveryMetrics(aggregateMetrics, delivery.metrics);
         failures.push(...delivery.failures.map((item) => ({ insertionId: insertion.id, ...item })));
@@ -3235,10 +3815,9 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         return;
       }
 
-      const archiveBase = journalistPresentation
-        ? `PI-${resolveDeliveryPiCode(descriptor.piCodigo)}-${deliverySegment(descriptor.siteSigla, "SITE")}`
-        : buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
+      const archiveBase = buildPiSitePrintDeliveryArchiveName(descriptor, exportableInsertions, allEvidenceDates);
       zipPath = join(tmpdir(), `${archiveBase}-${exportRequestId}.zip`);
+      await writeSha256Sums(tempDir);
       await execFileAsync("zip", ["-rq", zipPath, "."], { cwd: tempDir, maxBuffer: 20 * 1024 * 1024 });
       setPrintDeliveryHeaders(res, aggregateMetrics, exportOptions.variant, exportRequestId);
       res.download(zipPath, `${archiveBase}.zip`, async () => {
@@ -3845,11 +4424,19 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
 
   const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
   const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
+  const forceCapture = req.body?.force === true || req.body?.force === "true";
+  const reconstructionReason = req.body?.reconstructionReason === "late_publication_recovery"
+    ? "late_publication_recovery" as const
+    : null;
+  if (req.body?.reconstructionReason != null && !reconstructionReason) {
+    res.status(400).json({ error: "reconstructionReason inválido." });
+    return;
+  }
   const requestedIdempotencyKey = typeof req.headers["idempotency-key"] === "string"
     ? req.headers["idempotency-key"].trim()
     : "";
   const idempotencyKey = requestedIdempotencyKey || crypto.createHash("sha256")
-    .update(JSON.stringify({ insertionId: params.data.id, targetDate, captureAt, candidateOnly, promoteCandidate }))
+    .update(JSON.stringify({ insertionId: params.data.id, targetDate, captureAt, candidateOnly, promoteCandidate, reconstructionReason }))
     .digest("hex");
   if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
     res.status(400).json({ error: "Idempotency-Key inválida." });
@@ -3873,9 +4460,10 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
         insertionId: params.data.id,
         targetDate,
         captureAt,
-        replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate,
+        replaceExisting: req.body?.replace === true || req.body?.replace === "true" || promoteCandidate || forceCapture,
         candidateOnly,
         promoteCandidate,
+        reconstructionReason,
       }],
       { competencia: null, siteId: insertion.siteId ?? null, source: "api" },
     ),
@@ -4056,7 +4644,17 @@ router.patch("/insertions/:id", async (req, res): Promise<void> => {
     statusNormalizado: merged.statusNormalizado as string,
   });
 
-  const [updated] = await db.update(insertionsTable).set(updateData).where(eq(insertionsTable.id, params.data.id)).returning();
+  const expectedUpdatedAt = parsed.data.expectedUpdatedAt instanceof Date
+    ? parsed.data.expectedUpdatedAt
+    : parsed.data.expectedUpdatedAt ? new Date(parsed.data.expectedUpdatedAt) : null;
+  const updateWhere = expectedUpdatedAt
+    ? and(eq(insertionsTable.id, params.data.id), eq(insertionsTable.updatedAt, expectedUpdatedAt))
+    : eq(insertionsTable.id, params.data.id);
+  const [updated] = await db.update(insertionsTable).set(updateData).where(updateWhere).returning();
+  if (!updated) {
+    res.status(409).json({ error: "Insertion changed", details: "A inserção foi alterada depois do preflight; releia as fontes e tente novamente." });
+    return;
+  }
   const enriched = await enrichInsertion(updated);
   res.json(enriched);
 });

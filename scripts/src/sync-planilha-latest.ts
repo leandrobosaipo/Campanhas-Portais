@@ -13,7 +13,10 @@ import {
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { inferClientProfileFromPiReference, type InferredClientProfile } from "./lib/pi-client-cnpj";
-import { resolveSiteFormat } from "../../artifacts/api-server/src/lib/adrotate-sites";
+import {
+  buildCampaignInsertionIdentity,
+  normalizeCampaignPiIdentity,
+} from "../../artifacts/api-server/src/lib/campaign-operations-matching";
 
 type RawRow = {
   sourceSheet: string;
@@ -251,11 +254,7 @@ function deriveCompetenciaFromPeriodo(
   return `${sheetMonth}/${sheetYear}`;
 }
 
-function normalizeFormato(value: string, siteSigla?: string | null): string {
-  if (siteSigla) {
-    const resolution = resolveSiteFormat(siteSigla, value);
-    if (resolution.canonicalFormat) return resolution.canonicalFormat;
-  }
+function normalizeFormato(value: string): string {
   const normalized = normalizeForMatch(value).replace(/\./g, "").replace(/\s+/g, " ");
   const direct: Record<string, string> = {
     "MEGA BANNER TOPO": "MEGABANNER TOPO",
@@ -270,9 +269,9 @@ function normalizeFormato(value: string, siteSigla?: string | null): string {
     "PRIMEIRA DOBRA": "PRIMEIRA DOBRA",
     "SEGUNDA DOBRA": "SEGUNDA DOBRA",
     "LATERAL": "LATERAL",
+    "LATERAL 02 — SIDEBAR — 300X250": "LATERAL 02",
     "LATERAL PRIMEIRA DOBRA": "LATERAL PRIMEIRA DOBRA",
     "TOPO LATERAL": "TOPO LATERAL",
-    TOPO: "MEGABANNER TOPO",
     "HOME 1": "HOME 1",
     "HOME 2": "HOME 2",
     "HOME 3": "HOME 3",
@@ -514,6 +513,9 @@ async function main() {
   let createdInsertions = 0;
   let updatedInsertions = 0;
   const changes: Array<Record<string, unknown>> = [];
+  const knownSitesById = new Map((await db.select().from(sitesTable)).map((site) => [site.id, site]));
+  const knownCampaignsById = new Map((await db.select().from(campaignsTable)).map((campaign) => [campaign.id, campaign]));
+  const knownInsertions = await db.select().from(insertionsTable);
 
   for (const row of rawRows) {
     if (isSocialOnlyFormato(row.local)) {
@@ -523,12 +525,46 @@ async function main() {
     const agencyInfo = splitAgencyValue(row.agenciaValor);
     const clientName = inferClientName(row.peca, row.campanha);
     const piCodigo = normalizePi(row.peca, row.agenciaValor);
+    const normalizedCampaignName = normalizeSpaces(row.campanha);
+    const localFormatoNormalizado = normalizeFormato(row.local);
+    const insertionIdentity = buildCampaignInsertionIdentity({
+      piCodigo,
+      siteSigla: row.siteSigla,
+      localFormato: localFormatoNormalizado,
+      periodoInicio: row.inicio,
+      periodoFim: row.fim,
+    });
+    const canonicalInsertionCandidates = insertionIdentity
+      ? knownInsertions.filter((item) => {
+          const candidateCampaign = knownCampaignsById.get(item.campanhaId);
+          const candidateSite = item.siteId ? knownSitesById.get(item.siteId) : null;
+          return buildCampaignInsertionIdentity({
+            piCodigo: candidateCampaign?.piCodigo,
+            siteSigla: candidateSite?.sigla,
+            localFormato: item.localFormatoNormalizado ?? item.localFormato,
+            periodoInicio: item.periodoInicio,
+            periodoFim: item.periodoFim,
+          }) === insertionIdentity;
+        })
+      : [];
+
+    if (canonicalInsertionCandidates.length > 1) {
+      changes.push({
+        type: "duplicate_identity",
+        identity: insertionIdentity,
+        insertionIds: canonicalInsertionCandidates.map((item) => item.id),
+        campaignIds: [...new Set(canonicalInsertionCandidates.map((item) => item.campanhaId))],
+      });
+      warnings.push(
+        `${row.sourceSheet}: identidade canônica duplicada para ${piCodigo ?? "sem-pi"} / ${row.siteSigla} / ${localFormatoNormalizado} (${row.inicio} a ${row.fim}). Nenhuma inserção foi criada.`,
+      );
+      continue;
+    }
+
     const siteId = await ensureSite(row.siteSigla);
     const clientProfile = await inferClientProfileFromPiReference(piCodigo, clientName);
     const clientId = await ensureByName(clientsTable, clientName, { profile: clientProfile });
     const agencyId = await ensureByName(agenciesTable, agencyInfo.agencyName);
-    const normalizedCampaignName = normalizeSpaces(row.campanha);
-    const normalizedPiCode = piCodigo ?? "";
 
     if (row.competenciaResolved !== row.competenciaSheet) {
       warnings.push(
@@ -539,11 +575,11 @@ async function main() {
     const matchingCampaigns = (await db.select().from(campaignsTable)).sort((a, b) => a.id - b.id);
     const exactCampaignCandidates = matchingCampaigns.filter((item) =>
       item.nome === normalizedCampaignName &&
-      (item.piCodigo ?? "") === normalizedPiCode &&
+      normalizeCampaignPiIdentity(item.piCodigo) === normalizeCampaignPiIdentity(piCodigo) &&
       item.agenciaId === agencyId &&
       item.competencia === row.competenciaResolved,
     );
-    let campaign = exactCampaignCandidates[0] ?? null;
+    let campaign = exactCampaignCandidates[0] ?? matchingCampaigns.find((item) => item.id === canonicalInsertionCandidates[0]?.campanhaId) ?? null;
 
     if (exactCampaignCandidates.length > 1) {
       warnings.push(
@@ -554,7 +590,7 @@ async function main() {
     if (!campaign) {
       const sameIdentityCandidates = matchingCampaigns.filter((item) =>
         item.nome === normalizedCampaignName &&
-        (item.piCodigo ?? "") === normalizedPiCode &&
+        normalizeCampaignPiIdentity(item.piCodigo) === normalizeCampaignPiIdentity(piCodigo) &&
         item.agenciaId === agencyId,
       );
       const sameIdentity = sameIdentityCandidates[0] ?? null;
@@ -640,7 +676,6 @@ async function main() {
       createdCampaigns += 1;
     }
 
-    const localFormatoNormalizado = normalizeFormato(row.local, row.siteSigla);
     const insertionIdentityInBatch = `${campaign.id}|${siteId}|${localFormatoNormalizado}|${row.inicio}|${row.fim}`;
     if (processedInsertionKeys.has(insertionIdentityInBatch)) {
       warnings.push(
@@ -662,9 +697,9 @@ async function main() {
           ? eq(insertionsTable.campanhaId, candidateCampaignIds[0]!)
           : inArray(insertionsTable.campanhaId, candidateCampaignIds),
       );
-    const existing = existingInsertions.find((item) =>
+    const existing = canonicalInsertionCandidates[0] ?? existingInsertions.find((item) =>
       item.siteId === siteId &&
-      normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "", row.siteSigla) === localFormatoNormalizado &&
+      normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "") === localFormatoNormalizado &&
       item.periodoInicio === row.inicio &&
       item.periodoFim === row.fim,
     );

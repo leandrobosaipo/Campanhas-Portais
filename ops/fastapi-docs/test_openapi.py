@@ -5,7 +5,7 @@ from main import REDOC_ASSET_PATH, REDOC_ASSET_URL, build_openapi_document, redo
 
 document = build_openapi_document()
 assert document["openapi"] == "3.1.0"
-assert document["info"]["version"] == "adops-ops-api-catalog-v3"
+assert document["info"]["version"] == "adops-ops-api-catalog-v2"
 assert document["x-cod5-endpoint-count"] >= 100
 assert "/api/healthz" in document["paths"]
 assert "/api/pi-site-exports" in document["paths"]
@@ -15,14 +15,31 @@ assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["requestBody"]["co
 assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["responses"]["202"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PiSiteExportJobAccepted"
 assert document["paths"]["/api/pi-site-exports/jobs/{jobId}"]["get"]["parameters"][0]["schema"]["format"] == "uuid"
 assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/download"]["get"]["responses"]
-assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/pdf"]["get"]["responses"]
-assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "delivery"
-assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["sendTelegram"]["default"] is True
+assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "full-pdf"
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["imageQuality"]["maximum"] == 90
 assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofJobRequest"
 assert document["paths"]["/api/insertions/{id}/capture-proof/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofStatusResponse"
 assert "RetroContentProof" in document["components"]["schemas"]
 assert document["components"]["schemas"]["CaptureProofJobRequest"]["required"] == ["date", "candidate", "promote"]
+assert document["paths"]["/api/ops/schedules/reconcile"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ScheduleReconcileResponse"
+assert document["paths"]["/api/ops/queue/overview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/QueueOverviewResponse"
+assert document["paths"]["/api/ops/daily-print-status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/DailyPrintStatusResponse"
+assert document["paths"]["/api/ops/runner/heartbeat"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/RunnerHeartbeatRequest"
+assert document["paths"]["/api/ops/runner/jobs/{id}/progress"]["post"]["parameters"][0]["schema"]["format"] == "uuid"
+ops_job_properties = document["components"]["schemas"]["OpsJob"]["properties"]
+for required_property in ["heartbeatAt", "runnerId", "incidentLayer", "errorCode", "failedInsertionIds", "nextRecoveryAt", "queueWaitMs", "captureMs", "auditMs", "uploadMs", "reportMs"]:
+    assert required_property in ops_job_properties
+schemas = document["components"]["schemas"]
+assert "PublicationHealth" in schemas
+assert "EvidenceHealth" in schemas
+assert "RetroactiveBackfillItem" in schemas
+assert schemas["RetroactiveBackfillItem"]["properties"]["status"]["enum"] == [
+    "audited", "failed", "skipped_existing", "blocked_reconstruction", "blocked_upstream"
+]
+assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillRequest"
+assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillJobAccepted"
+assert list(schemas["PrintBackfillJobAccepted"]["properties"]) == ["ok", "kind", "jobId", "status", "duplicate", "existingNotBefore"]
+assert schemas["PrintBackfillJobAccepted"]["properties"]["existingNotBefore"] == {"type": ["string", "null"], "format": "date-time"}
 assert len(document["x-cod5-route-fingerprint-sha256"]) == 64
 
 redoc_html = redoc().body.decode("utf-8")

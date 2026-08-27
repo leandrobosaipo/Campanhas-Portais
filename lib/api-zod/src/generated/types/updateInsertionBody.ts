@@ -7,6 +7,8 @@
  */
 
 export interface UpdateInsertionBody {
+  /** Optimistic concurrency guard; returns 409 when the insertion changed. */
+  expectedUpdatedAt?: Date;
   /** @nullable */
   siteId?: number | null;
   /** @nullable */

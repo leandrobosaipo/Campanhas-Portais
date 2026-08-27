@@ -45,14 +45,27 @@ router.post("/audit-checklists/validate-proof", async (req, res): Promise<void> 
     return;
   }
 
+  let metadata = Object.prototype.hasOwnProperty.call(req.body ?? {}, "metadata") ? req.body.metadata : undefined;
+  if (req.body?.phase === "pre_upload" && metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    // Pre-upload data is still supplied by the runner and has no persisted
+    // job/artifact correlation.  It may validate the visual capture, but it
+    // must never mint immutable provenance or authorize reconstructed history.
+    const item = { ...metadata as Record<string, unknown> };
+    for (const key of ["captureClass", "targetDate", "sourceJobId", "capturedAt", "auditPolicyVersion", "evidenceUrl", "reconstruction"]) {
+      delete item[key];
+    }
+    metadata = item;
+  }
   const validation = await validateAuditChecklist({
     insertionId,
     date,
-    metadata: Object.prototype.hasOwnProperty.call(req.body ?? {}, "metadata")
-      ? req.body.metadata
-      : undefined,
+    metadata,
+    phase: req.body?.phase === "pre_upload" ? "pre_upload" : "final",
   });
-  res.status(validation.approved ? 200 : 422).json(validation);
+  res.status(validation.approved ? 200 : 422).json({
+    ...validation,
+    preliminary: req.body?.phase === "pre_upload",
+  });
 });
 
 router.get("/audit-checklists/metadata", async (req, res): Promise<void> => {

@@ -20,10 +20,74 @@ import {
 } from "./drive-campaign-media";
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
-import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
-import { isFormatCompatible, selectBestAdopsMatch } from "./campaign-operations-matching";
+import { getAdRotateGroupId, getSiteFormatMapping, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
+import { findCampaignIdentityMatches, isFormatCompatible, isInactiveInsertionStatus, selectBestAdopsMatch } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v2" as const;
+
+export type PublicationHealth = {
+  status: "ok" | "prepublication_pending" | "blocked_upstream";
+  reason: "confirmed" | "drive_media_not_linked" | "media_missing" | "adrotate_relation_missing" | "expected_media_not_observed" | "public_html_not_confirmed" | "duplicate_identity";
+  requiredAction: "none" | "resolve_media" | "reconcile_duplicate" | "publish_adrotate" | "verify_publication";
+  expectedGroupId: number | null;
+  expectedMediaObserved: boolean;
+  duplicateInsertionIds: number[];
+};
+
+export type EvidenceHealth = {
+  status: "complete" | "missing" | "invalid" | "blocked_upstream" | "not_applicable";
+  auditedDates: string[];
+  missingDates: string[];
+  invalidDates: string[];
+};
+
+type PublicationHealthInput = {
+  inPeriod: boolean;
+  mediaUrl: string | null;
+  bannerPublicadoNoSite: boolean;
+  expectedGroupId: number | null;
+  expectedMediaObserved: boolean;
+  publicConfirmation: "confirmed" | "reported_only" | "not_published";
+  driveMediaAvailable?: boolean;
+  duplicateInsertionIds: number[];
+};
+
+export function classifyPublicationHealth(input: PublicationHealthInput): PublicationHealth {
+  const blockedStatus = input.inPeriod ? "blocked_upstream" : "prepublication_pending";
+  const result = (reason: PublicationHealth["reason"], requiredAction: PublicationHealth["requiredAction"]): PublicationHealth => ({
+    status: blockedStatus,
+    reason,
+    requiredAction,
+    expectedGroupId: input.expectedGroupId,
+    expectedMediaObserved: input.expectedMediaObserved,
+    duplicateInsertionIds: input.duplicateInsertionIds,
+  });
+
+  if (!input.mediaUrl) return result(input.driveMediaAvailable ? "drive_media_not_linked" : "media_missing", "resolve_media");
+  if (!input.expectedGroupId) return result("adrotate_relation_missing", "publish_adrotate");
+  if (!input.expectedMediaObserved) return result("expected_media_not_observed", "publish_adrotate");
+  if (input.publicConfirmation !== "confirmed") return result("public_html_not_confirmed", "verify_publication");
+  if (input.duplicateInsertionIds.length) return result("duplicate_identity", "reconcile_duplicate");
+  return {
+    status: "ok",
+    reason: "confirmed",
+    requiredAction: "none",
+    expectedGroupId: input.expectedGroupId,
+    expectedMediaObserved: input.expectedMediaObserved,
+    duplicateInsertionIds: input.duplicateInsertionIds,
+  };
+}
+
+export function activeDuplicateInsertionIds(
+  candidates: Array<{ id: number; statusNormalizado: string | null }>,
+  canonicalInsertionId: number | null | undefined,
+) {
+  return candidates
+    .filter((candidate) => candidate.id !== canonicalInsertionId)
+    .filter((candidate) => !isInactiveInsertionStatus(candidate.statusNormalizado))
+    .map((candidate) => candidate.id)
+    .sort((left, right) => left - right);
+}
 
 type RequiredAction =
   | "create_campaign_or_insertion"
@@ -74,7 +138,7 @@ type MinimalInsertionRow = Pick<
   mediaUrl: string | null;
 };
 
-type MinimalCampaignRow = Pick<typeof campaignsTable.$inferSelect, "id" | "nome" | "piCodigo">;
+type MinimalCampaignRow = Pick<typeof campaignsTable.$inferSelect, "id" | "nome" | "piCodigo" | "competencia">;
 type MinimalSiteRow = Pick<typeof sitesTable.$inferSelect, "id" | "nome" | "sigla">;
 
 type MinimalEnrichedInsertion = MinimalInsertionRow & {
@@ -105,17 +169,34 @@ export type CampaignOperationItem = {
     rowNumber: number;
   };
   sourceIdentity: SourceIdentityDecision;
+  canonicalSelection: {
+    insertionId: number | null;
+    decision: "confirmed" | "ambiguous" | "missing";
+    compatibleInsertionIds: number[];
+    reason: string;
+    identityEvidence: {
+      piCodigo: string;
+      siteSigla: string;
+      format: string;
+      periodStart: string | null;
+      periodEnd: string | null;
+      mediaUrl: string | null;
+    } | null;
+  };
   drive: DriveCampaignMediaMatch & {
     mediaMatchesFormat: boolean;
   };
   adops: {
     status: "matched" | "missing" | "ambiguous";
     campaignId: number | null;
+    competencia: string | null;
     insertionId: number | null;
     mediaUrl: string | null;
     bannerPublicadoNoSite: boolean | null;
+    publicConfirmation: "confirmed" | "reported_only" | "not_published";
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
+    operationalMatchCount: number;
   };
   evidence: {
     status: "approved" | "missing" | "invalid" | "missing_or_not_applicable";
@@ -124,6 +205,8 @@ export type CampaignOperationItem = {
     invalidDates: string[];
     missingDates: string[];
   };
+  publicationHealth: PublicationHealth;
+  evidenceHealth: EvidenceHealth;
   requiredActions: RequiredAction[];
   blockingIssues: string[];
   suggestedJobs: SuggestedJob[];
@@ -160,9 +243,12 @@ export type CampaignOperationUpcomingItem = {
     insertionId: number | null;
     mediaUrl: string | null;
     bannerPublicadoNoSite: boolean | null;
+    publicConfirmation: "confirmed" | "reported_only" | "not_published";
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
   };
+  publicationHealth: PublicationHealth;
+  evidenceHealth: EvidenceHealth;
   requiredActions: RequiredAction[];
   blockingIssues: string[];
 };
@@ -187,6 +273,8 @@ export type CampaignOperationsActiveResult = {
   sheet: {
     name: string;
     activeRows: number;
+    downloadedAt: string;
+    sourceSha256: string;
   };
   summary: {
     activeInSheet: number;
@@ -285,6 +373,98 @@ type LiveAdSlot = {
   mediaBasename: string | null;
 };
 
+export type PublicationReadback = {
+  insertionId: number;
+  groupId: number;
+  mediaBasename: string;
+  publicHtmlOk: boolean;
+  mediaFound: boolean;
+  adFound: boolean;
+};
+
+export function publicationReadbackConfirms(input: {
+  insertionId: number;
+  expectedGroupId: number | null;
+  expectedMediaBasename: string | null;
+  readback: PublicationReadback | null | undefined;
+}) {
+  const { readback } = input;
+  return Boolean(
+    readback
+    && readback.insertionId === input.insertionId
+    && readback.groupId === input.expectedGroupId
+    && readback.mediaBasename === input.expectedMediaBasename
+    && readback.publicHtmlOk
+    && readback.mediaFound
+    && readback.adFound,
+  );
+}
+
+function asJobObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      return asJobObject(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function buildSuccessfulPublicationReadbacks(rows: Array<{ payloadJson: unknown; resultJson: unknown }>) {
+  const readbacks = new Map<number, PublicationReadback>();
+  for (const row of rows) {
+    const payload = asJobObject(row.payloadJson);
+    const result = asJobObject(row.resultJson);
+    const execution = asJobObject(result?.execution);
+    const wpCliResult = asJobObject(execution?.wpCliResult);
+    const expectedMedia = asJobObject(execution?.expectedMedia);
+    const publicHtmlValidation = asJobObject(execution?.publicHtmlValidation);
+    const insertionId = payload?.insertionId;
+    const groupId = wpCliResult?.group_id;
+    const mediaBasenameValue = expectedMedia?.mediaBasename;
+    if (
+      !Number.isInteger(insertionId)
+      || !Number.isInteger(groupId)
+      || typeof mediaBasenameValue !== "string"
+      || typeof publicHtmlValidation?.ok !== "boolean"
+      || typeof publicHtmlValidation?.mediaFound !== "boolean"
+      || typeof publicHtmlValidation?.adFound !== "boolean"
+      || readbacks.has(insertionId as number)
+    ) continue;
+    readbacks.set(insertionId as number, {
+      insertionId: insertionId as number,
+      groupId: groupId as number,
+      mediaBasename: mediaBasenameValue,
+      publicHtmlOk: publicHtmlValidation.ok,
+      mediaFound: publicHtmlValidation.mediaFound,
+      adFound: publicHtmlValidation.adFound,
+    });
+  }
+  return readbacks;
+}
+
+async function loadSuccessfulPublicationReadbacks() {
+  try {
+    const result = await db.execute(sql`
+      select payload_json as "payloadJson", result_json as "resultJson"
+      from ops_jobs
+      where kind = 'adrotate-publish'
+        and status = 'completed'
+        and payload_json::jsonb ->> 'mode' = 'apply'
+      order by updated_at desc
+      limit 1000
+    `);
+    return buildSuccessfulPublicationReadbacks(result.rows as Array<{ payloadJson: unknown; resultJson: unknown }>);
+  } catch {
+    return new Map<number, PublicationReadback>();
+  }
+}
+
+export async function getSuccessfulPublicationReadback(insertionId: number) {
+  return (await loadSuccessfulPublicationReadbacks()).get(insertionId) ?? null;
+}
+
 function mediaBasename(value: string | null | undefined) {
   if (!value) return null;
   try {
@@ -319,15 +499,27 @@ function parseLiveSlotsFromHtml(html: string, pageUrl: string, supportedGroups: 
   return slots;
 }
 
-async function fetchHomeLiveSlots(siteSigla: string) {
+async function fetchLiveSlotsForInsertion(insertion: MinimalEnrichedInsertion | null, cache: Map<string, LiveAdSlot[]>) {
+  const siteSigla = insertion?.site?.sigla ?? null;
+  const mapping = getSiteFormatMapping(siteSigla, insertion?.localFormatoNormalizado ?? insertion?.localFormato);
   const site = getSiteIntegration(siteSigla);
-  if (!site) return [] as LiveAdSlot[];
+  if (!site || !mapping) return [] as LiveAdSlot[];
+  const pageUrl = mapping.page === "article" ? site.articleFallbackUrl : site.homeUrl;
+  if (!pageUrl) return [] as LiveAdSlot[];
+  const cacheKey = `${site.sigla}:${mapping.page}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey) ?? [];
   try {
-    const response = await fetch(site.homeUrl, { signal: AbortSignal.timeout(12000) });
-    if (!response.ok) return [];
+    const response = await fetch(pageUrl, { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) {
+      cache.set(cacheKey, []);
+      return [];
+    }
     const html = await response.text();
-    return parseLiveSlotsFromHtml(html, site.homeUrl, getSupportedGroupIds(siteSigla));
+    const slots = parseLiveSlotsFromHtml(html, pageUrl, getSupportedGroupIds(siteSigla));
+    cache.set(cacheKey, slots);
+    return slots;
   } catch {
+    cache.set(cacheKey, []);
     return [];
   }
 }
@@ -362,6 +554,15 @@ function liveSlotIssuesForInsertion(insertion: MinimalEnrichedInsertion | null, 
   return unique(issues);
 }
 
+function hasExactPublicSlot(insertion: MinimalEnrichedInsertion | null, liveSlots: LiveAdSlot[]) {
+  if (!insertion) return false;
+  const expectedGroupId = getAdRotateGroupId(insertion.site?.sigla ?? null, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const expectedMediaBasename = mediaBasename(insertion.mediaUrl);
+  return Boolean(expectedGroupId && expectedMediaBasename && liveSlots.some((slot) => (
+    slot.groupId === expectedGroupId && slot.mediaBasename === expectedMediaBasename
+  )));
+}
+
 async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
   const [insertionsResult, campaignsResult, sitesResult] = await Promise.all([
     db.execute(sql`
@@ -382,7 +583,7 @@ async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
       from insertions
     `),
     db.execute(sql`
-      select id, nome, pi_codigo as "piCodigo"
+      select id, nome, pi_codigo as "piCodigo", competencia
       from campaigns
     `),
     db.execute(sql`
@@ -403,13 +604,12 @@ async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
 }
 
 function findAdopsMatches(row: CurrentSheetCampaignRow, insertions: MinimalEnrichedInsertion[]) {
-  const piDigits = extractPiDigits(row.piCodigo);
-  if (!piDigits) return [];
-  return insertions.filter((insertion) => {
-    const siteSigla = insertion.site?.sigla?.toUpperCase();
-    const insertionPi = extractPiDigits(insertion.campaign?.piCodigo);
-    return siteSigla === row.blockSite && insertionPi === piDigits;
-  });
+  return findCampaignIdentityMatches(row, insertions.map((insertion) => ({
+    ...insertion,
+    campaignName: insertion.campaign?.nome ?? null,
+    piCodigo: insertion.campaign?.piCodigo ?? null,
+    siteSigla: insertion.site?.sigla ?? null,
+  })));
 }
 
 async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: CurrentSheetCampaignRow, targetDate: string, includeEvidence: boolean) {
@@ -453,7 +653,22 @@ async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: 
   };
 }
 
-function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null, evidenceStatus: Awaited<ReturnType<typeof resolveEvidence>>, drive: DriveCampaignMediaMatch): SuggestedJob[] {
+export function classifyEvidenceHealth(evidence: Pick<Awaited<ReturnType<typeof resolveEvidence>>, "status" | "auditedDates" | "missingDates" | "invalidDates">): EvidenceHealth {
+  return {
+    status: evidence.status === "approved"
+      ? "complete"
+      : evidence.status === "missing"
+        ? "missing"
+        : evidence.status === "invalid"
+          ? "invalid"
+          : "not_applicable",
+    auditedDates: evidence.auditedDates,
+    missingDates: evidence.missingDates,
+    invalidDates: evidence.invalidDates,
+  };
+}
+
+function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null, evidenceStatus: Awaited<ReturnType<typeof resolveEvidence>>, drive: DriveCampaignMediaMatch, publicationHealth: PublicationHealth): SuggestedJob[] {
   const jobs: SuggestedJob[] = [];
   if (drive.folderId) {
     jobs.push({
@@ -471,7 +686,7 @@ function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedI
       payload: { folderId: drive.folderId },
     });
   }
-  if (insertion && evidenceStatus.requiredDates.length) {
+  if (insertion && publicationHealth.status === "ok" && evidenceStatus.requiredDates.length) {
     jobs.push({
       type: "print_backfill",
       method: "POST",
@@ -520,20 +735,21 @@ export async function getActiveCampaignOperations(options: {
   refreshDrive?: boolean;
   siteSigla?: string | null;
   includeEvidence?: boolean;
+  sheetScope?: "daily" | "monthly";
 } = {}): Promise<CampaignOperationsActiveResult> {
   const date = options.date ?? todayInCuiaba();
   const includeEvidence = options.includeEvidence !== false;
-  const [sheet, insertions] = await Promise.all([
-    loadCurrentSheetCampaigns({ date, siteSigla: options.siteSigla ?? null, includeUpcoming: true }),
+  const [sheet, insertions, publicationReadbacks] = await Promise.all([
+    loadCurrentSheetCampaigns({
+      date,
+      siteSigla: options.siteSigla ?? null,
+      includeUpcoming: options.sheetScope !== "monthly",
+      scope: options.sheetScope ?? "daily",
+    }),
     loadEnrichedInsertions(),
+    loadSuccessfulPublicationReadbacks(),
   ]);
-  const liveSlotsBySite = new Map<string, LiveAdSlot[]>();
-  const getLiveSlots = async (siteSigla: string) => {
-    if (!liveSlotsBySite.has(siteSigla)) {
-      liveSlotsBySite.set(siteSigla, await fetchHomeLiveSlots(siteSigla));
-    }
-    return liveSlotsBySite.get(siteSigla) ?? [];
-  };
+  const liveSlotsByPage = new Map<string, LiveAdSlot[]>();
 
   const items: CampaignOperationItem[] = [];
   for (const row of sheet.rows) {
@@ -543,15 +759,61 @@ export async function getActiveCampaignOperations(options: {
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
       campaignName: row.campaignName,
+      periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
-    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado, getSiteIntegration(row.blockSite)?.formatMappings.find((mapping) => mapping.aliases.some((alias) => normalizeForMatch(alias) === normalizeForMatch(row.localFormatoNormalizado)))?.operationalMediaProfile?.formats ?? null);
     const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
+    const canonicalSelection = {
+      insertionId: insertion?.id ?? null,
+      decision: insertion ? "confirmed" as const : compatible.length ? "ambiguous" as const : "missing" as const,
+      compatibleInsertionIds: compatible.map((candidate) => candidate.id).sort((left, right) => left - right),
+      reason: insertion
+        ? "Inserção selecionada por PI, portal, formato, período e prioridade da variante exata."
+        : compatible.length
+          ? "Há inserções compatíveis sem vencedora determinística; não autorize publicação ou captura."
+          : "Nenhuma inserção compatível foi encontrada para PI e portal.",
+      identityEvidence: insertion ? {
+        piCodigo: insertion.campaign?.piCodigo ?? row.piCodigo,
+        siteSigla: insertion.site?.sigla ?? row.blockSite,
+        format: insertion.localFormatoNormalizado ?? insertion.localFormato ?? row.localFormatoNormalizado,
+        periodStart: insertion.periodoInicio,
+        periodEnd: insertion.periodoFim,
+        mediaUrl: insertion.mediaUrl,
+      } : null,
+    };
     const evidence = await resolveEvidence(insertion, row, date, includeEvidence);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
-    const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, await getLiveSlots(row.blockSite));
+    const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
+    const liveSlots = await fetchLiveSlotsForInsertion(insertion, liveSlotsByPage);
+    const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, liveSlots);
+    const sampledExactPublicSlot = hasExactPublicSlot(insertion, liveSlots);
+    const expectedMediaBasename = mediaBasename(insertion?.mediaUrl);
+    const exactPublicSlot = sampledExactPublicSlot || Boolean(insertion && publicationReadbackConfirms({
+      insertionId: insertion.id,
+      expectedGroupId,
+      expectedMediaBasename,
+      readback: publicationReadbacks.get(insertion.id),
+    }));
+    const publicConfirmation = exactPublicSlot
+      ? "confirmed" as const
+      : insertion?.bannerPublicadoNoSite === true
+        ? "reported_only" as const
+        : "not_published" as const;
+    const duplicateInsertionIds = activeDuplicateInsertionIds(compatible, insertion?.id);
+    const publicationHealth = classifyPublicationHealth({
+      inPeriod: Boolean(row.periodoInicio && row.periodoFim && date >= row.periodoInicio && date <= row.periodoFim),
+      mediaUrl: insertion?.mediaUrl ?? null,
+      bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? false,
+      expectedGroupId,
+      expectedMediaObserved: exactPublicSlot,
+      publicConfirmation,
+      driveMediaAvailable: drive.mediaFiles.length > 0,
+      duplicateInsertionIds,
+    });
+    const evidenceHealth = classifyEvidenceHealth(evidence);
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
@@ -577,7 +839,7 @@ export async function getActiveCampaignOperations(options: {
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
     if (insertion && !insertion.mediaUrl) requiredActions.push("locate_or_upload_media");
-    if (!insertion || insertion.bannerPublicadoNoSite !== true) requiredActions.push("publish_on_site");
+    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) requiredActions.push("publish_on_site");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) requiredActions.push("generate_evidence");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
@@ -595,7 +857,7 @@ export async function getActiveCampaignOperations(options: {
     if (drive.status === "ambiguous") statuses.push("ambiguous_drive_match");
     if (sourceIdentity.decision === "needs_confirmation") statuses.push("source_conflict");
     if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat && !hasAdopsMedia))) statuses.push("needs_media");
-    if (!insertion || insertion.bannerPublicadoNoSite !== true) statuses.push("needs_publication");
+    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) statuses.push("needs_publication");
     if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) statuses.push("needs_evidence");
     if (periodDivergent) statuses.push("divergent_period");
     if (formatDivergent) statuses.push("divergent_format");
@@ -627,6 +889,7 @@ export async function getActiveCampaignOperations(options: {
         rowNumber: row.rowNumber,
       },
       sourceIdentity,
+      canonicalSelection,
       drive: {
         ...drive,
         mediaMatchesFormat,
@@ -634,16 +897,21 @@ export async function getActiveCampaignOperations(options: {
       adops: {
         status: insertion ? "matched" : compatible.length > 1 ? "ambiguous" : "missing",
         campaignId: insertion?.campanhaId ?? null,
+        competencia: insertion?.campaign?.competencia ?? null,
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
+        publicConfirmation,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
+        operationalMatchCount: compatible.length,
       },
       evidence,
+      publicationHealth,
+      evidenceHealth,
       requiredActions: unique(requiredActions),
       blockingIssues,
-      suggestedJobs: suggestedJobs(row, insertion, evidence, drive),
+      suggestedJobs: suggestedJobs(row, insertion, evidence, drive, publicationHealth),
     });
   }
 
@@ -655,13 +923,27 @@ export async function getActiveCampaignOperations(options: {
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
       campaignName: row.campaignName,
+      periodStart: row.periodoInicio,
       refreshDrive: options.refreshDrive === true,
     });
-    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado);
+    const mediaMatchesFormat = driveMediaMatchesFormat(drive.mediaFiles, row.localFormatoNormalizado, getSiteIntegration(row.blockSite)?.formatMappings.find((mapping) => mapping.aliases.some((alias) => normalizeForMatch(alias) === normalizeForMatch(row.localFormatoNormalizado)))?.operationalMediaProfile?.formats ?? null);
     const sourceIdentity = resolveSourceIdentity(row, drive, insertion);
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
+    const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
+    const publicConfirmation = insertion?.bannerPublicadoNoSite === true ? "reported_only" as const : "not_published" as const;
+    const duplicateInsertionIds = activeDuplicateInsertionIds(compatible, insertion?.id);
+    const publicationHealth = classifyPublicationHealth({
+      inPeriod: false,
+      mediaUrl: insertion?.mediaUrl ?? null,
+      bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? false,
+      expectedGroupId,
+      expectedMediaObserved: false,
+      publicConfirmation,
+      driveMediaAvailable: drive.mediaFiles.length > 0,
+      duplicateInsertionIds,
+    });
     // Future ads are intentionally not required to appear in public HTML before their start date.
     const liveSlotIssues: string[] = [];
 
@@ -730,8 +1012,16 @@ export async function getActiveCampaignOperations(options: {
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
+        publicConfirmation,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
+      },
+      publicationHealth,
+      evidenceHealth: {
+        status: "not_applicable",
+        auditedDates: [],
+        missingDates: [],
+        invalidDates: [],
       },
       requiredActions: unique(requiredActions),
       blockingIssues,
@@ -745,6 +1035,8 @@ export async function getActiveCampaignOperations(options: {
     sheet: {
       name: sheet.sheetName,
       activeRows: sheet.rows.length,
+      downloadedAt: sheet.source.downloadedAt,
+      sourceSha256: sheet.source.sha256,
     },
     summary: {
       activeInSheet: items.length,

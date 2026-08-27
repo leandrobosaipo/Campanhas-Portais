@@ -4,10 +4,11 @@
   "compatibility_date": "2026-04-13",
   "workers_dev": true,
   "triggers": {
-    "crons": ["0 22 * * *"]
+    "crons": ["0,15,30 0,1,2,12,21,22,23 * * *"]
   },
   "vars": {
-    "PRIVATE_ADOPS_API_BASE_URL": "https://adops-api.codigo5.com.br"
+    "PRIVATE_ADOPS_API_BASE_URL": "https://adops-api.codigo5.com.br",
+    "ADOPS_CONTROL_PLANE_PROVIDER": "macmini"
   },
   "d1_databases": [
     {

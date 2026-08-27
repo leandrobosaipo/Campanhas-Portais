@@ -94,6 +94,238 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /ops/jobs/campaign-publication-reconcile:
+    post:
+      operationId: createCampaignPublicationReconcileJob
+      tags: [operations]
+      summary: Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                targetDate:
+                  type: string
+                  format: date
+                insertionId:
+                  type: integer
+                  format: int32
+                  minimum: 1
+                  description: Restrict reconciliation to one existing canonical insertion.
+                mode:
+                  type: string
+                  enum: [preflight, apply]
+                  default: apply
+                  description: Preflight returns only the deterministic decision; apply executes it when the automation gate permits.
+      responses:
+        "200":
+          description: Existing idempotent reconciliation returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignPublicationReconcileJobAccepted"
+        "202":
+          description: Reconciliation accepted by the Drive runner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CampaignPublicationReconcileJobAccepted"
+        "401":
+          description: Operator authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ops/jobs/print-backfill:
+    post:
+      operationId: createPrintBackfillJob
+      tags: [operations]
+      summary: Create or retrieve an idempotent retroactive evidence backfill
+      description: The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrintBackfillRequest"
+      responses:
+        "200":
+          description: Existing idempotent backfill job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintBackfillJobAccepted"
+        "202":
+          description: New backfill accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintBackfillJobAccepted"
+        "400":
+          description: Missing or invalid bounded filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ops/jobs:
+    get:
+      operationId: listOpsJobs
+      tags: [operations]
+      summary: List operational jobs in compact form
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: kind
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Operational jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /ops/daily-print-status:
+    get:
+      operationId: getDailyPrintStatus
+      tags: [operations]
+      summary: Get the sanitized status of the canonical daily evidence routine
+      parameters:
+        - name: date
+          in: query
+          required: false
+          description: When informed, returns the attempt for this historical date instead of the latest routine.
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Last attempt, last fully approved day and next scheduled run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyPrintStatus"
+
+  /ops/daily-print-recoveries:
+    get:
+      operationId: getDailyPrintRecoveries
+      tags: [operations]
+      summary: Get persisted retries and the compact evaluator result for one date
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Recovery items plus complete, retryable or blocked evaluator status
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /ops/incidents:
+    get:
+      operationId: listOpsIncidents
+      tags: [operations]
+      summary: List sanitized operational incidents for diagnosis and correction planning
+      description: Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Open and historical operational incidents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OpsIncident"
+        "401":
+          description: Operator authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ops/jobs/{id}:
+    get:
+      operationId: getOpsJob
+      tags: [operations]
+      summary: Read the complete operational job for final inspection or diagnosis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Complete operational job
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ops/jobs/{id}/progress:
+    get:
+      operationId: getOpsJobProgress
+      tags: [operations]
+      summary: Read compact operational job progress for polling
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Compact progress, stage and heartbeat
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /campaign-operations/active:
     get:
       operationId: getActiveCampaignOperations
@@ -127,6 +359,113 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+
+  /campaign-operations/pending-publication:
+    get:
+      operationId: getPendingCampaignOperations
+      tags: [operations]
+      summary: Return only campaigns that still require publication or evidence
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Compact pending publication and evidence queue
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [date, generatedAt, summary, items]
+                properties:
+                  date: { type: string, format: date }
+                  generatedAt: { type: string, format: date-time }
+                  summary: { type: object, additionalProperties: true }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [commercialIdentityStatus, publicationStatus, resolutionStatus, operationalIdentity]
+                      properties:
+                        identityMode:
+                          type: [string, "null"]
+                          enum: [authoritative_pi, operational_identity, sheet_drive_composite, null]
+                        commercialIdentityStatus:
+                          type: string
+                          enum: [confirmed, awaiting_authoritative_pi]
+                        publicationStatus:
+                          type: string
+                          enum: [awaiting_authoritative_pi, ready_for_preflight, ready_for_publication, published, failed_retryable]
+                        resolutionStatus: { type: string }
+                        resolutionReason: { type: string }
+                        resumeAction: { type: string }
+                        lastCheckedAt: { type: string, format: date-time }
+                        nextCheckAt: { type: [string, "null"], format: date-time }
+                        operationalIdentity:
+                          type: object
+                          required: [gates, fingerprint, source]
+                          properties:
+                            gates:
+                              type: object
+                              additionalProperties: { type: boolean }
+                            fingerprint: { type: string, pattern: "^[a-f0-9]{64}$" }
+                            source: { type: object, additionalProperties: true }
+                      additionalProperties: true
+                  upcomingItems: { type: array, items: {} }
+                additionalProperties: true
+
+  /campaign-operations/evidence-monthly-source:
+    get:
+      operationId: getMonthlyEvidenceSource
+      tags: [operations]
+      summary: Aggregate canonical insertions and audited daily evidence for the monthly report
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: competencia
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: All canonical sheet rows whose period intersects the requested month, including ended campaigns and compact daily evidence descriptors. Each item exposes canonicalSelection (deterministic insertion choice and identity evidence); a relation may expose rotation metadata when a valid AdRotate group serves multiple creatives.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source:
+                    type: object
+                    required: [sheetName, downloadedAt, sha256, competencia]
+                    properties:
+                      sheetName: { type: string }
+                      downloadedAt: { type: string, format: date-time }
+                      sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                      competencia: { type: string }
+                  driveInventory:
+                    type: object
+                    required: [snapshotStatus, snapshotAt, snapshotAgeSeconds, stale, itemCount]
+                    additionalProperties: false
+                    properties:
+                      snapshotStatus:
+                        type: string
+                        enum: [fresh, stale, unavailable, syncing, failed]
+                      snapshotAt: { type: [string, "null"], format: date-time }
+                      snapshotAgeSeconds: { type: [integer, "null"], minimum: 0 }
+                      stale: { type: boolean }
+                      itemCount: { type: integer, minimum: 0 }
+                additionalProperties: true
+        "400":
+          description: The requested competence does not match the target date month
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   # Sites
   /sites:
@@ -631,6 +970,25 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /insertions/capture-proof/reconcile-scheduled:
+    post:
+      operationId: reconcileScheduledCaptureProofs
+      tags: [insertions, operations]
+      summary: Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaptureProofReconciliationRequest"
+      responses:
+        "200":
+          description: Per-insertion reconciliation and canonical audit result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptureProofReconciliationResponse"
+
   /audit-checklists/validate-proof:
     post:
       operationId: validateCaptureProof
@@ -706,7 +1064,7 @@ paths:
       summary: Export insertion evidence package
       description: >-
         Exports the existing full operational package by default. Use
-        mode=prints-only and variant=web to receive only optimized PNG copies;
+        mode=prints-only and variant=web to receive only optimized progressive JPEG copies;
         canonical evidence files and audit URLs are not changed.
       parameters:
         - name: id
@@ -776,6 +1134,124 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /pi-site-exports/jobs:
+    post:
+      operationId: createPiSiteExportJob
+      tags: [evidences]
+      summary: Queue an asynchronous evidence package for one PI and site
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 160
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [piCodigo, siteSigla]
+              properties:
+                piCodigo:
+                  type: string
+                siteSigla:
+                  type: string
+                mode:
+                  type: string
+                  enum: [full-pdf, prints-only]
+                  default: full-pdf
+                variant:
+                  type: string
+                  enum: [original, web]
+                  default: web
+                imageMaxWidth:
+                  type: integer
+                  minimum: 800
+                  maximum: 2560
+                  default: 1600
+                imageQuality:
+                  type: integer
+                  minimum: 45
+                  maximum: 90
+                  default: 72
+      responses:
+        "200":
+          description: Existing idempotent PI/site export returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "202":
+          description: PI/site export queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports/jobs/{jobId}:
+    get:
+      operationId: getPiSiteExportJob
+      tags: [evidences]
+      summary: Read asynchronous PI/site export status
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: PI/site export job
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /pi-site-exports/jobs/{jobId}/download:
+    get:
+      operationId: downloadPiSiteExportJob
+      tags: [evidences]
+      summary: Redirect to the completed PI/site export artifact
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the completed artifact
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Export is not completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /pi-site-exports:
     get:
       operationId: exportPiSitePackage
@@ -828,14 +1304,233 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: PI/site not found
+
+  /campaign-evidence-exports/jobs:
+    post:
+      operationId: createCampaignEvidenceExportJob
+      tags: [evidences]
+      summary: Queue the complete audited JPEG package for a campaign across every portal
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 160
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [piCodigo, competencia]
+              properties:
+                piCodigo:
+                  type: string
+                competencia:
+                  type: string
+                mode:
+                  type: string
+                  const: prints-only
+                  default: prints-only
+                variant:
+                  type: string
+                  const: web
+                  default: web
+                imageMaxWidth:
+                  type: integer
+                  minimum: 800
+                  maximum: 2560
+                  default: 1600
+                imageQuality:
+                  type: integer
+                  minimum: 45
+                  maximum: 90
+                  default: 72
+      responses:
+        "200":
+          description: Existing idempotent campaign evidence export returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "202":
+          description: Campaign evidence export queued
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "409":
+          description: Campaign identity is ambiguous or evidence coverage is incomplete
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: One or more source images could not be prepared
+
+  /campaign-evidence-exports/jobs/batch:
+    post:
+      operationId: createCampaignEvidenceExportBatch
+      tags: [evidences]
+      summary: Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [competencia, campaigns]
+              properties:
+                competencia:
+                  type: string
+                asOfDate:
+                  type: string
+                  format: date
+                  description: Optional inclusive evidence cutoff for immutable historical snapshots.
+                campaigns:
+                  type: array
+                  minItems: 1
+                  maxItems: 25
+                  items:
+                    type: object
+                    required: [piCodigo]
+                    properties:
+                      piCodigo:
+                        type: string
+                mode:
+                  type: string
+                  const: prints-only
+                variant:
+                  type: string
+                  const: web
+                imageMaxWidth:
+                  type: integer
+                  minimum: 800
+                  maximum: 2560
+                  default: 1600
+                imageQuality:
+                  type: integer
+                  minimum: 45
+                  maximum: 90
+                  default: 72
+      responses:
+        "200":
+          description: Every requested package was served from the immutable cache
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "202":
+          description: Cache misses were queued; each item reports its job and cache status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "409":
+          description: One or more campaigns are blocked by incomplete evidence or ambiguous identity
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /campaign-evidence-exports/jobs/{jobId}:
+    get:
+      operationId: getCampaignEvidenceExportJob
+      tags: [evidences]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaign evidence export status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "404":
+          description: Job not found
+
+  /campaign-evidence-exports/jobs/{jobId}/download:
+    get:
+      operationId: downloadCampaignEvidenceExport
+      tags: [evidences]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the immutable campaign ZIP
+        "409":
+          description: Export is not completed
+        "404":
+          description: Campaign evidence export job not found
+
+  /insertions/{id}/evidences/{date}/download:
+    get:
+      operationId: downloadInsertionEvidence
+      tags: [evidences]
+      summary: Download one approved canonical evidence as a progressive web JPEG
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: variant
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [web]
+            default: web
+        - name: imageMaxWidth
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [1600]
+            default: 1600
+        - name: imageQuality
+          in: query
+          required: false
+          schema:
+            type: integer
+            enum: [72]
+            default: 72
+      responses:
+        "200":
+          description: Progressive RGB JPEG attachment
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Insertion or evidence date not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Evidence exists but is not approved for delivery
           content:
             application/json:
               schema:
@@ -951,6 +1646,169 @@ paths:
 
 components:
   schemas:
+    PublicationHealth:
+      type: object
+      additionalProperties: false
+      required: [status, reason, requiredAction, expectedGroupId, expectedMediaObserved, duplicateInsertionIds]
+      properties:
+        status: { type: string, enum: [ok, prepublication_pending, blocked_upstream] }
+        reason: { type: string, enum: [confirmed, drive_media_not_linked, media_missing, adrotate_relation_missing, expected_media_not_observed, public_html_not_confirmed, duplicate_identity] }
+        requiredAction: { type: string, enum: [none, resolve_media, reconcile_duplicate, publish_adrotate, verify_publication] }
+        expectedGroupId: { type: [integer, "null"], minimum: 1 }
+        expectedMediaObserved: { type: boolean }
+        duplicateInsertionIds: { type: array, items: { type: integer, minimum: 1 } }
+
+    EvidenceHealth:
+      type: object
+      additionalProperties: false
+      required: [status, auditedDates, missingDates, invalidDates]
+      properties:
+        status: { type: string, enum: [complete, missing, invalid, blocked_upstream, not_applicable] }
+        auditedDates: { type: array, items: { type: string, format: date } }
+        missingDates: { type: array, items: { type: string, format: date } }
+        invalidDates: { type: array, items: { type: string, format: date } }
+
+    RetroactiveBackfillItem:
+      type: object
+      additionalProperties: false
+      required: [insertionId, date, status, attempts, evidenceUrl, errorCode, error, checklistStatus]
+      properties:
+        insertionId: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        status: { type: string, enum: [audited, failed, skipped_existing, blocked_reconstruction, blocked_upstream] }
+        attempts: { type: integer, minimum: 0, maximum: 3 }
+        evidenceUrl: { type: [string, "null"], format: uri }
+        errorCode: { type: [string, "null"] }
+        error: { type: [string, "null"] }
+        checklistStatus: { type: [string, "null"] }
+
+    PrintBackfillRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        insertionId: { type: integer, minimum: 1 }
+        campaignId: { type: integer, minimum: 1 }
+        siteId: { type: integer, minimum: 1 }
+        competencia: { type: string, minLength: 1 }
+        piCodigo: { type: string, minLength: 1 }
+        siteSigla: { type: string, minLength: 1 }
+        fromDate: { type: string, format: date }
+        toDate: { type: string, format: date }
+        replace: { type: boolean, default: false }
+        force: { type: boolean, default: false }
+      anyOf:
+        - required: [insertionId]
+        - required: [campaignId]
+        - required: [siteId]
+        - required: [competencia]
+        - required: [piCodigo, siteSigla]
+
+    PrintBackfillJobAccepted:
+      type: object
+      additionalProperties: true
+      required: [ok, kind, jobId, status, duplicate]
+      properties:
+        ok: { type: boolean, const: true }
+        kind: { type: string, const: print-backfill }
+        jobId: { type: string, format: uuid }
+        status: { type: string, enum: [queued, ready_for_runner, running, completed, failed] }
+        duplicate: { type: boolean }
+        existingNotBefore: { type: [string, "null"], format: date-time }
+
+    CaptureProofReconciliationRequest:
+      type: object
+      additionalProperties: false
+      required: [date, insertionIds, mode, sourceKind]
+      properties:
+        date: { type: string, format: date }
+        insertionIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: integer, minimum: 1 }
+        mode: { type: string, enum: [dryRun, apply] }
+        sourceKind: { type: string, enum: [daily_batch, same_day_inline] }
+        sourceJobId:
+          description: Required for daily_batch and omitted for same_day_inline.
+          type: string
+
+    CaptureProofReconciliationItem:
+      type: object
+      additionalProperties: true
+      required: [insertionId, status]
+      properties:
+        insertionId: { type: integer }
+        status: { type: string, enum: [ready, ok, ok_best_effort, blocked] }
+        reason: { type: [string, "null"] }
+        blockers:
+          type: array
+          items: { type: string }
+        logId: { type: [string, "null"] }
+        evidenceId: { type: [integer, "null"] }
+        captureClass: { type: [string, "null"], enum: [scheduled, same_day_retry, historical_recovery, null] }
+        sourceJobId: { type: [string, "null"] }
+        capturedAt: { type: [string, "null"], format: date-time }
+        unchangedEvidence: { type: boolean }
+
+    CaptureProofReconciliationResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, date, mode, sourceKind, reconciled, items]
+      properties:
+        ok: { type: boolean }
+        date: { type: string, format: date }
+        mode: { type: string, enum: [dryRun, apply] }
+        sourceKind: { type: string, enum: [daily_batch, same_day_inline] }
+        sourceJobId: { type: [string, "null"] }
+        reconciled: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CaptureProofReconciliationItem"
+
+    DailyPrintAttempt:
+      type: object
+      additionalProperties: false
+      required: [jobId, targetDate, status, expected, approved, missing, invalid, summary]
+      properties:
+        jobId: { type: string }
+        targetDate: { type: string, format: date }
+        status: { type: string, enum: [queued, running, completed, partial, failed] }
+        startedAt: { type: [string, "null"], format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+        expected: { type: integer, minimum: 0 }
+        approved: { type: integer, minimum: 0 }
+        missing: { type: integer, minimum: 0 }
+        invalid: { type: integer, minimum: 0 }
+        summary: { type: string }
+        errorCode: { type: [string, "null"] }
+        failedInsertionIds:
+          type: array
+          items: { type: integer }
+        nextRecoveryAt: { type: [string, "null"], format: date-time }
+
+    DailyPrintStatus:
+      type: object
+      additionalProperties: false
+      required: [timeZone, schedule, nextRunAt, lastAttempt, lastFullyApproved]
+      properties:
+        timeZone: { type: string, const: America/Cuiaba }
+        schedule: { type: string, const: "18:00" }
+        nextRunAt: { type: string, format: date-time }
+        lastAttempt:
+          oneOf:
+            - $ref: "#/components/schemas/DailyPrintAttempt"
+            - type: "null"
+        lastFullyApproved:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [targetDate, finishedAt]
+              properties:
+                targetDate: { type: string, format: date }
+                finishedAt: { type: [string, "null"], format: date-time }
+            - type: "null"
+
     DrivePiReconcileBody:
       type: object
       properties:
@@ -977,6 +1835,41 @@ components:
           type: ["string", "null"]
       required:
         - insertionId
+
+    OpsIncident:
+      type: object
+      required: [id, fingerprint, status, layer, jobId, jobKind, summary, evidence, attempts, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        fingerprint:
+          type: string
+        status:
+          type: string
+          enum: [open, resolved]
+        layer:
+          type: string
+          enum: [scheduling, queue_or_runner, api_or_runner_transport, audit, portal, job_execution]
+        jobId:
+          type: string
+        jobKind:
+          type: string
+        summary:
+          type: string
+        error:
+          type: ["string", "null"]
+        evidence:
+          type: object
+          additionalProperties: true
+        attempts:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     OpsJobAccepted:
       type: object
@@ -1005,6 +1898,29 @@ components:
         - duplicate
         - apply
         - requiredFollowUp
+
+    CampaignPublicationReconcileJobAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+        jobId:
+          type: string
+        kind:
+          type: string
+          const: campaign-publication-reconcile
+        status:
+          type: string
+          enum: [ready_for_runner, running, completed, failed]
+        duplicate:
+          type: boolean
+      required:
+        - ok
+        - jobId
+        - kind
+        - status
+        - duplicate
 
     OpsRuntimeTopology:
       type: object
@@ -1974,6 +2890,10 @@ components:
     UpdateInsertionBody:
       type: object
       properties:
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+          description: Optimistic concurrency guard; returns 409 when the insertion changed.
         siteId:
           type: ["integer", "null"]
         localFormato:
@@ -2156,14 +3076,22 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        phase:
+          type: string
+          enum: [pre_upload, final]
+          default: final
       required:
         - insertionId
         - date
 
     AuditChecklistValidation:
       type: object
+      description: A blocked response always contains at least one structured blockingIssues entry.
       properties:
         approved:
+          type: boolean
+          description: Preliminary approval in pre_upload; terminal approval only in final.
+        preliminary:
           type: boolean
         version:
           type: string
@@ -2200,6 +3128,7 @@ components:
             additionalProperties: true
       required:
         - approved
+        - preliminary
         - version
         - insertionId
         - date

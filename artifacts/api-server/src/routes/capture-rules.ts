@@ -155,8 +155,24 @@ function sanitizeAuditConfig(value: unknown) {
   if (payload.requireCriticalContentPainted != null && typeof payload.requireCriticalContentPainted !== "boolean") {
     throw new Error("auditConfig.requireCriticalContentPainted deve ser booleano.");
   }
-  if (payload.requireEditorialDateMatchTarget != null && typeof payload.requireEditorialDateMatchTarget !== "boolean") {
-    throw new Error("auditConfig.requireEditorialDateMatchTarget deve ser booleano.");
+  for (const key of ["requireSignedRetroPreview", "requireRetroContentProof", "allowAuditedReconstruction"]) {
+    if (payload[key] != null && typeof payload[key] !== "boolean") {
+      throw new Error(`auditConfig.${key} deve ser booleano.`);
+    }
+  }
+  if (payload.minRetroContentMatches != null) {
+    const minimum = Number(payload.minRetroContentMatches);
+    if (!Number.isInteger(minimum) || minimum < 1 || minimum > 25) {
+      throw new Error("auditConfig.minRetroContentMatches deve ser um inteiro entre 1 e 25.");
+    }
+    payload.minRetroContentMatches = minimum;
+  }
+  for (const key of ["retroContentCardSelectors", "retroContentDateSelectors"]) {
+    if (payload[key] == null) continue;
+    if (!Array.isArray(payload[key]) || payload[key].length > 25) {
+      throw new Error(`auditConfig.${key} deve ser uma lista com no máximo 25 seletores.`);
+    }
+    payload[key] = Array.from(new Set(payload[key].map((selector) => sanitizeSelector(selector, `auditConfig.${key}`))));
   }
   const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   if (bytes > MAX_AUDIT_JSON_BYTES) {
@@ -366,6 +382,9 @@ function normalizeRuntimeFromJson(siteSigla: string, localFormato: string | null
   const baseAudit = site.auditConfig && typeof site.auditConfig === "object" ? site.auditConfig as Record<string, unknown> : {};
   const rowAudit = mapping.auditOverrides && typeof mapping.auditOverrides === "object" ? mapping.auditOverrides as Record<string, unknown> : {};
   const auditConfig = { ...baseAudit, ...rowAudit };
+  if (mapping.page === "article" && rowAudit.minRetroContentMatches == null) {
+    auditConfig.minRetroContentMatches = 1;
+  }
 
   return {
     siteSigla: siteSigla.toUpperCase(),

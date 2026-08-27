@@ -14,8 +14,24 @@ const fastApiDocsPaths = new Set(["/api/docs", "/api/docs/", "/api/redoc", "/api
 const fastApiDocsAssetPrefix = "/api/docs-assets/";
 
 function internalApiGuard(req: Request, res: Response, next: NextFunction) {
-  if (["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())) {
+  const protectedInternalRead = req.path.startsWith("/internal/");
+  const publicAsyncCampaignExportPost = req.method.toUpperCase() === "POST" && (
+    req.path === "/campaign-evidence-exports/jobs"
+  );
+  if (publicAsyncCampaignExportPost) {
     next();
+    return;
+  }
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase()) && !protectedInternalRead) {
+    next();
+    return;
+  }
+
+  if (protectedInternalRead && !internalApiToken) {
+    res.status(503).json({
+      error: "internal_api_token_not_configured",
+      details: "A rota interna não está disponível sem ADOPS_INTERNAL_API_TOKEN.",
+    });
     return;
   }
 
@@ -26,7 +42,13 @@ function internalApiGuard(req: Request, res: Response, next: NextFunction) {
 
   const providedInternal = req.header("x-adops-api-token")?.trim() ?? "";
   if (internalApiToken && providedInternal && providedInternal === internalApiToken) {
+    res.locals.adopsInternalAuth = true;
     next();
+    return;
+  }
+
+  if (protectedInternalRead) {
+    res.status(401).json({ error: "unauthorized", details: "ADOPS internal API token inválido ou ausente." });
     return;
   }
 

@@ -1,0 +1,516 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import test, { after } from "node:test";
+import { pathToFileURL } from "node:url";
+
+const repoRoot = path.resolve(import.meta.dirname, "../..");
+const buildDir = await mkdtemp(path.join(tmpdir(), "campaign-evidence-contract-"));
+const outputPath = path.join(buildDir, "contract.mjs");
+const build = spawnSync("pnpm", ["--filter", "@workspace/api-server", "exec", "esbuild", "src/lib/campaign-evidence-export.ts", "--bundle", "--platform=node", "--format=esm", `--outfile=${outputPath}`], {
+  cwd: repoRoot,
+  encoding: "utf8",
+});
+assert.equal(build.status, 0, build.stderr || build.stdout);
+const contract = await import(pathToFileURL(outputPath));
+after(() => rm(buildDir, { recursive: true, force: true }));
+
+const adrotateSites = JSON.parse(await readFile(path.join(repoRoot, "config/adrotate-sites.json"), "utf8"));
+
+test("gate composto deriva exatamente dos perfis de mídia vigentes", () => {
+  for (const [siteSigla, siteConfig] of Object.entries(adrotateSites)) {
+    for (const mapping of siteConfig.formatMappings ?? []) {
+      for (const alias of mapping.aliases ?? []) {
+        assert.equal(
+          contract.isCompositePublicationTarget(siteSigla, alias),
+          Boolean(mapping.operationalMediaProfile),
+          `${siteSigla} ${alias}`,
+        );
+        assert.deepEqual(
+          contract.resolveCompositePublicationTarget(siteSigla, alias),
+          mapping.operationalMediaProfile ? { groupId: Number(mapping.groupId), ...mapping.operationalMediaProfile } : null,
+          `${siteSigla} ${alias} precisa snapshotar o perfil exato no fingerprint`,
+        );
+      }
+    }
+  }
+});
+
+test("normaliza a identidade por PI e competencia sem aceitar campanha sem PI", () => {
+  assert.equal(contract.normalizeCampaignPi("PI 009750- PREF ROO"), "9750");
+  assert.deepEqual(contract.parseCampaignEvidenceIdentity({ piCodigo: "PI 17.048 - GOV", competencia: "agosto/2026" }), {
+    piCodigo: "17048",
+    competencia: "2026-08",
+  });
+  assert.deepEqual(contract.parseCampaignEvidenceIdentity({ piCodigo: "PI 009750- PREF ROO", competencia: "AGOSTO/2026" }), {
+    piCodigo: "9750",
+    competencia: "2026-08",
+  });
+  assert.throws(() => contract.parseCampaignEvidenceIdentity({ piCodigo: "PI - TCE", competencia: "AGOSTO/2026" }), /PI canônica/);
+});
+
+test("normalização canônica trata zeros à esquerda igual em planilha, operação e lote", () => {
+  for (const value of ["9750", "009750", "PI 009750- PREF ROO"]) {
+    assert.equal(contract.normalizeCampaignPi(value), "9750");
+  }
+});
+
+test("preserva insercoes canonicas sem omitir blockers de publicacao ou midia", () => {
+  const selected = contract.selectCampaignEvidenceInsertions([
+    { id: 1826, piCodigo: "17048", competencia: "AGOSTO/2026", statusNormalizado: "rascunho", bannerPublicadoNoSite: false, mediaUrl: null },
+    { id: 1831, piCodigo: "PI 17048 - GOV", competencia: "AGOSTO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/banner.jpg" },
+    { id: 1900, piCodigo: "17048", competencia: "JULHO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/old.jpg" },
+    { id: 1901, piCodigo: "PI 017048- GOV", competencia: "AGOSTO/2026", statusNormalizado: "em veiculacao", bannerPublicadoNoSite: true, mediaUrl: "https://cdn.example/labelled.jpg" },
+  ], { piCodigo: "17048", competencia: "AGOSTO/2026" });
+  assert.deepEqual(selected.map((item) => item.id), [1826, 1831, 1901]);
+});
+
+test("seleciona competencia mensal legada sem misturar outro mes", () => {
+  const selected = contract.selectCampaignEvidenceInsertions([
+    { id: 1840, piCodigo: "PI 742 - PREF VG", competencia: "08/2026", statusNormalizado: "publicado" },
+    { id: 1852, piCodigo: "742", competencia: "2026-08", statusNormalizado: "cancelado" },
+    { id: 1900, piCodigo: "742", competencia: "07/2026", statusNormalizado: "publicado" },
+  ], { piCodigo: "742", competencia: "AGOSTO/2026" });
+  assert.deepEqual(selected.map((item) => item.id), [1840]);
+});
+
+test("bloqueia pacote parcial, invalido ou com evidencia inacessivel", () => {
+  assert.deepEqual(contract.validateCampaignEvidenceReadiness([
+    { insertionId: 1831, requiredDates: ["2026-08-11", "2026-08-12"], evidenceDates: ["2026-08-11"], invalidDates: [], inaccessibleDates: [] },
+  ]), { ready: false, missingDates: [{ insertionId: 1831, date: "2026-08-12" }], invalidDates: [], inaccessibleDates: [], operationalBlockers: [] });
+  assert.equal(contract.validateCampaignEvidenceReadiness([
+    { insertionId: 1831, requiredDates: ["2026-08-12"], evidenceDates: ["2026-08-12"], invalidDates: [], inaccessibleDates: [] },
+  ]).ready, true);
+});
+
+test("chave idempotente e estavel para evidencias aprovadas em varios portais", () => {
+  const left = contract.buildCampaignEvidenceExportIdempotencyKey({
+    piCodigo: "17048",
+    competencia: "AGOSTO/2026",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+    evidences: [
+      { insertionId: 2, evidenceId: 20, portal: "OMT", date: "2026-08-12" },
+      { insertionId: 1, evidenceId: 10, portal: "PPMT", date: "2026-08-11" },
+    ],
+  });
+  const right = contract.buildCampaignEvidenceExportIdempotencyKey({
+    piCodigo: "PI 17048",
+    competencia: "agosto/2026",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+    evidences: [
+      { insertionId: 1, evidenceId: 10, portal: "ppmt", date: "2026-08-11" },
+      { insertionId: 2, evidenceId: 20, portal: "omt", date: "2026-08-12" },
+    ],
+  });
+  assert.equal(left, right);
+  assert.match(left, /^campaign-evidence-v1-[a-f0-9]{64}$/);
+  assert.equal(left, contract.buildCampaignEvidenceExportIdempotencyKey({
+    piCodigo: "17048",
+    competencia: "08/2026",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+    evidences: [
+      { insertionId: 1, evidenceId: 10, portal: "PPMT", date: "2026-08-11" },
+      { insertionId: 2, evidenceId: 20, portal: "OMT", date: "2026-08-12" },
+    ],
+  }));
+  assert.notEqual(left, contract.buildCampaignEvidenceExportIdempotencyKey({
+    piCodigo: "17048",
+    competencia: "AGOSTO/2026",
+    imageMaxWidth: 1200,
+    imageQuality: 60,
+    evidences: [
+      { insertionId: 1, evidenceId: 10, portal: "PPMT", date: "2026-08-11" },
+      { insertionId: 2, evidenceId: 20, portal: "OMT", date: "2026-08-12" },
+    ],
+  }));
+});
+
+test("fila compacta inclui somente operacoes com acao pendente", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-12",
+    generatedAt: "2026-08-12T15:36:28.201Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [
+      { campaignName: "RADAR", piCodigo: "PI - TCE", requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: ["PI ausente"], adops: { insertionId: 1944 } },
+      { campaignName: "FAKE NEWS", piCodigo: "17161", requiredActions: [], blockingIssues: [], adops: { insertionId: 1861 } },
+    ],
+    upcomingItems: [],
+  });
+  assert.deepEqual(result.summary, { pending: 1, needsPublication: 1, needsEvidence: 1 });
+  assert.deepEqual(result.items.map((item) => item.adops.insertionId), [1944]);
+});
+
+test("identidade operacional única não depende de IDs hardcoded", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA OPERACIONAL",
+      piCodigo: "PI - PENDENTE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 30 },
+      sourceIdentity: { decision: "insufficient_data", canonicalPi: null, sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched",
+        folderId: "folder-unique",
+        folderPath: "/PERRENGUE/AGOSTO/PI - CAMPANHA OPERACIONAL",
+        inventoryScanId: "scan-1",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "missing",
+        mediaFiles: [{ id: "media-1", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-1", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1200, insertionId: 2200, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+
+  assert.equal(result.items[0].identityMode, "operational_identity");
+  assert.equal(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].commercialIdentityStatus, "awaiting_authoritative_pi");
+});
+
+test("não usa a exceção operacional quando existe PI comercial sem PDF autoritativo", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA COM PI ROTULADA",
+      piCodigo: "PI 009750- PREF ROO",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 31 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "9750", sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched",
+        folderId: "folder-labelled",
+        folderPath: "/PERRENGUE/AGOSTO/PI 009750 CAMPANHA",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "missing",
+        mediaFiles: [{ id: "media-2", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-2", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1201, insertionId: 2201, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("não usa identidade operacional quando há candidato de PI em PDF", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CAMPANHA AMBÍGUA",
+      piCodigo: "PI - PENDENTE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-14", end: "2026-08-20" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 32 },
+      sourceIdentity: { decision: "insufficient_data", canonicalPi: null, sources: { drivePdfPiCandidates: ["9750"] } },
+      drive: {
+        status: "matched", folderId: "folder-pdf", folderPath: "/PERRENGUE/AGOSTO/PI PENDENTE",
+        mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "missing",
+        mediaFiles: [{ id: "media-3", name: "670x90.gif", mimeType: "image/gif" }],
+        textFiles: [{ id: "destination-3", name: "Destino", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 1202, insertionId: 2202, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+});
+
+test("encaminha PDF candidato ao preflight mesmo quando o nome não contém a PI", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:20:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "FAKE NEWS",
+      piCodigo: "57652",
+      siteSigla: "ROO",
+      period: { start: "2026-08-14", end: "2026-08-31" },
+      format: { normalized: "HOME 1" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 33 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "57652", sources: { drivePdfPiCandidates: [] } },
+      drive: {
+        status: "matched", folderId: "folder-roo", folderPath: "/ROO NOTICIAS/AGOSTO/PI 57652 - FAKE NEWS",
+        mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found",
+        mediaFiles: [{ id: "media-roo", name: "banner-home1.gif", mimeType: "image/gif" }], textFiles: [],
+      },
+      adops: { status: "matched", campaignId: 992, insertionId: 2185, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(result.items[0].publicationStatus, "ready_for_preflight");
+  assert.equal(result.items[0].resumeAction, "run_drive_pi_preflight");
+  assert.notEqual(result.items[0].identityMode, "operational_identity");
+});
+
+test("libera identidade composta quando planilha, AdOps e pasta única concordam com PDF, mídia e destino", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:40:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{
+      campaignName: "CRIME AMBIENTAL",
+      piCodigo: "PI 17046 - GOV",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-01", end: "2026-08-22" },
+      format: { normalized: "MEGABANNER TOPO — HEADER — 825X120" },
+      sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 8 },
+      sourceIdentity: {
+        decision: "confirmed",
+        canonicalPi: "17046",
+        sources: { sheetPi: "17046", adopsPi: "17046", driveFolderPiCandidates: ["17046"], drivePdfPiCandidates: ["17046"] },
+      },
+      drive: {
+        status: "matched",
+        folderId: "folder-17046",
+        folderPath: "/PERRENGUE/AGOSTO/PI 17046 - CRIME AMBIENTAL",
+        inventoryScanId: "scan-composite",
+        mediaStatus: "candidate_found",
+        mediaMatchesFormat: true,
+        documentStatus: "candidate_found",
+        mediaFiles: [{ id: "gif-17046", name: "825x120.gif", mimeType: "image/gif", size: "280027", md5Checksum: "a".repeat(32) }],
+        pdfFiles: [{ id: "pdf-17046", name: "PI_17046_SITE_PERRENGUE.pdf", mimeType: "application/pdf", size: "63740", md5Checksum: "b".repeat(32) }],
+        textFiles: [{ id: "redirect-17046", name: "Documento sem título", mimeType: "application/vnd.google-apps.document" }],
+      },
+      adops: { status: "matched", campaignId: 970, insertionId: 2186, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+      requiredActions: ["publish_on_site", "generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(result.items[0].identityMode, "sheet_drive_composite");
+  assert.equal(result.items[0].commercialIdentityStatus, "confirmed");
+  assert.equal(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].resumeAction, "run_composite_preflight_and_publish");
+  assert.equal(result.items[0].operationalIdentity.source.expectedPiCodigo, "17046");
+  assert.equal(result.items[0].operationalIdentity.source.pdfDocuments[0].id, "pdf-17046");
+  assert.deepEqual(result.items[0].operationalIdentity.source.operationalMediaProfile, {
+    groupId: 1,
+    ...adrotateSites.PERRENGUE.formatMappings.find((mapping) => mapping.groupId === 1).operationalMediaProfile,
+  });
+});
+
+test("libera identidade composta nos portais configurados sem exigir que o PDF repita o período da planilha", () => {
+  for (const siteSigla of ["ROO", "AFL"]) {
+    const result = contract.buildPendingPublicationView({
+      date: "2026-08-14",
+      generatedAt: "2026-08-14T09:40:00.000Z",
+      summary: { needsPublication: 1, needsEvidence: 1 },
+      items: [{
+        campaignName: "PRESTAÇÃO DE CONTAS",
+        piCodigo: "PI 91085 - PREF ROO",
+        siteSigla,
+        period: { start: "2026-08-14", end: "2026-08-23" },
+        format: { normalized: "MEGABANNER TOPO" },
+        sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 6 },
+        sourceIdentity: {
+          decision: "confirmed",
+          canonicalPi: "91085",
+          sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] },
+        },
+        drive: {
+          status: "matched",
+          folderId: "folder-91085",
+          folderPath: `/${siteSigla}/AGOSTO/PI 91085 - PRESTAÇÃO DE CONTAS`,
+          inventoryScanId: "scan-composite",
+          mediaStatus: "candidate_found",
+          mediaMatchesFormat: true,
+          documentStatus: "candidate_found",
+          mediaFiles: [{ id: "gif-91085", name: "820x120.gif", mimeType: "image/gif", size: "140088", md5Checksum: "a".repeat(32) }],
+          pdfFiles: [{ id: "pdf-91085", name: "PI 91085.pdf", mimeType: "application/pdf", size: "79668", md5Checksum: "b".repeat(32) }],
+          textFiles: [{ id: "redirect-91085", name: "Documento sem título", mimeType: "application/vnd.google-apps.document" }],
+        },
+        adops: { status: "matched", campaignId: 997, insertionId: 2310, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+        requiredActions: ["publish_on_site", "generate_evidence"],
+        blockingIssues: [],
+      }],
+      upcomingItems: [],
+    });
+    assert.equal(result.items[0].identityMode, "sheet_drive_composite", siteSigla);
+    assert.equal(result.items[0].publicationStatus, "ready_for_publication", siteSigla);
+    assert.deepEqual(result.items[0].operationalIdentity.source.operationalMediaProfile, {
+      groupId: 1,
+      ...adrotateSites[siteSigla].formatMappings.find((mapping) => mapping.groupId === 1).operationalMediaProfile,
+    }, siteSigla);
+  }
+});
+
+test("não amplia a exceção sem PDF nem publica identidade composta em portal sem configuração", () => {
+  const baseItem = {
+    campaignName: "PRESTAÇÃO DE CONTAS",
+    piCodigo: "PI 91085 - PREF ROO",
+    siteSigla: "ROO",
+    period: { start: "2026-08-14", end: "2026-08-23" },
+    format: { normalized: "MEGABANNER TOPO" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 6 },
+    sourceIdentity: {
+      decision: "insufficient_data",
+      canonicalPi: null,
+      sources: { sheetPi: null, adopsPi: null, driveFolderPiCandidates: [], drivePdfPiCandidates: [] },
+    },
+    drive: {
+      status: "matched", folderId: "folder", folderPath: "/ROO/AGOSTO/CAMPANHA", inventoryScanId: "scan",
+      mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "missing",
+      mediaFiles: [{ id: "gif" }], pdfFiles: [], textFiles: [],
+    },
+    adops: { status: "matched", campaignId: 997, insertionId: 2310, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site"], blockingIssues: [],
+  };
+  const noPdfOutsidePerrengue = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, items: [baseItem], upcomingItems: [],
+  });
+  assert.notEqual(noPdfOutsidePerrengue.items[0].identityMode, "operational_identity");
+
+  const unknownSiteComposite = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, upcomingItems: [],
+    items: [{
+      ...baseItem,
+      siteSigla: "DESCONHECIDO",
+      sourceIdentity: { decision: "confirmed", canonicalPi: "91085", sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] } },
+      drive: { ...baseItem.drive, documentStatus: "candidate_found", pdfFiles: [{ id: "pdf", size: "100", md5Checksum: "b".repeat(32) }], textFiles: [{ id: "redirect" }] },
+    }],
+  });
+  assert.notEqual(unknownSiteComposite.items[0].identityMode, "sheet_drive_composite");
+
+  const unsupportedRooFormat = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: {}, upcomingItems: [],
+    items: [{
+      ...baseItem,
+      siteSigla: "ROO",
+      format: { normalized: "HOME 1" },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "91085", sources: { sheetPi: "91085", adopsPi: "91085", driveFolderPiCandidates: ["91085"], drivePdfPiCandidates: ["91085"] } },
+      drive: { ...baseItem.drive, documentStatus: "candidate_found", pdfFiles: [{ id: "pdf", size: "100", md5Checksum: "b".repeat(32) }], textFiles: [{ id: "redirect" }] },
+    }],
+  });
+  assert.notEqual(unsupportedRooFormat.items[0].identityMode, "sheet_drive_composite");
+});
+
+test("identidade composta permite banner informativo sem redirect e bloqueia PI divergente", () => {
+  const base = {
+    date: "2026-08-14",
+    generatedAt: "2026-08-14T09:40:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    upcomingItems: [],
+  };
+  const item = {
+    campaignName: "FAKE NEWS", piCodigo: "PI 17142 - ALMT", siteSigla: "PERRENGUE",
+    period: { start: "2026-08-09", end: "2026-08-31" }, format: { normalized: "POP UP — SITEWIDE — 970X90" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 18 },
+    sourceIdentity: { decision: "confirmed", canonicalPi: "17142", sources: { sheetPi: "17142", adopsPi: "17142", driveFolderPiCandidates: ["17142"], drivePdfPiCandidates: ["17142"] } },
+    drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17142 - FAKE NEWS", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif", size: "100", md5Checksum: "a".repeat(32) }], pdfFiles: [{ id: "pdf", size: "200", md5Checksum: "b".repeat(32) }], textFiles: [] },
+    adops: { status: "matched", campaignId: 987, insertionId: 2193, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+  };
+  const missingRedirect = contract.buildPendingPublicationView({ ...base, items: [item] });
+  assert.equal(missingRedirect.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(missingRedirect.items[0].destinationMode, "none");
+  assert.equal(missingRedirect.items[0].destinationStatusText, "Banner informativo, sem link");
+  assert.equal(missingRedirect.items[0].operationalIdentity.gates.destinationPolicyValid, true);
+  const divergent = contract.buildPendingPublicationView({ ...base, items: [{ ...item, sourceIdentity: { ...item.sourceIdentity, sources: { ...item.sourceIdentity.sources, sheetPi: "99999" } }, drive: { ...item.drive, textFiles: [{ id: "redirect" }] } }] });
+  assert.notEqual(divergent.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("identidade composta bloqueia destinos múltiplos antes do preflight", () => {
+  const item = {
+    campaignName: "FAKE NEWS", piCodigo: "PI 57687 - AFL", siteSigla: "AFL",
+    period: { start: "2026-08-14", end: "2026-08-19" }, format: { normalized: "MEGABANNER TOPO" },
+    sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 12 },
+    sourceIdentity: { decision: "confirmed", canonicalPi: "57687", sources: { sheetPi: "57687", adopsPi: "57687", driveFolderPiCandidates: ["57687"], drivePdfPiCandidates: ["57687"] } },
+    drive: {
+      status: "matched", folderId: "folder-57687", folderPath: "/AFL/AGOSTO/PI 57687", inventoryScanId: "scan",
+      mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found",
+      mediaFiles: [{ id: "gif", size: "150135", md5Checksum: "a".repeat(32) }],
+      pdfFiles: [{ id: "pdf", size: "72584", md5Checksum: "b".repeat(32) }],
+      textFiles: [{ id: "redirect-a" }, { id: "redirect-b" }],
+    },
+    adops: { status: "matched", campaignId: 1000, insertionId: 2413, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false },
+    requiredActions: ["publish_on_site", "generate_evidence"], blockingIssues: [],
+  };
+  const result = contract.buildPendingPublicationView({ date: "2026-08-17", generatedAt: "2026-08-17T20:00:00.000Z", summary: {}, items: [item], upcomingItems: [] });
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+  assert.equal(result.items[0].destinationMode, "ambiguous");
+  assert.equal(result.items[0].destinationStatusText, "Foram encontrados links diferentes");
+});
+
+test("identidade composta exige checksum e tamanho do PDF no snapshot", () => {
+  const result = contract.buildPendingPublicationView({
+    date: "2026-08-14", generatedAt: "2026-08-14T09:40:00.000Z", summary: { needsPublication: 1, needsEvidence: 1 }, upcomingItems: [],
+    items: [{
+      campaignName: "CRIME AMBIENTAL", piCodigo: "17046", siteSigla: "PERRENGUE", period: { start: "2026-08-01", end: "2026-08-22" }, format: { normalized: "TOPO" }, sheetSource: { sheetName: "AGOSTO 2026", rowNumber: 8 },
+      sourceIdentity: { decision: "confirmed", canonicalPi: "17046", sources: { sheetPi: "17046", adopsPi: "17046", driveFolderPiCandidates: ["17046"], drivePdfPiCandidates: ["17046"] } },
+      drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/AGOSTO/PI 17046", mediaStatus: "candidate_found", mediaMatchesFormat: true, documentStatus: "candidate_found", mediaFiles: [{ id: "gif" }], pdfFiles: [{ id: "pdf", size: null, md5Checksum: null }], textFiles: [{ id: "redirect" }] },
+      adops: { status: "matched", campaignId: 970, insertionId: 2186, operationalMatchCount: 1, mediaUrl: null, bannerPublicadoNoSite: false }, requiredActions: ["publish_on_site"], blockingIssues: [],
+    }],
+  });
+  assert.notEqual(result.items[0].identityMode, "sheet_drive_composite");
+  assert.notEqual(result.items[0].publicationStatus, "ready_for_publication");
+});
+
+test("lote de campanhas normaliza identidade e remove duplicatas", () => {
+  assert.deepEqual(contract.parseCampaignEvidenceBatch({
+    competencia: "agosto/2026",
+    campaigns: [{ piCodigo: "PI 17048" }, { piCodigo: "17048" }, { piCodigo: "17190" }],
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+  }), {
+    competencia: "AGOSTO/2026",
+    campaigns: [{ piCodigo: "17048" }, { piCodigo: "17190" }],
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth: 1600,
+    imageQuality: 72,
+  });
+});
+
+test("fonte mensal remove payload pesado do Drive e preserva evidencias por data", () => {
+  const source = contract.buildMonthlyEvidenceSource({
+    version: "campaign-operations-v1",
+    date: "2026-08-12",
+    generatedAt: "2026-08-12T15:36:28.201Z",
+    sheet: { name: "AGOSTO 2026", activeRows: 1 },
+    summary: { activeInSheet: 1 },
+    items: [{
+      campaignName: "RADAR",
+      piCodigo: "PI - TCE",
+      siteSigla: "PERRENGUE",
+      period: { start: "2026-08-12", end: "2026-08-25" },
+      format: { normalized: "HOME 1" },
+      adops: { insertionId: 1944 },
+      evidence: { days: [{ date: "2026-08-12", status: "missing", evidenceId: null, url: null, auditHash: null, blockingIssues: [] }] },
+      drive: { status: "matched", folderId: "folder", folderPath: "/PERRENGUE/RADAR", mediaFiles: [{ id: "large" }] },
+      requiredActions: ["generate_evidence"],
+      blockingIssues: [],
+    }],
+    upcomingItems: [],
+  });
+  assert.equal(source.items[0].drive.folderId, "folder");
+  assert.equal("mediaFiles" in source.items[0].drive, false);
+  assert.deepEqual(source.items[0].evidence.days.map((day) => day.status), ["missing"]);
+});

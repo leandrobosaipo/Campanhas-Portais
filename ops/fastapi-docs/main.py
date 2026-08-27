@@ -175,6 +175,56 @@ def build_openapi_document() -> dict[str, Any]:
     source_hash = hashlib.sha256(route_fingerprint.encode("utf-8")).hexdigest()
     operation_count = sum(len(operations) for operations in paths.values())
 
+    def set_response_schema(path: str, method: str, schema_name: str) -> None:
+        operation = paths.get(path, {}).get(method)
+        if operation:
+            operation["responses"]["200"]["content"]["application/json"]["schema"] = {
+                "$ref": f"#/components/schemas/{schema_name}"
+            }
+
+    set_response_schema("/api/ops/schedules/reconcile", "post", "ScheduleReconcileResponse")
+    set_response_schema("/api/ops/queue/overview", "get", "QueueOverviewResponse")
+    set_response_schema("/api/ops/daily-print-status", "get", "DailyPrintStatusResponse")
+    set_response_schema("/api/ops/runner/heartbeat", "post", "RunnerHeartbeatResponse")
+
+    print_backfill_path = paths.get("/api/ops/jobs/print-backfill", {})
+    if "post" in print_backfill_path:
+        print_backfill_path["post"].update({
+            "tags": ["Operações retroativas"],
+            "summary": "Criar ou recuperar um backfill retroativo idempotente",
+            "description": (
+                "Único caminho de captura retroativa. O payload recebe o motivo "
+                "late_publication_recovery, tentativa 1 de no máximo 3 e retorna "
+                "200 para replay idempotente ou 202 para um novo job."
+            ),
+            "responses": {
+                "200": {"description": "Job idempotente já existente.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillJobAccepted"}}}},
+                "202": {"description": "Backfill aceito para processamento assíncrono.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillJobAccepted"}}}},
+                "400": {"description": "Filtro ausente ou inválido."},
+                "401": {"description": "Token ausente ou inválido."},
+            },
+        })
+        print_backfill_path["post"]["requestBody"] = {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillRequest"}}},
+        }
+
+    heartbeat_operation = paths.get("/api/ops/runner/heartbeat", {}).get("post")
+    if heartbeat_operation:
+        heartbeat_operation["requestBody"] = {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunnerHeartbeatRequest"}}},
+        }
+
+    for operation_path in (
+        "/api/ops/runner/jobs/{id}/progress",
+        "/api/ops/runner/jobs/{id}/complete",
+        "/api/ops/runner/jobs/{id}/fail",
+    ):
+        operation = paths.get(operation_path, {}).get("post")
+        if operation and operation.get("parameters"):
+            operation["parameters"][0]["schema"] = {"type": "string", "format": "uuid"}
+
     capture_status_path = paths.get("/api/insertions/{id}/capture-proof/status", {})
     if "get" in capture_status_path:
         capture_status_path["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {
@@ -185,13 +235,12 @@ def build_openapi_document() -> dict[str, Any]:
     if "post" in export_job_path:
         export_job_path["post"].update({
             "tags": ["Entrega de evidências"],
-            "summary": "Solicitar entrega de imagens e PDF",
+            "summary": "Solicitar pacote auditado, comprimido e com PDF",
             "description": (
                 "Endpoint canônico para entrega final. Cria um job idempotente, "
                 "retorna 202 e deve ser acompanhado pelo endpoint de status. "
-                "O padrão delivery/web preserva os PNGs auditados de origem, gera "
-                "um ZIP somente com JPEGs e publica o PDF separadamente. Por padrão, "
-                "os dois documentos também são enviados ao Telegram."
+                "O padrão full-pdf/web preserva os PNGs auditados de origem e gera "
+                "uma cópia cliente em JPEG progressivo, PDF e ZIP com checksums."
             ),
             "parameters": [{
                 "name": "Idempotency-Key",
@@ -220,13 +269,12 @@ def build_openapi_document() -> dict[str, Any]:
                 "application/json": {
                     "schema": {"$ref": "#/components/schemas/PiSiteExportJobRequest"},
                     "examples": {
-                        "entrega_para_jornalista": {
+                        "pacote_web_completo": {
                             "value": {
                                 "piCodigo": "14609",
                                 "siteSigla": "AFL",
-                                "mode": "delivery",
+                                "mode": "full-pdf",
                                 "variant": "web",
-                                "sendTelegram": True,
                             }
                         }
                     },
@@ -268,36 +316,6 @@ def build_openapi_document() -> dict[str, Any]:
             },
         })
 
-    export_pdf_path = paths.get("/api/pi-site-exports/jobs/{jobId}/pdf", {})
-    if "get" in export_pdf_path:
-        export_pdf_path["get"].update({
-            "tags": ["Entrega de evidências"],
-            "summary": "Baixar os PDFs separados por posição",
-            "responses": {
-                "302": {
-                    "description": "Quando existe uma única posição, redireciona para o PDF publicado.",
-                    "headers": {"Location": {"schema": {"type": "string", "format": "uri"}}},
-                },
-                "300": {
-                    "description": "Quando existem várias posições, lista um PDF independente por posição.",
-                    "content": {"application/json": {"schema": {
-                        "type": "object",
-                        "required": ["message", "jobId", "pdfUrls", "pdfs"],
-                        "properties": {
-                            "message": {"type": "string"},
-                            "jobId": {"type": "string", "format": "uuid"},
-                            "pdfUrls": {"type": "array", "minItems": 2, "items": {"type": "string", "format": "uri"}},
-                            "pdfs": {"type": "array", "minItems": 2, "items": {"type": "object", "additionalProperties": True}},
-                        },
-                        "additionalProperties": False,
-                    }}},
-                },
-                "404": {"description": "Job não encontrado."},
-                "409": {"description": "PDF ainda não está pronto."},
-                "500": {"description": "Falha ao resolver o PDF."},
-            },
-        })
-
     export_sync_path = paths.get("/api/pi-site-exports", {})
     if "get" in export_sync_path:
         export_sync_path["get"].update({
@@ -308,9 +326,8 @@ def build_openapi_document() -> dict[str, Any]:
                 {"name": "piCodigo", "in": "query", "required": True, "schema": {"type": "string", "minLength": 1}},
                 {"name": "siteSigla", "in": "query", "required": True, "schema": {"type": "string", "minLength": 2}},
                 {"name": "download", "in": "query", "required": False, "schema": {"type": "string", "enum": ["0", "1"], "default": "0"}},
-                {"name": "mode", "in": "query", "required": False, "schema": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"], "default": "full"}},
+                {"name": "mode", "in": "query", "required": False, "schema": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"], "default": "full"}},
                 {"name": "variant", "in": "query", "required": False, "schema": {"type": "string", "enum": ["original", "web"]}},
-                {"name": "position", "in": "query", "required": False, "description": "Restringe mode=pdf a uma posição/banner.", "schema": {"type": "string", "minLength": 1}},
                 {"name": "pdfMaxWidth", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1920}},
                 {"name": "pdfQuality", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 45, "maximum": 85, "default": 68}},
                 {"name": "pdfResolution", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 72, "maximum": 180, "default": 120}},
@@ -399,6 +416,78 @@ def build_openapi_document() -> dict[str, Any]:
                 },
             },
             "schemas": {
+                "PublicationHealth": {
+                    "type": "object",
+                    "required": ["status", "reason", "requiredAction", "expectedGroupId", "expectedMediaObserved", "duplicateInsertionIds"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ok", "prepublication_pending", "blocked_upstream"]},
+                        "reason": {"type": "string", "enum": ["confirmed", "drive_media_not_linked", "media_missing", "adrotate_relation_missing", "expected_media_not_observed", "public_html_not_confirmed", "duplicate_identity"]},
+                        "requiredAction": {"type": "string", "enum": ["none", "resolve_media", "reconcile_duplicate", "publish_adrotate", "verify_publication"]},
+                        "expectedGroupId": {"type": ["integer", "null"], "minimum": 1},
+                        "expectedMediaObserved": {"type": "boolean"},
+                        "duplicateInsertionIds": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                    },
+                    "additionalProperties": False,
+                },
+                "EvidenceHealth": {
+                    "type": "object",
+                    "required": ["status", "auditedDates", "missingDates", "invalidDates"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["complete", "missing", "invalid", "blocked_upstream", "not_applicable"]},
+                        "auditedDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                        "missingDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                        "invalidDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "RetroactiveBackfillItem": {
+                    "type": "object",
+                    "required": ["insertionId", "date", "status", "attempts", "evidenceUrl", "errorCode", "error", "checklistStatus"],
+                    "properties": {
+                        "insertionId": {"type": "integer", "minimum": 1},
+                        "date": {"type": "string", "format": "date"},
+                        "status": {"type": "string", "enum": ["audited", "failed", "skipped_existing", "blocked_reconstruction", "blocked_upstream"]},
+                        "attempts": {"type": "integer", "minimum": 0, "maximum": 3},
+                        "evidenceUrl": {"type": ["string", "null"], "format": "uri"},
+                        "errorCode": {"type": ["string", "null"]},
+                        "error": {"type": ["string", "null"]},
+                        "checklistStatus": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": False,
+                },
+                "PrintBackfillRequest": {
+                    "type": "object",
+                    "properties": {
+                        "insertionId": {"type": "integer", "minimum": 1},
+                        "campaignId": {"type": "integer", "minimum": 1},
+                        "siteId": {"type": "integer", "minimum": 1},
+                        "competencia": {"type": "string", "minLength": 1},
+                        "piCodigo": {"type": "string", "minLength": 1},
+                        "siteSigla": {"type": "string", "minLength": 1},
+                        "fromDate": {"type": "string", "format": "date"},
+                        "toDate": {"type": "string", "format": "date"},
+                        "replace": {"type": "boolean", "default": False},
+                        "force": {"type": "boolean", "default": False},
+                    },
+                    "anyOf": [
+                        {"required": ["insertionId"]}, {"required": ["campaignId"]}, {"required": ["siteId"]},
+                        {"required": ["competencia"]}, {"required": ["piCodigo", "siteSigla"]},
+                    ],
+                    "additionalProperties": False,
+                },
+                "PrintBackfillJobAccepted": {
+                    "type": "object",
+                    "required": ["ok", "kind", "jobId", "status", "duplicate"],
+                    "properties": {
+                        "ok": {"type": "boolean", "const": True},
+                        "kind": {"type": "string", "const": "print-backfill"},
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "duplicate": {"type": "boolean"},
+                        "existingNotBefore": {"type": ["string", "null"], "format": "date-time"},
+                    },
+                    "additionalProperties": True,
+                },
                 "RetroContentProof": {
                     "type": "object",
                     "required": [
@@ -443,15 +532,13 @@ def build_openapi_document() -> dict[str, Any]:
                     "properties": {
                         "piCodigo": {"type": "string", "minLength": 1},
                         "siteSigla": {"type": "string", "minLength": 2},
-                        "mode": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"], "default": "delivery"},
+                        "mode": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"], "default": "full-pdf"},
                         "variant": {"type": "string", "enum": ["original", "web"], "default": "web"},
                         "pdfMaxWidth": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1920},
                         "pdfQuality": {"type": "integer", "minimum": 45, "maximum": 85, "default": 68},
                         "pdfResolution": {"type": "integer", "minimum": 72, "maximum": 180, "default": 120},
                         "imageMaxWidth": {"type": "integer", "minimum": 800, "maximum": 2560, "default": 1600},
                         "imageQuality": {"type": "integer", "minimum": 45, "maximum": 90, "default": 72},
-                        "sendTelegram": {"type": "boolean", "default": True},
-                        "chatId": {"type": ["string", "null"], "description": "Destino opcional; omita para usar o grupo padrão."},
                         "source": {"type": "string", "maxLength": 120, "default": "api-server"},
                         "requestedBy": {"type": "string", "maxLength": 160, "default": "api-server"},
                     },
@@ -468,7 +555,7 @@ def build_openapi_document() -> dict[str, Any]:
                         "duplicate": {"type": "boolean"},
                         "piCodigo": {"type": "string"},
                         "siteSigla": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf"]},
+                        "mode": {"type": "string", "enum": ["full", "prints-only", "pdf", "full-pdf"]},
                         "variant": {"type": "string", "enum": ["original", "web"]},
                     },
                     "additionalProperties": True,
@@ -476,6 +563,150 @@ def build_openapi_document() -> dict[str, Any]:
                 "OpsJobStatus": {
                     "type": "string",
                     "enum": ["queued", "ready_for_runner", "running", "completed", "failed"],
+                },
+                "OpsJob": {
+                    "type": "object",
+                    "required": ["jobId", "kind", "status"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "kind": {"type": "string"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "runnerId": {"type": ["string", "null"]},
+                        "claimedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "heartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                        "createdAt": {"type": ["string", "null"], "format": "date-time"},
+                        "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "completedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "failedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "attempt": {"type": ["integer", "null"], "minimum": 1},
+                        "maxAttempts": {"type": ["integer", "null"], "minimum": 1},
+                        "incidentLayer": {"type": ["string", "null"]},
+                        "errorCode": {"type": ["string", "null"]},
+                        "error": {"type": ["string", "null"]},
+                        "failedInsertionIds": {"type": ["array", "null"], "items": {"type": "integer", "minimum": 1}},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                        "durationMs": {"type": ["number", "null"], "minimum": 0},
+                        "queueWaitMs": {"type": ["number", "null"], "minimum": 0},
+                        "captureMs": {"type": ["number", "null"], "minimum": 0},
+                        "auditMs": {"type": ["number", "null"], "minimum": 0},
+                        "uploadMs": {"type": ["number", "null"], "minimum": 0},
+                        "reportMs": {"type": ["number", "null"], "minimum": 0},
+                        "payload": {"type": ["object", "null"], "additionalProperties": True},
+                        "result": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": True,
+                },
+                "CanonicalScheduleDecision": {
+                    "type": "object",
+                    "required": ["routineKind", "targetDate", "timezone", "scheduledFor", "dispatchWindow", "due"],
+                    "properties": {
+                        "routineKind": {"type": "string"},
+                        "jobKind": {"type": ["string", "null"]},
+                        "targetDate": {"type": "string", "format": "date"},
+                        "timezone": {"type": "string", "const": "America/Cuiaba"},
+                        "scheduledFor": {"type": "string", "format": "date-time"},
+                        "dispatchWindow": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$"},
+                        "due": {"type": "boolean"},
+                        "scheduleId": {"type": ["string", "null"]},
+                        "idempotencyKey": {"type": ["string", "null"]},
+                        "outcome": {"type": ["string", "null"], "enum": ["created", "duplicate", "not_due", "blocked", "failed", None]},
+                        "jobId": {"type": ["string", "null"], "format": "uuid"},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                    },
+                    "additionalProperties": True,
+                },
+                "ScheduleReconcileResponse": {
+                    "type": "object",
+                    "required": ["ok", "dryRun", "auditGateEvaluated", "timezone", "decisions"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "dryRun": {"type": "boolean"},
+                        "auditGateEvaluated": {"type": "boolean"},
+                        "timezone": {"type": "string", "const": "America/Cuiaba"},
+                        "decisions": {"type": "array", "items": {"$ref": "#/components/schemas/CanonicalScheduleDecision"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "QueueOverviewResponse": {
+                    "type": "object",
+                    "required": ["now", "queue", "totals", "runners", "scheduler"],
+                    "properties": {
+                        "now": {"anyOf": [{"$ref": "#/components/schemas/OpsJob"}, {"type": "null"}]},
+                        "queue": {"type": "array", "items": {"$ref": "#/components/schemas/OpsJob"}},
+                        "scheduled": {"type": "array", "items": {"$ref": "#/components/schemas/OpsJob"}},
+                        "totals": {"type": "object", "additionalProperties": {"type": ["integer", "null"], "minimum": 0}},
+                        "runners": {"type": "object", "properties": {
+                            "lastHeartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                            "hasRecentRunner": {"type": ["boolean", "null"]},
+                            "count": {"type": ["integer", "null"], "minimum": 0},
+                            "registeredCount": {"type": ["integer", "null"], "minimum": 0},
+                        }, "additionalProperties": True},
+                        "scheduler": {"type": "object", "properties": {
+                            "provider": {"type": "string", "enum": ["macmini", "cloudflare"]},
+                            "timezone": {"type": "string", "const": "America/Cuiaba"},
+                            "evaluatedAt": {"type": "string", "format": "date-time"},
+                            "nextDecision": {"anyOf": [{"$ref": "#/components/schemas/CanonicalScheduleDecision"}, {"type": "null"}]},
+                            "decisions": {"type": "array", "items": {"$ref": "#/components/schemas/CanonicalScheduleDecision"}},
+                        }, "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "DailyPrintAttempt": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "targetDate": {"type": "string", "format": "date"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "expected": {"type": ["integer", "null"], "minimum": 0},
+                        "approved": {"type": ["integer", "null"], "minimum": 0},
+                        "missing": {"type": ["integer", "null"], "minimum": 0},
+                        "invalid": {"type": ["integer", "null"], "minimum": 0},
+                        "errorCode": {"type": ["string", "null"]},
+                        "failedInsertionIds": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                    },
+                    "additionalProperties": True,
+                },
+                "DailyPrintStatusResponse": {
+                    "type": "object",
+                    "required": ["timeZone", "schedule", "requestedDate", "lastAttempt"],
+                    "properties": {
+                        "timeZone": {"type": "string", "const": "America/Cuiaba"},
+                        "schedule": {"type": "string", "const": "18:00"},
+                        "nextRunAt": {"type": ["string", "null"], "format": "date-time"},
+                        "requestedDate": {"type": "string", "format": "date"},
+                        "lastAttempt": {"$ref": "#/components/schemas/DailyPrintAttempt"},
+                        "lastFullyApproved": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "RunnerHeartbeatRequest": {
+                    "type": "object",
+                    "required": ["runnerId"],
+                    "properties": {
+                        "runnerId": {"type": "string", "minLength": 1, "maxLength": 120},
+                        "version": {"type": ["string", "null"]},
+                        "jobId": {"type": ["string", "null"], "format": "uuid"},
+                        "heartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastCycleAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastSuccessAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastError": {"type": ["string", "null"]},
+                        "capabilities": {"type": "object", "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "RunnerHeartbeatResponse": {
+                    "type": "object",
+                    "required": ["ok", "runnerId", "receivedAt", "jobLease"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "error": {"type": ["string", "null"], "enum": ["lease_lost", None]},
+                        "runnerId": {"type": "string"},
+                        "receivedAt": {"type": "string", "format": "date-time"},
+                        "jobLease": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
                 },
                 "PiSiteExportJobStatus": {
                     "type": "object",
@@ -488,13 +719,9 @@ def build_openapi_document() -> dict[str, Any]:
                         "stage": {"type": ["string", "null"]},
                         "piCodigo": {"type": ["string", "null"]},
                         "siteSigla": {"type": ["string", "null"]},
-                        "mode": {"type": ["string", "null"], "enum": ["delivery", "full", "prints-only", "pdf", "full-pdf", None]},
+                        "mode": {"type": ["string", "null"], "enum": ["full", "prints-only", "pdf", "full-pdf", None]},
                         "variant": {"type": ["string", "null"], "enum": ["original", "web", None]},
                         "downloadUrl": {"type": ["string", "null"], "format": "uri"},
-                        "pdfUrl": {"type": ["string", "null"], "format": "uri"},
-                        "pdfUrls": {"type": "array", "items": {"type": "string", "format": "uri"}},
-                        "artifacts": {"type": ["object", "null"], "additionalProperties": True},
-                        "telegram": {"type": ["object", "null"], "additionalProperties": True},
                         "artifactBytes": {"type": ["integer", "null"], "minimum": 1},
                         "artifactContentType": {"type": ["string", "null"]},
                         "artifactFileName": {"type": ["string", "null"]},

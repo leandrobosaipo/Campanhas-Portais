@@ -60,6 +60,7 @@ export type LocalCaptureOptions = {
   diagnosticMode?: boolean;
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
+  reconstructionReason?: "late_publication_recovery" | null;
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
@@ -80,6 +81,9 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
   }
   if (options?.captureAt) {
     args.push("--captureAt", options.captureAt);
+  }
+  if (options?.reconstructionReason) {
+    args.push("--reconstructionReason", options.reconstructionReason);
   }
   if (options?.jobId) {
     args.push("--jobId", options.jobId);

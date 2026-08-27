@@ -2,6 +2,19 @@
 
 Atualizado em: 2026-06-03
 
+## Atualização do scheduler em 2026-08-26
+
+Implementação preparada para o corte controlado:
+
+- API/Postgres passam a decidir agenda, idempotência, claim, heartbeat, retry e estado terminal.
+- Runner local apenas dispara a reconciliação; data e rotina não vêm do caller.
+- Worker público encaminha todo `/api/ops/*` ao Mac Mini quando `ADOPS_CONTROL_PLANE_PROVIDER=macmini`.
+- Cron Cloudflare permanece em `shadow` durante 72 horas e não grava D1.
+- Claim de alertas diários foi portado ao Postgres para não deixar uma escrita normal escondida no D1.
+- Runbook de corte, canário e rollback: `docs/adops/macmini-control-plane-scheduler-runbook.md`.
+
+O estado desta seção só muda para concluído depois de deploy, canário terminal, validação do consumidor real e 72 horas sem divergência.
+
 ## Status de execucao em 2026-06-03
 
 Executado:

@@ -162,17 +162,6 @@ Cada tentativa remove os artefatos temporarios anteriores antes de navegar. O
 readiness grava exclusivamente o viewport candidato; ele nao pode sobrescrever
 o recorte do slot nem reutilizar um viewport de uma tentativa anterior.
 
-Para o topo do Portal Norte MT, provas historicas exigem datas editoriais
-absolutas. O capturador coleta datas visiveis das materias e bloqueia qualquer
-texto relativo remanescente, como `ha 5 dias`, com
-`relative_content_time_unresolved`. A prova tambem precisa registrar ao menos
-uma data absoluta visivel; a ausencia retorna
-`absolute_content_time_missing`. O checklist exige o registro dessa varredura;
-metadado antigo sem o gate retorna
-`relative_content_time_audit_missing` ate a evidencia ser regenerada.
-O payload persistido conserva no maximo 25 amostras absolutas e 10 relativas,
-quantidade suficiente para a auditoria sem carregar o metadado completo da DOM.
-
 ### Jobs e progresso
 
 | Metodo | Endpoint | Funcao |

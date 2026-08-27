@@ -74,6 +74,183 @@ export const CreateDrivePiReconcileJobResponse = zod.object({
 });
 
 /**
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
+ */
+
+export const createCampaignPublicationReconcileJobBodyModeDefault = `apply`;
+
+export const CreateCampaignPublicationReconcileJobBody = zod.object({
+  targetDate: zod.coerce.date().optional(),
+  insertionId: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe("Restrict reconciliation to one existing canonical insertion."),
+  mode: zod
+    .enum(["preflight", "apply"])
+    .default(createCampaignPublicationReconcileJobBodyModeDefault)
+    .describe(
+      "Preflight returns only the deterministic decision; apply executes it when the automation gate permits.",
+    ),
+});
+
+export const CreateCampaignPublicationReconcileJobResponse = zod.object({
+  ok: zod.boolean(),
+  jobId: zod.string(),
+  kind: zod.literal("campaign-publication-reconcile"),
+  status: zod.enum(["ready_for_runner", "running", "completed", "failed"]),
+  duplicate: zod.boolean(),
+});
+
+/**
+ * @summary List operational jobs in compact form
+ */
+export const listOpsJobsQueryLimitDefault = 20;
+export const listOpsJobsQueryLimitMax = 100;
+
+export const ListOpsJobsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listOpsJobsQueryLimitMax)
+    .default(listOpsJobsQueryLimitDefault),
+  status: zod.coerce.string().optional(),
+  kind: zod.coerce.string().optional(),
+});
+
+export const ListOpsJobsResponse = zod.record(zod.string(), zod.unknown());
+
+/**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+export const GetDailyPrintStatusQueryParams = zod.object({
+  date: zod
+    .date()
+    .optional()
+    .describe(
+      "When informed, returns the attempt for this historical date instead of the latest routine.",
+    ),
+});
+
+export const getDailyPrintStatusResponseLastAttemptOneExpectedMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneApprovedMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneMissingMin = 0;
+
+export const getDailyPrintStatusResponseLastAttemptOneInvalidMin = 0;
+
+export const GetDailyPrintStatusResponse = zod.object({
+  timeZone: zod.literal("America/Cuiaba"),
+  schedule: zod.literal("18:00"),
+  nextRunAt: zod.coerce.date(),
+  lastAttempt: zod.union([
+    zod.object({
+      jobId: zod.string(),
+      targetDate: zod.coerce.date(),
+      status: zod.enum(["queued", "running", "completed", "partial", "failed"]),
+      startedAt: zod.coerce.date().nullish(),
+      finishedAt: zod.coerce.date().nullish(),
+      expected: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneExpectedMin),
+      approved: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneApprovedMin),
+      missing: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneMissingMin),
+      invalid: zod
+        .number()
+        .min(getDailyPrintStatusResponseLastAttemptOneInvalidMin),
+      summary: zod.string(),
+    }),
+    zod.null(),
+  ]),
+  lastFullyApproved: zod.union([
+    zod.object({
+      targetDate: zod.coerce.date(),
+      finishedAt: zod.coerce.date().nullable(),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+export const GetDailyPrintRecoveriesQueryParams = zod.object({
+  date: zod.date(),
+});
+
+export const GetDailyPrintRecoveriesResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+export const listOpsIncidentsQueryLimitDefault = 50;
+export const listOpsIncidentsQueryLimitMax = 100;
+
+export const ListOpsIncidentsQueryParams = zod.object({
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(listOpsIncidentsQueryLimitMax)
+    .default(listOpsIncidentsQueryLimitDefault),
+});
+
+export const ListOpsIncidentsResponse = zod.object({
+  items: zod.array(
+    zod.object({
+      id: zod.string(),
+      fingerprint: zod.string(),
+      status: zod.enum(["open", "resolved"]),
+      layer: zod.enum([
+        "scheduling",
+        "queue_or_runner",
+        "api_or_runner_transport",
+        "audit",
+        "portal",
+        "job_execution",
+      ]),
+      jobId: zod.string(),
+      jobKind: zod.string(),
+      summary: zod.string(),
+      error: zod.string().nullish(),
+      evidence: zod.record(zod.string(), zod.unknown()),
+      attempts: zod.number().min(1),
+      createdAt: zod.coerce.date(),
+      updatedAt: zod.coerce.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+export const GetOpsJobParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetOpsJobResponse = zod.record(zod.string(), zod.unknown());
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+export const GetOpsJobProgressParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const GetOpsJobProgressResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
  */
 export const getActiveCampaignOperationsQueryIncludeEvidenceDefault = true;
@@ -94,6 +271,110 @@ export const GetActiveCampaignOperationsResponse = zod.record(
   zod.string(),
   zod.unknown(),
 );
+
+/**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+export const GetPendingCampaignOperationsQueryParams = zod.object({
+  date: zod.date().optional(),
+});
+
+export const getPendingCampaignOperationsResponseItemsItemOperationalIdentityFingerprintRegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const GetPendingCampaignOperationsResponse = zod.object({
+  date: zod.coerce.date(),
+  generatedAt: zod.coerce.date(),
+  summary: zod.record(zod.string(), zod.unknown()),
+  items: zod.array(
+    zod.object({
+      identityMode: zod
+        .union([
+          zod.literal("authoritative_pi"),
+          zod.literal("operational_identity"),
+          zod.literal("sheet_drive_composite"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      commercialIdentityStatus: zod.enum([
+        "confirmed",
+        "awaiting_authoritative_pi",
+      ]),
+      publicationStatus: zod.enum([
+        "awaiting_authoritative_pi",
+        "ready_for_preflight",
+        "ready_for_publication",
+        "published",
+        "failed_retryable",
+      ]),
+      resolutionStatus: zod.string(),
+      resolutionReason: zod.string().optional(),
+      resumeAction: zod.string().optional(),
+      lastCheckedAt: zod.coerce.date().optional(),
+      nextCheckAt: zod.coerce.date().nullish(),
+      operationalIdentity: zod.object({
+        gates: zod.record(zod.string(), zod.boolean()),
+        fingerprint: zod
+          .string()
+          .regex(
+            getPendingCampaignOperationsResponseItemsItemOperationalIdentityFingerprintRegExp,
+          ),
+        source: zod.record(zod.string(), zod.unknown()),
+      }),
+    }),
+  ),
+  upcomingItems: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+export const GetMonthlyEvidenceSourceQueryParams = zod.object({
+  date: zod.date().optional(),
+  competencia: zod.coerce.string().optional(),
+});
+
+export const getMonthlyEvidenceSourceResponseSourceSha256RegExp = new RegExp(
+  "^[a-f0-9]{64}$",
+);
+export const getMonthlyEvidenceSourceResponseDriveInventorySnapshotAgeSecondsMin = 0;
+
+export const getMonthlyEvidenceSourceResponseDriveInventoryItemCountMin = 0;
+
+export const GetMonthlyEvidenceSourceResponse = zod.object({
+  source: zod
+    .object({
+      sheetName: zod.string(),
+      downloadedAt: zod.coerce.date(),
+      sha256: zod
+        .string()
+        .regex(getMonthlyEvidenceSourceResponseSourceSha256RegExp),
+      competencia: zod.string(),
+    })
+    .optional(),
+  driveInventory: zod
+    .object({
+      snapshotStatus: zod.enum([
+        "fresh",
+        "stale",
+        "unavailable",
+        "syncing",
+        "failed",
+      ]),
+      snapshotAt: zod.coerce.date().nullable(),
+      snapshotAgeSeconds: zod
+        .number()
+        .min(
+          getMonthlyEvidenceSourceResponseDriveInventorySnapshotAgeSecondsMin,
+        )
+        .nullable(),
+      stale: zod.boolean(),
+      itemCount: zod
+        .number()
+        .min(getMonthlyEvidenceSourceResponseDriveInventoryItemCountMin),
+    })
+    .optional(),
+});
 
 /**
  * @summary List all sites
@@ -764,6 +1045,12 @@ export const UpdateInsertionParams = zod.object({
 });
 
 export const UpdateInsertionBody = zod.object({
+  expectedUpdatedAt: zod.coerce
+    .date()
+    .optional()
+    .describe(
+      "Optimistic concurrency guard; returns 409 when the insertion changed.",
+    ),
   siteId: zod.number().nullish(),
   localFormato: zod.string().nullish(),
   localFormatoNormalizado: zod.string().nullish(),
@@ -837,6 +1124,12 @@ export const GetInsertionMediaConsistencyResponse = zod.object({
 export const BulkUpdateInsertionsBody = zod.object({
   ids: zod.array(zod.number()),
   updates: zod.object({
+    expectedUpdatedAt: zod.coerce
+      .date()
+      .optional()
+      .describe(
+        "Optimistic concurrency guard; returns 409 when the insertion changed.",
+      ),
     siteId: zod.number().nullish(),
     localFormato: zod.string().nullish(),
     localFormatoNormalizado: zod.string().nullish(),
@@ -918,6 +1211,55 @@ export const GetCaptureProofStatusResponse = zod.object({
 });
 
 /**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+
+export const ReconcileScheduledCaptureProofsBody = zod.object({
+  date: zod.coerce.date(),
+  insertionIds: zod.array(zod.number().min(1)).min(1),
+  mode: zod.enum(["dryRun", "apply"]),
+  sourceKind: zod.enum(["daily_batch", "same_day_inline"]),
+  sourceJobId: zod
+    .string()
+    .optional()
+    .describe("Required for daily_batch and omitted for same_day_inline."),
+});
+
+export const reconcileScheduledCaptureProofsResponseReconciledMin = 0;
+
+export const ReconcileScheduledCaptureProofsResponse = zod.object({
+  ok: zod.boolean(),
+  date: zod.coerce.date(),
+  mode: zod.enum(["dryRun", "apply"]),
+  sourceKind: zod.enum(["daily_batch", "same_day_inline"]),
+  sourceJobId: zod.string().nullish(),
+  reconciled: zod
+    .number()
+    .min(reconcileScheduledCaptureProofsResponseReconciledMin),
+  items: zod.array(
+    zod.object({
+      insertionId: zod.number(),
+      status: zod.enum(["ready", "ok", "ok_best_effort", "blocked"]),
+      reason: zod.string().nullish(),
+      blockers: zod.array(zod.string()).optional(),
+      logId: zod.string().nullish(),
+      evidenceId: zod.number().nullish(),
+      captureClass: zod
+        .union([
+          zod.literal("scheduled"),
+          zod.literal("same_day_retry"),
+          zod.literal("historical_recovery"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      sourceJobId: zod.string().nullish(),
+      capturedAt: zod.coerce.date().nullish(),
+      unchangedEvidence: zod.boolean().optional(),
+    }),
+  ),
+});
+
+/**
  * @summary Validate capture proof, including strict readiness gates
  */
 export const ValidateCaptureProofBody = zod.object({
@@ -965,7 +1307,7 @@ export const CreateEvidenceBody = zod.object({
 });
 
 /**
- * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized progressive JPEG copies; canonical evidence files and audit URLs are not changed.
  * @summary Export insertion evidence package
  */
 export const ExportInsertionEvidencesParams = zod.object({
@@ -983,6 +1325,75 @@ export const ExportInsertionEvidencesQueryParams = zod.object({
     .enum(["original", "web"])
     .default(exportInsertionEvidencesQueryVariantDefault),
   source: zod.coerce.string().nullish(),
+});
+
+/**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const createPiSiteExportJobHeaderIdempotencyKeyMin = 8;
+export const createPiSiteExportJobHeaderIdempotencyKeyMax = 160;
+
+export const CreatePiSiteExportJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createPiSiteExportJobHeaderIdempotencyKeyMin)
+    .max(createPiSiteExportJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createPiSiteExportJobBodyModeDefault = `full-pdf`;
+export const createPiSiteExportJobBodyVariantDefault = `web`;
+export const createPiSiteExportJobBodyImageMaxWidthDefault = 1600;
+export const createPiSiteExportJobBodyImageMaxWidthMin = 800;
+export const createPiSiteExportJobBodyImageMaxWidthMax = 2560;
+
+export const createPiSiteExportJobBodyImageQualityDefault = 72;
+export const createPiSiteExportJobBodyImageQualityMin = 45;
+export const createPiSiteExportJobBodyImageQualityMax = 90;
+
+export const CreatePiSiteExportJobBody = zod.object({
+  piCodigo: zod.string(),
+  siteSigla: zod.string(),
+  mode: zod
+    .enum(["full-pdf", "prints-only"])
+    .default(createPiSiteExportJobBodyModeDefault),
+  variant: zod
+    .enum(["original", "web"])
+    .default(createPiSiteExportJobBodyVariantDefault),
+  imageMaxWidth: zod
+    .number()
+    .min(createPiSiteExportJobBodyImageMaxWidthMin)
+    .max(createPiSiteExportJobBodyImageMaxWidthMax)
+    .default(createPiSiteExportJobBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createPiSiteExportJobBodyImageQualityMin)
+    .max(createPiSiteExportJobBodyImageQualityMax)
+    .default(createPiSiteExportJobBodyImageQualityDefault),
+});
+
+export const CreatePiSiteExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+export const GetPiSiteExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const GetPiSiteExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+export const DownloadPiSiteExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
 });
 
 /**
@@ -1010,6 +1421,141 @@ export const ExportPiSitePackageResponse = zod.record(
   zod.string(),
   zod.unknown(),
 );
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const createCampaignEvidenceExportJobHeaderIdempotencyKeyMin = 8;
+export const createCampaignEvidenceExportJobHeaderIdempotencyKeyMax = 160;
+
+export const CreateCampaignEvidenceExportJobHeader = zod.object({
+  "Idempotency-Key": zod
+    .string()
+    .min(createCampaignEvidenceExportJobHeaderIdempotencyKeyMin)
+    .max(createCampaignEvidenceExportJobHeaderIdempotencyKeyMax)
+    .optional(),
+});
+
+export const createCampaignEvidenceExportJobBodyModeDefault = `prints-only`;
+export const createCampaignEvidenceExportJobBodyVariantDefault = `web`;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthDefault = 1600;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthMin = 800;
+export const createCampaignEvidenceExportJobBodyImageMaxWidthMax = 2560;
+
+export const createCampaignEvidenceExportJobBodyImageQualityDefault = 72;
+export const createCampaignEvidenceExportJobBodyImageQualityMin = 45;
+export const createCampaignEvidenceExportJobBodyImageQualityMax = 90;
+
+export const CreateCampaignEvidenceExportJobBody = zod.object({
+  piCodigo: zod.string(),
+  competencia: zod.string(),
+  mode: zod
+    .literal("prints-only")
+    .default(createCampaignEvidenceExportJobBodyModeDefault),
+  variant: zod
+    .literal("web")
+    .default(createCampaignEvidenceExportJobBodyVariantDefault),
+  imageMaxWidth: zod
+    .number()
+    .min(createCampaignEvidenceExportJobBodyImageMaxWidthMin)
+    .max(createCampaignEvidenceExportJobBodyImageMaxWidthMax)
+    .default(createCampaignEvidenceExportJobBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createCampaignEvidenceExportJobBodyImageQualityMin)
+    .max(createCampaignEvidenceExportJobBodyImageQualityMax)
+    .default(createCampaignEvidenceExportJobBodyImageQualityDefault),
+});
+
+export const CreateCampaignEvidenceExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const createCampaignEvidenceExportBatchBodyCampaignsMax = 25;
+
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthDefault = 1600;
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthMin = 800;
+export const createCampaignEvidenceExportBatchBodyImageMaxWidthMax = 2560;
+
+export const createCampaignEvidenceExportBatchBodyImageQualityDefault = 72;
+export const createCampaignEvidenceExportBatchBodyImageQualityMin = 45;
+export const createCampaignEvidenceExportBatchBodyImageQualityMax = 90;
+
+export const CreateCampaignEvidenceExportBatchBody = zod.object({
+  competencia: zod.string(),
+  asOfDate: zod.coerce
+    .date()
+    .optional()
+    .describe(
+      "Optional inclusive evidence cutoff for immutable historical snapshots.",
+    ),
+  campaigns: zod
+    .array(
+      zod.object({
+        piCodigo: zod.string(),
+      }),
+    )
+    .min(1)
+    .max(createCampaignEvidenceExportBatchBodyCampaignsMax),
+  mode: zod.literal("prints-only").optional(),
+  variant: zod.literal("web").optional(),
+  imageMaxWidth: zod
+    .number()
+    .min(createCampaignEvidenceExportBatchBodyImageMaxWidthMin)
+    .max(createCampaignEvidenceExportBatchBodyImageMaxWidthMax)
+    .default(createCampaignEvidenceExportBatchBodyImageMaxWidthDefault),
+  imageQuality: zod
+    .number()
+    .min(createCampaignEvidenceExportBatchBodyImageQualityMin)
+    .max(createCampaignEvidenceExportBatchBodyImageQualityMax)
+    .default(createCampaignEvidenceExportBatchBodyImageQualityDefault),
+});
+
+export const CreateCampaignEvidenceExportBatchResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+export const GetCampaignEvidenceExportJobParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+export const GetCampaignEvidenceExportJobResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+export const DownloadCampaignEvidenceExportParams = zod.object({
+  jobId: zod.coerce.string(),
+});
+
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+export const DownloadInsertionEvidenceParams = zod.object({
+  id: zod.coerce.number(),
+  date: zod.date(),
+});
+
+export const downloadInsertionEvidenceQueryVariantDefault = `web`;
+export const downloadInsertionEvidenceQueryImageMaxWidthDefault = 1600;
+export const downloadInsertionEvidenceQueryImageQualityDefault = 72;
+
+export const DownloadInsertionEvidenceQueryParams = zod.object({
+  variant: zod
+    .enum(["web"])
+    .default(downloadInsertionEvidenceQueryVariantDefault),
+  imageMaxWidth: zod
+    .literal(1600)
+    .default(downloadInsertionEvidenceQueryImageMaxWidthDefault),
+  imageQuality: zod
+    .literal(72)
+    .default(downloadInsertionEvidenceQueryImageQualityDefault),
+});
 
 export const DeleteEvidenceParams = zod.object({
   id: zod.coerce.number(),

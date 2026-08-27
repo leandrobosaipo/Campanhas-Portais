@@ -26,15 +26,21 @@ bash /Users/leandrobosaipo/.agents/skills/portainer/portainer.sh endpoints
 - Nao expor `OPS_API_TOKEN`, `PORTAINER_API_KEY` ou headers.
 - Nao usar `printGerado` como aprovacao de evidencia.
 - Nao chamar rotas de mutacao.
+- Usar exclusivamente a fonte mensal da API AdOps; nunca acessar a planilha diretamente nem usar fallback para a fonte ativa.
+- Manter campanhas encerradas no documento mesmo quando a interface abrir filtrada em `Ativas`.
+- Restaurar somente com evidências já armazenadas; não criar jobs de print.
+- Antes das 18h e durante a rotina diária, retirar o dia corrente do corte de pendências.
 - Nao tratar insercao futura como pendente.
 - Nao tratar insercao sem publicacao no site como pendente de evidencia.
 - Quando houver `pendente`, abrir o modal ou `data.json` e informar as datas exatas.
 - Quando houver `erro`, informar status e issue retornada por `capture-proof/status`.
 - Nao publicar fora do `sites-index`.
 - Quando o portal mostrar o banner mas o AdOps marcar `sem publicação`, nao gere evidencia primeiro. Corrija metadata da insercao e regra publicada de captura, rode a integridade, e so entao gere retroativos.
+- Grupo AdRotate em rotação não é duplicidade: consulte `relation.canonicalSelection` e `relation.rotation`. Preservar anúncios históricos e aprovar somente quando a evidência pertencer à mídia esperada da inserção canônica.
+- Para retroativos, usar um job idempotente por inserção e acompanhar o mesmo `jobId` até terminal. Datas já `audited` não podem ser recapturadas.
 
 ## Quando houver divergencia
 
-- Se API e HTML divergirem, confiar na API e regenerar.
+- Se API e HTML divergirem, conferir `canonicalSelection`, mídia esperada e amostra pública do grupo antes de regenerar.
 - Se evidencia falhar, registrar como pendente ou erro. Nao aprovar manualmente.
 - Se Portainer falhar, manter artefato local e registrar bloqueio.

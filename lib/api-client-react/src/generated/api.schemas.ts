@@ -5,6 +5,147 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+export type CaptureProofReconciliationRequestMode =
+  (typeof CaptureProofReconciliationRequestMode)[keyof typeof CaptureProofReconciliationRequestMode];
+
+export const CaptureProofReconciliationRequestMode = {
+  dryRun: "dryRun",
+  apply: "apply",
+} as const;
+
+export type CaptureProofReconciliationRequestSourceKind =
+  (typeof CaptureProofReconciliationRequestSourceKind)[keyof typeof CaptureProofReconciliationRequestSourceKind];
+
+export const CaptureProofReconciliationRequestSourceKind = {
+  daily_batch: "daily_batch",
+  same_day_inline: "same_day_inline",
+} as const;
+
+export interface CaptureProofReconciliationRequest {
+  date: string;
+  /** @minItems 1 */
+  insertionIds: number[];
+  mode: CaptureProofReconciliationRequestMode;
+  sourceKind: CaptureProofReconciliationRequestSourceKind;
+  /** Required for daily_batch and omitted for same_day_inline. */
+  sourceJobId?: string;
+}
+
+export type CaptureProofReconciliationItemStatus =
+  (typeof CaptureProofReconciliationItemStatus)[keyof typeof CaptureProofReconciliationItemStatus];
+
+export const CaptureProofReconciliationItemStatus = {
+  ready: "ready",
+  ok: "ok",
+  ok_best_effort: "ok_best_effort",
+  blocked: "blocked",
+} as const;
+
+/**
+ * @nullable
+ */
+export type CaptureProofReconciliationItemCaptureClass =
+  | (typeof CaptureProofReconciliationItemCaptureClass)[keyof typeof CaptureProofReconciliationItemCaptureClass]
+  | null;
+
+export const CaptureProofReconciliationItemCaptureClass = {
+  scheduled: "scheduled",
+  same_day_retry: "same_day_retry",
+  historical_recovery: "historical_recovery",
+} as const;
+
+export interface CaptureProofReconciliationItem {
+  insertionId: number;
+  status: CaptureProofReconciliationItemStatus;
+  /** @nullable */
+  reason?: string | null;
+  blockers?: string[];
+  /** @nullable */
+  logId?: string | null;
+  /** @nullable */
+  evidenceId?: number | null;
+  /** @nullable */
+  captureClass?: CaptureProofReconciliationItemCaptureClass;
+  /** @nullable */
+  sourceJobId?: string | null;
+  /** @nullable */
+  capturedAt?: string | null;
+  unchangedEvidence?: boolean;
+  [key: string]: unknown;
+}
+
+export type CaptureProofReconciliationResponseMode =
+  (typeof CaptureProofReconciliationResponseMode)[keyof typeof CaptureProofReconciliationResponseMode];
+
+export const CaptureProofReconciliationResponseMode = {
+  dryRun: "dryRun",
+  apply: "apply",
+} as const;
+
+export type CaptureProofReconciliationResponseSourceKind =
+  (typeof CaptureProofReconciliationResponseSourceKind)[keyof typeof CaptureProofReconciliationResponseSourceKind];
+
+export const CaptureProofReconciliationResponseSourceKind = {
+  daily_batch: "daily_batch",
+  same_day_inline: "same_day_inline",
+} as const;
+
+export interface CaptureProofReconciliationResponse {
+  ok: boolean;
+  date: string;
+  mode: CaptureProofReconciliationResponseMode;
+  sourceKind: CaptureProofReconciliationResponseSourceKind;
+  /** @nullable */
+  sourceJobId?: string | null;
+  /** @minimum 0 */
+  reconciled: number;
+  items: CaptureProofReconciliationItem[];
+}
+
+export type DailyPrintAttemptStatus =
+  (typeof DailyPrintAttemptStatus)[keyof typeof DailyPrintAttemptStatus];
+
+export const DailyPrintAttemptStatus = {
+  queued: "queued",
+  running: "running",
+  completed: "completed",
+  partial: "partial",
+  failed: "failed",
+} as const;
+
+export interface DailyPrintAttempt {
+  jobId: string;
+  targetDate: string;
+  status: DailyPrintAttemptStatus;
+  /** @nullable */
+  startedAt?: string | null;
+  /** @nullable */
+  finishedAt?: string | null;
+  /** @minimum 0 */
+  expected: number;
+  /** @minimum 0 */
+  approved: number;
+  /** @minimum 0 */
+  missing: number;
+  /** @minimum 0 */
+  invalid: number;
+  summary: string;
+}
+
+export type DailyPrintStatusLastFullyApproved = {
+  targetDate: string;
+  /** @nullable */
+  finishedAt: string | null;
+} | null;
+
+export interface DailyPrintStatus {
+  timeZone: "America/Cuiaba";
+  schedule: "18:00";
+  nextRunAt: string;
+  lastAttempt: DailyPrintAttempt | null;
+  lastFullyApproved: DailyPrintStatusLastFullyApproved;
+}
+
 export interface DrivePiReconcileBody {
   /** @minimum 1 */
   insertionId: number;
@@ -29,6 +170,45 @@ export interface DrivePiReconcileBody {
   idempotencyKey?: string | null;
 }
 
+export type OpsIncidentStatus =
+  (typeof OpsIncidentStatus)[keyof typeof OpsIncidentStatus];
+
+export const OpsIncidentStatus = {
+  open: "open",
+  resolved: "resolved",
+} as const;
+
+export type OpsIncidentLayer =
+  (typeof OpsIncidentLayer)[keyof typeof OpsIncidentLayer];
+
+export const OpsIncidentLayer = {
+  scheduling: "scheduling",
+  queue_or_runner: "queue_or_runner",
+  api_or_runner_transport: "api_or_runner_transport",
+  audit: "audit",
+  portal: "portal",
+  job_execution: "job_execution",
+} as const;
+
+export type OpsIncidentEvidence = { [key: string]: unknown };
+
+export interface OpsIncident {
+  id: string;
+  fingerprint: string;
+  status: OpsIncidentStatus;
+  layer: OpsIncidentLayer;
+  jobId: string;
+  jobKind: string;
+  summary: string;
+  /** @nullable */
+  error?: string | null;
+  evidence: OpsIncidentEvidence;
+  /** @minimum 1 */
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OpsJobAccepted {
   ok: boolean;
   jobId: string;
@@ -37,6 +217,24 @@ export interface OpsJobAccepted {
   duplicate: boolean;
   apply: boolean;
   requiredFollowUp: string[];
+}
+
+export type CampaignPublicationReconcileJobAcceptedStatus =
+  (typeof CampaignPublicationReconcileJobAcceptedStatus)[keyof typeof CampaignPublicationReconcileJobAcceptedStatus];
+
+export const CampaignPublicationReconcileJobAcceptedStatus = {
+  ready_for_runner: "ready_for_runner",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface CampaignPublicationReconcileJobAccepted {
+  ok: boolean;
+  jobId: string;
+  kind: "campaign-publication-reconcile";
+  status: CampaignPublicationReconcileJobAcceptedStatus;
+  duplicate: boolean;
 }
 
 export interface OpsRuntimeTopology {
@@ -801,6 +999,8 @@ export interface CreateInsertionBody {
 }
 
 export interface UpdateInsertionBody {
+  /** Optimistic concurrency guard; returns 409 when the insertion changed. */
+  expectedUpdatedAt?: string;
   /** @nullable */
   siteId?: number | null;
   /** @nullable */
@@ -993,6 +1193,69 @@ export interface CompetenciaBreakdown {
   atrasadas: number;
 }
 
+/**
+ * Preflight returns only the deterministic decision; apply executes it when the automation gate permits.
+ */
+export type CreateCampaignPublicationReconcileJobBodyMode =
+  (typeof CreateCampaignPublicationReconcileJobBodyMode)[keyof typeof CreateCampaignPublicationReconcileJobBodyMode];
+
+export const CreateCampaignPublicationReconcileJobBodyMode = {
+  preflight: "preflight",
+  apply: "apply",
+} as const;
+
+export type CreateCampaignPublicationReconcileJobBody = {
+  targetDate?: string;
+  /**
+   * Restrict reconciliation to one existing canonical insertion.
+   * @minimum 1
+   */
+  insertionId?: number;
+  /** Preflight returns only the deterministic decision; apply executes it when the automation gate permits. */
+  mode?: CreateCampaignPublicationReconcileJobBodyMode;
+};
+
+export type ListOpsJobsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  status?: string;
+  kind?: string;
+};
+
+export type ListOpsJobs200 = { [key: string]: unknown };
+
+export type GetDailyPrintStatusParams = {
+  /**
+   * When informed, returns the attempt for this historical date instead of the latest routine.
+   */
+  date?: string;
+};
+
+export type GetDailyPrintRecoveriesParams = {
+  date: string;
+};
+
+export type GetDailyPrintRecoveries200 = { [key: string]: unknown };
+
+export type ListOpsIncidentsParams = {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type ListOpsIncidents200 = {
+  items: OpsIncident[];
+};
+
+export type GetOpsJob200 = { [key: string]: unknown };
+
+export type GetOpsJobProgress200 = { [key: string]: unknown };
+
 export type GetActiveCampaignOperationsParams = {
   date?: string;
   siteSigla?: string;
@@ -1001,6 +1264,127 @@ export type GetActiveCampaignOperationsParams = {
 };
 
 export type GetActiveCampaignOperations200 = { [key: string]: unknown };
+
+export type GetPendingCampaignOperationsParams = {
+  date?: string;
+};
+
+export type GetPendingCampaignOperations200Summary = { [key: string]: unknown };
+
+/**
+ * @nullable
+ */
+export type GetPendingCampaignOperations200ItemsItemIdentityMode =
+  | (typeof GetPendingCampaignOperations200ItemsItemIdentityMode)[keyof typeof GetPendingCampaignOperations200ItemsItemIdentityMode]
+  | null;
+
+export const GetPendingCampaignOperations200ItemsItemIdentityMode = {
+  authoritative_pi: "authoritative_pi",
+  operational_identity: "operational_identity",
+  sheet_drive_composite: "sheet_drive_composite",
+} as const;
+
+export type GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus =
+  (typeof GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus)[keyof typeof GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus];
+
+export const GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus =
+  {
+    confirmed: "confirmed",
+    awaiting_authoritative_pi: "awaiting_authoritative_pi",
+  } as const;
+
+export type GetPendingCampaignOperations200ItemsItemPublicationStatus =
+  (typeof GetPendingCampaignOperations200ItemsItemPublicationStatus)[keyof typeof GetPendingCampaignOperations200ItemsItemPublicationStatus];
+
+export const GetPendingCampaignOperations200ItemsItemPublicationStatus = {
+  awaiting_authoritative_pi: "awaiting_authoritative_pi",
+  ready_for_preflight: "ready_for_preflight",
+  ready_for_publication: "ready_for_publication",
+  published: "published",
+  failed_retryable: "failed_retryable",
+} as const;
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentityGates = {
+  [key: string]: boolean;
+};
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentitySource =
+  { [key: string]: unknown };
+
+export type GetPendingCampaignOperations200ItemsItemOperationalIdentity = {
+  gates: GetPendingCampaignOperations200ItemsItemOperationalIdentityGates;
+  /** @pattern ^[a-f0-9]{64}$ */
+  fingerprint: string;
+  source: GetPendingCampaignOperations200ItemsItemOperationalIdentitySource;
+};
+
+export type GetPendingCampaignOperations200ItemsItem = {
+  /** @nullable */
+  identityMode?: GetPendingCampaignOperations200ItemsItemIdentityMode;
+  commercialIdentityStatus: GetPendingCampaignOperations200ItemsItemCommercialIdentityStatus;
+  publicationStatus: GetPendingCampaignOperations200ItemsItemPublicationStatus;
+  resolutionStatus: string;
+  resolutionReason?: string;
+  resumeAction?: string;
+  lastCheckedAt?: string;
+  /** @nullable */
+  nextCheckAt?: string | null;
+  operationalIdentity: GetPendingCampaignOperations200ItemsItemOperationalIdentity;
+  [key: string]: unknown;
+};
+
+export type GetPendingCampaignOperations200 = {
+  date: string;
+  generatedAt: string;
+  summary: GetPendingCampaignOperations200Summary;
+  items: GetPendingCampaignOperations200ItemsItem[];
+  upcomingItems?: unknown[];
+  [key: string]: unknown;
+};
+
+export type GetMonthlyEvidenceSourceParams = {
+  date?: string;
+  competencia?: string;
+};
+
+export type GetMonthlyEvidenceSource200Source = {
+  sheetName: string;
+  downloadedAt: string;
+  /** @pattern ^[a-f0-9]{64}$ */
+  sha256: string;
+  competencia: string;
+};
+
+export type GetMonthlyEvidenceSource200DriveInventorySnapshotStatus =
+  (typeof GetMonthlyEvidenceSource200DriveInventorySnapshotStatus)[keyof typeof GetMonthlyEvidenceSource200DriveInventorySnapshotStatus];
+
+export const GetMonthlyEvidenceSource200DriveInventorySnapshotStatus = {
+  fresh: "fresh",
+  stale: "stale",
+  unavailable: "unavailable",
+  syncing: "syncing",
+  failed: "failed",
+} as const;
+
+export type GetMonthlyEvidenceSource200DriveInventory = {
+  snapshotStatus: GetMonthlyEvidenceSource200DriveInventorySnapshotStatus;
+  /** @nullable */
+  snapshotAt: string | null;
+  /**
+   * @minimum 0
+   * @nullable
+   */
+  snapshotAgeSeconds: number | null;
+  stale: boolean;
+  /** @minimum 0 */
+  itemCount: number;
+};
+
+export type GetMonthlyEvidenceSource200 = {
+  source?: GetMonthlyEvidenceSource200Source;
+  driveInventory?: GetMonthlyEvidenceSource200DriveInventory;
+  [key: string]: unknown;
+};
 
 export type ListCampaignsParams = {
   /**
@@ -1077,6 +1461,45 @@ export const ExportInsertionEvidencesVariant = {
   web: "web",
 } as const;
 
+export type CreatePiSiteExportJobBodyMode =
+  (typeof CreatePiSiteExportJobBodyMode)[keyof typeof CreatePiSiteExportJobBodyMode];
+
+export const CreatePiSiteExportJobBodyMode = {
+  "full-pdf": "full-pdf",
+  "prints-only": "prints-only",
+} as const;
+
+export type CreatePiSiteExportJobBodyVariant =
+  (typeof CreatePiSiteExportJobBodyVariant)[keyof typeof CreatePiSiteExportJobBodyVariant];
+
+export const CreatePiSiteExportJobBodyVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type CreatePiSiteExportJobBody = {
+  piCodigo: string;
+  siteSigla: string;
+  mode?: CreatePiSiteExportJobBodyMode;
+  variant?: CreatePiSiteExportJobBodyVariant;
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreatePiSiteExportJob200 = { [key: string]: unknown };
+
+export type CreatePiSiteExportJob202 = { [key: string]: unknown };
+
+export type GetPiSiteExportJob200 = { [key: string]: unknown };
+
 export type ExportPiSitePackageParams = {
   piCodigo: string;
   siteSigla: string;
@@ -1110,6 +1533,89 @@ export const ExportPiSitePackageVariant = {
 } as const;
 
 export type ExportPiSitePackage200One = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportJobBody = {
+  piCodigo: string;
+  competencia: string;
+  mode?: "prints-only";
+  variant?: "web";
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreateCampaignEvidenceExportJob200 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportJob202 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatchBodyCampaignsItem = {
+  piCodigo: string;
+};
+
+export type CreateCampaignEvidenceExportBatchBody = {
+  competencia: string;
+  /** Optional inclusive evidence cutoff for immutable historical snapshots. */
+  asOfDate?: string;
+  /**
+   * @minItems 1
+   * @maxItems 25
+   */
+  campaigns: CreateCampaignEvidenceExportBatchBodyCampaignsItem[];
+  mode?: "prints-only";
+  variant?: "web";
+  /**
+   * @minimum 800
+   * @maximum 2560
+   */
+  imageMaxWidth?: number;
+  /**
+   * @minimum 45
+   * @maximum 90
+   */
+  imageQuality?: number;
+};
+
+export type CreateCampaignEvidenceExportBatch200 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatch202 = { [key: string]: unknown };
+
+export type CreateCampaignEvidenceExportBatch409 = { [key: string]: unknown };
+
+export type GetCampaignEvidenceExportJob200 = { [key: string]: unknown };
+
+export type DownloadInsertionEvidenceParams = {
+  variant?: DownloadInsertionEvidenceVariant;
+  imageMaxWidth?: DownloadInsertionEvidenceImageMaxWidth;
+  imageQuality?: DownloadInsertionEvidenceImageQuality;
+};
+
+export type DownloadInsertionEvidenceVariant =
+  (typeof DownloadInsertionEvidenceVariant)[keyof typeof DownloadInsertionEvidenceVariant];
+
+export const DownloadInsertionEvidenceVariant = {
+  web: "web",
+} as const;
+
+export type DownloadInsertionEvidenceImageMaxWidth =
+  (typeof DownloadInsertionEvidenceImageMaxWidth)[keyof typeof DownloadInsertionEvidenceImageMaxWidth];
+
+export const DownloadInsertionEvidenceImageMaxWidth = {
+  NUMBER_1600: 1600,
+} as const;
+
+export type DownloadInsertionEvidenceImageQuality =
+  (typeof DownloadInsertionEvidenceImageQuality)[keyof typeof DownloadInsertionEvidenceImageQuality];
+
+export const DownloadInsertionEvidenceImageQuality = {
+  NUMBER_72: 72,
+} as const;
 
 export type GetDashboardSummaryParams = {
   /**

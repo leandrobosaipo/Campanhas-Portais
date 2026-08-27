@@ -1,0 +1,339 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+import worker from "../../ops/cloudflare-public-api/src/index";
+
+function jobRecord(overrides = {}) {
+  const old = new Date(Date.now() - 20 * 60_000).toISOString();
+  return {
+    id: "legacy-job",
+    kind: "print-batch",
+    status: "queued",
+    payload_json: JSON.stringify({ source: "cloudflare-daily-print-cron", date: "2026-08-13" }),
+    result_json: null,
+    error_text: null,
+    requested_by: "cloudflare-scheduled",
+    runner_id: null,
+    created_at: old,
+    updated_at: old,
+    ...overrides,
+  };
+}
+
+function fakeEnv(options = {}) {
+  const statements = [];
+  const rows = new Map((options.active ?? []).map((item) => [String(item.id), { ...item }]));
+  const incidents = new Map();
+  let queueSends = 0;
+  const db = {
+    prepare(sql) {
+      const statement = { sql, values: [] };
+      statements.push(statement);
+      return {
+        bind(...values) {
+          statement.values = values;
+          return this;
+        },
+        async run() {
+          if (/UPDATE ops_jobs\s+SET status/.test(sql)) {
+            const transactionalFailure = /status = 'failed'/.test(sql);
+            const id = String(transactionalFailure ? statement.values.at(-3) : statement.values.at(-1));
+            const row = rows.get(id);
+            if (row) {
+              row.status = transactionalFailure ? "failed" : statement.values[0];
+              row.result_json = transactionalFailure ? statement.values[0] : statement.values[1];
+              row.error_text = transactionalFailure ? statement.values[1] : statement.values[2];
+              row.runner_id = transactionalFailure ? statement.values[2] : statement.values[3];
+              row.updated_at = transactionalFailure ? statement.values[3] : statement.values[4];
+            }
+          }
+          if (/INSERT INTO ops_incidents/.test(sql)) {
+            const fingerprint = String(statement.values[1]);
+            const current = incidents.get(fingerprint);
+            incidents.set(fingerprint, {
+              id: current?.id ?? statement.values[0],
+              fingerprint,
+              status: "open",
+              layer: statement.values[2],
+              job_id: statement.values[3],
+              job_kind: statement.values[4],
+              summary: statement.values[5],
+              error_text: statement.values[6],
+              evidence_json: statement.values[7],
+              attempts: (current?.attempts ?? 0) + 1,
+              created_at: current?.created_at ?? statement.values[8],
+              updated_at: statement.values[9],
+            });
+          }
+          return { meta: { changes: 1 } };
+        },
+        async first() {
+          if (/SELECT \* FROM ops_jobs WHERE id/.test(sql)) return rows.get(String(statement.values[0])) ?? null;
+          if (/SELECT status FROM ops_jobs WHERE id/.test(sql)) {
+            const row = rows.get(String(statement.values[0]));
+            return row ? { status: row.status } : null;
+          }
+          if (/SELECT \* FROM ops_incidents WHERE fingerprint/.test(sql)) return incidents.get(String(statement.values[0])) ?? null;
+          if (/kind = 'print-batch'/.test(sql)) {
+            if (options.dailyExisting?.status === "failed" && sql.includes("status IN ('queued','ready_for_runner','running','completed')")) return null;
+            return options.dailyExisting ?? null;
+          }
+          return null;
+        },
+        async all() {
+          if (/status IN \('queued','ready_for_runner','running'\)/.test(sql)) return { results: Array.from(rows.values()) };
+          if (/SELECT \* FROM ops_jobs/.test(sql) && /kind IN/.test(sql)) return { results: options.dailyJobs ?? [] };
+          return { results: [] };
+        },
+      };
+    },
+    async batch(batchStatements) {
+      const results = [];
+      for (const statement of batchStatements) results.push(await statement.run());
+      return results;
+    },
+  };
+  return {
+    env: {
+      OPS_API_TOKEN: "test-token",
+      adops_ops: db,
+      adops_ops_queue: { async send() { queueSends += 1; } },
+    },
+    statements,
+    rows,
+    queueSends: () => queueSends,
+  };
+}
+
+test("status diário público expõe somente o resumo canônico e não vaza payload ou erro interno", async () => {
+  const fixture = fakeEnv({
+    dailyJobs: [{
+      ...jobRecord(),
+      id: "daily-2026-08-17",
+      status: "failed",
+      payload_json: JSON.stringify({ source: "cloudflare-cron-daily-print", date: "2026-08-17", accessToken: "segredo" }),
+      result_json: JSON.stringify({ canonicalAudit: { expected: 16, approved: 14, missing: 2, invalid: 0 } }),
+      error_text: "Bearer segredo fetch failed",
+      created_at: "2026-08-17T22:00:00.000Z",
+      updated_at: "2026-08-17T22:14:00.000Z",
+    }],
+  });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/daily-print-status"), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.lastAttempt.expected, 16);
+  assert.equal(payload.lastAttempt.approved, 14);
+  assert.equal(payload.lastAttempt.missing, 2);
+  assert.equal("payload" in payload.lastAttempt, false);
+  assert.equal(JSON.stringify(payload).includes("segredo"), false);
+  assert.match(payload.lastAttempt.summary, /14 de 16 inserções.*2 precisam/);
+  assert.equal(payload.lastAttempt.errorCode, null);
+  assert.match(payload.lastAttempt.nextRecoveryAt, /T(22:30|23:00|23:30|00:00|00:30|01:00|01:30|12:00):00\.000Z$/);
+});
+
+test("job destinado ao runner nasce pronto no D1 sem depender da Cloudflare Queue", async () => {
+  const fixture = fakeEnv();
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/print-single", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ insertionId: 1944, date: "2026-08-13" }),
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(payload.status, "ready_for_runner");
+  const insert = fixture.statements.find((item) => item.sql.includes("INSERT INTO ops_jobs"));
+  assert.match(insert?.sql ?? "", /'ready_for_runner'/);
+  assert.equal(fixture.queueSends(), 0);
+});
+
+test("todas as rotas de print respondem o estado realmente persistido", async () => {
+  const cases = [
+    ["print-batch", { siteId: 1, date: "2026-08-13" }],
+    ["print-backfill", { insertionId: 1944, fromDate: "2026-08-12", toDate: "2026-08-13" }],
+  ];
+  for (const [kind, body] of cases) {
+    const fixture = fakeEnv();
+    const response = await worker.fetch(new Request(`https://worker.test/api/ops/jobs/${kind}`, {
+      method: "POST",
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }), fixture.env, {});
+    const payload = await response.json();
+    assert.equal(response.status, 202);
+    assert.equal(payload.status, "ready_for_runner");
+  }
+});
+
+test("cron diário cria nova tentativa quando o job anterior falhou", async () => {
+  const fixture = fakeEnv({ active: [], dailyExisting: jobRecord({ status: "failed" }) });
+  const promises = [];
+  await worker.scheduled({ cron: "0 22 * * *", scheduledTime: Date.parse("2026-08-13T22:00:00.000Z") }, fixture.env, {
+    waitUntil(promise) { promises.push(promise); },
+  });
+  await Promise.all(promises);
+
+  assert.equal(fixture.statements.filter((item) => item.sql.includes("INSERT INTO ops_jobs")).length, 1);
+  assert.match(fixture.statements.find((item) => item.sql.includes("kind = 'print-batch'"))?.sql ?? "", /status IN \('queued','ready_for_runner','running','completed'\)/);
+});
+
+test("cron de retomada sincroniza a planilha antes de criar reconciliador dependente", async () => {
+  const fixture = fakeEnv();
+  const promises = [];
+  await worker.scheduled({ cron: "30 21 * * *", scheduledTime: Date.parse("2026-08-13T21:30:00.000Z") }, fixture.env, {
+    waitUntil(promise) { promises.push(promise); },
+  });
+  await Promise.all(promises);
+
+  const inserts = fixture.statements.filter((item) => item.sql.includes("INSERT OR IGNORE INTO ops_jobs"));
+  assert.equal(inserts.length, 2);
+  assert.equal(inserts[0]?.values[1], "sync-planilha");
+  assert.match(String(inserts[0]?.values[2]), /daily-sheet-sync:2026-08-13/);
+  assert.equal(inserts[1]?.values[1], "campaign-publication-reconcile");
+  const reconcilePayload = JSON.parse(String(inserts[1]?.values[2]));
+  assert.equal(reconcilePayload.dependsOnJobId, String(inserts[0]?.values[0]));
+  assert.equal(reconcilePayload.idempotencyKey, "campaign-publication-reconcile:2026-08-13");
+  assert.equal(reconcilePayload.mode, "apply");
+});
+
+test("reconciliador expõe preflight idempotente sem confundir com apply", async () => {
+  const fixture = fakeEnv();
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/campaign-publication-reconcile", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({ targetDate: "2026-08-21", insertionId: 2692, mode: "preflight" }),
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(payload.kind, "campaign-publication-reconcile");
+  const insert = fixture.statements.find((item) => item.sql.includes("INSERT OR IGNORE INTO ops_jobs"));
+  const jobPayload = JSON.parse(String(insert?.values[2]));
+  assert.equal(jobPayload.mode, "preflight");
+  assert.equal(jobPayload.insertionId, 2692);
+  assert.equal(jobPayload.idempotencyKey, "campaign-publication-reconcile:2026-08-21:2692:preflight");
+});
+
+test("atualização do Drive agenda retomada idempotente depois do ingest", async () => {
+  const fixture = fakeEnv();
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/drive-pi-events", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: JSON.stringify({
+      eventId: "drive:file-1944:2026-08-13T18:00:00Z",
+      driveFileId: "file-1944",
+      name: "PI 17191.pdf",
+      mimeType: "application/pdf",
+      path: "/PERRENGUE/AGOSTO/PI 17191 - RADAR/PI 17191.pdf",
+      parentFolderId: "folder-1944",
+      modifiedTime: "2026-08-13T18:00:00Z",
+      eventType: "updated",
+    }),
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(payload.kind, "drive-pi-ingest");
+  assert.ok(payload.reconcileJobId);
+  const jobInserts = fixture.statements.filter((item) => item.sql.includes("INTO ops_jobs"));
+  assert.equal(jobInserts.length, 2);
+  assert.equal(jobInserts[0]?.values[1], "drive-pi-ingest");
+  assert.equal(jobInserts[1]?.values[1], "campaign-publication-reconcile");
+  assert.equal(JSON.parse(String(jobInserts[1]?.values[2])).idempotencyKey, "campaign-publication-reconcile:drive:drive:file-1944:2026-08-13T18:00:00Z");
+});
+
+test("watchdog recupera uma vez job legado queued em vez de marcá-lo como failed", async () => {
+  const old = new Date(Date.now() - 31 * 60_000).toISOString();
+  const fixture = fakeEnv({ active: [jobRecord({ created_at: old, updated_at: old })] });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/watchdog", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: "{}",
+  }), fixture.env, {});
+  const payload = await response.json();
+  const row = fixture.rows.get("legacy-job");
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.recoveredCount, 1);
+  assert.equal(payload.failedCount, 0);
+  assert.equal(row.status, "ready_for_runner");
+  assert.match(String(row.result_json), /recovered_from_queue/);
+});
+
+test("reconciliador espera ingest concluído e usa timeout longo", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /kind === "campaign-publication-reconcile"/);
+  assert.match(source, /json_extract\(ops_jobs\.payload_json, '\$\.dependsOnJobId'\)/);
+  assert.match(source, /dependency\.status = 'completed'/);
+  assert.match(source, /waitingForDependency/);
+  assert.match(source, /stage: "dependency_failed"/);
+  assert.match(source, /kind === "print-batch"/);
+});
+
+test("monitor do Drive roda separado do consumidor de jobs autorizado", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  const poolSource = source.slice(source.indexOf("async function runPool"), source.indexOf("async function runDrivePiMonitorLoop"));
+  assert.match(poolSource, /const handled = await runOnce\(pool\.kinds\);/);
+  assert.doesNotMatch(poolSource, /runDrivePiMonitorOnce/);
+  assert.match(source, /async function runDrivePiMonitorLoop\(\)/);
+  assert.match(source, /workers\.push\(runDrivePiMonitorLoop\(\)\)/);
+});
+
+test("alvo canônico preserva cliente e agência da campanha, sem preferir o PDF", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  assert.match(source, /preferPdfCommercialIdentity: false/);
+  assert.match(source, /clienteId: readNumberRecord\(campaign, \["clienteId"\]\)/);
+  assert.match(source, /agenciaId: readNumberRecord\(campaign, \["agenciaId"\]\)/);
+});
+
+test("watchdog não expira reconciliador enquanto ingest ainda executa", async () => {
+  const old = new Date(Date.now() - 31 * 60_000).toISOString();
+  const fixture = fakeEnv({ active: [
+    jobRecord({ id: "ingest-long", kind: "drive-pi-ingest", status: "running", created_at: old, updated_at: old }),
+    jobRecord({
+      id: "reconcile-waiting",
+      kind: "campaign-publication-reconcile",
+      status: "ready_for_runner",
+      payload_json: JSON.stringify({ dependsOnJobId: "ingest-long" }),
+      created_at: old,
+      updated_at: old,
+    }),
+  ] });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/watchdog", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: "{}",
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.failedCount, 0);
+  assert.equal(fixture.rows.get("reconcile-waiting").status, "ready_for_runner");
+});
+
+test("watchdog propaga falha do ingest para o reconciliador dependente", async () => {
+  const old = new Date(Date.now() - 31 * 60_000).toISOString();
+  const fixture = fakeEnv({ active: [
+    jobRecord({ id: "ingest-failed", kind: "drive-pi-ingest", status: "failed", created_at: old, updated_at: old }),
+    jobRecord({
+      id: "reconcile-orphan",
+      kind: "campaign-publication-reconcile",
+      status: "ready_for_runner",
+      payload_json: JSON.stringify({ dependsOnJobId: "ingest-failed" }),
+      created_at: old,
+      updated_at: old,
+    }),
+  ] });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/jobs/watchdog", {
+    method: "POST",
+    headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+    body: "{}",
+  }), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.failedCount, 1);
+  assert.equal(fixture.rows.get("reconcile-orphan").status, "failed");
+  assert.match(String(fixture.rows.get("reconcile-orphan").result_json), /dependency_failed/);
+});

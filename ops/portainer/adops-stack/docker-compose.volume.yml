@@ -52,13 +52,17 @@ services:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
       ADOPS_FASTAPI_DOCS_URL: http://127.0.0.1:4013
       ADOPS_PUBLIC_BASE_URL: https://adops-api.codigo5.com.br
-      DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-legacy}
+      DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-monitor}
       ADOPS_DRIVE_INVENTORY_STALE_MS: ${ADOPS_DRIVE_INVENTORY_STALE_MS:-600000}
       ADOPS_TSX_BIN: /app/node_modules/.bin/tsx
       ADOPS_GENERATED_PRINTS_ROOT: /app/tmp/generated-prints
       ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
+      ADOPS_PRINT_TARGET_MAX_ATTEMPTS: ${ADOPS_PRINT_TARGET_MAX_ATTEMPTS:-3}
+      ADOPS_PRINT_RETRY_BASE_MS: ${ADOPS_PRINT_RETRY_BASE_MS:-15000}
+      ADOPS_PRINT_TARGET_COOLDOWN_MS: ${ADOPS_PRINT_TARGET_COOLDOWN_MS:-12000}
       ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:?DO_SPACES_ACCESS_KEY_ID is required}
@@ -103,17 +107,30 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        set -e;
+        if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+          apt-get update;
+          apt-get install -y --no-install-recommends ffmpeg;
+          rm -rf /var/lib/apt/lists/*;
+        fi;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
+      OPS_API_BASE_URL: http://adops-api:4011
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
       ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE: ${ADOPS_CAPTURE_DISABLE_ORIGIN_OVERRIDE:-1}
       PORTAINER_URL: ${PORTAINER_URL:-}
+      ADOPS_REPORTS_PUBLISH_MOUNT: /sites-reports
       PORTAINER_API_KEY: ${PORTAINER_API_KEY:-}
       PORTAINER_ENDPOINT_ID: ${PORTAINER_ENDPOINT_ID:-3}
       ADOPS_PERRENGUE_ADROTATE_EXEC_MODE: ${ADOPS_PERRENGUE_ADROTATE_EXEC_MODE:-portainer}
@@ -123,7 +140,7 @@ services:
       ADOPS_PERRENGUE_CONTAINER_PHP_BIN: ${ADOPS_PERRENGUE_CONTAINER_PHP_BIN:-php}
       ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH: ${ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH:-wp}
       ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE: ${ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE:-true}
-      ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-600000}
+      ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-1200000}
       ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS: ${ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS:-5000}
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_HOST: ${ADOPS_MULTISITE_SSH_HOST:-93.127.210.71}
@@ -133,7 +150,9 @@ services:
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
+      ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
+      ADOPS_SCHEDULER_INTERVAL_MS: ${ADOPS_SCHEDULER_INTERVAL_MS:-60000}
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,analytics-report,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
@@ -152,6 +171,7 @@ services:
       ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE: ${ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE:-}
       ADOPS_MEDIA_MAX_BYTES: ${ADOPS_MEDIA_MAX_BYTES:-268435456}
       ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
+      ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED: ${ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ADOPS_PI_AGENT_ENABLED: ${ADOPS_PI_AGENT_ENABLED:-true}
       ADOPS_PI_AGENT_AUTO_APPLY: ${ADOPS_PI_AGENT_AUTO_APPLY:-false}
@@ -167,6 +187,7 @@ services:
       - adops_runner_state:/var/lib/adops
       - adops_pnpm_store:/var/lib/adops/.pnpm-store
       - adops_ssh:/root/.ssh:ro
+      - /home/codigo5/projetos/balboa/reports:/sites-reports
     networks:
       - adops_internal
 
@@ -178,11 +199,26 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        set -e;
+        if ! python3 -c 'from PIL import Image' >/dev/null 2>&1 || ! command -v pdftotext >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+          apt-get update;
+          apt-get install -y --no-install-recommends python3-pil poppler-utils ffmpeg;
+          rm -rf /var/lib/apt/lists/*;
+        fi;
+        python3 -c 'from PIL import Image';
+        command -v pdftotext >/dev/null;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
+      OPS_API_BASE_URL: http://adops-api:4011
+      ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
@@ -192,15 +228,13 @@ services:
       ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh,media-monitor
+      OPS_JOB_KINDS: campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh
       DRIVE_PI_ARCHIVE_DIR: /data/drive-pi-archive
       DRIVE_PI_MONITOR_ENABLED: "true"
       DRIVE_PI_MONITOR_ROOT_FOLDER_ID: ${DRIVE_PI_MONITOR_ROOT_FOLDER_ID:-}
       DRIVE_PI_MONITOR_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
       DRIVE_PI_MONITOR_STATE_FILE: /data/drive-pi-monitor-state.json
       DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
-      ADOPS_MEDIA_MONITOR_ENABLED: ${ADOPS_MEDIA_MONITOR_ENABLED:-true}
-      ADOPS_MEDIA_MONITOR_INTERVAL_MS: ${ADOPS_MEDIA_MONITOR_INTERVAL_MS:-900000}
       ADOPS_DRIVE_REQUEST_TIMEOUT_MS: ${ADOPS_DRIVE_REQUEST_TIMEOUT_MS:-30000}
       ADOPS_DRIVE_RETRY_MAX_ATTEMPTS: ${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS:-7}
       ADOPS_DRIVE_RETRY_BASE_MS: ${ADOPS_DRIVE_RETRY_BASE_MS:-2000}
@@ -216,7 +250,7 @@ services:
       ADOPS_PERRENGUE_CONTAINER_PHP_BIN: ${ADOPS_PERRENGUE_CONTAINER_PHP_BIN:-php}
       ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH: ${ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH:-wp}
       ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE: ${ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE:-true}
-      ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-600000}
+      ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS: ${ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS:-1200000}
       ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS: ${ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS:-5000}
       ADOPS_PERRENGUE_SSH_KEY_PATH: ${ADOPS_PERRENGUE_SSH_KEY_PATH:-/root/.ssh/id_rsa_perrengue_adops}
       ADOPS_MULTISITE_SSH_HOST: ${ADOPS_MULTISITE_SSH_HOST:-93.127.210.71}
@@ -238,6 +272,7 @@ services:
       ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE: ${ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE:-}
       ADOPS_MEDIA_MAX_BYTES: ${ADOPS_MEDIA_MAX_BYTES:-268435456}
       ADOPS_DRIVE_PI_ALLOW_MUTATION: ${ADOPS_DRIVE_PI_ALLOW_MUTATION:-false}
+      ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED: ${ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ADOPS_PI_AGENT_ENABLED: ${ADOPS_PI_AGENT_ENABLED:-true}
       ADOPS_PI_AGENT_AUTO_APPLY: ${ADOPS_PI_AGENT_AUTO_APPLY:-false}
@@ -269,19 +304,41 @@ services:
     depends_on:
       adops-api:
         condition: service_healthy
-    command: ["node", "ops/cloudflare-remote-runner/src/runner.mjs"]
+    command:
+      - sh
+      - -lc
+      - >-
+        set -e;
+        if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+          apt-get update;
+          apt-get install -y --no-install-recommends ffmpeg;
+          rm -rf /var/lib/apt/lists/*;
+        fi;
+        command -v ffmpeg >/dev/null;
+        command -v ffprobe >/dev/null;
+        exec node ops/cloudflare-remote-runner/src/runner.mjs
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api.codigo5.com.br
+      OPS_API_BASE_URL: http://adops-api:4011
+      ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011
       PRIVATE_ADOPS_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       CAMPANHAS_PORTAIS_ROOT: /app
       OPS_POLL_INTERVAL_MS: ${OPS_POLL_INTERVAL_MS:-5000}
-      OPS_JOB_KINDS: print-single
+      OPS_JOB_KINDS: print-single,pi-site-export,campaign-evidence-export
+      OPS_CAMPAIGN_EXPORT_CONCURRENCY: ${OPS_CAMPAIGN_EXPORT_CONCURRENCY:-3}
       RUNNER_ID: runner-print-single
+      ADOPS_IMAGE_TAG: ${ADOPS_IMAGE_TAG:-unknown}
       ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION: "1"
+      DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:-}
+      DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:-}
+      DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
+      DO_SPACES_REGION: ${DO_SPACES_REGION:-nyc3}
+      ADOPS_SPACES_BUCKET: ${ADOPS_SPACES_BUCKET:-cod5}
+      ADOPS_EXPORT_BUCKET: ${ADOPS_EXPORT_BUCKET:-cod5}
+      ADOPS_EXPORT_BASE_PATH: ${ADOPS_EXPORT_BASE_PATH:-adops-exports}
     volumes:
       - adops_app_source:/app
       - adops_runner_state:/var/lib/adops

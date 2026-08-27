@@ -1,328 +1,203 @@
-# Runbook - Nova PI, AdOps, AdRotate e evidencias
+# Tutorial — Nova PI, publicação e evidências
 
-Atualizado em: 2026-05-23
+> Estado: vigente
+> Público: operação humana e agentes
+> Última validação: 2026-08-13
+> Release-base: c71350e; política sem PDF validada no commit que contém este documento
+> Fonte autoritativa: PI/PDF, planilha, API AdOps e portal público
 
-Este e o guia de entrada para um projeto/agente novo entender onde esta cada coisa e o que fazer para cadastrar uma PI, sincronizar midia, gerar evidencias atuais e retroativas, auditar e entregar relatorio.
+## Resultado esperado
 
-## Caminhos principais
+Ao terminar, a campanha possui identidade confirmada, inserção canônica, mídia pública, anúncio correto no AdRotate e evidências auditadas. Se faltar uma fonte autoritativa, o resultado é um blocker objetivo — nunca um cadastro inferido.
 
-Raiz oficial do projeto:
+## 1. Auditar a entrada
 
-```bash
-/Users/leandrobosaipo/Projetos/AdOps
-```
+Extraia:
 
-Arquivos mais usados:
+- PI numérica;
+- cliente e agência;
+- campanha;
+- portal;
+- período;
+- formato;
+- mídia e dimensões;
+- URL de destino.
 
-```text
-docs/START_HERE_ADOPS.md                         leitura inicial
-docs/PROJECT_MAP_ADOPS.md                        mapa tecnico
-docs/runbook-nova-pi-evidencias.md               este runbook
-docs/prints-retroativos.md                       regras de retroativos
-docs/adops/capture-config/README.md              regras de captura/auditoria
-docs/adops/pi-automation-v3/runbook.md           automacao de intake de PI
-config/adrotate-sites.json                       mapa portal/posicao/slot
-scripts/src/capture-insertion-proof.cjs          capturador de evidencias
-artifacts/api-server/src/lib/capture-audit.ts    auditoria da evidencia
-ops/cloudflare-remote-runner/src/runner.mjs      runner de jobs
-ops/cloudflare-public-api/src/index.ts           API publica/Worker
-ops/cloudflare-telegram-bot/src/index.ts         Telegram operacional
-```
+Prioridade: PDF/e-mail da PI → planilha → AdOps → AdRotate/portal → Drive. O Drive pode provar que existe mídia candidata, mas o nome da pasta não cria uma PI.
 
-Servicos vivos:
-
-```text
-Painel publico: https://adops-campanhas-portais.pages.dev
-API publica:    https://adops-api-public.leandro471.workers.dev
-VPS/Swarm:      codigo5_adops-api, codigo5_adops-runner
-```
-
-Nao usar a pasta antiga como fonte principal:
+Para pasta local:
 
 ```bash
-/Users/leandrobosaipo/.openclaw/Campanhas-Portais
+bash /Users/leandrobosaipo/.codex/skills/adops-pi-sync/scripts/pi-folder-audit.sh "/caminho/da/pasta"
 ```
 
-Ela e historico.
-
-## Fontes de verdade
-
-Ordem de prioridade quando houver divergencia:
-
-1. PDF/e-mail da PI.
-2. Pasta da PI no Google Drive.
-3. Planilha operacional.
-4. AdOps.
-5. AdRotate/portal.
-6. WhatsApp apenas como evidencia operacional complementar.
-
-Regra pratica:
-
-- nao inventar PI, periodo, formato, midia ou URL;
-- nao criar duplicidade para "resolver rapido";
-- se a PI ja existe, completar vinculo e corrigir a insercao canonica;
-- se a planilha tem duplicidade textual, manter uma insercao canonica e registrar a outra como conflito/duplicata.
-
-## Fluxo para cadastrar ou revisar nova PI
-
-### 1. Fazer intake da PI
-
-Extrair do PDF/e-mail/Drive:
-
-- numero da PI;
-- cliente;
-- agencia;
-- site/veiculo;
-- periodo;
-- formato/posicao;
-- midia;
-- link de redirecionamento;
-- exigencias documentais;
-- pasta Drive.
-
-Se houver pasta local de PI, rodar:
-
-```bash
-scripts/pi-folder-audit.sh <caminho-da-pasta>
-```
-
-Se houver risco de duplicidade/correcao:
-
-```bash
-scripts/pi-sync-report.sh <pi-codigo-ou-caminho-da-pasta>
-```
-
-### 2. Sincronizar planilha
+## 2. Sincronizar e consultar
 
 ```bash
 pnpm --filter @workspace/scripts run sync:planilha
+curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/active?date=YYYY-MM-DD'
+curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/pending-publication?date=YYYY-MM-DD'
 ```
 
-Depois conferir se a PI apareceu na competencia correta.
+A fila pendente mostra somente campanhas que precisam de publicação ou evidência. Verifique fatos da planilha, Drive, AdOps e AdRotate antes de agir.
 
-### 3. Conferir AdOps
+## 3. Decidir: criar, corrigir ou bloquear
 
-Validar:
+| Situação | Decisão |
+|---|---|
+| Linha oficial e nenhuma campanha compatível | Criar campanha e inserção |
+| Campanha já existe | Atualizar a entidade canônica |
+| Inserção equivalente existe | Corrigir/vincular; não duplicar |
+| Anúncio correto existe no grupo | Reutilizar e vincular |
+| Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
+| PI/PDF ausente, identidade operacional única | Usar `identityMode=operational_identity`, manter `commercialIdentityStatus=awaiting_authoritative_pi` e liberar somente o preflight vivo de publicação |
+| PDF presente, mas os campos comerciais estão divididos entre planilha e pasta | Usar `identityMode=sheet_drive_composite` somente quando PI, linha, campanha, inserção, portal, período, formato e pasta forem únicos; exigir um PDF e uma mídia compatível. O redirect é opcional |
+| PI/PDF ausente e fonte ambígua | Manter `failed_retryable`; mídia candidata não vira “mídia ausente” e nenhuma entidade é criada |
 
-- campanha existente;
-- insercao existente;
-- periodo;
-- site;
-- formato normalizado;
-- `mediaUrl`;
-- status operacional;
-- documentos operacionais;
-- evidencias ja anexadas.
+Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
 
-Se ja houver insercao canonica, atualizar essa. Nao criar outra.
+### Retomada automática sem duplicação
 
-### 4. Conferir AdRotate e portal
+O job `campaign-publication-reconcile` reconsulta planilha, snapshot do Drive e AdOps às 17h30 de Cuiabá e após atualizações do Drive. Sem PDF, ele pode publicar somente quando competência, portal, campanha, período, formato, linha, pasta e mídia formam uma correspondência operacional única. O redirect não é obrigatório: se não existir, o anúncio fica sem clique; se existir, o runner exige um único HTTPS público antes de mutar. A PI continua pendente para faturamento e ZIP por PI. Quando o PDF chegar, o fluxo completa a campanha e a inserção existentes, sem duplicar ou trocar o portal por semelhança de nome.
 
-Validar no portal:
+Quando o PDF existe, mas não contém texto extraível suficiente, a planilha continua sendo a fonte canônica de portal, PI, período e formato. O modo `sheet_drive_composite` só é liberado se planilha, AdOps, pasta e nome do PDF apontarem para a mesma PI e houver exatamente um PDF e uma mídia. O runner baixa novamente esses arquivos, compara ID, tamanho e checksum, rejeita uma PI explícita divergente no PDF e publica apenas a inserção canônica existente. Um redirect ausente gera `destinationMode=none`; um redirect presente continua sujeito à validação HTTPS e de unicidade.
 
-- anuncio AdRotate;
-- grupo/posicao;
-- codigo HTML real;
-- URL real da midia;
-- URL de destino;
-- schedule ativo;
-- cache limpo.
+Em recuperação histórica, a página assinada de um portal pode manter o bloco da posição e omitir o slot do AdRotate. Nunca crie um slot genérico. Só reconstrua quando existir uma regra explícita por domínio, página, grupo, seletor e contexto. Para PNMT HOME 1, a exceção aprovada é exclusivamente `portalnortemt.com`, home, grupo `2`, seletor `.g.g-2` e um único contexto `#block-9`. Ela exige data passada dentro do período e `late_publication_recovery`; a evidência deve registrar que foi reconstruída.
 
-Quando o anuncio tem arquivo selecionado no AdRotate:
+Compare `009749` e `9749` como a mesma PI apenas quando ambos forem identificadores puramente numéricos. Preserve a grafia original para exibição e auditoria.
 
-- o `bannercode` precisa conter `%asset%`;
-- se o `image` estiver preenchido e o `bannercode` estiver vazio ou com URL absoluta da midia, corrigir antes de gerar evidencia;
-- nao sincronizar `mediaUrl` para o AdOps a partir de anuncio nessa condicao;
-- se o anuncio for orfao antigo, expirar/corrigir sem reativar campanha inexistente.
+## 4. Atualizar entidades no lugar correto
 
-O mapa local de portal/slot fica em:
+- `clients`: razão social, CNPJ, contato e endereço.
+- `agencies`: dados fiscais e contato.
+- `sites`: dados institucionais e configuração do portal.
+- `campaigns`: PI e vínculos com cliente/agência.
+- `insertions`: portal, formato, período, `mediaUrl` e operação.
+
+Não grave dados mestres apenas na campanha ou inserção.
+
+## 5. Validar e publicar a mídia
+
+Confirme o arquivo binário, não apenas o nome:
+
+- MIME e assinatura;
+- dimensões;
+- conteúdo visual;
+- compatibilidade com o formato;
+- URL de destino, quando fornecida.
+
+O perfil em `config/adrotate-sites.json` define os tipos aceitos. GIF exige assinatura, dimensões, frames e conteúdo. MP4 exige container íntegro, H.264, duração positiva, dimensões e pixel format compatível. Quando o perfil declarar transformação, normalize apenas uma cópia com chave baseada no SHA-256; nunca altere o original do Drive.
+
+Compare a URL no WordPress, AdRotate, AdOps e HTML público. Se o portal opera via Spaces/CDN, use o host público que realmente serve a peça. Perrengue pode usar domínio/CDN próprio; não force Spaces por regra geral.
+
+Antes de criar anúncio, consulte a relação existente. Publique no grupo resolvido por `config/adrotate-sites.json`, limpe caches e reabra o slot público. Só marque `bannerPublicadoNoSite=true` depois da leitura pública.
+
+No Perrengue, o rebuild headless pode aguardar publicações editoriais que já estavam na fila. O reconciliador identifica cada publish e rollback com um `reason` único e só aceita o health do próprio trigger. Não trate timeout local, anúncio no banco ou HTML isolado como conclusão: confronte AdOps, AdRotate, health do rebuild e consumidor público.
+
+## 6. Gerar a evidência do dia
+
+Antes da captura:
 
 ```bash
-config/adrotate-sites.json
-```
-
-Chave operacional:
-
-```text
-siteSigla + groupId
-```
-
-Nao publicar duas regras ativas para a mesma chave.
-
-### 5. Sincronizar midia
-
-Validar a URL real com `HEAD`/HTML publico.
-
-Regra para portais com DigitalOcean Spaces/CDN:
-
-- preferir a URL canonica do bucket/CDN quando o site serve a midia por esse host;
-- nao usar URL local quebrada do WordPress se o portal offloada midia;
-- conferir o `mediaUrl` no AdOps e o `bannercode` no AdRotate.
-
-### 6. Limpar cache
-
-Quando mexer em midia, AdRotate ou schedule:
-
-- limpar cache WordPress/plugin;
-- purgar Cloudflare quando aplicavel;
-- reabrir o HTML publico para confirmar o banner renderizado.
-
-### 7. Gerar evidencia atual
-
-Pelo painel, usar o botao de print da insercao.
-
-Pela API privada/runner, usar o fluxo de `capture-proof` da insercao. Para operacao manual, prefira o painel ou a fila, porque ela injeta credenciais e contexto de forma correta.
-
-Validar no final:
-
-- `status = audited`;
-- `urlStatus = 200`;
-- `frameSelectionMode = gif_source` quando for GIF;
-- `uploadedUrl` presente;
-- `audit.visualAudit.ok = true`;
-- banner visivel e legivel no print.
-
-### 8. Gerar evidencias retroativas
-
-Para datas passadas, usar `captureAt`.
-
-Regras:
-
-- horario preferencial: janela operacional `18:00 <= captureAt < 20:00`;
-- se a evidencia do dia ja existe e esta valida, nao sobrescrever sem motivo;
-- para refazer uma data ruim, usar `replace=true`/botao de apagar+gerar;
-- processar datas criticas em serie, nao em paralelo, para evitar corrida de jobs.
-
-No painel:
-
-1. abrir a insercao;
-2. escolher data/hora retroativa;
-3. gerar print;
-4. revisar status/auditoria do card do dia.
-
-Para lote:
-
-1. abrir dashboard/lista;
-2. selecionar competencia;
-3. usar `Retroativos vencidos`;
-4. conferir preview antes de disparar;
-5. revisar falhas em `Falhas de Prints`.
-
-## Auditoria visual obrigatoria
-
-Nao basta a URL do print responder `200`.
-
-Conferir:
-
-- banner realmente carregado;
-- banner dentro do slot correto;
-- frame do criativo legivel;
-- sem placeholder `ANUNCIE AQUI`;
-- sem loader/spinner;
-- sem frame branco;
-- sem frame de transicao parcial;
-- data/hora coerente com `captureAt`;
-- conteudo do site coerente com a data simulada.
-
-Para GIF:
-
-- a midia publicada continua sendo GIF;
-- a captura pode escolher um frame especifico para a prova;
-- o metadata deve registrar `gifChosenFrameIndex`;
-- quando a campanha exigir frames aprovados, configurar `gifAllowedFrameRanges` em `config/adrotate-sites.json`;
-- a auditoria deve reprovar com `gif_frame_not_approved` quando o frame escolhido estiver fora dos intervalos aceitos.
-
-## Aprendizado do caso PI 490711 - Energisa
-
-Problema encontrado:
-
-- algumas evidencias estavam `audited` e HTTP `200`, mas visualmente ruins;
-- havia banner sem carregar, loader/spinner, frame sem mensagem de campanha e transicao parcial;
-- a regra runtime publicada nao carregava o override local de frame aprovado.
-
-Correcao aplicada:
-
-- `PERRENGUE / groupId 6 / LATERAL PRIMEIRA DOBRA` recebeu:
-
-```json
-"gifAllowedFrameRanges": [[99, 195], [206, 285], [318, 389]]
-```
-
-- `scripts/src/capture-insertion-proof.cjs` passou a mesclar:
-
-```text
-site.auditConfig + mapping.auditOverrides + runtimeRule.auditConfig
-```
-
-- `artifacts/api-server/src/lib/capture-audit.ts` passou a validar `gifChosenFrameAllowed`;
-- nova falha de auditoria: `gif_frame_not_approved`;
-- evidencias ruins foram refeitas em serie;
-- relatorio e pacote local foram salvos em:
-
-```bash
-/Users/leandrobosaipo/Downloads/PI_490711_Energisa_Evidencias_AdOps_2026-05-23
-```
-
-Resultado validado:
-
-- `12/12` evidencias com `audited`;
-- `12/12` URLs com HTTP `200`;
-- `12/12` com `gif_source`;
-- `12/12` com frame dentro dos intervalos aprovados;
-- relatorio enviado no Telegram, `message_id=611`.
-
-## Comandos de validacao antes de concluir
-
-Escolha conforme a mudanca feita:
-
-```bash
-node --check scripts/src/capture-insertion-proof.cjs
-pnpm --dir scripts run test:gif-capture-only-short-frames
 pnpm --dir scripts run audit:capture-rules-integrity
-pnpm --filter @workspace/api-server run build
-pnpm --filter @workspace/adops run build
 ```
 
-Validacao viva obrigatoria em tarefa operacional:
+Dispare `print-single` pela API/fila e acompanhe:
 
-- status da insercao;
-- relacao AdOps x AdRotate;
-- evidencia por data;
-- URL publica do print;
-- auditoria sem issues;
-- folha visual/contato quando for GIF ou campanha com muitos frames;
-- Telegram enviado, se solicitado.
+```text
+POST /api/ops/jobs/print-single
+GET  /api/ops/jobs/{jobId}/progress
+GET  /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD
+```
 
-## Entrega final recomendada
+Aceite:
 
-Ao fechar uma PI:
+- `audited` ou `audited_best_effort`;
+- evidência presente;
+- URL acessível;
+- `checklistValidation.approved=true`;
+- nenhum blocking issue.
 
-1. gerar relatorio visual em `docs/reports/<slug>/`;
-2. salvar `index.html`, `data.json`, `report.json` e folha visual;
-3. se solicitado, criar pacote em `Downloads`;
-4. enviar no Telegram;
-5. registrar pendencias reais:
-   - Analytics completo se o fim da PI ainda for futuro;
-   - deploy definitivo se algum hotfix tiver sido aplicado direto em container;
-   - divergencia de planilha/AdOps/AdRotate que nao tenha sido resolvida.
+`queued`, `running` e `completed` descrevem o job, não a qualidade final. `skipped` pode significar que uma evidência válida já existia.
 
-## Riscos conhecidos
+## 7. Gerar retroativos
 
-- `docker restart` em servico Swarm pode recriar container a partir da imagem antiga e perder hotfix por `docker cp`.
-- Para hotfix de auditoria/captura, atualizar API e runner e confirmar que os dois carregaram a mesma versao.
-- Se a imagem hotfix for local e nao estiver em registry, um redeploy pelo EasyPanel pode voltar para imagem antiga.
-- Nunca rodar varios `runner --once` em paralelo para a mesma fila/tipo de job sem lock atomico validado.
-- API publica pode exigir token de operador para mutacoes; nao imprimir tokens no chat/log.
+Campanha encerrada não deve ser reativada para produzir evidência. Use backfill restrito à inserção e à data contratada. Para PI 14771/OMT (`campaignId=969`, `insertionId=1841`) e PI 9750/AFL (`campaignId=981`, `insertionId=1854`), a única data pendente confirmada em 17/08/2026 era 15/08/2026. Aceite o resultado somente com `audited` ou `audited_best_effort`, checklist aprovado, URL acessível e nenhum bloqueio.
 
-## Nota AFL / AdRotate dinamico
+O relatório mensal deve continuar mostrando a campanha depois do encerramento. O endpoint diário `campaign-operations/active` não serve para montar o histórico do mês; use `campaign-operations/evidence-monthly-source`.
 
-Em `AFL / MEGABANNER TOPO`, o AdRotate pode trocar o no DOM marcado temporariamente pelo capturador depois que o criativo foi localizado. Se isso acontecer, a auditoria pode acusar falso `slot_position_mismatch` mesmo com o banner visivel na imagem.
+Use `print-backfill` somente após publicação real. Datas críticas rodam em série, com captura concorrência 1. Para evidência inválida, refaça a data individual com `replace=true`; não sobrescreva evidência válida sem motivo.
 
-Regra operacional:
+Reconstrução histórica só é aceita quando a auditoria confirma que a prova representa o slot, mídia, data e contexto esperados. Caso contrário, registre blocker por portal, formato e data.
 
-- nao relaxar `requireSlotVisibleInViewport`;
-- medir primeiro o seletor resolvido pelo capturador;
-- se ele sumir ou ficar invisivel, medir o seletor operacional publicado (`slotSelector`) antes de reprovar;
-- so aceitar a evidencia quando o status final continuar com `audit.ok=true`.
+Quando um anúncio encerrado não aparece mais no HTML do AdRotate, o capturador pode usar a reconstrução auditada explicitamente habilitada no runner. Para OMT e AFL, ela consulta o WordPress REST com corte na data pedida, reescreve somente os cards de notícia visíveis e recria o slot apenas em uma âncora conhecida do tema. A mídia vem da `mediaUrl` canônica da inserção. Esse fallback não altera WordPress, AdRotate ou cache público. Falhe sem gerar evidência se a âncora não for única, houver menos de três notícias históricas, aparecer conteúdo posterior ao corte ou a identidade visual do banner divergir.
 
-Esse comportamento foi observado na PI `16098`, insercao `1270`, data `2026-05-22`.
+## 8. GIF e prova visual
+
+O GIF original permanece publicado. A captura pode congelar um frame apenas no DOM de prova. Confirme:
+
+- frame legível;
+- ausência de branco, loader ou transição parcial;
+- `gifChosenFrameIndex` registrado;
+- frame dentro de `gifAllowedFrameRanges`, quando configurado.
+
+O caso Energisa/PI 490711 ensinou que HTTP 200 e estado `audited` antigo não garantiam mensagem visual legível. A regra extraída foi validar o frame e reprovar `gif_frame_not_approved`.
+
+## 9. Entregar evidências
+
+Individual:
+
+```text
+GET /api/insertions/{id}/evidences/{date}/download
+```
+
+PI + portal:
+
+```text
+POST /api/pi-site-exports/jobs
+GET  /api/pi-site-exports/jobs/{jobId}
+GET  /api/pi-site-exports/jobs/{jobId}/download
+```
+
+Campanha completa:
+
+```text
+POST /api/campaign-evidence-exports/jobs
+GET  /api/campaign-evidence-exports/jobs/{jobId}
+GET  /api/campaign-evidence-exports/jobs/{jobId}/download
+```
+
+O ZIP completo usa descritor imutável assinado e contém JPEGs progressivos + `SHA256SUMS.txt`. Ele não captura nem reaudita, e o PNG original não é alterado.
+
+## 10. Atualizar relatório e comunicar
+
+O job `evidence-monthly-report` consulta a fonte agregada, reutiliza ZIPs por fingerprint, valida staging e publica atomicamente. Falha mantém a última versão válida. Envie Telegram somente quando solicitado e depois de validar o link/artefato real.
+
+## Regras aprendidas
+
+- Inserção canônica vem de `campaign-operations/active`; rascunhos duplicados não entram em backfill.
+- Campanhas homônimas sem PI não são agrupadas.
+- Drive pode retornar `candidate_found` com `documentStatus=missing`.
+- `printGerado`, HTTP 200 e arquivo existente não substituem auditoria.
+- Captura e empacotamento são responsabilidades separadas.
+- Exportações usam concorrência até 3; browser/captura permanece serial.
+- Polling usa `/progress`; respostas completas são para conclusão ou diagnóstico.
+
+## Casos de referência
+
+- `#1826`: rascunho duplicado excluído pela seleção canônica.
+- RADAR/OMT PI 17190: publicada e com ZIP validado.
+- RADAR/PERRENGUE `#1944`: caso de identidade operacional única; GIF 670×90 e destino podem liberar a veiculação após preflight, mas faturamento e ZIP por PI permanecem bloqueados até o PDF.
+- Relatório/ZIP: deadlock removido ao separar o runner mensal do pool dedicado de exportações.
+
+## Checklist final
+
+- [ ] PI e identidade confirmadas.
+- [ ] Planilha sincronizada.
+- [ ] Campanha/inserção canônicas, sem duplicação.
+- [ ] Mídia e destino validados.
+- [ ] AdRotate e `mediaUrl` usam a URL pública correta.
+- [ ] Cache limpo e banner confirmado no slot público.
+- [ ] Evidências auditadas por data.
+- [ ] Downloads/ZIP validados.
+- [ ] Relatório atualizado ou blocker explícito.

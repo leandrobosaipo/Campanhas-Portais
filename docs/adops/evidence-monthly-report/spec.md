@@ -14,17 +14,17 @@ Variaveis opcionais:
 
 ## Fontes
 
-- `GET /api/insertions?competencia=<competencia>&limit=500`
-- `GET /api/campaigns?competencia=<competencia>&limit=500`
-- `GET /api/insertions/capture-proof/audit?date=<date>&competencia=<competencia>`
-- `GET /api/insertions/:id/capture-proof/status?date=<date>`
-- `GET /api/integrations/adrotate/insertions/:id/relation`
-- `config/adrotate-sites.json`
+- `GET /api/campaign-operations/evidence-monthly-source?date=<date>&competencia=<competencia>`: única fonte mensal; inclui ativas, agendadas, concluídas e encerradas que cruzam a competência.
+- `GET /api/ops/daily-print-status`: estado real do lote `cloudflare-cron-daily-print`.
+- A planilha é consultada somente dentro da API AdOps. O gerador não acessa planilha ou Drive diretamente.
+- Falha ou ambiguidade da fonte bloqueia a publicação; não existe fallback para `/campaign-operations/active`.
 
 ## Regras de negocio
 
-- Excluir `cancelado`, `concluido`, `finalizado` e `finalizada`.
-- Incluir insercao se cruza o mes e esta ativa, publicada, em veiculacao, print gerado ou futura.
+- Excluir somente `cancelado`, `cancelada`, `excluido` e `excluida`.
+- Incluir toda inserção canônica cujo período cruza o mês, inclusive `concluido`, `finalizado` e `finalizada`.
+- `reportDate` classifica campanhas; `evidenceCutoffDate` limita os dias já exigíveis.
+- Antes das 18h e durante fila/execução, o dia corrente não entra no corte. Após conclusão canônica ou fechamento da janela, passa a ser exigível.
 - Insercao futura (`periodoInicio > data alvo`) fica `agendada`.
 - Insercao ainda sem `bannerPublicadoNoSite=true` fica `sem publicação`, nao `pendente`.
 - Insercao iniciada usa os dias entre inicio, mes e data alvo.
@@ -35,6 +35,11 @@ Variaveis opcionais:
 - Dias com imagem auditada aparecem como thumb.
 - Dias sem evidencia aparecem como celula de data com tooltip e detalhe no modal.
 - Dias invalidos aparecem como celula de erro com tooltip e detalhe no modal.
+- O relatório somente apresenta o status canônico retornado pela auditoria da API. Ele não cria, promove, reclassifica ou aprova evidências.
+- `same_day_retry` permanece uma captura do próprio dia; somente `historical_recovery` exige prova editorial retroativa.
+- `publicationHealth` e `evidenceHealth` são exibidos separadamente: `blocked_upstream` de publicação não altera dias já `audited`.
+- Um backfill retroativo só ocorre depois de preflight Drive, publicação AdRotate e confirmação viva; o relatório apenas consome o resultado auditado do job `print-backfill`.
+- `#2693` permanece com evidências históricas intactas e não entra como pendência de print; `#2645` permanece bloqueada até publicação e confirmação viva.
 
 ## Saida
 
@@ -46,7 +51,7 @@ Variaveis opcionais:
 
 ## UX de diagnostico
 
-- O badge `pendente` significa evidencia retroativa ou do dia ainda nao gerada/aprovada.
+- O badge `pendente` significa evidência exigível e ainda não gerada/aprovada; o dia corrente antes da janela nunca recebe esse badge.
 - O badge `erro` significa evidencia existente, mas reprovada pela auditoria.
 - O badge `sem publicação` significa que a insercao ainda nao deve ser cobrada por evidencia.
 - O modal exibe datas pendentes e invalidas para deixar claro o que deve ser corrigido.

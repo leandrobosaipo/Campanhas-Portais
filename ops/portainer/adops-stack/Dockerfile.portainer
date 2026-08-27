@@ -9,7 +9,7 @@ WORKDIR /app
 RUN corepack enable \
  && corepack prepare pnpm@10.14.0 --activate \
  && apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-pip python3-pil zip curl ca-certificates git openssh-client poppler-utils postgresql-client \
+ && apt-get install -y --no-install-recommends python3 python3-pip python3-pil zip curl ca-certificates git openssh-client poppler-utils postgresql-client ffmpeg \
  && python3 -m pip install --break-system-packages --no-cache-dir awscli \
  && rm -rf /var/lib/apt/lists/* \
  && curl -LsSf https://astral.sh/uv/install.sh | sh \
@@ -17,6 +17,8 @@ RUN corepack enable \
  && command -v uvx \
  && command -v pdftotext \
  && command -v pdfinfo \
+ && command -v ffmpeg \
+ && command -v ffprobe \
  && command -v pnpm
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json tsconfig.base.json .npmrc ./

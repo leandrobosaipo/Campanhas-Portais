@@ -60,8 +60,14 @@ print(json.dumps({
 }))
 `;
 
-export type EvidenceExportMode = "delivery" | "full" | "prints-only" | "pdf" | "full-pdf";
+export type EvidenceExportMode = "full" | "prints-only" | "pdf" | "full-pdf";
 export type EvidenceImageVariant = "original" | "web";
+
+export type IndividualEvidenceDownloadOptions = {
+  variant: "web";
+  imageMaxWidth: number;
+  imageQuality: number;
+};
 
 export class EvidenceExportInputError extends Error {
   constructor(
@@ -97,12 +103,12 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
   const mode = String(query.mode ?? "full")
     .trim()
     .toLowerCase();
-  const defaultVariant = mode === "delivery" || mode === "pdf" || mode === "full-pdf" ? "web" : "original";
+  const defaultVariant = mode === "pdf" || mode === "full-pdf" ? "web" : "original";
   const variant = String(query.variant ?? defaultVariant)
     .trim()
     .toLowerCase();
-  if (!["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(mode)) {
-    throw new EvidenceExportInputError("mode deve ser delivery, full, prints-only, pdf ou full-pdf.");
+  if (!["full", "prints-only", "pdf", "full-pdf"].includes(mode)) {
+    throw new EvidenceExportInputError("mode deve ser full, prints-only, pdf ou full-pdf.");
   }
   if (variant !== "original" && variant !== "web") {
     throw new EvidenceExportInputError("variant deve ser original ou web.");
@@ -110,13 +116,38 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
   if (mode === "full" && variant !== "original") {
     throw new EvidenceExportInputError("mode=full exige variant=original; use prints-only, pdf ou full-pdf para variant=web.");
   }
-  if ((mode === "delivery" || mode === "pdf" || mode === "full-pdf") && variant !== "web") {
-    throw new EvidenceExportInputError("mode=delivery, mode=pdf e mode=full-pdf exigem variant=web.");
+  if ((mode === "pdf" || mode === "full-pdf") && variant !== "web") {
+    throw new EvidenceExportInputError("mode=pdf e mode=full-pdf exigem variant=web.");
   }
   return {
     mode: mode as EvidenceExportMode,
     variant: variant as EvidenceImageVariant,
   };
+}
+
+export function parseIndividualEvidenceDownloadOptions(query: Record<string, unknown>): IndividualEvidenceDownloadOptions {
+  const cod5_variant = String(query.variant ?? "web").trim().toLowerCase();
+  const cod5_imageMaxWidth = Number.parseInt(String(query.imageMaxWidth ?? "1600"), 10);
+  const cod5_imageQuality = Number.parseInt(String(query.imageQuality ?? "72"), 10);
+  if (cod5_variant !== "web") throw new EvidenceExportInputError("O download individual exige variant=web.");
+  if (cod5_imageMaxWidth !== 1600 || cod5_imageQuality !== 72) {
+    throw new EvidenceExportInputError("O portal fixa imageMaxWidth=1600 e imageQuality=72.");
+  }
+  return { variant: "web", imageMaxWidth: cod5_imageMaxWidth, imageQuality: cod5_imageQuality };
+}
+
+export function buildIndividualEvidenceDownloadName(insertion: EvidenceDeliveryInsertion, dateKey: string) {
+  return buildDeliveryPrintFileName(insertion, dateKey, undefined, ".jpg");
+}
+
+export function isApprovedEvidenceDownload(status: {
+  status?: string | null;
+  isReachable?: boolean | null;
+  checklistValidation?: { approved?: boolean | null } | null;
+}) {
+  return (status.status === "ok" || status.status === "ok_best_effort")
+    && status.isReachable === true
+    && status.checklistValidation?.approved === true;
 }
 
 export function deliverySegment(
@@ -143,23 +174,6 @@ export function resolveDeliveryPosition(insertion: EvidenceDeliveryInsertion) {
     insertion.localFormatoNormalizado ?? insertion.localFormato,
     "POSICAO",
   );
-}
-
-export function groupByDeliveryPosition<T>(
-  items: T[],
-  resolvePosition: (item: T) => string | null | undefined,
-) {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    const position = deliverySegment(resolvePosition(item), "POSICAO");
-    const current = groups.get(position) ?? [];
-    current.push(item);
-    groups.set(position, current);
-  }
-  return Array.from(groups.entries()).map(([position, groupedItems]) => ({
-    position,
-    items: groupedItems,
-  }));
 }
 
 export function resolveDeliveryDateRange(
@@ -241,6 +255,21 @@ export function selectCanonicalEvidencePerDate<T extends CanonicalEvidenceCandid
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, row]) => row)
     .concat(undated.sort((left, right) => left.id - right.id));
+}
+
+export function selectApprovedCanonicalEvidenceRows<T extends CanonicalEvidenceCandidate>(
+  rows: T[],
+  resolveDate: (row: T) => string | null,
+  statusesByDate: Map<string, {
+    status?: string | null;
+    isReachable?: boolean | null;
+    checklistValidation?: { approved?: boolean | null } | null;
+  }>,
+) {
+  return selectCanonicalEvidencePerDate(rows, resolveDate).filter((row) => {
+    const cod5_date = resolveDate(row);
+    return Boolean(cod5_date && isApprovedEvidenceDownload(statusesByDate.get(cod5_date) || {}));
+  });
 }
 
 export function isPngBuffer(value: Buffer) {

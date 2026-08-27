@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
+import { getActiveCampaignOperations } from "../lib/campaign-operations";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
+import { buildRetryJobInput, buildSchedulerReadback, reconcileDueSchedules, resolveCanonicalSchedule, suppressCompletedPrintRecoveries, validateDryRunNow } from "../lib/ops-scheduler";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
+import { selectDailyPrintCandidates } from "../../../../ops/shared/daily-print-candidates.mjs";
+import { getCaptureProofAuditForDate } from "./insertions";
+// @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
+import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
+import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
+import { nextOperationalAttempt, shouldRetryFailedOpsJob } from "../lib/ops-job-retry";
 
 type JobKind =
   | "print-batch"
@@ -11,14 +19,16 @@ type JobKind =
   | "sync-planilha"
   | "analytics-report"
   | "pi-site-export"
+  | "campaign-evidence-export"
   | "drive-pi-ingest"
   | "drive-inventory-refresh"
-  | "media-monitor"
   | "operational-documents"
   | "reconcile-adrotate"
   | "adrotate-link"
   | "adrotate-publish"
   | "drive-pi-reconcile"
+  | "campaign-publication-reconcile"
+  | "evidence-monthly-report"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -71,19 +81,114 @@ const OPS_JOB_KINDS: JobKind[] = [
   "sync-planilha",
   "analytics-report",
   "pi-site-export",
+  "campaign-evidence-export",
   "drive-pi-ingest",
   "drive-inventory-refresh",
-  "media-monitor",
   "operational-documents",
   "reconcile-adrotate",
   "adrotate-link",
   "adrotate-publish",
   "drive-pi-reconcile",
+  "campaign-publication-reconcile",
+  "evidence-monthly-report",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
 
 const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
+const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
+const ADOPS_CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "cloudflare").trim();
+const recoveryAuditGateByScheduleId = new Map<string, { complete: boolean; checkedAt: number }>();
+
+async function readDailyPrintCandidateAudit(targetDate: string) {
+  const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true });
+  const candidates = selectDailyPrintCandidates(operations.items, targetDate);
+  const insertionIds = new Set<number>(candidates
+    .map((item: { adops?: { insertionId?: unknown } }) => Number(item?.adops?.insertionId))
+    .filter((value: number) => Number.isInteger(value) && value > 0));
+  return {
+    ...await getCaptureProofAuditForDate(targetDate, { insertionIds }),
+    expectedTotal: candidates.length,
+  };
+}
+
+async function proxyPublicWorkerJob(req: Request, res: Response, targetPath = req.originalUrl): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const method = req.method.toUpperCase();
+    const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${targetPath}`, {
+      method: req.method,
+      signal: controller.signal,
+      headers: {
+        accept: req.header("accept") || "application/json",
+        "content-type": "application/json",
+        ...(req.header("authorization") ? { authorization: req.header("authorization")! } : {}),
+        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key")! } : {}),
+      },
+      ...(method === "GET" || method === "HEAD" ? {} : { body: JSON.stringify(req.body ?? {}) }),
+    });
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) res.setHeader("content-type", contentType);
+    res.setHeader("cache-control", "no-store");
+    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (error) {
+    res.status(503).json({
+      error: "ops_worker_unavailable",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const D1_JOB_POST_PATHS = new Set([
+  "/ops/jobs/print-batch",
+  "/ops/jobs/print-backfill",
+  "/ops/jobs/print-single",
+  "/ops/jobs/evidence-monthly-report",
+  "/ops/monthly-report-refreshes",
+  "/ops/jobs/campaign-publication-reconcile",
+  "/ops/jobs/drive-pi-preflight",
+  "/ops/jobs/drive-pi-folder",
+  "/ops/jobs/drive-pi-publish",
+  "/ops/jobs/reconcile-adrotate",
+  "/ops/jobs/adrotate-link",
+  "/ops/jobs/adrotate-publish",
+  "/ops/jobs/watchdog",
+  "/ops/jobs/sync-planilha",
+  "/ops/jobs/drive-inventory-refresh",
+  "/ops/jobs/drive-pi-reconcile",
+  "/ops/jobs/telegram-send-evidence",
+  "/ops/jobs/runtime-readiness-probe",
+]);
+
+router.use((req, res, next) => {
+  if (ADOPS_CONTROL_PLANE_PROVIDER === "macmini") {
+    next();
+    return;
+  }
+  const method = req.method.toUpperCase();
+  if (method === "POST" && req.path === "/ops/jobs/pi-site-export") {
+    void proxyPublicWorkerJob(req, res, "/api/pi-site-exports/jobs");
+    return;
+  }
+  if (method === "POST" && (req.path === "/ops/drive-pi-events" || req.path === "/ops/drive-pi-events/status")) {
+    void proxyPublicWorkerJob(req, res);
+    return;
+  }
+  const d1Read = method === "GET" && (
+    req.path === "/ops/jobs"
+    || req.path === "/ops/daily-print-status"
+    || req.path === "/ops/queue/overview"
+    || /^\/ops\/jobs\/[^/]+(?:\/progress)?$/.test(req.path)
+  );
+  if (d1Read || (method === "POST" && D1_JOB_POST_PATHS.has(req.path))) {
+    void proxyPublicWorkerJob(req, res);
+    return;
+  }
+  next();
+});
 
 type RuntimeEnvCheck = {
   name: string;
@@ -394,6 +499,18 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Concluido",
     failed: "Falhou",
   },
+  "campaign-evidence-export": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    queue_received: "Fila recebida",
+    running: "Gerando ZIP completo da campanha",
+    preparing: "Conferindo evidências",
+    compiling: "Montando ZIP por portal e formato",
+    upload_started: "Publicando pacote",
+    completed: "Pacote completo concluído",
+    failed: "Falha no pacote completo da campanha",
+    queue_dispatch_failed: "Falha ao despachar fila",
+  },
   "drive-pi-ingest": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -417,16 +534,6 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     syncing: "Persistindo snapshot",
     completed: "Inventário do Drive atualizado",
     failed: "Falha ao atualizar inventário do Drive",
-  },
-  "media-monitor": {
-    queued: "Na fila",
-    ready_for_runner: "Aguardando monitor do Drive",
-    running: "Verificando novas mídias",
-    scanning: "Atualizando inventário do Drive",
-    waiting_for_inventory: "Aguardando inventário atualizado",
-    matching: "Conferindo PI, portal e posição",
-    completed: "Fila de mídia verificada",
-    failed: "Falha na fila de mídia",
   },
   "operational-documents": {
     queued: "Na fila",
@@ -459,6 +566,20 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     generating_evidence: "Gerando evidencia",
     completed: "Publicacao AdRotate concluida",
     failed: "Falha na publicacao AdRotate",
+  },
+  "campaign-publication-reconcile": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner do Drive",
+    running: "Reavaliando campanhas bloqueadas",
+    completed: "Retomada de campanhas conferida",
+    failed: "Falha na retomada de campanhas",
+  },
+  "evidence-monthly-report": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Gerando relatório de evidências",
+    completed: "Concluído",
+    failed: "Falhou",
   },
   "telegram-send-evidence": {
     queued: "Na fila",
@@ -501,6 +622,9 @@ function parseJson(value: string | null) {
 function sanitizeJobText(value: unknown, maxLength = 12000) {
   if (typeof value !== "string") return value;
   return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\b(authorization|cookie|set-cookie|x-api-key|x-adops-api-token)\s*:\s*[^\r\n,}]+/gi, "$1: [redacted]")
+    .replace(/([?&](?:access_)?(?:token|api[_-]?key|secret|password|authorization|cookie)=)[^&#\s]+/gi, "$1[redacted]")
     .replace(/\b[A-Za-z0-9._-]+@(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ssh-user-host]")
     .replace(/\[(?:\d{1,3}\.){3}\d{1,3}\]:\d+/g, "[ssh-host-port]")
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[ip]")
@@ -512,9 +636,21 @@ function sanitizeJobValue(value: unknown): unknown {
   if (typeof value === "string") return sanitizeJobText(value);
   if (Array.isArray(value)) return value.map((item) => sanitizeJobValue(item));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJobValue(item)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, isSensitiveJobKey(key) ? "[redacted]" : sanitizeJobValue(item)]));
   }
   return value;
+}
+
+function isSensitiveJobKey(key: string) {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return normalized.includes("authorization")
+    || normalized.endsWith("token")
+    || normalized.endsWith("apikey")
+    || normalized.endsWith("secret")
+    || normalized.endsWith("password")
+    || normalized.endsWith("passwd")
+    || normalized.endsWith("cookie")
+    || normalized === "bearer";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -544,6 +680,28 @@ function parseDriveFolderId(value: unknown) {
 function parseIsoDate(value: unknown) {
   const raw = readOptionalString(value);
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function buildPrintBackfillIdempotencyKey(payload: {
+  insertionId: number | null;
+  campaignId: number | null;
+  piCodigo: string | null;
+  siteSigla: string | null;
+  siteId: number | null;
+  competencia: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+}) {
+  const scope = payload.insertionId
+    ? `insertion:${payload.insertionId}`
+    : payload.campaignId
+      ? `campaign:${payload.campaignId}`
+      : payload.piCodigo && payload.siteSigla
+        ? `pi-site:${payload.piCodigo.replace(/\D/g, "").replace(/^0+(?=\d)/, "")}:${payload.siteSigla}`
+        : payload.siteId
+          ? `site:${payload.siteId}`
+          : `competencia:${payload.competencia}`;
+  return `print-backfill:${scope}:${payload.fromDate ?? "period-start"}:${payload.toDate ?? "period-end"}:late_publication_recovery`;
 }
 
 function parseIsoTimestamp(value: unknown) {
@@ -677,7 +835,7 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
 }
 
 function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
-  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "media-monitor" || kind === "adrotate-publish";
+  const longRunning = kind === "analytics-report" || kind === "pi-site-export" || kind === "campaign-evidence-export" || kind === "drive-pi-ingest" || kind === "drive-inventory-refresh" || kind === "adrotate-publish";
   if (status === "queued" || status === "ready_for_runner") {
     return longRunning ? 30 * 60_000 : 15 * 60_000;
   }
@@ -688,12 +846,16 @@ function getJobTimeoutMs(kind: JobKind, status: JobStatus) {
 }
 
 function buildWatchdogFailure(record: OpsJobRecord, detectedAt: string) {
+  const errorCode = record.status === "running" ? "expired" : "queue_timeout";
   return {
     error: `Watchdog marcou falha automatica: ${record.status} excedeu o tempo limite de ${record.kind}.`,
     result: {
       ok: false,
       watchdog: true,
+      incidentLayer: record.status === "running" ? "runner" : "queue",
+      errorCode,
       previousStatus: record.status,
+      partialResult: parseJson(record.result_json),
       detectedAt,
       ageMinutes: Math.round(getJobAgeMs(record) / 60_000),
       timeoutMinutes: Math.round(getJobTimeoutMs(record.kind, record.status) / 60_000),
@@ -749,29 +911,114 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
   return id;
 }
 
-async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string) {
-  const existing = await pool.query<{ id: string; status: JobStatus }>(
-    `SELECT id, status
-       FROM ops_jobs
-      WHERE kind = $1
-        AND payload_json::jsonb ->> 'idempotencyKey' = $2
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [kind, idempotencyKey],
-  );
-  if (existing.rows[0]) {
-    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string, activeOnly = false, retryFailed = false) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`ops-job:${kind}:${idempotencyKey}`]);
+    const existing = await client.query<{ id: string; status: JobStatus; not_before: string | null; attempt: string | null }>(
+      `SELECT id, status, payload_json::jsonb ->> 'notBefore' AS not_before,
+              payload_json::jsonb ->> 'attempt' AS attempt
+         FROM ops_jobs
+        WHERE kind = $1
+          AND payload_json::jsonb ->> 'idempotencyKey' = $2
+          AND (NOT $3::boolean OR status IN ('queued', 'ready_for_runner'))
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [kind, idempotencyKey, activeOnly],
+    );
+    if (existing.rows[0]) {
+      if (shouldRetryFailedOpsJob(existing.rows[0].status, retryFailed)) {
+        const retriedAt = nowIso();
+        await client.query(
+          `UPDATE ops_jobs
+              SET status = 'ready_for_runner', payload_json = $1, result_json = NULL, error_text = NULL, runner_id = NULL, updated_at = $2
+            WHERE id = $3 AND status = 'failed'`,
+          [JSON.stringify({ ...payload, attempt: nextOperationalAttempt(existing.rows[0].attempt), idempotencyKey }), retriedAt, existing.rows[0].id],
+        );
+        await client.query("COMMIT");
+        return { jobId: existing.rows[0].id, status: "ready_for_runner" as const, duplicate: false, existingNotBefore: null };
+      }
+      await client.query("COMMIT");
+      return {
+        jobId: existing.rows[0].id,
+        status: existing.rows[0].status,
+        duplicate: true,
+        existingNotBefore: existing.rows[0].not_before,
+      };
+    }
+    const jobId = randomUUID();
+    const createdAt = nowIso();
+    await client.query(
+      `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+       VALUES ($1, $2, 'ready_for_runner', $3, NULL, NULL, $4, NULL, $5, $6)`,
+      [jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, createdAt, createdAt],
+    );
+    await client.query("COMMIT");
+    return { jobId, status: "ready_for_runner" as const, duplicate: false, existingNotBefore: null };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
-  const jobId = await createOpsJob(kind, { ...payload, idempotencyKey }, requestedBy);
-  return { jobId, status: "ready_for_runner" as const, duplicate: false };
 }
+
+function competenciaForDate(date: string) {
+  const match = date.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  const months = ["", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+  return `${months[Number(match[2])]}\/${match[1]}`;
+}
+
+router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
+  const dryRun = req.body?.dryRun === true || req.body?.shadow === true;
+  const requestedNow = validateDryRunNow(dryRun, req.body?.now);
+  if (requestedNow === undefined) {
+    res.status(400).json({ error: "bad_request", details: "now deve ser um instante ISO válido e só é aceito em dry-run." });
+    return;
+  }
+  const scheduled = resolveCanonicalSchedule(requestedNow ?? new Date());
+  const recoveryGateRequired = scheduled.some((decision) => decision.due
+    && ["daily-print-recovery", "daily-print-morning-recovery"].includes(decision.routineKind));
+  const decisions = dryRun
+    ? scheduled
+    : await suppressCompletedPrintRecoveries(scheduled, readDailyPrintCandidateAudit, recoveryAuditGateByScheduleId);
+  const results = await reconcileDueSchedules(decisions, async (input) => {
+    if (dryRun) return { jobId: `dry-run:${input.scheduleId}`, created: true };
+    if (!input.jobKind) throw new Error(`Rotina sem jobKind: ${input.routineKind}`);
+    const created = await createIdempotentOpsJob(input.jobKind, {
+      ...input,
+      date: input.targetDate,
+      ...(input.routineKind === "daily-print-morning-recovery" ? { recoveryMode: "late_publication_recovery" } : {}),
+      ...(input.jobKind === "evidence-monthly-report" ? { competencia: competenciaForDate(input.targetDate) } : {}),
+      source: "macmini-canonical-scheduler",
+    }, req.body?.shadow === true ? "cloudflare-shadow" : "macmini-scheduler", input.idempotencyKey);
+    return { jobId: created.jobId, created: !created.duplicate };
+  });
+  res.status(dryRun || results.every((item) => item.outcome !== "created") ? 200 : 202).json({
+    ok: true,
+    dryRun,
+    auditGateEvaluated: !dryRun && recoveryGateRequired,
+    timezone: "America/Cuiaba",
+    decisions: results,
+  });
+});
 
 async function getOpsJob(id: string) {
   const result = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [id]);
   return result.rows[0] ? describeJob(result.rows[0]) : null;
 }
 
-async function updateOpsJob(id: string, patch: { status?: JobStatus; result?: unknown; error?: string | null; runnerId?: string | null }) {
+async function updateOpsJob(id: string, patch: {
+  status?: JobStatus;
+  result?: unknown;
+  error?: string | null;
+  runnerId?: string | null;
+  expectedStatus?: JobStatus;
+  expectedRunnerId?: string | null;
+  expectedUpdatedAt?: string;
+}) {
   const current = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [id]);
   const record = current.rows[0];
   if (!record) return null;
@@ -784,8 +1031,11 @@ async function updateOpsJob(id: string, patch: { status?: JobStatus; result?: un
     `UPDATE ops_jobs
        SET status = $1, result_json = $2, error_text = $3, runner_id = $4, updated_at = $5
      WHERE id = $6
+       AND ($7::text IS NULL OR status = $7)
+       AND ($8::text IS NULL OR runner_id = $8)
+       AND ($9::text IS NULL OR updated_at = $9)
      RETURNING *`,
-    [status, resultJson, errorText, runnerId, updatedAt, id],
+    [status, resultJson, errorText, runnerId, updatedAt, id, patch.expectedStatus ?? null, patch.expectedRunnerId ?? null, patch.expectedUpdatedAt ?? null],
   );
   return updated.rows[0] ?? null;
 }
@@ -989,54 +1239,83 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
     ? req.body.kinds.filter((item: unknown): item is JobKind => OPS_JOB_KINDS.includes(String(item) as JobKind))
     : null;
   const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId || !requestedKinds?.length) {
+    res.status(400).json({ error: "bad_request", details: "runnerId e ao menos um kind válido são obrigatórios." });
+    return;
+  }
   const values: unknown[] = [];
   let kindFilter = "";
-  if (requestedKinds?.length) {
-    values.push(requestedKinds);
-    kindFilter = `AND kind = ANY($${values.length})`;
-  }
+  values.push(requestedKinds);
+  kindFilter = `AND kind = ANY($${values.length}::text[])`;
+  const claimedAt = nowIso();
   const result = await pool.query<OpsJobRecord>(
     `UPDATE ops_jobs
-       SET status = 'running', runner_id = $${values.length + 1}, error_text = NULL, updated_at = $${values.length + 2}
+       SET status = 'running',
+           runner_id = $${values.length + 1},
+           error_text = NULL,
+           payload_json = (payload_json::jsonb || jsonb_build_object('claimedAt', $${values.length + 2}::text, 'heartbeatAt', $${values.length + 2}::text))::text,
+           updated_at = $${values.length + 2}
      WHERE id = (
        SELECT id FROM ops_jobs
        WHERE status = 'ready_for_runner' ${kindFilter}
+         AND (payload_json::jsonb ->> 'notBefore' IS NULL OR payload_json::jsonb ->> 'notBefore' <= $${values.length + 2})
        ORDER BY created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
      )
      RETURNING *`,
-    [...values, runnerId, nowIso()],
+    [...values, runnerId, claimedAt],
   );
   res.json({ ok: true, job: result.rows[0] ? describeJob(result.rows[0]) : null });
 });
 
 router.post("/ops/runner/jobs/:id/progress", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     result: req.body?.result ?? null,
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     status: "completed",
     result: req.body?.result ?? { ok: true },
     error: null,
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
+  const runnerId = readOptionalString(req.body?.runnerId);
+  if (!runnerId) {
+    res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     status: "failed",
     result: req.body?.result ?? null,
     error: readOptionalString(req.body?.error) ?? "Runner reportou falha sem detalhe.",
-    runnerId: readOptionalString(req.body?.runnerId) ?? undefined,
+    runnerId: runnerId ?? undefined,
+    expectedStatus: "running",
+    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 404).json(updated ? { ok: true, job: describeJob(updated) } : { error: "not_found", details: "Job not found" });
+  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
@@ -1047,10 +1326,40 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     [limit],
   );
   const stale: OpsJobRecord[] = active.rows.filter((record: OpsJobRecord) => getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
+  const recoveries: Array<{ parentJobId: string; jobId: string; attempt: number }> = [];
   if (!dryRun) {
     for (const record of stale) {
       const failure = buildWatchdogFailure(record, nowIso());
-      await updateOpsJob(record.id, { status: "failed", error: failure.error, result: failure.result, runnerId: record.runner_id });
+      const failed = await updateOpsJob(record.id, {
+        status: "failed",
+        error: failure.error,
+        result: failure.result,
+        runnerId: record.runner_id,
+        expectedStatus: record.status,
+        expectedUpdatedAt: record.updated_at,
+      });
+      if (!failed) continue;
+      if (record.status !== "running") continue;
+      const retry = buildRetryJobInput({
+        parentJobId: record.id,
+        jobKind: record.kind,
+        payload: (parseJson(record.payload_json) ?? {}) as Record<string, unknown>,
+        failedAt: failure.result.detectedAt,
+        errorCode: failure.result.errorCode,
+      });
+      if (!retry || !OPS_JOB_KINDS.includes(retry.jobKind as JobKind)) continue;
+      const created = await createIdempotentOpsJob(
+        retry.jobKind as JobKind,
+        {
+          ...retry.payload,
+          notBefore: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+        "watchdog-recovery",
+        retry.idempotencyKey,
+      );
+      if (!created.duplicate) {
+        recoveries.push({ parentJobId: record.id, jobId: created.jobId, attempt: Number(retry.payload.attempt) });
+      }
     }
   }
   res.json({
@@ -1059,6 +1368,7 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     checked: active.rows.length,
     staleCount: stale.length,
     failedCount: dryRun ? 0 : stale.length,
+    recoveries,
     stale: stale.map((record: OpsJobRecord) => ({
       id: record.id,
       kind: record.kind,
@@ -1071,9 +1381,10 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
 });
 
 router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
-  const active = await pool.query<OpsJobRecord>(
-    "SELECT * FROM ops_jobs WHERE status IN ('running','queued','ready_for_runner') ORDER BY created_at ASC",
-  );
+  const [active, heartbeats] = await Promise.all([
+    pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE status IN ('running','queued','ready_for_runner') ORDER BY created_at ASC"),
+    listRunnerHeartbeats().catch(() => []),
+  ]);
   const described: Array<ReturnType<typeof describeJob>> = active.rows.map(describeJob);
   const running = described.filter((job: ReturnType<typeof describeJob>) => job.status === "running");
   const queue = described.filter((job: ReturnType<typeof describeJob>) => job.status === "queued" || job.status === "ready_for_runner");
@@ -1093,6 +1404,11 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
      FROM ops_jobs`,
   );
   const row = totals.rows[0] ?? {};
+  const heartbeatRows = heartbeats as Awaited<ReturnType<typeof listRunnerHeartbeats>>;
+  const recentHeartbeatWindowMs = 30 * 60_000;
+  const recentHeartbeats = heartbeatRows.filter((heartbeat) => (
+    heartbeat.updated_at && Date.now() - Date.parse(heartbeat.updated_at) <= recentHeartbeatWindowMs
+  ));
   res.json({
     now: running[0] ?? null,
     queue,
@@ -1104,7 +1420,78 @@ router.get("/ops/queue/overview", async (_req, res): Promise<void> => {
       completedToday: Number(row.completed_today ?? 0) || 0,
       failedToday: Number(row.failed_today ?? 0) || 0,
     },
+    runners: {
+      lastHeartbeatAt: heartbeatRows[0]?.updated_at ?? null,
+      hasRecentRunner: heartbeatRows.length ? recentHeartbeats.length > 0 : null,
+      count: recentHeartbeats.length || null,
+      registeredCount: heartbeatRows.length || null,
+    },
+    scheduler: buildSchedulerReadback(new Date(), ADOPS_CONTROL_PLANE_PROVIDER),
   });
+});
+
+router.get("/ops/daily-print-status", async (req, res): Promise<void> => {
+  const targetDate = readOptionalString(req.query.date);
+  if (targetDate && !/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "date deve estar em YYYY-MM-DD." });
+    return;
+  }
+  const result = await pool.query<OpsJobRecord>(
+    `SELECT * FROM ops_jobs
+      WHERE kind = 'print-batch'
+      ORDER BY created_at DESC
+      LIMIT 100`,
+  );
+  res.json(buildDailyPrintStatus({ jobs: result.rows.map(describeJob), now: new Date(), targetDate }));
+});
+
+router.get("/ops/daily-print-alerts/evaluate", async (_req, res): Promise<void> => {
+  const decision = resolveDailyPrintAlertDecision(new Date());
+  const operations = await getActiveCampaignOperations({ date: decision.targetDate, includeEvidence: true });
+  const publicationBlockedIds = [...new Set(operations.items
+    .filter((item) => item.publicationHealth?.status === "blocked_upstream")
+    .map((item) => item.adops.insertionId)
+    .filter((id): id is number => Number.isInteger(id)))]
+    .sort((a, b) => a - b);
+  res.json({ ...decision, publicationBlockedIds });
+});
+
+router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => {
+  const date = readOptionalString(req.body?.date);
+  const state = readOptionalString(req.body?.state);
+  const pendingInsertionIds = Array.isArray(req.body?.pendingInsertionIds)
+    ? (req.body.pendingInsertionIds as unknown[])
+      .map((item: unknown) => readOptionalNumber(item))
+      .filter((item: number | null): item is number => item !== null)
+      .sort((a: number, b: number) => a - b)
+    : [];
+  const publicationBlockedIds = Array.isArray(req.body?.publicationBlockedIds)
+    ? (req.body.publicationBlockedIds as unknown[])
+      .map((item: unknown) => readOptionalNumber(item))
+      .filter((item: number | null): item is number => item !== null)
+      .filter((item: number) => item > 0)
+    : [];
+  const canonicalPublicationBlockedIds = [...new Set(publicationBlockedIds)].sort((a, b) => a - b);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !state) {
+    res.status(400).json({ error: "bad_request", details: "date e state são obrigatórios." });
+    return;
+  }
+  const previous = await pool.query<{ total: string | number }>(
+    "SELECT COUNT(*) AS total FROM daily_print_alerts WHERE target_date = $1",
+    [date],
+  );
+  if (state === "resolved" && Number(previous.rows[0]?.total ?? 0) === 0) {
+    res.json({ ok: true, claimed: false, reason: "no_previous_incident" });
+    return;
+  }
+  const fingerprint = `${date}:${state}:prints=${pendingInsertionIds.join(",")}:publication=${canonicalPublicationBlockedIds.join(",")}`;
+  const inserted = await pool.query(
+    `INSERT INTO daily_print_alerts (fingerprint, target_date, state, pending_ids_json, claimed_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (fingerprint) DO NOTHING`,
+    [fingerprint, date, state, JSON.stringify(pendingInsertionIds), nowIso()],
+  );
+  res.json({ ok: true, claimed: inserted.rowCount === 1 });
 });
 
 router.get("/ops/runtime-readiness", async (_req, res): Promise<void> => {
@@ -1141,7 +1528,26 @@ router.post("/ops/runner/heartbeat", async (req, res): Promise<void> => {
     lastSuccessAt: parseIsoTimestamp(req.body?.lastSuccessAt),
     lastError: sanitizeJobText(readOptionalString(req.body?.lastError), 1000) as string | null,
   });
-  res.json({ ok: true, runnerId, receivedAt: nowIso() });
+  const jobId = readOptionalString(req.body?.jobId);
+  const heartbeatAt = parseIsoTimestamp(req.body?.heartbeatAt) ?? nowIso();
+  let jobLease: { jobId: string; accepted: boolean } | null = null;
+  if (jobId) {
+    const updated = await pool.query(
+      `UPDATE ops_jobs
+          SET payload_json = (payload_json::jsonb || jsonb_build_object('heartbeatAt', $1::text))::text,
+              updated_at = $1
+        WHERE id = $2 AND runner_id = $3 AND status = 'running'`,
+      [heartbeatAt, jobId, runnerId],
+    );
+    jobLease = { jobId, accepted: updated.rowCount === 1 };
+  }
+  res.status(jobLease && !jobLease.accepted ? 409 : 200).json({
+    ok: !jobLease || jobLease.accepted,
+    ...(jobLease && !jobLease.accepted ? { error: "lease_lost" } : {}),
+    runnerId,
+    receivedAt: nowIso(),
+    jobLease,
+  });
 });
 
 router.get("/ops/api-catalog", (_req, res): void => {
@@ -1195,7 +1601,7 @@ router.get("/ops/docs", (_req, res): void => {
 </html>`);
 });
 
-export function buildOpsApiCatalog() {
+function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
   const sections = [
@@ -1216,9 +1622,65 @@ export function buildOpsApiCatalog() {
         id: "queue-overview",
         method: "GET",
         path: "/api/ops/queue/overview",
-        purpose: "Ver jobs ativos, fila e totais do dia.",
+        purpose: "Ver jobs ativos, fila, runners e decisões do scheduler canônico do Mac Mini.",
         authRequired: false,
         curl: `curl -fsSL ${base}/api/ops/queue/overview`,
+      },
+      {
+        id: "schedule-reconcile",
+        method: "POST",
+        path: "/api/ops/schedules/reconcile",
+        purpose: "Reconciliar a janela atual na API canônica; a API calcula data, horário e idempotência.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/schedules/reconcile -d '{}'`,
+      },
+      {
+        id: "daily-print-alert-claim",
+        method: "POST",
+        path: "/api/ops/daily-print-alerts/claim",
+        purpose: "Reservar idempotentemente uma transição de alerta diário no Postgres.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/daily-print-alerts/claim -d '{"date":"2026-08-26","state":"incident","pendingInsertionIds":[2713]}'`,
+      },
+      {
+        id: "daily-print-status",
+        method: "GET",
+        path: "/api/ops/daily-print-status",
+        purpose: "Consultar tentativa, auditoria e próxima janela canônica de uma data em America/Cuiaba.",
+        authRequired: false,
+        curl: `curl -fsSL '${base}/api/ops/daily-print-status?date=2026-08-26'`,
+      },
+      {
+        id: "ops-incidents",
+        method: "GET",
+        path: "/api/ops/incidents",
+        purpose: "Consultar incidentes derivados de jobs, com camada, código e IDs correlacionados.",
+        authRequired: true,
+        curl: `curl -fsSL ${auth} '${base}/api/ops/incidents?status=open'`,
+      },
+      {
+        id: "runner-claim-next",
+        method: "POST",
+        path: "/api/ops/runner/claim-next",
+        purpose: "Fazer claim exclusivo do próximo job permitido para o runner.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/runner/claim-next -d '{"runnerId":"runner-1","kinds":["print-batch"]}'`,
+      },
+      {
+        id: "runner-heartbeat",
+        method: "POST",
+        path: "/api/ops/runner/heartbeat",
+        purpose: "Registrar heartbeat e capacidades reais do runner sem inventar contagens ausentes.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/runner/heartbeat -d '{"runnerId":"runner-1","status":"idle","currentJobId":null,"capabilities":{"jobKinds":["print-batch"]}}'`,
+      },
+      {
+        id: "runner-job-progress",
+        method: "POST",
+        path: "/api/ops/runner/jobs/{jobId}/progress",
+        purpose: "Atualizar progresso somente enquanto o runner ainda possui o lease do job.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/runner/jobs/JOB_ID/progress -d '{"runnerId":"runner-1","result":{"stage":"capture"}}'`,
       },
       {
         id: "runtime-readiness",
@@ -1251,14 +1713,6 @@ export function buildOpsApiCatalog() {
         purpose: "Enfileirar atualização idempotente do inventário do Google Drive sem fornecer credenciais à API pública.",
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/drive-inventory-refresh -d '{}'`,
-      },
-      {
-        id: "media-monitor",
-        method: "POST",
-        path: "/api/ops/jobs/media-monitor",
-        purpose: "Verificar campanhas da planilha aguardando mídia e publicar somente correspondências exatas, sem LLM e sem banco direto.",
-        authRequired: true,
-        curl: `curl -fsSL -X POST ${auth} -H 'Idempotency-Key: media-monitor:AAAA-MM-DDTHH:MM' ${base}/api/ops/jobs/media-monitor -d '{}'`,
       },
       {
         id: "ops-quickstart",
@@ -1326,7 +1780,7 @@ export function buildOpsApiCatalog() {
         id: "active-campaign-operations",
         method: "GET",
         path: "/api/campaign-operations/active?date=YYYY-MM-DD",
-        purpose: "Ler a aba do mês corrente, resolver posição por portal, cruzar candidatos do Drive, AdOps e evidências, e retornar bloqueios sem criar jobs.",
+        purpose: "Ler a aba do mês corrente, cruzar com Drive, AdOps e evidências, e retornar ações recomendadas sem criar jobs.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08"`,
       },
@@ -1334,7 +1788,7 @@ export function buildOpsApiCatalog() {
         id: "active-campaign-operations-site",
         method: "GET",
         path: "/api/campaign-operations/active?date=YYYY-MM-DD&siteSigla=PERRENGUE",
-        purpose: "Filtrar o diagnóstico por portal, preservando valor bruto, resolução da posição e candidatos do Drive.",
+        purpose: "Filtrar o diagnóstico operacional por portal.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08&siteSigla=PERRENGUE"`,
       },
@@ -1504,7 +1958,7 @@ export function buildOpsApiCatalog() {
   })));
   return {
     ok: true,
-    version: "adops-ops-api-catalog-v3",
+    version: "adops-ops-api-catalog-v2",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     auth: {
@@ -1604,7 +2058,7 @@ function buildOpsQuickstart() {
   ];
   return {
     ok: true,
-    version: "adops-ops-quickstart-v3",
+    version: "adops-ops-quickstart-v2",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     tokenEnv: "OPS_API_TOKEN",
@@ -1630,7 +2084,6 @@ function buildOpsQuickstart() {
       "Campanha futura é aceita por adId, groupId e período administrativo; não exigir HTML antes da data de início.",
       "Aceitar print somente com validate-proof.approved=true.",
       "Usar campaign-operations/active para saber o que está ativo, pendente de cadastro, publicação ou evidência antes de criar jobs.",
-      "Nunca aplicar posição ambígua, match do Drive somente por nome da campanha ou conflito de PI; revisar candidates e blockingIssues.",
       "Se regra de slot, período, mídia ou checklist falhar, corrigir a fonte antes do lote.",
       "Em divergência de fonte, prioridade: PDF/email da PI, planilha, AdOps, AdRotate, HTML público.",
     ],
@@ -1664,37 +2117,26 @@ function openApiSchemaForExample(value: unknown): Record<string, unknown> {
   return {};
 }
 
-export function buildOpsOpenApiDocument() {
+function buildOpsOpenApiDocument() {
   const catalog = buildOpsApiCatalog();
   const paths: Record<string, Record<string, unknown>> = {};
   for (const endpoint of catalog.endpoints) {
     const method = String(endpoint.method).toLowerCase();
-    const [pathTemplate, queryTemplate = ""] = endpoint.path.split("?");
-    const pathKey = pathTemplate!.replace(/\{([^}]+)\}/g, "{$1}");
-    const pathParams = Array.from(pathTemplate!.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
-    const queryParams = queryTemplate.split("&").filter(Boolean).map((item) => {
-      const [name, example = ""] = item.split("=");
-      return {
-        name,
-        in: "query",
-        required: false,
-        schema: { type: "string" },
-        ...(example && !/[{}]/.test(example) && !/YYYY|true\|false/.test(example) ? { example } : {}),
-      };
-    });
+    const pathKey = endpoint.path.replace(/\{([^}]+)\}/g, "{$1}");
+    const pathParams = Array.from(endpoint.path.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
     const bodyExample = method === "post" ? parseCurlBodyExample(endpoint.curl) : null;
     paths[pathKey] ??= {};
-    const operation: Record<string, any> = {
+    paths[pathKey][method] = {
       summary: endpoint.purpose,
       description: `${endpoint.sectionTitle}. ${endpoint.purpose}`,
       tags: [endpoint.sectionTitle],
       security: endpoint.authRequired ? [{ bearerAuth: [] }] : [],
-      parameters: [...pathParams.map((name) => ({
+      parameters: pathParams.map((name) => ({
         name,
         in: "path",
         required: true,
         schema: { type: "string" },
-      })), ...queryParams],
+      })),
       ...(bodyExample ? {
         requestBody: {
           required: true,
@@ -1707,10 +2149,7 @@ export function buildOpsOpenApiDocument() {
         },
       } : {}),
       responses: {
-        "200": endpoint.id.startsWith("active-campaign-operations") ? {
-          description: "Diagnóstico read-only campaign-operations-v2.",
-          content: { "application/json": { schema: { $ref: "#/components/schemas/CampaignOperationsV2" } } },
-        } : { description: "Resposta bem-sucedida." },
+        "200": { description: "Resposta bem-sucedida." },
         "202": { description: "Job criado para execução assíncrona." },
         "400": { description: "Payload inválido." },
         "401": { description: "Token operacional ausente ou inválido." },
@@ -1718,14 +2157,6 @@ export function buildOpsOpenApiDocument() {
       },
       "x-curl": endpoint.curl,
     };
-    const previous = paths[pathKey][method] as { parameters?: Array<Record<string, any>> } | undefined;
-    if (previous?.parameters) {
-      const merged = [...previous.parameters, ...operation.parameters].filter((parameter, index, all) =>
-        all.findIndex((candidate) => candidate.name === parameter.name && candidate.in === parameter.in) === index,
-      );
-      operation.parameters = merged;
-    }
-    paths[pathKey][method] = operation;
   }
   return {
     openapi: "3.1.0",
@@ -1747,66 +2178,6 @@ export function buildOpsOpenApiDocument() {
           type: "http",
           scheme: "bearer",
           bearerFormat: "OPS_API_TOKEN",
-        },
-      },
-      schemas: {
-        CampaignOperationsV2: {
-          type: "object",
-          required: ["version", "date", "summary", "items", "upcomingItems"],
-          properties: {
-            version: { type: "string", const: "campaign-operations-v2" },
-            date: { type: "string", format: "date" },
-            summary: { type: "object", additionalProperties: true },
-            items: { type: "array", items: { $ref: "#/components/schemas/CampaignOperationItemV2" } },
-            upcomingItems: { type: "array", items: { $ref: "#/components/schemas/CampaignOperationItemV2" } },
-          },
-          additionalProperties: true,
-        },
-        CampaignOperationItemV2: {
-          type: "object",
-          required: ["siteSigla", "piCodigo", "format", "drive", "requiredActions", "blockingIssues"],
-          properties: {
-            siteSigla: { type: "string" },
-            piCodigo: { type: "string" },
-            format: {
-              type: "object",
-              properties: {
-                sheet: { type: "string" },
-                normalized: { type: "string" },
-                resolution: { $ref: "#/components/schemas/FormatResolution" },
-              },
-              additionalProperties: true,
-            },
-            drive: { $ref: "#/components/schemas/DriveCampaignMatch" },
-            requiredActions: { type: "array", items: { type: "string" } },
-            blockingIssues: { type: "array", items: { type: "string" } },
-          },
-          additionalProperties: true,
-        },
-        FormatResolution: {
-          type: "object",
-          required: ["status", "method", "rawFormat", "lexicalKey", "candidates", "safeToApply"],
-          properties: {
-            status: { type: "string", enum: ["resolved", "ambiguous", "unresolved"] },
-            method: { type: "string", enum: ["exact_alias", "normalized_alias", "context", "dimension", "none"] },
-            rawFormat: { type: "string" },
-            lexicalKey: { type: "string" },
-            canonicalFormat: { type: ["string", "null"] },
-            groupId: { type: ["integer", "null"] },
-            candidates: { type: "array", items: { type: "object", additionalProperties: true } },
-            safeToApply: { type: "boolean" },
-          },
-        },
-        DriveCampaignMatch: {
-          type: "object",
-          required: ["status", "candidates", "matchMethod", "safeToApply"],
-          properties: {
-            status: { type: "string", enum: ["matched", "not_found", "ambiguous", "unavailable"] },
-            matchMethod: { type: "string", enum: ["folder_pi", "file_pi", "campaign_tokens", "none"] },
-            candidates: { type: "array", items: { type: "object", additionalProperties: true } },
-            safeToApply: { type: "boolean" },
-          },
-          additionalProperties: true,
         },
       },
     },
@@ -2039,6 +2410,130 @@ router.get("/ops/quickstart.html", (_req, res): void => {
 </html>`);
 });
 
+router.post("/ops/jobs/campaign-publication-reconcile", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate) ?? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba" }).format(new Date());
+  const insertionId = readOptionalNumber(req.body?.insertionId);
+  const mode = req.body?.mode === "preflight" ? "preflight" : "apply";
+  const idempotencyKey = `campaign-publication-reconcile:${targetDate}:${insertionId || "all"}:${mode}`;
+  const created = await createIdempotentOpsJob("campaign-publication-reconcile", {
+    targetDate,
+    insertionId,
+    mode,
+    source: "macmini-protected-api",
+  }, "ops-api", idempotencyKey, false, true);
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "campaign-publication-reconcile", ...created });
+});
+
+router.post("/ops/jobs/evidence-monthly-report", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate);
+  const competencia = readOptionalString(req.body?.competencia)?.toUpperCase() ?? null;
+  if (!targetDate || !competencia || competencia !== competenciaForDate(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "Informe targetDate e competência correspondente." });
+    return;
+  }
+  const idempotencyKey = readOptionalString(req.body?.idempotencyKey) ?? `evidence-monthly-report:${targetDate}:22:15`;
+  const created = await createIdempotentOpsJob("evidence-monthly-report", {
+    targetDate,
+    competencia,
+    source: readOptionalString(req.body?.source) ?? "macmini-protected-api",
+  }, "ops-api", idempotencyKey);
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "evidence-monthly-report", ...created });
+});
+
+router.post("/ops/monthly-report-refreshes", async (req, res): Promise<void> => {
+  const targetDate = parseIsoDate(req.body?.targetDate);
+  const competencia = readOptionalString(req.body?.competencia)?.toUpperCase() ?? null;
+  if (!targetDate || !competencia || competencia !== competenciaForDate(targetDate)) {
+    res.status(400).json({ error: "bad_request", details: "Informe targetDate e competência correspondente." });
+    return;
+  }
+  const now = new Date();
+  const notBefore = new Date(now.getTime() + 60_000).toISOString();
+  const idempotencyKey = `evidence-monthly-report:${competencia}:incremental`;
+  const created = await createIdempotentOpsJob("evidence-monthly-report", {
+    targetDate,
+    competencia,
+    incremental: true,
+    notBefore,
+    source: readOptionalString(req.body?.source) ?? "evidence-approved-refresh",
+  }, "evidence-approved-refresh", idempotencyKey, true);
+  const { existingNotBefore, ...createdResponse } = created;
+  res.status(created.duplicate ? 200 : 202).json({
+    ok: true,
+    competencia,
+    targetDate,
+    debounceSeconds: 60,
+    ...createdResponse,
+    notBefore: created.duplicate ? existingNotBefore : notBefore,
+  });
+});
+
+router.get("/ops/daily-print-recoveries", async (req, res): Promise<void> => {
+  const date = readOptionalString(req.query.date);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "bad_request", details: "Informe date em YYYY-MM-DD." });
+    return;
+  }
+  const jobs = await pool.query<OpsJobRecord>(
+    `SELECT * FROM ops_jobs
+      WHERE kind = 'print-batch' AND payload_json::jsonb ->> 'targetDate' = $1
+      ORDER BY created_at DESC LIMIT 20`,
+    [date],
+  );
+  const latest = jobs.rows[0] ? describeJob(jobs.rows[0]) : null;
+  const items = latest ? [latest] : [];
+  const active = latest && ["queued", "ready_for_runner", "running"].includes(latest.status) ? 1 : 0;
+  const failed = latest?.status === "failed" ? 1 : 0;
+  res.json({
+    date,
+    items,
+    evaluator: {
+      status: active ? "retryable" : failed ? "blocked" : items.length ? "complete" : "blocked",
+      pending: active,
+      blocked: failed,
+      reason: items.length ? null : "recovery_not_initialized",
+    },
+  });
+});
+
+router.get("/ops/incidents", async (req, res): Promise<void> => {
+  const configuredToken = process.env.OPS_API_TOKEN?.trim() ?? "";
+  const bearer = req.header("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  if (configuredToken && bearer !== configuredToken) {
+    res.status(401).json({ error: "unauthorized", details: "OPS_API_TOKEN inválido ou ausente." });
+    return;
+  }
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+  const result = await pool.query<OpsJobRecord>(
+    "SELECT * FROM ops_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT $1",
+    [limit],
+  );
+  const incidentLayer = (record: OpsJobRecord) => {
+    const persisted = (parseJson(record.result_json) as Record<string, unknown> | null)?.incidentLayer;
+    if (["scheduling", "queue_or_runner", "api_or_runner_transport", "audit", "portal", "job_execution"].includes(String(persisted))) return persisted;
+    const error = String(record.error_text ?? "").toLowerCase();
+    if (error.includes("watchdog") || error.includes("expired")) return "queue_or_runner";
+    if (error.includes("checklist") || error.includes("audit")) return "audit";
+    if (error.includes("transport") || error.includes("timeout") || error.includes("network")) return "api_or_runner_transport";
+    if (error.includes("portal") || error.includes("adrotate")) return "portal";
+    return "job_execution";
+  };
+  res.json({ items: result.rows.map((record) => ({
+    id: `job-incident:${record.id}`,
+    fingerprint: createHash("sha256").update(`${record.id}:${record.error_text ?? "failed"}`).digest("hex"),
+    status: "open",
+    layer: incidentLayer(record),
+    jobId: record.id,
+    jobKind: record.kind,
+    summary: sanitizeJobText(record.error_text, 500),
+    error: sanitizeJobText(record.error_text, 1000),
+    evidence: describeJob(record).result,
+    attempts: Number((parseJson(record.payload_json) as Record<string, unknown> | null)?.attempt ?? 1),
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  })) });
+});
+
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
   const insertionId = typeof req.body?.insertionId === "number" ? req.body.insertionId : null;
   if (!insertionId) {
@@ -2084,7 +2579,7 @@ router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
     });
     return;
   }
-  const jobId = await createOpsJob("print-backfill", {
+  const payload = {
     insertionId,
     campaignId,
     siteId,
@@ -2095,9 +2590,13 @@ router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
     toDate,
     replace: typeof req.body?.replace === "boolean" ? req.body.replace : false,
     force: typeof req.body?.force === "boolean" ? req.body.force : false,
+    reconstructionReason: "late_publication_recovery",
+    attempt: 1,
+    maxAttempts: 3,
     source: "macmini-api",
-  }, "ops-api");
-  res.status(202).json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" });
+  };
+  const created = await createIdempotentOpsJob("print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload), false, true);
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "print-backfill", ...created });
 });
 
 router.post("/ops/jobs/print-batch", async (req, res): Promise<void> => {
@@ -2131,35 +2630,12 @@ router.post("/ops/jobs/sync-planilha", async (req, res): Promise<void> => {
   const campaignIds = Array.isArray(req.body?.campaignIds)
     ? req.body.campaignIds.filter((item: unknown) => Number.isInteger(item))
     : null;
-  const requestedKey = readOptionalString(req.headers["idempotency-key"]);
-  const payload = {
+  const jobId = await createOpsJob("sync-planilha", {
     mode,
     campaignIds,
     source: "macmini-api",
-  };
-  if (requestedKey) {
-    const result = await createIdempotentOpsJob("sync-planilha", payload, "ops-api", requestedKey);
-    res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "sync-planilha", ...result });
-    return;
-  }
-  const jobId = await createOpsJob("sync-planilha", payload, "ops-api");
+  }, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "sync-planilha", status: "ready_for_runner" });
-});
-
-router.post("/ops/jobs/media-monitor", async (req, res): Promise<void> => {
-  const window = readOptionalString(req.body?.window) ?? new Date(Math.floor(Date.now() / 900_000) * 900_000).toISOString();
-  const requestedKey = readOptionalString(req.headers["idempotency-key"])
-    ?? `media-monitor:${createHash("sha256").update(window).digest("hex").slice(0, 24)}`;
-  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) {
-    res.status(400).json({ error: "bad_request", details: "Idempotency-Key inválida." });
-    return;
-  }
-  const result = await createIdempotentOpsJob("media-monitor", {
-    window,
-    source: "macmini-api",
-    requestedBy: readOptionalString(req.body?.requestedBy),
-  }, "ops-api", requestedKey);
-  res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "media-monitor", ...result });
 });
 
 router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
@@ -2169,10 +2645,10 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "Informe piCodigo e siteSigla." });
     return;
   }
-  const requestedMode = readOptionalString(req.body?.mode)?.toLowerCase() ?? "delivery";
-  const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(requestedMode) ? requestedMode : "delivery";
+  const requestedMode = readOptionalString(req.body?.mode)?.toLowerCase() ?? "full-pdf";
+  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(requestedMode) ? requestedMode : "full-pdf";
   const requestedVariant = readOptionalString(req.body?.variant)?.toLowerCase();
-  const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
+  const variant = mode === "pdf" || mode === "full-pdf"
     ? "web"
     : requestedVariant === "web"
       ? "web"
@@ -2192,8 +2668,6 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
-    sendTelegram: req.body?.sendTelegram !== false,
-    chatId: readOptionalString(req.body?.chatId),
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({
@@ -2208,7 +2682,6 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
-    sendTelegram: req.body?.sendTelegram !== false,
   });
 });
 
@@ -2260,7 +2733,7 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
   const date = readOptionalString(req.body?.date);
   const captureAt = readOptionalString(req.body?.captureAt);
 
-  const payload = {
+  const jobId = await createOpsJob("adrotate-publish", {
     insertionId,
     apply,
     replaceExisting,
@@ -2270,16 +2743,13 @@ router.post("/ops/jobs/adrotate-publish", async (req, res): Promise<void> => {
     captureAt,
     mode: apply ? "apply" : "preview",
     source: "macmini-api",
-  };
-  const requestedKey = readOptionalString(req.headers["idempotency-key"]);
-  const result = requestedKey
-    ? await createIdempotentOpsJob("adrotate-publish", payload, "ops-api", requestedKey)
-    : { jobId: await createOpsJob("adrotate-publish", payload, "ops-api"), status: "ready_for_runner" as const, duplicate: false };
+  }, "ops-api");
 
-  res.status(result.duplicate ? 200 : 202).json({
+  res.status(202).json({
     ok: true,
-    ...result,
+    jobId,
     kind: "adrotate-publish",
+    status: "ready_for_runner",
     apply,
     requiredFollowUp: apply
       ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]

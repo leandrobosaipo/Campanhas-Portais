@@ -1,9 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   campaignsTable,
   captureProofLogsTable,
   captureRulesTable,
   db,
+  evidencesTable,
   insertionsTable,
   sitesTable,
 } from "@workspace/db";
@@ -15,11 +16,12 @@ import {
   normalizeSiteMediaUrl,
 } from "./adrotate-sites";
 import {
+  attachServerCaptureProvenance,
+  correlateCaptureLogProvenance,
   evaluateCaptureMetadata,
   isCaptureAtInRetroWindow,
   parseDateOnly,
 } from "./capture-audit";
-import { loadLocalCaptureMetadata } from "./local-capture-runtime";
 import {
   requiresPerrengueHomeEditorialAudit,
   resolveChecklistFinalProofStyle,
@@ -122,6 +124,7 @@ export type AuditChecklistContract = AuditChecklistContractOk | AuditChecklistCo
 
 export type AuditChecklistValidation = {
   approved: boolean;
+  preliminary: boolean;
   version: typeof AUDIT_CHECKLIST_VERSION;
   insertionId: number;
   date: string;
@@ -142,6 +145,39 @@ function issue(
   severity: Severity = "blocking",
 ): AuditChecklistIssue {
   return { code, severity, gate, label, detail };
+}
+
+export function decideAuditChecklistApproval(input: {
+  phase?: "pre_upload" | "final";
+  contractOk: boolean;
+  metadataPresent: boolean;
+  auditOk: boolean;
+  blockingIssues: AuditChecklistIssue[];
+}) {
+  const blockingIssues = [...input.blockingIssues];
+  const preliminary = input.phase === "pre_upload";
+  const approved = input.contractOk
+    && input.metadataPresent
+    && blockingIssues.length === 0
+    && (preliminary || input.auditOk);
+
+  if (!approved && blockingIssues.length === 0) {
+    blockingIssues.push(input.contractOk && input.metadataPresent && !preliminary && !input.auditOk
+      ? issue(
+          "audit_not_approved",
+          "captureMetadata",
+          "Auditoria final ainda não aprovada",
+          "A captura passou pelos gates mecânicos, mas a auditoria final ainda não confirmou a proveniência persistida.",
+        )
+      : issue(
+          "checklist_decision_inconsistent",
+          "checklist",
+          "Checklist bloqueado sem causa resolvida",
+          "O contrato não pôde aprovar a captura e não informou outro bloqueio estruturado.",
+        ));
+  }
+
+  return { approved, blockingIssues };
 }
 
 function normalizeDateKey(value: string) {
@@ -249,17 +285,29 @@ async function resolvePublishedRule(siteSigla: string, groupId: number) {
 
 export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string) {
   const dateKey = normalizeDateKey(targetDate);
-  const localMetadata = loadLocalCaptureMetadata(insertionId, dateKey);
-  if (isPlainObject(localMetadata)) return localMetadata;
-
-  const [latestLog] = await db.select().from(captureProofLogsTable).where(
+  const logs = await db.select().from(captureProofLogsTable).where(
     and(
       eq(captureProofLogsTable.insertionId, insertionId),
       eq(captureProofLogsTable.targetDate, dateKey),
-      eq(captureProofLogsTable.status, "ok"),
+      inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  return isPlainObject(latestLog?.metadata) ? latestLog.metadata : null;
+  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(50);
+  const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+  const evidenceUrl = evidenceRows.find((row) => String(row.titulo || "").includes(dateKey))?.arquivoUrl ?? null;
+  const latestLog = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? logs[0];
+  if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
+  const metadata = { ...latestLog.metadata };
+  const provenance = correlateCaptureLogProvenance({
+    targetDate: latestLog.targetDate,
+    jobId: latestLog.jobId,
+    runnerJobId: latestLog.runnerJobId,
+    createdAt: latestLog.createdAt,
+    uploadedUrl: latestLog.uploadedUrl,
+    status: latestLog.status,
+    metadata,
+    evidenceUrl,
+  });
+  return provenance ? attachServerCaptureProvenance(metadata, provenance) : metadata;
 }
 
 export async function resolveAuditChecklist(input: { insertionId: number; date: string }): Promise<AuditChecklistContract> {
@@ -462,6 +510,7 @@ export async function validateAuditChecklist(input: {
   insertionId: number;
   date: string;
   metadata?: unknown;
+  phase?: "pre_upload" | "final";
 }): Promise<AuditChecklistValidation> {
   const date = normalizeDateKey(input.date);
   const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date });
@@ -483,6 +532,16 @@ export async function validateAuditChecklist(input: {
   }
 
   addBaseAuditIssues(audit, blockingIssues);
+  if (input.phase === "pre_upload") {
+    // Temporal provenance can only be trusted after the artifact and child job
+    // are persisted.  Pre-upload is deliberately a visual/mechanical gate;
+    // the canonical audit still runs after persistence and keeps these issues.
+    for (let index = blockingIssues.length - 1; index >= 0; index -= 1) {
+      if (["metadata_retro_content_unverified", "metadata_capture_class_untrusted"].includes(blockingIssues[index]!.code)) {
+        blockingIssues.splice(index, 1);
+      }
+    }
+  }
 
   if (contract.ok && metadata) {
     const { requiredGates, expectedSelectors, expectedMedia, resolvedRule } = contract;
@@ -850,10 +909,17 @@ export async function validateAuditChecklist(input: {
     }
   }
 
-  const issues = [...blockingIssues, ...warnings];
-  const approved = blockingIssues.length === 0 && audit?.ok === true && contract.ok === true;
+  const decision = decideAuditChecklistApproval({
+    phase: input.phase,
+    contractOk: contract.ok,
+    metadataPresent: Boolean(metadata),
+    auditOk: audit?.ok === true,
+    blockingIssues,
+  });
+  const issues = [...decision.blockingIssues, ...warnings];
   return {
-    approved,
+    approved: decision.approved,
+    preliminary: input.phase === "pre_upload",
     version: AUDIT_CHECKLIST_VERSION,
     insertionId: input.insertionId,
     date,
@@ -861,8 +927,8 @@ export async function validateAuditChecklist(input: {
     metadataPresent: Boolean(metadata),
     audit,
     issues,
-    blockingIssues,
+    blockingIssues: decision.blockingIssues,
     warnings,
-    evidenceStatus: approved ? "approved" : "blocked",
+    evidenceStatus: decision.approved ? "approved" : "blocked",
   };
 }

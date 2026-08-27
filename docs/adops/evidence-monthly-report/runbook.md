@@ -1,77 +1,144 @@
-# Runbook - Atualizar relatorio mensal de evidencias
+# How-to — Relatório mensal de evidências
 
-## Atualizacao padrao
+> Estado: vigente
+> Público: equipe operacional e agentes
+> Última validação: 2026-08-24
+> Release anterior: b00779340442; confirmar a correção mensal pelo readback
+> Fonte autoritativa: job `evidence-monthly-report`, fonte mensal agregada e relatório público
+
+## Finalidade
+
+Gerar e publicar o relatório navegável sem substituir a última versão válida quando alguma evidência, ZIP ou validação falhar.
+
+## Fluxo atual
+
+```text
+fonte mensal agregada
+→ gate de auditoria
+→ plano de cache por fingerprint
+→ até 3 ZIPs simultâneos
+→ HTML/JSON/assets em staging
+→ validação
+→ troca atômica
+→ leitura pública
+```
+
+O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `print-single` e `print-backfill`.
+
+## Atualização incremental
+
+Quando uma evidência termina aprovada, o runner registra a competência como “suja”. O Worker aguarda 60 segundos desde a última aprovação próxima e executa uma revisão incremental única por competência. Ela reconsulta a fonte mensal e auditorias, atualiza HTML, `data.json`, miniaturas, contadores e modais, mas não solicita print, JPEG, ZIP nem pacote novo.
+
+O relatório lê a proveniência imutável da evidência: `captureClass` (`scheduled`, `same_day_retry` ou `historical_recovery`), `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`. Uma captura do dia não se torna retroativa no dia seguinte. Registros antigos só podem ser reconciliados quando banco, job e artefato concordam; a reconciliação reutiliza o arquivo existente e não dispara nova captura.
+
+O relatório não reclassifica nem aprova evidências. Para um log legado `inline-*` capturado no próprio dia, a API pode registrar `same_day_retry` somente após `dryRun` comprovar a mesma inserção, período, mídia, URL, auditoria visual e data em Cuiabá. Divergência mantém o card inválido e exige correção na origem.
+
+Se outra aprovação ocorrer enquanto a página está sendo atualizada, ela fica registrada como uma nova revisão e é publicada depois do job em curso. Falha do relatório não invalida o print aprovado: a revisão permanece pendente para retry e a página continua exibindo o último estado público válido.
+
+Recuperações são individuais e persistidas por inserção/data. O ciclo tenta em 5, 10 e 15 minutos para `missing` ou `invalid`, para imediatamente quando aprova e encerra como bloqueado após a terceira falha. A página deve mostrar “capturando”, “nova tentativa em X minutos” ou “bloqueado após 3 tentativas”, com resumo simples e detalhe técnico no diagnóstico.
+
+Uma evidência `invalid` também não bloqueia a publicação da revisão: ela precisa continuar visível no card e no modal como erro operacional, com a data e o motivo para recuperação. O bloqueio só é permitido quando a fonte mensal ou o artefato gerado estiver estruturalmente inconsistente.
+
+O relatório abre visualmente em `Ativas`, mas o artefato mensal sempre contém também `Encerradas`. Antes das 18h de Cuiabá ou durante fila/execução do lote diário, o corte termina no dia anterior. A restauração de encerradas reutiliza evidências existentes e nunca cria captura.
+
+O gerador e o ciclo de recuperação são determinísticos e não dependem de IA. Ao fim de cada rotina, a API produz somente um resultado compacto (`complete`, `retryable` ou `blocked`); modelos são usados apenas para análise posterior quando houver incidente, nunca para mutar dados.
+
+## Execução
+
+Antes de qualquer geração:
 
 ```bash
 cd /Users/leandrobosaipo/Projetos/AdOps
-node --check scripts/src/build-current-month-evidence-report.mjs
 pnpm --dir scripts run audit:capture-rules-integrity
-pnpm --filter @workspace/scripts run report:evidences-current-month
-curl -I --max-time 20 https://sites.codigo5.com.br/reports/adops-evidencias-maio-2026/
 ```
 
-## Atualizacao sem publicar
+Dry-run local, sem publicar:
 
 ```bash
-ADOPS_REPORT_SKIP_PUBLISH=1 pnpm --filter @workspace/scripts run report:evidences-current-month
-```
-
-## Mes especifico
-
-```bash
-ADOPS_REPORT_MONTH=2026-05 \
-ADOPS_REPORT_COMPETENCIA='MAIO/2026' \
-ADOPS_REPORT_SLUG=adops-evidencias-maio-2026 \
+ADOPS_REPORT_SKIP_PUBLISH=1 \
 pnpm --filter @workspace/scripts run report:evidences-current-month
 ```
 
-## Artefatos
+Execução operacional rastreável: crie o job `evidence-monthly-report` pela API e acompanhe exclusivamente em `/api/ops/jobs/{id}/progress` até o estado terminal.
 
-- Latest: `docs/reports/adops-evidencias-maio-2026/index.html`
-- Dados latest: `docs/reports/adops-evidencias-maio-2026/data.json`
-- Snapshots: `docs/reports/adops-evidencias-maio-2026/<timestamp>/`
-- Publico: `https://sites.codigo5.com.br/reports/adops-evidencias-maio-2026/`
+## Configuração de competência
+
+Use as variáveis já reconhecidas pelo gerador, sem inventar novas:
+
+```bash
+ADOPS_REPORT_MONTH=2026-08 \
+ADOPS_REPORT_COMPETENCIA='AGOSTO/2026' \
+ADOPS_REPORT_SLUG=adops-evidencias-agosto-2026 \
+ADOPS_REPORT_SKIP_PUBLISH=1 \
+pnpm --filter @workspace/scripts run report:evidences-current-month
+```
+
+## Gates de publicação
+
+- somente inserções canônicas da fonte agregada;
+- todas as linhas da competência cujo período toca o mês, inclusive campanhas encerradas antes da data-alvo;
+- todas as datas obrigatórias presentes na resposta canônica;
+- evidências `audited` ou `audited_best_effort`, acessíveis e sem blockers;
+- ZIPs completos ou cache hits com fingerprint vigente;
+- HTML, JSON, assets e downloads válidos;
+- `report.json` com `visibility: "unlisted"`;
+- `noindex,nofollow` no HTML;
+- zero credencial, token ou header real.
+
+Se qualquer gate falhar, o staging é rejeitado.
+
+## Recursos do relatório
+
+- busca por campanha, PI, portal, campaign ID e insertion ID;
+- filtro dedicado de portal combinado com estados;
+- calendário das datas contratadas;
+- JPEG individual;
+- ZIP por PI + portal;
+- ZIP completo por campanha;
+- entradas e vencimentos em sete dias;
+- filtro de publicação “Encerradas”, independente do estado das evidências;
+- layout mobile e navegação por teclado.
+
+## Cache e desempenho
+
+O hash ordenado inclui as evidências aprovadas. Hash igual produz cache hit; somente campanhas alteradas geram novo ZIP. Exportações executam com concorrência máxima três, enquanto captura continua com concorrência um.
+
+Na validação de 2026-08-12, o ciclo da release 47e0dab terminou em aproximadamente 3min48s com 163 datas auditadas. Esses números são um retrato datado, não uma garantia permanente.
+
+As durações relevantes são `sourceFetch`, `audit`, `cachePlan`, `exports`, `validation` e `publish`.
+
+## Validação
+
+```bash
+curl -fsSI https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/
+curl -fsSL https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/report.json
+```
+
+Além do HTTP 200, valide busca, filtros, três JPEGs, um ZIP completo, checksums e amostra visual em desktop e celular.
 
 ## Rollback
 
-1. Escolher snapshot anterior em `docs/reports/adops-evidencias-maio-2026/<timestamp>/`.
-2. Copiar o HTML desejado para `docs/reports/adops-evidencias-maio-2026/index.html`.
-3. Rodar novamente o publicador com o script normal.
+A publicação cria backup e realiza troca atômica. Em falha:
 
-## Falhas comuns
+1. não mova o staging para o destino;
+2. preserve o relatório público atual;
+3. identifique o último backup válido;
+4. restaure o diretório versionado pelo mesmo mecanismo do publicador;
+5. confirme HTML, JSON, downloads e consumidor real.
 
-- `OPS_API_TOKEN ausente`: conferir `.env.adops-operator.local` sem imprimir o valor.
-- `PORTAINER_API_KEY ausente`: conferir `/Users/leandrobosaipo/Projetos/macmini/.env.portainer`.
-- `sites-index nao encontrado`: validar Portainer endpoint `3 local`.
-- HTTP publico diferente de 200: verificar container `sites-index` e rota `/reports/<slug>/`.
-- Insercao aparece como `sem publicação`, mas o banner esta visivel no portal:
-  1. Conferir a home/slot do portal e identificar imagem, link, grupo AdRotate e seletor.
-  2. Corrigir no AdOps apenas se houver prova publica: `bannerPublicadoNoSite=true`, `statusNormalizado=em_veiculacao` e `mediaUrl`.
-  3. Conferir se o alias da posicao existe em `config/adrotate-sites.json`.
-  4. Se a regra publicada de captura divergir do JSON, criar nova draft, validar e publicar a regra.
-  5. Rodar `pnpm --dir scripts run audit:capture-rules-integrity`.
-  6. Gerar evidencias retroativas das datas exigidas.
-  7. Regenerar e publicar o relatorio.
+Não copie um `index.html` isolado sobre dados de outra versão.
 
-## Interpretacao dos estados
+## Regras aprendidas
 
-- `em dia`: todos os dias exigidos ate a data alvo tem evidencia `audited` com URL.
-- `pendente`: banner publicado no site, mas existe dia exigido sem evidencia auditada.
-- `erro`: banner publicado no site, mas existe evidencia reprovada pela auditoria.
-- `sem publicação`: a insercao aparece no mes, mas o AdOps ainda nao marca o banner como publicado no site. Nao conta como pendencia ate ser confirmado no portal/AdRotate.
-- `agendada`: periodo ainda nao iniciou.
-
-Para corrigir `pendente` ou `erro`, gere print individual das datas listadas no modal ou use o fluxo de retroativo por insercao quando aplicavel.
-
-## Caso auditado - PPMT #1252
-
-Em 2026-05-12, a insercao `#1252` estava aparecendo como `sem publicação`, mas a home do `portalpantanalmt.com` exibia o banner `pi-8227-calcada-viva-825x120-1.gif` no grupo AdRotate `2`.
-
-Correcoes aplicadas:
-
-- AdOps atualizado com `mediaUrl`, `bannerPublicadoNoSite=true` e `statusNormalizado=em_veiculacao`.
-- `PPMT:2` passou a aceitar aliases `FULLBANNER` e `FULL BANNER`.
-- Regra publicada de captura recriada como `ruleId=41`.
-- Evidencias retroativas de `2026-05-01` a `2026-05-12` geradas e auditadas.
-
-Resultado esperado no relatorio: insercao `#1252` como `em dia`, com `12/12` evidencias.
+- Recalcular status por centenas de chamadas aumentava tempo e tokens; a fonte agregada é canônica.
+- Recuperar o job completo em todo polling é desperdício; `/progress` é a visão padrão.
+- O deadlock entre relatório e exportação desapareceu ao separar o runner mensal do claim dedicado.
+- Falha de staging nunca pode apagar a última entrega válida.
+- `campaign-operations/active` é uma visão diária e exclui corretamente períodos encerrados. O relatório mensal deve usar exclusivamente `campaign-operations/evidence-monthly-source`.
+- `competencia` e `date` precisam pertencer ao mesmo mês; divergência é erro de contrato, não fallback silencioso.
+- Uma falha de rebuild do PERRENGUE bloqueia apenas a inserção afetada. Não marque o banner como publicado nem gere evidência até haver confirmação do AdRotate, do rebuild e do HTML público.
+- Grupos AdRotate com rotação não são duplicidade por si só. O relatório deve
+  preservar as inserções históricas e mostrar a canônica escolhida; captura
+  aprovada exige PI, inserção, período, grupo e mídia canônica coincidentes.
+- Em recuperação parcial, publique a revisão incremental após cada aprovação.
+  Não espere o lote terminar e não reexecute datas já auditadas.

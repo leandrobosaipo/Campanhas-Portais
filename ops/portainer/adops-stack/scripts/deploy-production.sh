@@ -12,6 +12,15 @@ source "$SCRIPT_DIR/lib-portainer.sh"
 
 load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
+
+portainer_start_container() {
+  local container_id="$1"
+  curl -sS --connect-timeout 10 --max-time 30 \
+    -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    -X POST \
+    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start"
+}
+
 DISCOVERED_ENV=""
 DEPLOY_ENV=""
 ROLLBACK_ENV=""
@@ -26,10 +35,10 @@ cleanup() {
       bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >/dev/null 2>&1 || true
   fi
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
-    NEW_MONITOR_HEALTH="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
+    NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
       | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor-stack") | .Status' | head -n 1 || true)"
     if [[ "$NEW_MONITOR_HEALTH" != *"(healthy)"* ]]; then
-      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${LEGACY_MONITOR_ID}/start" >/dev/null || true
+      portainer_start_container "$LEGACY_MONITOR_ID" >/dev/null || true
     fi
   fi
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
@@ -40,10 +49,10 @@ trap cleanup EXIT
 
 STACK_ENV_FILE="${ADOPS_STACK_ENV_FILE:-}"
 if [[ -z "$STACK_ENV_FILE" || ! -f "$STACK_ENV_FILE" ]]; then
-  STACK_ID="$(portainer_get_json "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
+  STACK_ID="$(portainer_curl "${PORTAINER_API}/stacks" | jq -r '.[] | select(.Name == "adops") | .Id' | head -n 1)"
   [[ -n "$STACK_ID" ]] || { printf 'AdOps stack not found in Portainer.\n' >&2; exit 1; }
   DISCOVERED_ENV="$(mktemp)"
-  portainer_get_json "${PORTAINER_API}/stacks/${STACK_ID}" \
+  portainer_curl "${PORTAINER_API}/stacks/${STACK_ID}" \
     | jq -r '.Env[] | select(.name | test("^[A-Z0-9_]+$")) | "\(.name)=\(.value)"' \
     > "$DISCOVERED_ENV"
   chmod 600 "$DISCOVERED_ENV"
@@ -56,16 +65,29 @@ env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$STACK_ENV_FILE"
 }
 
+wait_portainer_exec() {
+  local exec_id="$1" state exit_code
+  for _ in {1..40}; do
+    state="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
+    if [[ "$(jq -r '.Running' <<<"$state")" == "false" ]]; then
+      exit_code="$(jq -r '.ExitCode' <<<"$state")"
+      [[ "$exit_code" =~ ^[0-9]+$ ]] && { printf '%s' "$exit_code"; return 0; }
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 PREVIOUS_APP_VOLUME="$(env_value ADOPS_APP_SOURCE_VOLUME)"
 PREVIOUS_WEB_VOLUME="$(env_value ADOPS_WEB_PUBLIC_VOLUME)"
 PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
 PREVIOUS_IMAGE_TAG="$(env_value ADOPS_IMAGE_TAG)"
 PREVIOUS_APP_VOLUME="${PREVIOUS_APP_VOLUME:-adops_app_source}"
 PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
-PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-legacy}"
+PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-monitor}"
 PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
 
-CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
 [[ -n "$POSTGRES_ID" ]] || { printf 'adops-postgres container not found.\n' >&2; exit 1; }
 
@@ -76,8 +98,20 @@ EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
 }')"
 EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
 portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
-EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/json" | jq -r '.ExitCode')"
+EXIT_CODE="$(wait_portainer_exec "$EXEC_ID" || true)"
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
+
+ALERT_MIGRATION="$STACK_DIR/migrations/2026-08-26-daily-print-alerts.sql"
+[[ -f "$ALERT_MIGRATION" ]] || { printf 'Migration ausente: %s\n' "$ALERT_MIGRATION" >&2; exit 1; }
+ALERT_MIGRATION_B64="$(base64 < "$ALERT_MIGRATION" | tr -d '\n')"
+MIGRATION_PAYLOAD="$(jq -n --arg sql "$ALERT_MIGRATION_B64" '{
+  AttachStdout:true, AttachStderr:true, Tty:false,
+  Cmd:["sh","-lc",("printf %s " + ($sql|@sh) + " | base64 -d | psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" \"$POSTGRES_DB\"")]
+}')"
+MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
+portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null
+MIGRATION_EXIT_CODE="$(wait_portainer_exec "$MIGRATION_EXEC_ID" || true)"
+[[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'PostgreSQL migration failed.\n' >&2; exit 1; }
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
@@ -87,10 +121,14 @@ export ADOPS_WEB_PUBLIC_VOLUME="${ADOPS_WEB_PUBLIC_VOLUME:-adops_web_public_${AD
 # Docker's synchronous build stream exceeds Cloudflare's request timeout for
 # this Playwright image. The volume runtime is the production path already
 # validated for this stack and keeps the release traceable through its SHA.
-VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
-  bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
+if [[ "${ADOPS_SKIP_RUNTIME_UPLOAD:-false}" == "true" ]]; then
+  printf 'Skipping runtime upload because versioned volumes were already validated.\n'
+else
+  VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" \
+    bash "$SCRIPT_DIR/upload-runtime-volumes.sh"
+fi
 
-CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 LEGACY_MONITOR_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-drive-pi-monitor") | .Id' | head -n 1)"
 if [[ -n "$LEGACY_MONITOR_ID" ]]; then
   LEGACY_MONITOR_RUNNING="$(printf '%s' "$CONTAINERS" | jq -r --arg id "$LEGACY_MONITOR_ID" '.[] | select(.Id == $id) | .State == "running"')"
@@ -103,7 +141,7 @@ fi
 DEPLOY_ENV="$(mktemp)"
 grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-$PREVIOUS_DRIVE_MODE}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-monitor}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
 chmod 600 "$DEPLOY_ENV"
 
 ROLLBACK_ENV="$(mktemp)"
@@ -134,12 +172,12 @@ done
 RUNNER_ID=""
 MONITOR_ID=""
 for attempt in $(seq 1 120); do
-  CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
+  CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
   for container_name in adops-runner adops-runner-print-single adops-drive-pi-monitor-stack; do
     CONTAINER_ID="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .Id' 2>/dev/null | head -n 1)"
     CONTAINER_STATE="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .State' 2>/dev/null | head -n 1)"
     if [[ -n "$CONTAINER_ID" && "$CONTAINER_STATE" != "running" ]]; then
-      portainer_curl -X POST "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${CONTAINER_ID}/start" >/dev/null 2>&1 || true
+      portainer_start_container "$CONTAINER_ID" >/dev/null 2>&1 || true
     fi
   done
   RUNNER_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[]? | select(.Names[]? == "/adops-runner" and .State == "running") | .Id' 2>/dev/null | head -n 1)"
@@ -149,8 +187,8 @@ for attempt in $(seq 1 120); do
   sleep 5
 done
 
-RUNNER_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
-MONITOR_INSPECT="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
+RUNNER_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${RUNNER_ID}/json")"
+MONITOR_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
 printf '%s' "$RUNNER_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0] | select(startswith("GOOGLE_DRIVE_"))] | length == 0)' >/dev/null
 printf '%s' "$MONITOR_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0]] | index("GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE") != null) and (.HostConfig.PortBindings | length == 0)' >/dev/null
 

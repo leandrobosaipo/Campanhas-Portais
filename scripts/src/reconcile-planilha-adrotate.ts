@@ -5,7 +5,10 @@ import path from "node:path";
 import * as XLSX from "xlsx";
 import { eq, and } from "drizzle-orm";
 import { db, campaignsTable, insertionsTable, sitesTable } from "@workspace/db";
-import { resolveSiteFormat } from "../../artifacts/api-server/src/lib/adrotate-sites";
+import {
+  buildCampaignInsertionIdentity,
+  normalizeCampaignPiIdentity,
+} from "../../artifacts/api-server/src/lib/campaign-operations-matching";
 
 type RawRow = {
   sourceSheet: string;
@@ -338,11 +341,7 @@ function deriveCompetenciaFromPeriodo(competenciaSheet: string, inicio: string |
   return `${sheetMonth}/${sheetYear}`;
 }
 
-function normalizeFormato(value: string, siteSigla?: string | null): string {
-  if (siteSigla) {
-    const resolution = resolveSiteFormat(siteSigla, value);
-    if (resolution.canonicalFormat) return resolution.canonicalFormat;
-  }
+function normalizeFormato(value: string): string {
   const normalized = normalizeForMatch(value).replace(/\./g, "").replace(/\s+/g, " ");
   const direct: Record<string, string> = {
     "MEGA BANNER TOPO": "MEGABANNER TOPO",
@@ -455,7 +454,9 @@ async function loadRawRows() {
 
 function localGroupId(siteSigla: string | null | undefined, formato: string | null | undefined) {
   if (!siteSigla || !formato) return null;
-  return resolveSiteFormat(siteSigla, formato).groupId;
+  const bySite = ADROTATE_GROUPS[siteSigla];
+  if (!bySite) return null;
+  return bySite[normalizeFormato(formato)] ?? null;
 }
 
 function extractPiNumber(value: string | null | undefined) {
@@ -521,7 +522,8 @@ async function ensureSite(sigla: string) {
 }
 
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
+  const apply = process.argv.includes("--apply");
+  const dryRun = !apply;
   const rawRows = await loadRawRows();
   const allSites = await db.select().from(sitesTable);
   const allCampaigns = await db.select().from(campaignsTable);
@@ -533,8 +535,8 @@ async function main() {
     const key = [
       row.siteSigla,
       normalizeTextKey(row.campanha),
-      normalizeTextKey(normalizePi(row.peca, row.agenciaValor)),
-      normalizeTextKey(normalizeFormato(row.local, row.siteSigla)),
+      normalizeCampaignPiIdentity(normalizePi(row.peca, row.agenciaValor)) ?? "",
+      normalizeTextKey(normalizeFormato(row.local)),
       row.competenciaResolved,
     ].join("|");
     const current = groupedRows.get(key) ?? [];
@@ -544,13 +546,29 @@ async function main() {
 
   const periodUpdates: Array<Record<string, unknown>> = [];
   const periodSkipped: Array<Record<string, unknown>> = [];
+  const insertionIdsByIdentity = new Map<string, number[]>();
+  for (const insertion of allInsertions) {
+    const campaign = allCampaigns.find((item) => item.id === insertion.campanhaId);
+    const site = insertion.siteId ? siteById.get(insertion.siteId) : null;
+    const identity = buildCampaignInsertionIdentity({
+      piCodigo: campaign?.piCodigo,
+      siteSigla: site?.sigla,
+      localFormato: insertion.localFormatoNormalizado ?? insertion.localFormato,
+      periodoInicio: insertion.periodoInicio,
+      periodoFim: insertion.periodoFim,
+    });
+    if (identity) insertionIdsByIdentity.set(identity, [...(insertionIdsByIdentity.get(identity) ?? []), insertion.id]);
+  }
+  const duplicateIdentities = [...insertionIdsByIdentity]
+    .filter(([, insertionIds]) => insertionIds.length > 1)
+    .map(([identity, insertionIds]) => ({ identity, insertionIds }));
 
   for (const campaign of allCampaigns) {
     const campaignInsertions = allInsertions.filter((item) => item.campanhaId === campaign.id);
     if (!campaignInsertions.length) continue;
     const sampleInsertion = campaignInsertions[0]!;
     const site = sampleInsertion.siteId ? siteById.get(sampleInsertion.siteId) : null;
-    const piKey = normalizeTextKey(campaign.piCodigo);
+    const piKey = normalizeCampaignPiIdentity(campaign.piCodigo) ?? "";
     const sameCompetenciaKeys = [...groupedRows.keys()].filter((key) => {
       const [siteSigla, campaignNameKey, piCodeKey, , competenciaResolved] = key.split("|");
       return (
@@ -567,7 +585,7 @@ async function main() {
       const candidates = campaignInsertions
         .filter((item) => {
           const candidateSite = item.siteId ? siteById.get(item.siteId) : null;
-          return candidateSite?.sigla === site?.sigla && normalizeTextKey(normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "", site?.sigla)) === formatKey;
+          return candidateSite?.sigla === site?.sigla && normalizeTextKey(normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "")) === formatKey;
         })
         .sort((a, b) => `${a.periodoInicio ?? ""}|${a.periodoFim ?? ""}|${a.id}`.localeCompare(`${b.periodoInicio ?? ""}|${b.periodoFim ?? ""}|${b.id}`));
 
@@ -699,6 +717,7 @@ async function main() {
     periodSkipped,
     mediaUpdates,
     mediaSkipped,
+    duplicateIdentities,
     manualReview,
   };
 

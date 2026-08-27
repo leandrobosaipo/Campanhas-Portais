@@ -1,0 +1,399 @@
+{
+  "generatedAt": "2026-08-12T20:00:00.000Z",
+  "release": "47e0dab",
+  "documents": [
+    {
+      "path": "docs/START_HERE_ADOPS.md",
+      "title": "Comece aqui",
+      "category": "operacao",
+      "tasks": [
+        "operacao",
+        "incidentes"
+      ],
+      "status": "vigente",
+      "type": "how-to",
+      "typeLabel": "Como fazer",
+      "headings": [
+        {
+          "level": 1,
+          "text": "AdOps — Comece aqui",
+          "id": "adops-comece-aqui"
+        },
+        {
+          "level": 2,
+          "text": "Objetivo",
+          "id": "objetivo"
+        },
+        {
+          "level": 2,
+          "text": "Ordem de leitura",
+          "id": "ordem-de-leitura"
+        },
+        {
+          "level": 2,
+          "text": "Fluxo canônico",
+          "id": "fluxo-canonico"
+        },
+        {
+          "level": 2,
+          "text": "Fontes de verdade",
+          "id": "fontes-de-verdade"
+        },
+        {
+          "level": 2,
+          "text": "Serviços atuais",
+          "id": "servicos-atuais"
+        },
+        {
+          "level": 2,
+          "text": "Regras que nunca podem ser puladas",
+          "id": "regras-que-nunca-podem-ser-puladas"
+        },
+        {
+          "level": 2,
+          "text": "Diagnóstico inicial",
+          "id": "diagnostico-inicial"
+        },
+        {
+          "level": 2,
+          "text": "Documentos históricos",
+          "id": "documentos-historicos"
+        }
+      ],
+      "sha256": "9be8a82574dbcebd1c7a8a203527945c592ae6828d60d4b4aaac952ebeeae2d8"
+    },
+    {
+      "path": "docs/runbook-nova-pi-evidencias.md",
+      "title": "Nova PI, publicação e evidências",
+      "category": "campanhas",
+      "tasks": [
+        "campanhas",
+        "evidencias",
+        "operacao"
+      ],
+      "status": "vigente",
+      "type": "tutorial",
+      "typeLabel": "Tutorial",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Tutorial — Nova PI, publicação e evidências",
+          "id": "tutorial-nova-pi-publicacao-e-evidencias"
+        },
+        {
+          "level": 2,
+          "text": "Resultado esperado",
+          "id": "resultado-esperado"
+        },
+        {
+          "level": 2,
+          "text": "1. Auditar a entrada",
+          "id": "1-auditar-a-entrada"
+        },
+        {
+          "level": 2,
+          "text": "2. Sincronizar e consultar",
+          "id": "2-sincronizar-e-consultar"
+        },
+        {
+          "level": 2,
+          "text": "3. Decidir: criar, corrigir ou bloquear",
+          "id": "3-decidir-criar-corrigir-ou-bloquear"
+        },
+        {
+          "level": 2,
+          "text": "4. Atualizar entidades no lugar correto",
+          "id": "4-atualizar-entidades-no-lugar-correto"
+        },
+        {
+          "level": 2,
+          "text": "5. Validar e publicar a mídia",
+          "id": "5-validar-e-publicar-a-midia"
+        },
+        {
+          "level": 2,
+          "text": "6. Gerar a evidência do dia",
+          "id": "6-gerar-a-evidencia-do-dia"
+        },
+        {
+          "level": 2,
+          "text": "7. Gerar retroativos",
+          "id": "7-gerar-retroativos"
+        },
+        {
+          "level": 2,
+          "text": "8. GIF e prova visual",
+          "id": "8-gif-e-prova-visual"
+        },
+        {
+          "level": 2,
+          "text": "9. Entregar evidências",
+          "id": "9-entregar-evidencias"
+        },
+        {
+          "level": 2,
+          "text": "10. Atualizar relatório e comunicar",
+          "id": "10-atualizar-relatorio-e-comunicar"
+        },
+        {
+          "level": 2,
+          "text": "Regras aprendidas",
+          "id": "regras-aprendidas"
+        },
+        {
+          "level": 2,
+          "text": "Casos de referência",
+          "id": "casos-de-referencia"
+        },
+        {
+          "level": 2,
+          "text": "Checklist final",
+          "id": "checklist-final"
+        }
+      ],
+      "sha256": "0cd43a1100c5ac4b7b555eed09f5d577f7eb896977c15533d4d2d632cc3b2ea8"
+    },
+    {
+      "path": "docs/adops/ops-api-runbook.md",
+      "title": "API operacional",
+      "category": "api",
+      "tasks": [
+        "api",
+        "evidencias",
+        "incidentes"
+      ],
+      "status": "vigente",
+      "type": "reference",
+      "typeLabel": "Referência",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Referência — API operacional AdOps",
+          "id": "referencia-api-operacional-adops"
+        },
+        {
+          "level": 2,
+          "text": "Finalidade",
+          "id": "finalidade"
+        },
+        {
+          "level": 2,
+          "text": "Leituras canônicas",
+          "id": "leituras-canonicas"
+        },
+        {
+          "level": 2,
+          "text": "Jobs e entregas",
+          "id": "jobs-e-entregas"
+        },
+        {
+          "level": 2,
+          "text": "Matriz de evidência",
+          "id": "matriz-de-evidencia"
+        },
+        {
+          "level": 2,
+          "text": "Exportações",
+          "id": "exportacoes"
+        },
+        {
+          "level": 2,
+          "text": "Incidentes e rollback",
+          "id": "incidentes-e-rollback"
+        },
+        {
+          "level": 2,
+          "text": "Regras aprendidas",
+          "id": "regras-aprendidas"
+        }
+      ],
+      "sha256": "56fe48e5305b3a04b13aa58404ff55f7ed22365e003901e10461d8d9dbd1f80a"
+    },
+    {
+      "path": "docs/adops/evidence-monthly-report/runbook.md",
+      "title": "Relatório mensal",
+      "category": "evidencias",
+      "tasks": [
+        "evidencias",
+        "operacao",
+        "incidentes"
+      ],
+      "status": "vigente",
+      "type": "how-to",
+      "typeLabel": "Como fazer",
+      "headings": [
+        {
+          "level": 1,
+          "text": "How-to — Relatório mensal de evidências",
+          "id": "how-to-relatorio-mensal-de-evidencias"
+        },
+        {
+          "level": 2,
+          "text": "Finalidade",
+          "id": "finalidade"
+        },
+        {
+          "level": 2,
+          "text": "Fluxo atual",
+          "id": "fluxo-atual"
+        },
+        {
+          "level": 2,
+          "text": "Execução",
+          "id": "execucao"
+        },
+        {
+          "level": 2,
+          "text": "Configuração de competência",
+          "id": "configuracao-de-competencia"
+        },
+        {
+          "level": 2,
+          "text": "Gates de publicação",
+          "id": "gates-de-publicacao"
+        },
+        {
+          "level": 2,
+          "text": "Recursos do relatório",
+          "id": "recursos-do-relatorio"
+        },
+        {
+          "level": 2,
+          "text": "Cache e desempenho",
+          "id": "cache-e-desempenho"
+        },
+        {
+          "level": 2,
+          "text": "Validação",
+          "id": "validacao"
+        },
+        {
+          "level": 2,
+          "text": "Rollback",
+          "id": "rollback"
+        },
+        {
+          "level": 2,
+          "text": "Regras aprendidas",
+          "id": "regras-aprendidas"
+        }
+      ],
+      "sha256": "8dac3dcea3e3f6b72e76d5dcc7318841d8fbee98491318cc7aaea96940da0b75"
+    },
+    {
+      "path": "docs/adops/system/RUNBOOK.md",
+      "title": "Produção e manutenção",
+      "category": "manutencao",
+      "tasks": [
+        "manutencao",
+        "incidentes"
+      ],
+      "status": "vigente",
+      "type": "how-to",
+      "typeLabel": "Como fazer",
+      "headings": [
+        {
+          "level": 1,
+          "text": "How-to — Produção, manutenção e rollback AdOps",
+          "id": "how-to-producao-manutencao-e-rollback-adops"
+        },
+        {
+          "level": 2,
+          "text": "Topologia vigente",
+          "id": "topologia-vigente"
+        },
+        {
+          "level": 2,
+          "text": "Diagnóstico seguro",
+          "id": "diagnostico-seguro"
+        },
+        {
+          "level": 2,
+          "text": "Deploy versionado",
+          "id": "deploy-versionado"
+        },
+        {
+          "level": 2,
+          "text": "Worker",
+          "id": "worker"
+        },
+        {
+          "level": 2,
+          "text": "Relatórios",
+          "id": "relatorios"
+        },
+        {
+          "level": 2,
+          "text": "Incidentes",
+          "id": "incidentes"
+        },
+        {
+          "level": 2,
+          "text": "Rollback",
+          "id": "rollback"
+        },
+        {
+          "level": 2,
+          "text": "Segurança",
+          "id": "seguranca"
+        }
+      ],
+      "sha256": "4d0997e645f5c0a1a63170c6ce9ffd99212fc624267782c5f7059b8a1dc8b3df"
+    },
+    {
+      "path": "docs/status-do-projeto.md",
+      "title": "Estado confirmado",
+      "category": "operacao",
+      "tasks": [
+        "operacao",
+        "incidentes"
+      ],
+      "status": "vigente",
+      "type": "explanation",
+      "typeLabel": "Estado",
+      "headings": [
+        {
+          "level": 1,
+          "text": "Estado confirmado do projeto AdOps",
+          "id": "estado-confirmado-do-projeto-adops"
+        },
+        {
+          "level": 2,
+          "text": "Resumo executivo",
+          "id": "resumo-executivo"
+        },
+        {
+          "level": 2,
+          "text": "Estado por capacidade",
+          "id": "estado-por-capacidade"
+        },
+        {
+          "level": 2,
+          "text": "Relatório de agosto",
+          "id": "relatorio-de-agosto"
+        },
+        {
+          "level": 2,
+          "text": "Pendência operacional conhecida",
+          "id": "pendencia-operacional-conhecida"
+        },
+        {
+          "level": 2,
+          "text": "Ganhos consolidados",
+          "id": "ganhos-consolidados"
+        },
+        {
+          "level": 2,
+          "text": "Próximos cuidados",
+          "id": "proximos-cuidados"
+        },
+        {
+          "level": 2,
+          "text": "Leitura recomendada",
+          "id": "leitura-recomendada"
+        }
+      ],
+      "sha256": "21cc9664e16f016dd960e0a835524db300404a452621e52e035ad0637e7aca14"
+    }
+  ]
+}

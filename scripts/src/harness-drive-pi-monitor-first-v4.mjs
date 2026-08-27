@@ -56,7 +56,7 @@ await check("telegram-inicial-orienta-nao-cadastrar", async () => {
 await check("runner-cria-lock-antes-do-packaging", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
   const flowStart = source.indexOf("async function executeDrivePiIngest(payload)");
-  const flowEnd = source.indexOf("async function executePrintBatch(payload)", flowStart);
+  const flowEnd = source.indexOf("async function executePrintBatch(job)", flowStart);
   const flowSource = flowStart >= 0 && flowEnd > flowStart ? source.slice(flowStart, flowEnd) : "";
   const intakeIndex = flowSource.indexOf('"intake_locked"');
   const packagingIndex = flowSource.indexOf('"packaging"');

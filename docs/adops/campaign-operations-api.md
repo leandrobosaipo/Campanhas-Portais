@@ -134,6 +134,11 @@ Cada item retorna `sourceIdentity`:
 `decision=needs_confirmation`, a API adiciona
 `requiredActions[]=confirm_source_identity`.
 
+Cada linha mensal também retorna `canonicalSelection`: inserção escolhida,
+candidatas compatíveis e a evidência de PI, portal, formato, período e mídia
+usada na decisão. A seleção só é `confirmed` quando há uma vencedora
+determinística; `ambiguous` bloqueia publicação e captura.
+
 Arquivos classificados:
 
 - imagem: `gif`, `png`, `jpg`, `jpeg`, `webp`;
@@ -183,6 +188,10 @@ Detalhes e exemplos de variações ficam em [`campaign-input-resolution.md`](./c
   `/api/integrations/adrotate/insertions/{id}/relation` não tiver
   `exactLiveMatches`, manter como pendente. Não reaproveitar visualmente um
   anúncio sem vínculo canônico com a inserção.
+- `relation.rotation.mode=rotating` é permitido: o AdRotate pode entregar mais
+  de uma mídia no mesmo grupo. A aprovação continua exigindo que a evidência
+  contenha a mídia esperada da inserção; uma mídia rotativa diferente não pode
+  ser creditada e deve repetir apenas aquela data.
 
 ## Ações sugeridas
 

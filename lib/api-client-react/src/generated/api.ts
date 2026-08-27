@@ -23,17 +23,33 @@ import type {
   BulkUpdateResult,
   Campaign,
   CampaignDetail,
+  CampaignPublicationReconcileJobAccepted,
+  CaptureProofReconciliationRequest,
+  CaptureProofReconciliationResponse,
   CaptureProofStatus,
   Client,
   ClientBreakdown,
   CompetenciaBreakdown,
   CreateAgencyBody,
   CreateCampaignBody,
+  CreateCampaignEvidenceExportBatch200,
+  CreateCampaignEvidenceExportBatch202,
+  CreateCampaignEvidenceExportBatch409,
+  CreateCampaignEvidenceExportBatchBody,
+  CreateCampaignEvidenceExportJob200,
+  CreateCampaignEvidenceExportJob202,
+  CreateCampaignEvidenceExportJobBody,
+  CreateCampaignPublicationReconcileJobBody,
   CreateClientBody,
   CreateEvidenceBody,
   CreateInsertionBody,
+  CreatePiSiteExportJob200,
+  CreatePiSiteExportJob202,
+  CreatePiSiteExportJobBody,
   CreateSiteBody,
+  DailyPrintStatus,
   DashboardSummary,
+  DownloadInsertionEvidenceParams,
   DrivePiReconcileBody,
   ErrorResponse,
   Evidence,
@@ -42,16 +58,31 @@ import type {
   ExportPiSitePackageParams,
   GetActiveCampaignOperations200,
   GetActiveCampaignOperationsParams,
+  GetCampaignEvidenceExportJob200,
   GetCaptureProofStatusParams,
+  GetDailyPrintRecoveries200,
+  GetDailyPrintRecoveriesParams,
+  GetDailyPrintStatusParams,
   GetDashboardByClientParams,
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
   GetDashboardSummaryParams,
+  GetMonthlyEvidenceSource200,
+  GetMonthlyEvidenceSourceParams,
+  GetOpsJob200,
+  GetOpsJobProgress200,
+  GetPendingCampaignOperations200,
+  GetPendingCampaignOperationsParams,
+  GetPiSiteExportJob200,
   HealthStatus,
   InsertionDetail,
   InsertionWithRelations,
   ListCampaignsParams,
   ListInsertionsParams,
+  ListOpsIncidents200,
+  ListOpsIncidentsParams,
+  ListOpsJobs200,
+  ListOpsJobsParams,
   MediaConsistencyResult,
   OpsJobAccepted,
   OpsRuntimeTopology,
@@ -313,6 +344,669 @@ export const useCreateDrivePiReconcileJob = <
 };
 
 /**
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
+ */
+export const getCreateCampaignPublicationReconcileJobUrl = () => {
+  return `/api/ops/jobs/campaign-publication-reconcile`;
+};
+
+export const createCampaignPublicationReconcileJob = async (
+  createCampaignPublicationReconcileJobBody?: CreateCampaignPublicationReconcileJobBody,
+  options?: RequestInit,
+): Promise<CampaignPublicationReconcileJobAccepted> => {
+  return customFetch<CampaignPublicationReconcileJobAccepted>(
+    getCreateCampaignPublicationReconcileJobUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(createCampaignPublicationReconcileJobBody),
+    },
+  );
+};
+
+export const getCreateCampaignPublicationReconcileJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    TError,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+  TError,
+  { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignPublicationReconcileJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignPublicationReconcileJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignPublicationReconcileJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>
+>;
+export type CreateCampaignPublicationReconcileJobMutationBody =
+  BodyType<CreateCampaignPublicationReconcileJobBody>;
+export type CreateCampaignPublicationReconcileJobMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Recheck blocked drafts and resume campaigns with authoritative or unique operational identity
+ */
+export const useCreateCampaignPublicationReconcileJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+    TError,
+    { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignPublicationReconcileJob>>,
+  TError,
+  { data: BodyType<CreateCampaignPublicationReconcileJobBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignPublicationReconcileJobMutationOptions(options),
+  );
+};
+
+/**
+ * @summary List operational jobs in compact form
+ */
+export const getListOpsJobsUrl = (params?: ListOpsJobsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/jobs?${stringifiedParams}`
+    : `/api/ops/jobs`;
+};
+
+export const listOpsJobs = async (
+  params?: ListOpsJobsParams,
+  options?: RequestInit,
+): Promise<ListOpsJobs200> => {
+  return customFetch<ListOpsJobs200>(getListOpsJobsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOpsJobsQueryKey = (params?: ListOpsJobsParams) => {
+  return [`/api/ops/jobs`, ...(params ? [params] : [])] as const;
+};
+
+export const getListOpsJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOpsJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListOpsJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListOpsJobsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listOpsJobs>>> = ({
+    signal,
+  }) => listOpsJobs(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOpsJobs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOpsJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOpsJobs>>
+>;
+export type ListOpsJobsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List operational jobs in compact form
+ */
+
+export function useListOpsJobs<
+  TData = Awaited<ReturnType<typeof listOpsJobs>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListOpsJobsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsJobs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOpsJobsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+export const getGetDailyPrintStatusUrl = (
+  params?: GetDailyPrintStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/daily-print-status?${stringifiedParams}`
+    : `/api/ops/daily-print-status`;
+};
+
+export const getDailyPrintStatus = async (
+  params?: GetDailyPrintStatusParams,
+  options?: RequestInit,
+): Promise<DailyPrintStatus> => {
+  return customFetch<DailyPrintStatus>(getGetDailyPrintStatusUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDailyPrintStatusQueryKey = (
+  params?: GetDailyPrintStatusParams,
+) => {
+  return [`/api/ops/daily-print-status`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetDailyPrintStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDailyPrintStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDailyPrintStatusQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>
+  > = ({ signal }) =>
+    getDailyPrintStatus(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDailyPrintStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDailyPrintStatus>>
+>;
+export type GetDailyPrintStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get the sanitized status of the canonical daily evidence routine
+ */
+
+export function useGetDailyPrintStatus<
+  TData = Awaited<ReturnType<typeof getDailyPrintStatus>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetDailyPrintStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDailyPrintStatusQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+export const getGetDailyPrintRecoveriesUrl = (
+  params: GetDailyPrintRecoveriesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/daily-print-recoveries?${stringifiedParams}`
+    : `/api/ops/daily-print-recoveries`;
+};
+
+export const getDailyPrintRecoveries = async (
+  params: GetDailyPrintRecoveriesParams,
+  options?: RequestInit,
+): Promise<GetDailyPrintRecoveries200> => {
+  return customFetch<GetDailyPrintRecoveries200>(
+    getGetDailyPrintRecoveriesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetDailyPrintRecoveriesQueryKey = (
+  params?: GetDailyPrintRecoveriesParams,
+) => {
+  return [
+    `/api/ops/daily-print-recoveries`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDailyPrintRecoveriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDailyPrintRecoveriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDailyPrintRecoveriesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDailyPrintRecoveries>>
+  > = ({ signal }) =>
+    getDailyPrintRecoveries(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDailyPrintRecoveriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDailyPrintRecoveries>>
+>;
+export type GetDailyPrintRecoveriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get persisted retries and the compact evaluator result for one date
+ */
+
+export function useGetDailyPrintRecoveries<
+  TData = Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+  TError = ErrorType<unknown>,
+>(
+  params: GetDailyPrintRecoveriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getDailyPrintRecoveries>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDailyPrintRecoveriesQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Requires the same operator authorization used by runner and watchdog routes. Incident evidence never includes credentials or authorization headers.
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+export const getListOpsIncidentsUrl = (params?: ListOpsIncidentsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/ops/incidents?${stringifiedParams}`
+    : `/api/ops/incidents`;
+};
+
+export const listOpsIncidents = async (
+  params?: ListOpsIncidentsParams,
+  options?: RequestInit,
+): Promise<ListOpsIncidents200> => {
+  return customFetch<ListOpsIncidents200>(getListOpsIncidentsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListOpsIncidentsQueryKey = (
+  params?: ListOpsIncidentsParams,
+) => {
+  return [`/api/ops/incidents`, ...(params ? [params] : [])] as const;
+};
+
+export const getListOpsIncidentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listOpsIncidents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListOpsIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListOpsIncidentsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listOpsIncidents>>
+  > = ({ signal }) => listOpsIncidents(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listOpsIncidents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListOpsIncidentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listOpsIncidents>>
+>;
+export type ListOpsIncidentsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary List sanitized operational incidents for diagnosis and correction planning
+ */
+
+export function useListOpsIncidents<
+  TData = Awaited<ReturnType<typeof listOpsIncidents>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: ListOpsIncidentsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listOpsIncidents>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListOpsIncidentsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+export const getGetOpsJobUrl = (id: string) => {
+  return `/api/ops/jobs/${id}`;
+};
+
+export const getOpsJob = async (
+  id: string,
+  options?: RequestInit,
+): Promise<GetOpsJob200> => {
+  return customFetch<GetOpsJob200>(getGetOpsJobUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpsJobQueryKey = (id: string) => {
+  return [`/api/ops/jobs/${id}`] as const;
+};
+
+export const getGetOpsJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpsJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpsJobQueryKey(id);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getOpsJob>>> = ({
+    signal,
+  }) => getOpsJob(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getOpsJob>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetOpsJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpsJob>>
+>;
+export type GetOpsJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read the complete operational job for final inspection or diagnosis
+ */
+
+export function useGetOpsJob<
+  TData = Awaited<ReturnType<typeof getOpsJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpsJobQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+export const getGetOpsJobProgressUrl = (id: string) => {
+  return `/api/ops/jobs/${id}/progress`;
+};
+
+export const getOpsJobProgress = async (
+  id: string,
+  options?: RequestInit,
+): Promise<GetOpsJobProgress200> => {
+  return customFetch<GetOpsJobProgress200>(getGetOpsJobProgressUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpsJobProgressQueryKey = (id: string) => {
+  return [`/api/ops/jobs/${id}/progress`] as const;
+};
+
+export const getGetOpsJobProgressQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpsJobProgress>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJobProgress>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpsJobProgressQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpsJobProgress>>
+  > = ({ signal }) => getOpsJobProgress(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpsJobProgress>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpsJobProgressQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpsJobProgress>>
+>;
+export type GetOpsJobProgressQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read compact operational job progress for polling
+ */
+
+export function useGetOpsJobProgress<
+  TData = Awaited<ReturnType<typeof getOpsJobProgress>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getOpsJobProgress>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpsJobProgressQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
  */
 export const getGetActiveCampaignOperationsUrl = (
@@ -413,6 +1107,221 @@ export function useGetActiveCampaignOperations<
     params,
     options,
   );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+export const getGetPendingCampaignOperationsUrl = (
+  params?: GetPendingCampaignOperationsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/campaign-operations/pending-publication?${stringifiedParams}`
+    : `/api/campaign-operations/pending-publication`;
+};
+
+export const getPendingCampaignOperations = async (
+  params?: GetPendingCampaignOperationsParams,
+  options?: RequestInit,
+): Promise<GetPendingCampaignOperations200> => {
+  return customFetch<GetPendingCampaignOperations200>(
+    getGetPendingCampaignOperationsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPendingCampaignOperationsQueryKey = (
+  params?: GetPendingCampaignOperationsParams,
+) => {
+  return [
+    `/api/campaign-operations/pending-publication`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPendingCampaignOperationsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPendingCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPendingCampaignOperationsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPendingCampaignOperations>>
+  > = ({ signal }) =>
+    getPendingCampaignOperations(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPendingCampaignOperationsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPendingCampaignOperations>>
+>;
+export type GetPendingCampaignOperationsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Return only campaigns that still require publication or evidence
+ */
+
+export function useGetPendingCampaignOperations<
+  TData = Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPendingCampaignOperationsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPendingCampaignOperations>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPendingCampaignOperationsQueryOptions(
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+export const getGetMonthlyEvidenceSourceUrl = (
+  params?: GetMonthlyEvidenceSourceParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/campaign-operations/evidence-monthly-source?${stringifiedParams}`
+    : `/api/campaign-operations/evidence-monthly-source`;
+};
+
+export const getMonthlyEvidenceSource = async (
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: RequestInit,
+): Promise<GetMonthlyEvidenceSource200> => {
+  return customFetch<GetMonthlyEvidenceSource200>(
+    getGetMonthlyEvidenceSourceUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMonthlyEvidenceSourceQueryKey = (
+  params?: GetMonthlyEvidenceSourceParams,
+) => {
+  return [
+    `/api/campaign-operations/evidence-monthly-source`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetMonthlyEvidenceSourceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMonthlyEvidenceSourceQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMonthlyEvidenceSource>>
+  > = ({ signal }) =>
+    getMonthlyEvidenceSource(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMonthlyEvidenceSourceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMonthlyEvidenceSource>>
+>;
+export type GetMonthlyEvidenceSourceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Aggregate canonical insertions and audited daily evidence for the monthly report
+ */
+
+export function useGetMonthlyEvidenceSource<
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  params?: GetMonthlyEvidenceSourceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMonthlyEvidenceSourceQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -2343,6 +3252,98 @@ export function useGetCaptureProofStatus<
 }
 
 /**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+export const getReconcileScheduledCaptureProofsUrl = () => {
+  return `/api/insertions/capture-proof/reconcile-scheduled`;
+};
+
+export const reconcileScheduledCaptureProofs = async (
+  captureProofReconciliationRequest: CaptureProofReconciliationRequest,
+  options?: RequestInit,
+): Promise<CaptureProofReconciliationResponse> => {
+  return customFetch<CaptureProofReconciliationResponse>(
+    getReconcileScheduledCaptureProofsUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(captureProofReconciliationRequest),
+    },
+  );
+};
+
+export const getReconcileScheduledCaptureProofsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    TError,
+    { data: BodyType<CaptureProofReconciliationRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+  TError,
+  { data: BodyType<CaptureProofReconciliationRequest> },
+  TContext
+> => {
+  const mutationKey = ["reconcileScheduledCaptureProofs"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    { data: BodyType<CaptureProofReconciliationRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return reconcileScheduledCaptureProofs(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReconcileScheduledCaptureProofsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>
+>;
+export type ReconcileScheduledCaptureProofsMutationBody =
+  BodyType<CaptureProofReconciliationRequest>;
+export type ReconcileScheduledCaptureProofsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Reclassify same-day legacy evidence only after persisted job, timestamp and artifact correlation
+ */
+export const useReconcileScheduledCaptureProofs = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+    TError,
+    { data: BodyType<CaptureProofReconciliationRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reconcileScheduledCaptureProofs>>,
+  TError,
+  { data: BodyType<CaptureProofReconciliationRequest> },
+  TContext
+> => {
+  return useMutation(
+    getReconcileScheduledCaptureProofsMutationOptions(options),
+  );
+};
+
+/**
  * @summary Validate capture proof, including strict readiness gates
  */
 export const getValidateCaptureProofUrl = () => {
@@ -2593,7 +3594,7 @@ export const useCreateEvidence = <
 };
 
 /**
- * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized PNG copies; canonical evidence files and audit URLs are not changed.
+ * Exports the existing full operational package by default. Use mode=prints-only and variant=web to receive only optimized progressive JPEG copies; canonical evidence files and audit URLs are not changed.
  * @summary Export insertion evidence package
  */
 export const getExportInsertionEvidencesUrl = (
@@ -2711,6 +3712,273 @@ export function useExportInsertionEvidences<
 }
 
 /**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const getCreatePiSiteExportJobUrl = () => {
+  return `/api/pi-site-exports/jobs`;
+};
+
+export const createPiSiteExportJob = async (
+  createPiSiteExportJobBody: CreatePiSiteExportJobBody,
+  options?: RequestInit,
+): Promise<CreatePiSiteExportJob200 | CreatePiSiteExportJob202> => {
+  return customFetch<CreatePiSiteExportJob200 | CreatePiSiteExportJob202>(
+    getCreatePiSiteExportJobUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(createPiSiteExportJobBody),
+    },
+  );
+};
+
+export const getCreatePiSiteExportJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<CreatePiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<CreatePiSiteExportJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createPiSiteExportJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    { data: BodyType<CreatePiSiteExportJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPiSiteExportJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePiSiteExportJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>
+>;
+export type CreatePiSiteExportJobMutationBody =
+  BodyType<CreatePiSiteExportJobBody>;
+export type CreatePiSiteExportJobMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Queue an asynchronous evidence package for one PI and site
+ */
+export const useCreatePiSiteExportJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPiSiteExportJob>>,
+    TError,
+    { data: BodyType<CreatePiSiteExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPiSiteExportJob>>,
+  TError,
+  { data: BodyType<CreatePiSiteExportJobBody> },
+  TContext
+> => {
+  return useMutation(getCreatePiSiteExportJobMutationOptions(options));
+};
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+export const getGetPiSiteExportJobUrl = (jobId: string) => {
+  return `/api/pi-site-exports/jobs/${jobId}`;
+};
+
+export const getPiSiteExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<GetPiSiteExportJob200> => {
+  return customFetch<GetPiSiteExportJob200>(getGetPiSiteExportJobUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPiSiteExportJobQueryKey = (jobId: string) => {
+  return [`/api/pi-site-exports/jobs/${jobId}`] as const;
+};
+
+export const getGetPiSiteExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPiSiteExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>
+  > = ({ signal }) => getPiSiteExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPiSiteExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPiSiteExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPiSiteExportJob>>
+>;
+export type GetPiSiteExportJobQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Read asynchronous PI/site export status
+ */
+
+export function useGetPiSiteExportJob<
+  TData = Awaited<ReturnType<typeof getPiSiteExportJob>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPiSiteExportJobQueryOptions(jobId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+export const getDownloadPiSiteExportJobUrl = (jobId: string) => {
+  return `/api/pi-site-exports/jobs/${jobId}/download`;
+};
+
+export const downloadPiSiteExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getDownloadPiSiteExportJobUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadPiSiteExportJobQueryKey = (jobId: string) => {
+  return [`/api/pi-site-exports/jobs/${jobId}/download`] as const;
+};
+
+export const getDownloadPiSiteExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getDownloadPiSiteExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadPiSiteExportJob>>
+  > = ({ signal }) =>
+    downloadPiSiteExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadPiSiteExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadPiSiteExportJob>>
+>;
+export type DownloadPiSiteExportJobQueryError = ErrorType<void | ErrorResponse>;
+
+/**
+ * @summary Redirect to the completed PI/site export artifact
+ */
+
+export function useDownloadPiSiteExportJob<
+  TData = Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+  TError = ErrorType<void | ErrorResponse>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadPiSiteExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadPiSiteExportJobQueryOptions(jobId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
  * @summary Describe or download evidence package by PI and site
  */
 export const getExportPiSitePackageUrl = (
@@ -2805,6 +4073,491 @@ export function useExportPiSitePackage<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getExportPiSitePackageQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const getCreateCampaignEvidenceExportJobUrl = () => {
+  return `/api/campaign-evidence-exports/jobs`;
+};
+
+export const createCampaignEvidenceExportJob = async (
+  createCampaignEvidenceExportJobBody: CreateCampaignEvidenceExportJobBody,
+  options?: RequestInit,
+): Promise<
+  CreateCampaignEvidenceExportJob200 | CreateCampaignEvidenceExportJob202
+> => {
+  return customFetch<
+    CreateCampaignEvidenceExportJob200 | CreateCampaignEvidenceExportJob202
+  >(getCreateCampaignEvidenceExportJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCampaignEvidenceExportJobBody),
+  });
+};
+
+export const getCreateCampaignEvidenceExportJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignEvidenceExportJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignEvidenceExportJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignEvidenceExportJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>
+>;
+export type CreateCampaignEvidenceExportJobMutationBody =
+  BodyType<CreateCampaignEvidenceExportJobBody>;
+export type CreateCampaignEvidenceExportJobMutationError =
+  ErrorType<ErrorResponse>;
+
+/**
+ * @summary Queue the complete audited JPEG package for a campaign across every portal
+ */
+export const useCreateCampaignEvidenceExportJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportJob>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportJobBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignEvidenceExportJobMutationOptions(options),
+  );
+};
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const getCreateCampaignEvidenceExportBatchUrl = () => {
+  return `/api/campaign-evidence-exports/jobs/batch`;
+};
+
+export const createCampaignEvidenceExportBatch = async (
+  createCampaignEvidenceExportBatchBody: CreateCampaignEvidenceExportBatchBody,
+  options?: RequestInit,
+): Promise<
+  CreateCampaignEvidenceExportBatch200 | CreateCampaignEvidenceExportBatch202
+> => {
+  return customFetch<
+    CreateCampaignEvidenceExportBatch200 | CreateCampaignEvidenceExportBatch202
+  >(getCreateCampaignEvidenceExportBatchUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createCampaignEvidenceExportBatchBody),
+  });
+};
+
+export const getCreateCampaignEvidenceExportBatchMutationOptions = <
+  TError = ErrorType<CreateCampaignEvidenceExportBatch409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+  TContext
+> => {
+  const mutationKey = ["createCampaignEvidenceExportBatch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createCampaignEvidenceExportBatch(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateCampaignEvidenceExportBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>
+>;
+export type CreateCampaignEvidenceExportBatchMutationBody =
+  BodyType<CreateCampaignEvidenceExportBatchBody>;
+export type CreateCampaignEvidenceExportBatchMutationError =
+  ErrorType<CreateCampaignEvidenceExportBatch409>;
+
+/**
+ * @summary Reuse cached campaign ZIPs and queue only campaigns whose approved evidence changed
+ */
+export const useCreateCampaignEvidenceExportBatch = <
+  TError = ErrorType<CreateCampaignEvidenceExportBatch409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+    TError,
+    { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createCampaignEvidenceExportBatch>>,
+  TError,
+  { data: BodyType<CreateCampaignEvidenceExportBatchBody> },
+  TContext
+> => {
+  return useMutation(
+    getCreateCampaignEvidenceExportBatchMutationOptions(options),
+  );
+};
+
+export const getGetCampaignEvidenceExportJobUrl = (jobId: string) => {
+  return `/api/campaign-evidence-exports/jobs/${jobId}`;
+};
+
+export const getCampaignEvidenceExportJob = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<GetCampaignEvidenceExportJob200> => {
+  return customFetch<GetCampaignEvidenceExportJob200>(
+    getGetCampaignEvidenceExportJobUrl(jobId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetCampaignEvidenceExportJobQueryKey = (jobId: string) => {
+  return [`/api/campaign-evidence-exports/jobs/${jobId}`] as const;
+};
+
+export const getGetCampaignEvidenceExportJobQueryOptions = <
+  TData = Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetCampaignEvidenceExportJobQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>
+  > = ({ signal }) =>
+    getCampaignEvidenceExportJob(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetCampaignEvidenceExportJobQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>
+>;
+export type GetCampaignEvidenceExportJobQueryError = ErrorType<void>;
+
+export function useGetCampaignEvidenceExportJob<
+  TData = Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getCampaignEvidenceExportJob>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetCampaignEvidenceExportJobQueryOptions(
+    jobId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getDownloadCampaignEvidenceExportUrl = (jobId: string) => {
+  return `/api/campaign-evidence-exports/jobs/${jobId}/download`;
+};
+
+export const downloadCampaignEvidenceExport = async (
+  jobId: string,
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getDownloadCampaignEvidenceExportUrl(jobId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadCampaignEvidenceExportQueryKey = (jobId: string) => {
+  return [`/api/campaign-evidence-exports/jobs/${jobId}/download`] as const;
+};
+
+export const getDownloadCampaignEvidenceExportQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getDownloadCampaignEvidenceExportQueryKey(jobId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>
+  > = ({ signal }) =>
+    downloadCampaignEvidenceExport(jobId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!jobId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadCampaignEvidenceExportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>
+>;
+export type DownloadCampaignEvidenceExportQueryError = ErrorType<void>;
+
+export function useDownloadCampaignEvidenceExport<
+  TData = Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+  TError = ErrorType<void>,
+>(
+  jobId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadCampaignEvidenceExport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadCampaignEvidenceExportQueryOptions(
+    jobId,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+export const getDownloadInsertionEvidenceUrl = (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/insertions/${id}/evidences/${date}/download?${stringifiedParams}`
+    : `/api/insertions/${id}/evidences/${date}/download`;
+};
+
+export const downloadInsertionEvidence = async (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getDownloadInsertionEvidenceUrl(id, date, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getDownloadInsertionEvidenceQueryKey = (
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+) => {
+  return [
+    `/api/insertions/${id}/evidences/${date}/download`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getDownloadInsertionEvidenceQueryOptions = <
+  TData = Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getDownloadInsertionEvidenceQueryKey(id, date, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof downloadInsertionEvidence>>
+  > = ({ signal }) =>
+    downloadInsertionEvidence(id, date, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(id && date),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type DownloadInsertionEvidenceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof downloadInsertionEvidence>>
+>;
+export type DownloadInsertionEvidenceQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Download one approved canonical evidence as a progressive web JPEG
+ */
+
+export function useDownloadInsertionEvidence<
+  TData = Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+  TError = ErrorType<ErrorResponse>,
+>(
+  id: number,
+  date: string,
+  params?: DownloadInsertionEvidenceParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof downloadInsertionEvidence>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getDownloadInsertionEvidenceQueryOptions(
+    id,
+    date,
+    params,
+    options,
+  );
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

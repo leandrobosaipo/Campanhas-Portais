@@ -971,23 +971,11 @@ async function sendDailySummary(
     ? preflight.failed.slice(0, 8).map((item) => `- #${item.insertionId}: ${item.status}${item.issues.length ? ` (${item.issues.join(", ")})` : ""}`).join("\n")
     : "- nenhuma";
   const dailyPrintJobLine = formatDailyPrintJobState(dailyPrintJob);
-  const dailyPrintFailure = dailyPrintJob?.status === "failed"
-    ? [
-        "",
-        "Alerta de falha do lote diário:",
-        `- Data: ${dailyPrintJob.date}`,
-        `- Job: ${dailyPrintJob.job?.id ?? "—"}`,
-        `- Erro: ${dailyPrintJob.error ?? "sem detalhe registrado"}`,
-        "- Próximo passo: abrir painel > Inserções > gerar retroativos/corrigir falhas.",
-      ]
-    : [];
-
   const text = [
     `Resumo diário AdOps`,
     `Data: ${date}`,
     `Competência: ${competencia}`,
     dailyPrintJobLine,
-    ...dailyPrintFailure,
     "",
     `Total elegíveis: ${effectiveAudit.totalEligible}`,
     `Auditados: ${effectiveAudit.ok}`,
@@ -1005,6 +993,43 @@ async function sendDailySummary(
     scheduled.text,
   ].join("\n");
 
+  await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
+}
+
+async function sendDailyPrintAlert(env: Env, date: string, escalation = false, publicationBlockedIds: number[] = []) {
+  const daily = await adopsFetch(env, `/api/ops/daily-print-status?date=${encodeURIComponent(date)}`, {}, true) as {
+    lastAttempt?: {
+      status?: string;
+      expected?: number;
+      approved?: number;
+      missing?: number;
+      invalid?: number;
+      failedInsertionIds?: number[];
+    } | null;
+  };
+  const attempt = daily.lastAttempt;
+  const expected = Number(attempt?.expected ?? 0);
+  const approved = Number(attempt?.approved ?? 0);
+  const missing = Number(attempt?.missing ?? 0);
+  const invalid = Number(attempt?.invalid ?? 0);
+  const pending = Array.isArray(attempt?.failedInsertionIds)
+    ? attempt.failedInsertionIds.filter(Number.isInteger).sort((a, b) => a - b)
+    : [];
+  const resolved = attempt?.status === "completed" && expected > 0 && approved === expected && missing === 0 && invalid === 0;
+  const state = resolved ? "resolved" : escalation ? "blocked_0830" : "recovery_in_progress";
+  const claim = await adopsFetch(env, "/api/ops/daily-print-alerts/claim", {
+    method: "POST",
+    body: JSON.stringify({ date, state, pendingInsertionIds: pending, publicationBlockedIds }),
+  }, true) as { claimed?: boolean };
+  if (claim.claimed !== true) return;
+  const text = resolved
+    ? `AdOps: auditoria de ${date} concluída. ${approved} de ${expected} prints aprovados.`
+    : [
+        escalation ? `AdOps: bloqueio mantido às 08h30 para ${date}.` : `AdOps: recuperação automática em andamento para ${date}.`,
+        `Elegíveis: ${expected} · auditados: ${approved} · pendentes: ${missing} · inválidos: ${invalid}`,
+        `Inserções: ${pending.length ? pending.join(", ") : "causa ainda sem IDs"}`,
+        ...(publicationBlockedIds.length ? [`Publicação bloqueada: ${publicationBlockedIds.join(", ")}`] : []),
+      ].join("\n");
   await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
 }
 
@@ -1602,8 +1627,22 @@ export default {
     return json({ ok: false, error: "not_found" }, { status: 404 });
   },
 
-  async scheduled(_controller: unknown, env: Env): Promise<void> {
+  async scheduled(controller: { cron?: string; scheduledTime?: number }, env: Env): Promise<void> {
     if (normalizeText(env.TELEGRAM_NOTIFICATIONS_ENABLED) === "false") return;
+    const decision = await adopsFetch(env, "/api/ops/daily-print-alerts/evaluate") as { due?: boolean; localTime?: string; escalation?: boolean; targetDate?: string; publicationBlockedIds?: number[] };
+    if (decision.due !== true || !decision.targetDate) return;
+    const localTime = String(decision.localTime ?? "");
+    const escalation = decision.escalation === true;
+    const targetDate = decision.targetDate;
+    try {
+      const publicationBlockedIds = Array.isArray(decision.publicationBlockedIds)
+        ? [...new Set(decision.publicationBlockedIds.filter(Number.isInteger))].sort((a, b) => a - b)
+        : [];
+      await sendDailyPrintAlert(env, targetDate, escalation, publicationBlockedIds);
+    } catch (error) {
+      console.error("daily_print_alert_failed", error);
+    }
+    if (localTime !== "18:45") return;
     try {
       await adopsFetch(env, "/api/ops/jobs/watchdog", {
         method: "POST",

@@ -1,188 +1,122 @@
-# AdOps — Comece Aqui
+# AdOps — Comece aqui
+
+> Estado: vigente
+> Público: equipe operacional e agentes
+> Última validação: 2026-08-26
+> Release-base em produção antes do corte do scheduler: be813b54147df8d75ac98c69d6ad91ae4ea623b9
+> Fonte autoritativa: runtime público, OpenAPI e runbooks deste repositório
 
 ## Objetivo
 
-Este projeto administra campanhas, inserções, mídias, AdRotate, prints, auditoria de evidências, fila operacional, Telegram e relatórios relacionados aos portais da Código5.
+Este é o índice canônico da operação AdOps. Use-o para localizar a instrução atual sem depender de conversas antigas ou da pasta histórica do OpenClaw.
 
-Raiz atual:
+Raiz oficial:
 
 ```bash
 /Users/leandrobosaipo/Projetos/AdOps
 ```
 
-A pasta antiga do OpenClaw é apenas origem histórica:
+A pasta `/Users/leandrobosaipo/.openclaw/Campanhas-Portais` é somente histórica.
 
-```bash
-/Users/leandrobosaipo/.openclaw/Campanhas-Portais
-```
+## Ordem de leitura
 
-## O que existe
+| Necessidade | Documento | Tipo |
+|---|---|---|
+| Aprender o fluxo completo | `docs/runbook-nova-pi-evidencias.md` | Tutorial |
+| Operar endpoints e jobs | `docs/adops/ops-api-runbook.md` | Referência |
+| Atualizar o relatório mensal | `docs/adops/evidence-monthly-report/runbook.md` | How-to |
+| Manter, publicar ou reverter a plataforma | `docs/adops/system/RUNBOOK.md` | How-to |
+| Conhecer o estado confirmado | `docs/status-do-projeto.md` | Explicação |
+| Diagnosticar regras de captura | `docs/adops/capture-config/README.md` | Referência |
+| Operar o scheduler canônico | `docs/adops/macmini-control-plane-scheduler-runbook.md` | How-to |
+| Acompanhar o rollout do scheduler | `docs/adops/macmini-control-plane-scheduler-rollout-2026-08-26.md` | Evidência |
 
-- Frontend do painel AdOps.
-- API e runners no Mac Mini, implantados pelo Portainer endpoint 3.
-- Cloudflare apenas como DNS, Tunnel, Access e cache seletivo.
-- Monitor interno como único dono das credenciais do Google Drive.
-- Runner remoto de jobs.
-- Integração com planilha.
-- Integração com AdRotate nos portais.
-- Geração de prints e retroativos.
-- Auditoria de evidências.
-- Notificações Telegram.
-- Documentação de PRD, SPEC, HARNESS e runbooks.
-
-## Fluxo diário
+## Fluxo canônico
 
 ```text
-PI/email/PDF/Drive
-  -> intake rastreável
-  -> se veio do Drive: intake_locked + Telegram inicial
-  -> deduplicação AdOps/AdRotate
-  -> revisão se houver conflito
-  -> publicar/vincular mídia sem duplicar
-  -> limpar cache
-  -> gerar print retroativo
-  -> auditar evidência
-  -> enviar Telegram
-```
-
-## Para cadastrar nova PI
-
-Use primeiro o runbook operacional:
-
-- `docs/runbook-nova-pi-evidencias.md`
-
-Para PI nova no Drive, use também o contrato v4:
-
-- `docs/adops/pi-automation-v4-monitor-first-ai-gate.md`
-- `docs/adops/fila-midias-planilha.md`
-- `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md`
-- `docs/adops/containerized-runner-runtime-fix-plan-2026-06-03.md`
-
-Regra atual:
-
-```text
-nova pasta/arquivo no Drive
-  -> Worker registra drive-pi-ingest
-  -> runner marca intake_locked
-  -> Telegram avisa "processo automatico iniciado; nao cadastre manualmente"
-  -> classificador separa PDF/midia faltante
-  -> IA/OpenAI identifica campos quando houver contexto
-  -> runner deterministico decide applied ou needs_review
-```
-
-A IA não publica, não altera planilha e não altera AdRotate. Ela só melhora a identificação de PI, campanha, veículo, formato, período e mídia.
-
-Resumo do fluxo:
-
-```text
-PI/PDF/Drive
-  -> extrair numero, periodo, veiculo, formato, midia e destino
-  -> sincronizar planilha
-  -> conferir campanha/insercao canonica no AdOps
-  -> conferir AdRotate/portal sem duplicar anuncio
-  -> sincronizar mediaUrl e link de destino
-  -> limpar cache
-  -> gerar evidencia atual
-  -> gerar retroativos se houver dias passados
-  -> auditar status + visual do banner
-  -> gerar relatorio e enviar Telegram quando solicitado
+PI/PDF/e-mail/Drive
+→ planilha
+→ campanhas pendentes
+→ deduplicação
+→ campanha e inserção canônicas
+→ mídia pública
+→ AdRotate
+→ cache e HTML público
+→ print e auditoria
+→ retroativos
+→ relatório e ZIP
+→ monitoramento
 ```
 
 ## Fontes de verdade
 
-1. PDF/email da PI para identidade comercial.
-2. Planilha operacional para período, portal e posição.
-3. AdOps.
-4. AdRotate/portal como estado de publicação.
-5. Pasta e mídia do Drive como localização, sujeitas a erro de nome.
-6. WhatsApp como confirmação operacional quando houver conflito ou mídia fora do Drive.
+1. PDF ou e-mail da PI para identidade comercial.
+2. Planilha operacional para portal, período e formato.
+3. AdOps para campanha, inserção, mídia e estado operacional.
+4. AdRotate e HTML público para comprovar publicação.
+5. Drive para localizar documentos e mídia, sem inferir PI pelo nome.
+6. WhatsApp apenas como contexto complementar.
 
-Se houver divergência, não escolher no chute. Registrar o conflito e corrigir com base na PI.
+Conflito de identidade bloqueia publicação. Não escolha PI, portal, período ou formato por semelhança textual.
 
-## Primeiros comandos
+## Serviços atuais
 
-Entrar no projeto:
+| Serviço | Função |
+|---|---|
+| `adops-api` | API canônica, banco e contratos privados |
+| `adops-runner` | Sync, lotes, relatório, AdRotate e manutenção |
+| `adops-runner-print-single` | Print individual e exportações de evidências |
+| `adops-drive-pi-monitor-stack` | Credenciais Google e inventário do Drive |
+| `adops-web` | Painel web |
+| Worker `adops-api-public` | Proxy público e shadow/rollback temporário; não decide nem grava jobs no modo `macmini` |
+| PostgreSQL | Fonte canônica de jobs, claims, heartbeats e alertas operacionais |
+
+Painel: `https://adops.codigo5.com.br`
+API: `https://adops-api.codigo5.com.br`
+Swagger: `https://adops-api.codigo5.com.br/api/docs`
+Relatório: `https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/`
+
+## Regras que nunca podem ser puladas
+
+- Consulte planilha, Drive e API AdOps antes de criar ou publicar.
+- Use `campaign-operations/active` para o dia e `campaign-operations/evidence-monthly-source` para o mês. A fonte mensal inclui campanhas encerradas.
+- Reutilize campanha, inserção ou anúncio compatível antes de criar outro.
+- URL existente ou HTTP 200 não comprovam auditoria.
+- Aceite somente evidência auditada, acessível e sem bloqueios.
+- Captura é serial; exportações podem usar concorrência controlada.
+- Empacotamento não captura, repara ou reaudita.
+- Preserve o PNG canônico; comprima somente a cópia de entrega.
+- Polling usa `/progress`; carregue o job completo apenas no final ou diagnóstico.
+- Não exponha valores de tokens, cookies, headers ou arquivos `.env`.
+- Redirect é opcional: zero link publica banner sem clique; um HTTPS público publica banner clicável; link fornecido inválido ou ambíguo bloqueia.
+- GIF e MP4 são aceitos somente quando o perfil real da posição permitir e o binário passar em dimensões, codec e integridade.
+
+## Diagnóstico inicial
 
 ```bash
-cd /Users/leandrobosaipo/Projetos/AdOps
+curl -fsSL https://adops-api.codigo5.com.br/api/healthz
+curl -fsSL https://adops-api.codigo5.com.br/api/ops/runtime-readiness
+curl -fsSL 'https://adops-api.codigo5.com.br/api/campaign-operations/pending-publication?date=YYYY-MM-DD'
 ```
 
-Instalar dependências quando necessário:
+Na leitura de pendências, prefira `publicationStatus`; `resolutionStatus` permanece como alias compatível. `identityMode=authoritative_pi` confirma também a identidade comercial. `identityMode=operational_identity` pode deixar `publicationStatus=ready_for_publication` sem inventar PI, mas somente quando todos os gates operacionais são únicos e o preflight vivo passa. `commercialIdentityStatus=awaiting_authoritative_pi` continua bloqueando faturamento e ZIP por PI.
 
-```bash
-pnpm install
-```
+A rotina diária começa às 17h30 de Cuiabá com a sincronização da planilha e só depois reconcilia Drive, AdOps e publicação. Às 18h captura somente o dia corrente. Às 22h15 publica o relatório mensal completo. PI 9750/AFL e PI 14771/OMT já são as inserções canônicas `#1854` e `#1841`; nunca devem ser recriadas.
 
-Auditar regras de captura:
+Consulte o resumo sanitizado da captura em `GET /api/ops/daily-print-status`. O relatório exibe essa mesma leitura, a próxima execução às 18h e os links da planilha mensal e da pasta de mídias.
+
+Retroativo de campanha encerrada nunca reativa o anúncio. Se o AdRotate não renderizar mais o slot, OMT e AFL podem usar a reconstrução auditada do capturador: notícias vêm da API WordPress até a data pedida, o banner vem da `mediaUrl` do AdOps e nada é gravado no portal. Qualquer divergência impede a evidência.
+
+Toda reconstrução tardia usa `reconstructionReason=late_publication_recovery` e registra a data contratada, a data real da reconstrução e a mídia usada. A captura diária normal não recebe essa autorização.
+
+Uma campanha encerrada não aparece em `campaign-operations/active` depois do fim. Isso é correto para a captura diária, mas não para o relatório. Para auditoria mensal, use sempre a fonte mensal e procure também por PI, portal, campaign ID ou insertion ID.
+
+Antes de alterar captura:
 
 ```bash
 pnpm --dir scripts run audit:capture-rules-integrity
 ```
 
-Validar compositor de print:
+## Documentos históricos
 
-```bash
-node --check scripts/src/capture-insertion-proof.cjs
-```
-
-## Entrega final comprimida
-
-Guia específico: `docs/adops/entrega-jornalista-api.md`.
-
-O caminho canônico é assíncrono e idempotente:
-
-```text
-POST /api/pi-site-exports/jobs  (mode=delivery, variant=web, sendTelegram=true)
-  -> GET /api/pi-site-exports/jobs/{jobId}
-  -> status=completed
-  -> GET /api/pi-site-exports/jobs/{jobId}/download  (ZIP só com imagens)
-  -> GET /api/pi-site-exports/jobs/{jobId}/pdf       (PDF único ou lista de PDFs por posição)
-```
-
-Esse fluxo mantém os PNGs auditados e os dados técnicos internamente. Para a
-jornalista, monta `PI-<codigo>-<portal>.zip` somente com JPEGs e um
-`PI-<codigo>-<portal>-<posicao>.pdf` para cada banner; todos são enviados ao Telegram.
-Use o endpoint síncrono apenas para diagnóstico ou artefatos pequenos.
-
-- Swagger: `https://adops-api.codigo5.com.br/api/docs`
-- ReDoc: `https://adops-api.codigo5.com.br/api/redoc`
-- OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`
-
-## Docs essenciais
-
-- `docs/README.md`
-- `docs/PROJECT_MAP_ADOPS.md`
-- `docs/runbook-nova-pi-evidencias.md`
-- `docs/CREDENTIALS_AND_ENV_ADOPS.md`
-- `docs/adops/runtime-topology-and-permissions.md`
-- `docs/adops/entrega-jornalista-api.md`
-- `docs/base-de-conhecimento-do-projeto.md`
-- `docs/status-do-projeto.md`
-- `docs/prints-retroativos.md`
-- `docs/adops/evidence-web-print-export.md`
-- `docs/adops/pi-automation-v3/prd.md`
-- `docs/adops/pi-automation-v3/blueprint.md`
-- `docs/adops/pi-automation-v3/sdd.md`
-- `docs/adops/pi-automation-v3/spec.md`
-- `docs/adops/pi-automation-v3/harness.md`
-- `docs/adops/pi-automation-v3/tests.md`
-- `docs/adops/pi-automation-v3/playbook.md`
-- `docs/adops/pi-automation-v3/runbook.md`
-- `docs/adops/pi-automation-v3/prompts.md`
-- `docs/adops/pi-automation-v4-monitor-first-ai-gate.md`
-- `docs/adops/macmini-control-plane-migration-plan-2026-06-03.md`
-- `scripts/src/harness-drive-pi-monitor-first-v4.mjs`
-- `docs/adops/capture-config/README.md`
-- `docs/adops/ga4-monthly-report-ui/README.md`
-- `docs/adops/ga4-monthly-report-ui/RUNBOOK_MAIO_2026_UI_PDFS.md`
-- `docs/reports/adops-ga4-ui-rotina-maio-2026/index.html`
-- `docs/spec-sync-planilha-v1.md`
-- `docs/spec-reconcile-planilha-adrotate-v1.md`
-- `docs/fluxos-telegram-bot-adops.md`
-- `docs/operacao-pages-vps-2026-04-14.md`
-
-`docs/adops/roo-layout-drive-pi-v2/` continua como referência histórica. Para decisões novas de automação de PI, usar `docs/adops/pi-automation-v3/` e o contrato v4 de monitor-first em `docs/adops/pi-automation-v4-monitor-first-ai-gate.md`.
-
-## Regra de segurança
-
-Não expor tokens ou credenciais em respostas. Quando precisar relatar `.env`, usar apenas `presente/ausente`.
+Documentos sobre Swarm, EasyPanel, Contabo e a origem OpenClaw continuam disponíveis para auditoria histórica. Eles não vencem este índice, o OpenAPI vivo nem os runbooks marcados como `vigente`.

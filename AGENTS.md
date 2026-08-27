@@ -8,13 +8,7 @@ Raiz oficial:
 /Users/leandrobosaipo/Projetos/AdOps
 ```
 
-Origem histórica migrada:
-
-```bash
-/Users/leandrobosaipo/.openclaw/Campanhas-Portais
-```
-
-Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para código, documentação, scripts, `.env` locais e runbooks.
+O repositório anterior do OpenClaw é apenas registro de migração. Ele não é entrada de comandos, código, documentação, configuração ou deploy. Use exclusivamente a raiz oficial acima; consulte `docs/MIGRATION_FROM_OPENCLAW_ADOPS.md` somente para histórico.
 
 ## Postura obrigatória
 
@@ -25,6 +19,8 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Preferir correção simples, auditável e reversível.
 - Preservar operação em produção: nunca quebrar prints, planilha, AdRotate, Telegram ou Cloudflare por mudança não testada.
 - Ao trabalhar com PI, a prioridade de fonte é: PDF/email da PI, depois planilha, depois AdOps, depois AdRotate.
+- Link de direcionamento é opcional. Sem link, publique o banner sem clique. Se houver link, aceite somente um HTTPS público e inequívoco; link inseguro, inválido ou ambíguo bloqueia a publicação.
+- Valide o arquivo real da mídia. GIF ou MP4 só são aceitos quando o perfil da posição declarar o tipo e as dimensões. Preserve o original e normalize somente a cópia de entrega.
 - Em caso de divergência, registrar a divergência e corrigir sem duplicar anúncio, campanha ou inserção.
 
 ## Mapa rápido
@@ -40,11 +36,10 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 - Sincronização planilha/AdRotate: `docs/spec-reconcile-planilha-adrotate-v1.md`
 - Telegram: `docs/fluxos-telegram-bot-adops.md`
 - Cloudflare/VPS: `docs/operacao-pages-vps-2026-04-14.md`
-- Fila de campanhas aguardando mídia: `docs/adops/fila-midias-planilha.md`
 
 ## Fluxo para nova PI
 
-1. Conferir PI/email/PDF e identificar campanha, cliente, agência, portal, posição, período, mídia e destino.
+1. Conferir PI/email/PDF e identificar campanha, cliente, agência, portal, posição, período, mídia e destino, quando houver.
 2. Sincronizar planilha.
 3. Verificar se campanha/inserção já existem no AdOps.
 4. Verificar AdRotate do portal e evitar duplicidade.
@@ -55,14 +50,18 @@ Não assuma que a pasta antiga é a fonte atual. Use a pasta deste projeto para 
 9. Validar auditoria por data.
 10. Enviar resumo e prints no Telegram quando solicitado.
 
-## Campanha cadastrada sem mídia
+## Feedback operacional obrigatório
 
-- Consultar a planilha e sincronizar somente pelo endpoint `POST /api/ops/jobs/sync-planilha`.
-- Manter a inserção cadastrada enquanto a mídia não chega; não inventar URL nem publicar placeholder.
-- A fila oficial é `POST /api/ops/jobs/media-monitor`, executada pelo monitor do Drive a cada 15 minutos.
-- O monitor é determinístico e não usa LLM. Ele só vincula mídia quando PI, portal, posição e um único arquivo compatível estiverem resolvidos.
-- Toda mutação deve passar pela API AdOps. Agente e runner não escrevem diretamente no banco.
-- Conflito de PI, posição ambígua ou mais de um arquivo compatível bloqueiam a automação e exigem revisão humana.
+Ao explicar uma falha ao usuário, não entregue somente códigos técnicos. Use frases simples e informe, nesta ordem:
+
+1. campanha, PI, portal e insertion ID;
+2. datas afetadas;
+3. o que já existe;
+4. por que parou;
+5. o que ainda falta;
+6. o que o sistema tentará fazer;
+7. o que depende de informação humana;
+8. link para conferir.
 
 ## Comandos operacionais principais
 
@@ -102,26 +101,19 @@ Para qualquer entrega final de evidências, usar somente o fluxo assíncrono da 
 
 ```text
 POST /api/pi-site-exports/jobs
-  mode=delivery
+  mode=full-pdf
   variant=web
-  sendTelegram=true
   Idempotency-Key=<chave estável>
 GET /api/pi-site-exports/jobs/{jobId}
 GET /api/pi-site-exports/jobs/{jobId}/download
-GET /api/pi-site-exports/jobs/{jobId}/pdf
 ```
 
 - Não montar o pacote final manualmente quando a API estiver disponível.
 - Não usar o endpoint síncrono para pacotes grandes.
 - Preservar os PNGs auditados no storage; a compressão ocorre apenas na cópia de entrega.
-- O ZIP destinado à jornalista contém somente JPEGs progressivos, organizados por posição. Não incluir PDF, JSON, CSV, README, manifestos, auditoria ou contact sheet.
-- Os PDFs são artefatos separados por posição/banner. Nunca juntar TOPO, HOME 1, HOME 2, LATERAL ou VIDEO no mesmo PDF.
-- A API envia o ZIP de imagens e todos os PDFs por posição ao Telegram no mesmo grupo de mídia quando `sendTelegram=true`.
-- Nomes externos devem ser neutros: `PI-<codigo>-<portal>.zip` e `PI-<codigo>-<portal>-<posicao>.pdf`. Não usar `final`, `revisada`, `auditada` ou equivalentes em pastas e arquivos.
-- Auditoria, logs, checksums e fontes PNG continuam internos ao AdOps e não entram no pacote da jornalista.
-- Antes de liberar: `status=completed`, soma das páginas de `artifacts.pdfs` = JPEGs, um PDF por posição, ZIP sem PNG/PDF/JSON/TXT/CSV e amostragem visual com topbar/domínio/data/hora/banner visíveis.
+- O ZIP final deve conter PDF, JPEGs progressivos independentes, auditoria, contact sheet e `SHA256SUMS.txt`.
+- Antes de liberar: `status=completed`, páginas do PDF = JPEGs, zero PNG na cópia web, checksums válidos e amostragem visual com topbar/domínio/data/hora/banner visíveis.
 - Contrato navegável: `https://adops-api.codigo5.com.br/api/docs`; OpenAPI: `https://adops-api.codigo5.com.br/api/openapi.json`.
-- Guia operacional canônico: `docs/adops/entrega-jornalista-api.md`.
 
 ## Gate obrigatório de captura/auditoria
 
@@ -132,7 +124,36 @@ Bloqueia publicação ou regeneração em lote se houver:
 - Alias operacional igual em grupos diferentes do mesmo site.
 - Divergência entre `config/adrotate-sites.json` e regras publicadas no painel/API.
 - Campos inválidos: `scrollMode`, `proofStyle`, `slotSelector`.
-- Em página de notícia com `requireEditorialDateMatchTarget=true`, a data editorial visível deve coincidir com a data-alvo; não aprovar uma matéria repetida em dias diferentes.
+
+## Rotina diária e relatório mensal
+
+- Às 17h30 de Cuiabá, `sync-planilha` deve terminar antes de `campaign-publication-reconcile`. A sincronização cadastra de forma idempotente somente linhas canônicas realmente ausentes.
+- A publicação automática determinística usa somente a API AdOps, a planilha canônica e o snapshot interno do Drive. Ela depende de `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED=true`; não habilite as flags do agente IA para esse fluxo.
+- Falha transitória do monitor do Drive não pode atrasar job já autorizado: a varredura best-effort roda em loop separado do consumidor da fila de publicação.
+- Antes de qualquer mutação automática, o reconciliador deve sincronizar a planilha, repetir a deduplicação e validar PI, portal, período, formato, mídia única, HTTPS, grupo/slot e HTML público. Qualquer divergência termina em `needs_review`.
+- Para uma inserção canônica já resolvida na fonte mensal, portal, formato e período vêm sempre da planilha/API mensal. O PDF confirma PI, mídia e destino, mas nunca amplia o período contratado nem troca o slot da linha canônica.
+- Quando a campanha canônica já existe, cliente e agência também vêm da campanha/planilha. Diferença de nomenclatura comercial no PDF permanece auditável, mas não pode substituir nem bloquear o alvo já confirmado por PI, portal, formato e período.
+- A automação jamais substitui uma `mediaUrl` existente nem remove anúncio de outra inserção. Relação rotativa válida é preservada; `replaceExisting=false` é obrigatório no fluxo automático.
+- `campaign-publication-reconcile` aceita `mode=preflight|apply`. Eventos do Drive e cron só aplicam quando o gate explícito está ativo; com ele desligado retornam plano e bloqueios, sem mutar campanha, AdRotate ou evidência.
+- A reconciliação só cadastra/publica; ela nunca captura evidência do próprio dia. Após a confirmação do HTML público, a primeira captura continua exclusiva do `print-batch` das 18h.
+- Às 18h, `print-batch` captura apenas a data do dia, limitado pela competência calculada da data e, quando informado, pelo portal. A auditoria agregada é a prova de conclusão.
+- Toda captura deve preservar uma classificação imutável: `scheduled` (rotina do dia), `same_day_retry` (nova tentativa ainda no mesmo dia) ou `historical_recovery` (recuperação posterior). O registro guarda `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`; uma captura `scheduled` não vira retroativa só porque o calendário avançou.
+- Uma execução antiga `inline-*` só pode ser reconciliada como `same_day_retry` pela rota interna, em `dryRun` antes de `apply`, quando log, arquivo, mídia, inserção, período e data em `America/Cuiaba` coincidirem. A reconciliação nunca troca a evidência nem sua URL.
+- A aprovação exige proveniência correlacionável entre banco (`capture_proof_logs`), job original e artefato armazenado. Reconciliar um registro antigo pode corrigir sua classificação, mas não recaptura, substitui ou atribui arquivo a outra inserção. Sem correlação suficiente, o estado permanece bloqueado.
+- Após o lote das 18h, itens `missing` ou `invalid` recebem recuperação individual persistida em +5, +10 e +15 minutos. Cada tentativa tem inserção, data, causa humana/técnica, job, horário e próxima ação; aprovação interrompe o ciclo, evidência aprovada nunca é tocada e a terceira falha abre bloqueio sem retry adicional.
+- O status histórico deve respeitar `?date=YYYY-MM-DD`: não use a última rotina para responder outra data. A rotina normal é determinística e não chama IA; ao final pode emitir somente JSON compacto `complete`, `retryable` ou `blocked` para o avaliador econômico.
+- Às 22h15, `evidence-monthly-report` usa `campaign-operations/evidence-monthly-source`; essa fonte inclui toda campanha cujo período toca o mês, inclusive encerradas antes da data-alvo.
+- Cada evidência aprovada por `print-single`, `print-backfill` ou `print-batch` marca a competência como suja. O Worker agrupa aprovações por 60 segundos, mantém somente um job mensal ativo por competência e republica em modo incremental sem criar captura ou exportação nova.
+- Se uma aprovação chegar enquanto a revisão incremental estiver executando, ela cria a próxima revisão após o job atual. Falha de revisão mantém a competência suja e agenda retry; não esconda pendências para “destravar” o relatório.
+- `campaign-operations/active` continua sendo a fonte diária. Não use esse endpoint isoladamente para construir um relatório mensal.
+- O filtro visual inicial `Ativas` não reduz o conjunto persistido: `Encerradas` permanecem no HTML/JSON durante toda a competência.
+- É proibido recuar silenciosamente da fonte mensal para `campaign-operations/active`. Se a fonte mensal falhar, preserve a última publicação válida.
+- Antes das 18h, e enquanto o lote diário estiver em fila ou execução, o dia corrente é `aguardando captura`, nunca `pendente`. Ausência vira pendência somente após conclusão canônica ou fechamento da janela.
+- Restaurar campanha encerrada reutiliza evidências auditadas existentes e não autoriza `print-single`, `print-backfill` nem qualquer captura retroativa.
+- `bannerPublicadoNoSite=true` é somente publicação reportada. Confirmação pública exige a relação AdRotate e a mídia no HTML público.
+- `GET /api/ops/daily-print-status` é a leitura compacta da última rotina diária e da próxima execução. Não exponha payloads, tokens ou logs internos nessa resposta.
+- Uma falha terminal de job deve ser gravada junto do incidente na mesma operação transacional. Incidentes e logs nunca podem persistir credenciais.
+- Em 24/08/2026, a captura regular só é elegível após 18h de Cuiabá. Antes disso o dia corrente é `aguardando captura`; não crie backfill antecipado nem marque pendência.
 
 ## Serviços relacionados
 
@@ -170,3 +191,14 @@ Para tarefas operacionais, além dos comandos, validar no sistema vivo:
 - URL pública do print;
 - auditoria sem issues;
 - Telegram enviado, se solicitado.
+
+## Rotação AdRotate e evidências
+
+- Mais de um anúncio no mesmo grupo pode ser rotação legítima; não desativar ou
+  reatribuir histórico por esse sinal isolado.
+- A decisão canônica deve registrar PI, portal, formato, período e mídia.
+  Sem vencedora determinística, bloquear publicação/captura e expor a causa.
+- Em grupo rotativo, aprovar evidência somente se o audit confirmar a mídia
+  esperada da inserção. Retry idempotente é somente para datas não aprovadas.
+- Toda aprovação deve marcar a competência para revisão incremental do relatório;
+  antes das 18h de Cuiabá, o dia corrente fica aguardando captura.
