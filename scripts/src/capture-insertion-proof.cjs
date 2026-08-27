@@ -2141,7 +2141,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
 
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "perrenguematogrosso.com") return false;
-  if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
+  if (!["home", "article"].includes(mapping?.page) && mapping?.pageLabel !== "Home") return false;
   const adminRetroPosts = Array.isArray(options.adminRetroPosts)
     ? options.adminRetroPosts
     : await fetchPerrengueAdminRetroPosts(captureAt);

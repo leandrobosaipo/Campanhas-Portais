@@ -23,8 +23,27 @@ function makeMemePost(day, title = `Meme ${day}`) {
   return makePost(day, title, "Memes do vovô", "memes-do-vovo");
 }
 
-function makeDocument() {
+function makeDocument(pageType = "home") {
   const attrs = new Map();
+  const makeElement = () => Object.assign(new globalThis.HTMLElement(), {
+    _attrs: new Map(),
+    setAttribute(name, value) { this._attrs.set(name, String(value)); },
+    getAttribute(name) { return this._attrs.get(name) ?? null; },
+    getBoundingClientRect() { return { width: 320, height: 48 }; },
+  });
+  const title = Object.assign(makeElement(), {
+    replaceChildren(...children) { this.children = children; },
+  });
+  const time = makeElement();
+  const article = Object.assign(makeElement(), {
+    querySelector(selector) {
+      if (selector === "h1,.entry-title") return title;
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === "time" ? [time] : [];
+    },
+  });
   const emptyNode = {
     querySelector() {
       return null;
@@ -50,10 +69,14 @@ function makeDocument() {
         return attrs.get(`body:${name}`) ?? null;
       },
     },
+    createElement() {
+      return makeElement();
+    },
     querySelectorAll() {
       return [];
     },
     querySelector(selector) {
+      if (pageType === "article" && (selector === "main article" || selector === "article")) return article;
       if (selector === "main") return emptyNode;
       return null;
     },
@@ -61,7 +84,7 @@ function makeDocument() {
   };
 }
 
-function makePage(indexPayload) {
+function makePage(indexPayload, pageType = "home") {
   return {
     async evaluate(fn, payload) {
       const previous = {
@@ -70,12 +93,12 @@ function makePage(indexPayload) {
         HTMLElement: globalThis.HTMLElement,
         fetch: globalThis.fetch,
       };
-      const document = makeDocument();
       try {
-        globalThis.document = document;
         globalThis.HTMLElement = class HTMLElement {};
+        const document = makeDocument(pageType);
+        globalThis.document = document;
         globalThis.window = {
-          location: { origin: "https://perrenguematogrosso.com" },
+          location: { origin: "https://perrenguematogrosso.com", pathname: pageType === "article" ? "/post-1/" : "/" },
         };
         globalThis.fetch = async () => ({
           ok: true,
@@ -101,11 +124,24 @@ const applyPreview = (posts, captureAt) => applyPerrengueStaticRetroPreview(
   captureAt,
   { adminRetroPosts: posts, requireEditorialTargets: false },
 );
+const applyArticlePreview = (posts, captureAt) => applyPerrengueStaticRetroPreview(
+  makePage(posts, "article"),
+  { domain: "perrenguematogrosso.com", page: "article" },
+  captureAt,
+  { adminRetroPosts: posts },
+);
 
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17"), "2026-07-07T19:17:00");
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17:32-04:00"), "2026-07-07T19:17:32");
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07"), "2026-07-07T23:59:59");
 assert.equal(normalizePerrengueWpRestBefore("invalido"), "");
+
+{
+  const result = await applyArticlePreview([makePost(1)], "2026-06-01T18:30");
+  assert.equal(result.applied, true);
+  assert.equal(result.articleVerified, true);
+  assert.equal(result.expectedPosts[0]?.url, "/post-1/");
+}
 
 {
   const result = await applyPreview([makePost(1)], "2026-06-01T18:30");
