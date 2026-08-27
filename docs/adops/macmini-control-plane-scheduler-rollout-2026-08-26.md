@@ -163,6 +163,14 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Após readback saudável e fila vazia, uma única repetição controlada concluiu o deploy.
 - Rollback preservado: selecionar os volumes versionados anteriores e `ADOPS_CONTROL_PLANE_PROVIDER=cloudflare` para retornar temporariamente ao caminho legado.
 
+## Preflight de integração
+
+- A branch do scheduler parte exatamente do commit terminal da rotina autocorretiva de prints: `be813b54147df8d75ac98c69d6ad91ae4ea623b9`.
+- As duas worktrees dedicadas estão limpas; nenhum job em andamento depende do checkout principal.
+- O checkout principal contém muitas mudanças alheias e não será usado para merge, rebase ou deploy desta entrega.
+- `origin/main` não contém o release ativo e diverge significativamente da branch local (`85` commits somente no remoto e `195` somente nesta linha no preflight de 26/08). Rebase ou merge automático seria inseguro e poderia misturar frentes não autorizadas.
+- A integração final deve ocorrer somente após os 72h, em worktree limpa e com alvo explicitamente reconciliado; até lá, esta branch é o artefato isolado e reversível do release.
+
 ## Gates pendentes
 
 O refresh incremental já atualizou o consumidor para `8/8`, sem pendências atuais. O job natural das 22h15 e seu readback posterior continuam pendentes como gate independente.
