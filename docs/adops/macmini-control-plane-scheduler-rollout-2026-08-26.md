@@ -103,6 +103,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O canário natural das 19h30 também retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null`; nenhum registro com `scheduleId=daily-print-recovery:2026-08-26:19:30` foi persistido.
 - Após a janela natural das 20h, o reconcile idempotente confirmou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e `nextRecoveryAt=null` para `daily-print-recovery:2026-08-26:20:00`. A consulta ao histórico retornou zero jobs desse `scheduleId`.
 - Após a janela natural das 20h30, o mesmo gate confirmou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e zero jobs persistidos para `daily-print-recovery:2026-08-26:20:30`.
+- Após a janela natural das 21h, o gate confirmou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e zero jobs persistidos para `daily-print-recovery:2026-08-26:21:00`.
 - A fila permaneceu vazia e os três runners mantiveram heartbeat recente.
 
 ## Observabilidade de estágios e correção do runner de exportação
@@ -126,6 +127,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Revisão independente bloqueou um primeiro proxy redundante que quebraria o rollback; a versão publicada usa somente o roteamento global por provider.
 - Readback público após o deploy: `expected=8`, `approved=8`, `missing=0`, `invalid=0`, `status=completed`.
 - O cron natural das 20h15 reivindicou `resolved` com `pending_ids=[]`; o falso claim anterior `recovery_in_progress:[1860]` foi preservado como trilha de auditoria.
+- Os crons posteriores não criaram outro fingerprint: a tabela permaneceu com exatamente uma reivindicação de incidente e uma de resolução, comprovando deduplicação sem spam enquanto a lista não mudou.
 - Health do bot confirmou username, webhook base e notificações configurados. A tabela comprova deduplicação/disparo; a confirmação visual no grupo do Telegram não é observável pela API do bot e permanece como limite explícito da evidência.
 
 ## Readback incremental do relatório público
