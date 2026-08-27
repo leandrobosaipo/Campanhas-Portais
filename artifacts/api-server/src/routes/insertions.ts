@@ -3390,6 +3390,17 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       ...(req.body as Record<string, unknown>),
       mode: req.body?.mode ?? "full-pdf",
     });
+    const asOfDate = typeof req.body?.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.body.asOfDate)
+      ? req.body.asOfDate
+      : null;
+    const requiredDatesByInsertion = Object.fromEntries(Object.entries(
+      req.body?.requiredDatesByInsertion && typeof req.body.requiredDatesByInsertion === "object"
+        ? req.body.requiredDatesByInsertion as Record<string, unknown>
+        : {},
+    ).filter(([insertionId, dates]) => /^\d+$/.test(insertionId) && Array.isArray(dates)).map(([insertionId, dates]) => [
+      insertionId,
+      Array.from(new Set((dates as unknown[]).map(String).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))).sort(),
+    ]));
     const payload = {
       piCodigo,
       siteSigla: siteSigla.toUpperCase(),
@@ -3400,6 +3411,8 @@ router.post("/pi-site-exports/jobs", async (req, res): Promise<void> => {
       pdfResolution: parseBoundedInteger(req.body?.pdfResolution, { minimum: 72, maximum: 180, fallback: 120 }),
       imageMaxWidth: parseBoundedInteger(req.body?.imageMaxWidth, { minimum: 800, maximum: 2560, fallback: 1600 }),
       imageQuality: parseBoundedInteger(req.body?.imageQuality, { minimum: 45, maximum: 90, fallback: 72 }),
+      asOfDate,
+      requiredDatesByInsertion,
       source: typeof req.body?.source === "string" ? req.body.source : "api-server",
     };
     const requestedKey = typeof req.headers["idempotency-key"] === "string"

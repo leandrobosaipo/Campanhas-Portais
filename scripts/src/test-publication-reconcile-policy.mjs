@@ -214,6 +214,15 @@ test("release mantém API em modo monitor e documenta o job protegido", async ()
   assert.match(openapi, /\/ops\/jobs\/campaign-publication-reconcile:/);
 });
 
+test("ZIP por portal respeita as datas exatas do relatório", async () => {
+  const insertionRoutes = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  assert.match(insertionRoutes, /requiredDatesByInsertion/);
+  assert.match(insertionRoutes, /asOfDate/);
+  assert.match(runner, /payload\.requiredDatesByInsertion/);
+  assert.match(runner, /ensureInsertionCaptureCoverage\(insertion, requiredDates/);
+});
+
 test("AFL VIDEO usa MP4 validado sem compressor externo", async () => {
   const config = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
   const mapping = config.AFL.formatMappings.find((item) => item.groupId === 6);

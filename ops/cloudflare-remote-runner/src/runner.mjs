@@ -7919,6 +7919,9 @@ async function executePiSiteExport(job) {
   const splitZipByPosition = mode === "delivery" ? payload.splitZipByPosition !== false : false;
   const requestedPositions = Array.isArray(payload.positions) ? payload.positions.map((item) => deliveryPositionSegment(item)).filter(Boolean) : [];
   const deliveryClass = ["standard", "retroactive", "correction", "rejected_rework"].includes(String(payload.deliveryClass)) ? String(payload.deliveryClass) : "standard";
+  const requiredDatesByInsertion = payload.requiredDatesByInsertion && typeof payload.requiredDatesByInsertion === "object"
+    ? payload.requiredDatesByInsertion
+    : {};
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
@@ -7954,18 +7957,10 @@ async function executePiSiteExport(job) {
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
   for (const insertion of insertions) {
-    const capture = await ensureInsertionCaptureCoverage(insertion, async (captureProgress) => {
-      await progressJob(job.id, {
-        stage: "reauditando evidências",
-        ...stagePayload,
-        regeneratedDates,
-        invalidatedEvidenceIds,
-        captureProgress: {
-          insertionId: insertion.id,
-          ...captureProgress,
-        },
-      });
-    });
+    const requiredDates = Array.isArray(requiredDatesByInsertion[String(insertion.id)])
+      ? requiredDatesByInsertion[String(insertion.id)]
+      : null;
+    const capture = await ensureInsertionCaptureCoverage(insertion, requiredDates, { allowRecovery: requiredDates === null });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
