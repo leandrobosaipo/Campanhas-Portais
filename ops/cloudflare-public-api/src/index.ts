@@ -2,6 +2,7 @@ import { snapshot } from "./snapshot-fallback";
 import { buildMonthlyEvidenceReportSchedule, isMonthlyEvidenceReportCron } from "./monthly-report-window";
 import { buildCloudflareSchedulerAction, shouldProxyOpsToMacMini } from "./scheduler-shadow";
 import { shouldRetryCompletedCampaignPublication } from "./campaign-publication-retry";
+import { shouldRetryFailedOpsJob } from "./ops-job-retry";
 import { buildDailyReconciliationJobs } from "./daily-operations-policy";
 import { buildDailyPrintStatus } from "../../shared/daily-print-status.mjs";
 import { resolveDailyPrintAlertDecision } from "../../shared/daily-print-alert-decision.mjs";
@@ -1392,7 +1393,7 @@ async function createIdempotentOpsJob(
       .first<{ id: string; status: JobStatus; result_json: string | null; updated_at: string }>();
     if (!existing) throw new Error("Falha ao recuperar job idempotente concorrente.");
     const retryCompleted = existing.status === "completed" && retryCompletedWhen?.(existing.result_json) === true;
-    if ((retryFailed && existing.status === "failed") || retryCompleted) {
+    if (shouldRetryFailedOpsJob(existing.status, retryFailed) || retryCompleted) {
       const retried = await env.adops_ops.prepare(
         `UPDATE ops_jobs SET status = 'ready_for_runner', payload_json = ?, result_json = ?, error_text = NULL, runner_id = NULL, updated_at = ? WHERE id = ? AND status = ? AND result_json IS ? AND updated_at = ?`,
       ).bind(JSON.stringify({ ...payload, idempotencyKey }), JSON.stringify({ stage: "ready_for_runner", retryOf: existing.id, retriedAt: now }), now, existing.id, existing.status, existing.result_json, existing.updated_at).run();

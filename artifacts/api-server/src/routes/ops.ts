@@ -10,6 +10,7 @@ import { getCaptureProofAuditForDate } from "./insertions";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
 import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
 import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
+import { shouldRetryFailedOpsJob } from "../lib/ops-job-retry";
 
 type JobKind =
   | "print-batch"
@@ -926,7 +927,7 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
       [kind, idempotencyKey, activeOnly],
     );
     if (existing.rows[0]) {
-      if (retryFailed && existing.rows[0].status === "failed") {
+      if (shouldRetryFailedOpsJob(existing.rows[0].status, retryFailed)) {
         const retriedAt = nowIso();
         await client.query(
           `UPDATE ops_jobs

@@ -27,14 +27,14 @@ test("backfill usa criacao idempotente nos dois providers", () => {
 test("retry idempotente reabre somente failed e preserva o mesmo jobId", () => {
   const apiStart = api.indexOf("async function createIdempotentOpsJob");
   const apiBlock = api.slice(apiStart, apiStart + 3600);
-  assert.match(apiBlock, /retryFailed && existing\.rows\[0\]\.status === "failed"/);
+  assert.match(apiBlock, /shouldRetryFailedOpsJob\(existing\.rows\[0\]\.status, retryFailed\)/);
   assert.match(apiBlock, /WHERE id = \$3 AND status = 'failed'/);
   assert.match(apiBlock, /jobId: existing\.rows\[0\]\.id, status: "ready_for_runner" as const, duplicate: false/);
   assert.match(apiBlock, /status: existing\.rows\[0\]\.status,[\s\S]{0,80}duplicate: true/);
 
   const workerStart = worker.indexOf("async function createIdempotentOpsJob");
   const workerBlock = worker.slice(workerStart, workerStart + 3600);
-  assert.match(workerBlock, /retryFailed && existing\.status === "failed"/);
+  assert.match(workerBlock, /shouldRetryFailedOpsJob\(existing\.status, retryFailed\)/);
   assert.match(workerBlock, /WHERE id = \? AND status = \? AND result_json IS \? AND updated_at = \?/);
   assert.match(workerBlock, /jobId: existing\.id, status: "ready_for_runner" as JobStatus, duplicate: false/);
   assert.match(workerBlock, /jobId: existing\.id, status: existing\.status, duplicate: true/);
