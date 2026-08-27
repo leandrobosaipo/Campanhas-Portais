@@ -8366,7 +8366,7 @@ async function runOnce(poolKinds = kinds) {
     const result = await runWithJobHeartbeat(
       job.id,
       (assertLease) => handleJob(job, assertLease),
-      (jobId) => sendRunnerHeartbeat(true, jobId),
+      (jobId) => progressJob(jobId, { stage: "heartbeat", heartbeatAt: new Date().toISOString() }),
       Math.max(5_000, Math.floor(RUNNER_HEARTBEAT_INTERVAL_MS / 2)),
     );
     await completeJob(job.id, {

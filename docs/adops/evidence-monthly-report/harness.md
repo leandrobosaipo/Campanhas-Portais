@@ -59,6 +59,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - O `claim-next` da fila usa sessão D1 `first-primary` e uma única escrita atômica `UPDATE ... RETURNING`; não separar leitura e claim, pois uma réplica atrasada pode esconder jobs `ready_for_runner`.
 - `adops-runner-print-single` consome `OPS_API_BASE_URL=https://adops-api-public.leandro471.workers.dev`, pois `print-single`, `pi-site-export` e `campaign-evidence-export` nascem no D1. A API privada continua em `PRIVATE_ADOPS_API_BASE_URL`.
 - Em modo `macmini`, o Worker não redireciona `/api/ops/runner/*`; esse protocolo conclui os jobs D1 do runner dedicado. Os demais `/api/ops/*` continuam no controle canônico do Mac Mini.
+- O lease de um job é renovado por `/api/ops/runner/jobs/{jobId}/progress` no mesmo control plane que fez o claim; heartbeat geral da API privada não substitui lease D1.
 - `PRIVATE_ADOPS_API_TOKEN` do Worker público deve ser o mesmo `ADOPS_INTERNAL_API_TOKEN` ativo na stack do Portainer. Após rotação, sincronizar o secret sem registrar o valor e confirmar uma leitura interna via Worker; HTTP 401 bloqueia a publicação do relatório.
 - Falha, timeout ou credencial inválida em qualquer ZIP deixa o job do relatório como `failed` e preserva integralmente o HTML/data.json público anterior.
 - Toda inserção com PI canônica e evidências completas deve possuir os dois downloads antes da troca atômica. URL vazia bloqueia a publicação e preserva o relatório anterior.
