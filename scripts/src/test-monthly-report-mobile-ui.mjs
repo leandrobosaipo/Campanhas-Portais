@@ -37,7 +37,7 @@ test("relatorio aguarda os jobs de ZIP e bloqueia publicacao sem os dois escopos
   assert.match(source, /Relatório sem ZIP por portal/);
   assert.match(source, /Relatório sem ZIP completo/);
   assert.match(source, /requiredDatesByInsertion:/);
-  assert.match(source, /readyGroups\.slice\(index, index \+ 25\)/);
+  assert.match(source, /readyGroups\.slice\(index, index \+ 3\)/);
   assert.match(source, /materializeCampaignExports\(enriched, monthEndForEvidence\)/);
 });
 
