@@ -18,7 +18,8 @@ test("lote diário usa jobs assíncronos por inserção e fecha pela auditoria a
   assert.match(flow, /transportError: transportError/);
   assert.match(flow, /expectedTotal: candidates\.length/);
   assert.match(flow, /error\.jobResult = executionResult/);
-  assert.match(flow, /item\?\.adops\?\.competencia/);
+  assert.match(flow, /selectDailyPrintCandidates\(operations\?\.items, targetDate, \{[\s\S]*?competencia,/);
+  assert.doesNotMatch(flow, /\.filter\([^)]*competencia/);
   assert.match(flow, /auditQuery\.set\("insertionIds", candidates\.map/);
   assert.doesNotMatch(flow, /capture-proof\/batch/);
   const worker = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");

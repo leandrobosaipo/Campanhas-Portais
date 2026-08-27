@@ -49,6 +49,19 @@ test("erro 503 passa na terceira tentativa", async () => {
   assert.equal(result.attempts, 3);
 });
 
+test("GET 503 preserva codigo estruturado para o retry", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 });
+  try {
+    await assert.rejects(
+      () => runner.privateApiGet("/api/insertions/2645/capture-proof/status?date=2026-08-24"),
+      (error) => error?.code === "http_503" && runner.isRetryableRetroactiveError(error),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("bloqueio de reconstrucao nao recebe retry", async () => {
   let attempts = 0;
   const result = await runner.executeRetroactiveTarget({

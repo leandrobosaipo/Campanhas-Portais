@@ -310,7 +310,9 @@ async function privateApiPatch(pathname, body) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
@@ -324,7 +326,9 @@ async function privateApiGet(pathname) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
@@ -8109,6 +8113,7 @@ export {
   validateOperationalDriveItem,
   executeRetroactiveTarget,
   isRetryableRetroactiveError,
+  privateApiGet,
 };
 
 if (process.env.ADOPS_RUNNER_TEST_MODE !== "1") {
