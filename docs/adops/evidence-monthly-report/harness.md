@@ -8,6 +8,13 @@ Validacao sintatica:
 node --check scripts/src/build-current-month-evidence-report.mjs
 ```
 
+Contratos do modal e dos downloads:
+
+```bash
+node scripts/src/test-monthly-evidence-contract.mjs
+node scripts/src/test-monthly-report-mobile-ui.mjs
+```
+
 Auditoria de regras:
 
 ```bash
@@ -40,6 +47,10 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - `summary.notPublished` deve contar insercoes sem `bannerPublicadoNoSite=true`.
 - A quantidade de `.thumb` deve representar todos os dias auditados, nao apenas uma amostra.
 - O modal deve abrir tanto em thumb auditada quanto em celula `missing` ou `invalid`.
+- O modal deve abrir com “Detalhes da campanha e evidência” visível.
+- “Baixar ZIP da campanha — todos os portais” deve usar `campaign-evidence-exports` e reunir a PI completa.
+- “Baixar ZIP da campanha — somente este portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
+- O HTML público nunca pode conter hostname interno, como `adops-api:4011`; os downloads devem usar `ADOPS_DELIVERY_API_BASE_URL`.
 - Se `ADOPS_REPORT_SKIP_PUBLISH=1`, nenhum container auxiliar deve ser criado.
 - Em `ADOPS_REPORT_REFRESH_MODE=incremental`, `ADOPS_REPORT_SKIP_EXPORTS=1` é obrigatório: o ciclo só reusa evidências existentes e não pode disparar captura, JPEG, ZIP ou exportação.
 - Duas aprovações próximas devem resultar em uma revisão com debounce de 60 segundos; uma aprovação durante a execução deve resultar em uma única revisão seguinte, sem jobs mensais concorrentes.
@@ -71,3 +82,5 @@ Esperado:
 - HTTP 200.
 - HTML contem `Evidências AdOps`.
 - HTML contem a competencia alvo.
+- Abrir um print exibe os dados da campanha sem clique adicional.
+- JPEG e os dois escopos de ZIP disponíveis respondem pela origem pública; ZIP responde como `application/zip`.
