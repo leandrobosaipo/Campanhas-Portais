@@ -2792,7 +2792,7 @@ export default {
           maxAttempts: 3,
           source: "cloudflare-protected-api",
         };
-        const created = await createIdempotentOpsJob(env, "print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload));
+        const created = await createIdempotentOpsJob(env, "print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload), true);
         return json({ ok: true, kind: "print-backfill", ...created }, { status: created.duplicate ? 200 : 202 });
       }
 

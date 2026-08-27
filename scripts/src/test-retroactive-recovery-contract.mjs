@@ -19,6 +19,7 @@ test("backfill usa criacao idempotente nos dois providers", () => {
     assert.match(block, /createIdempotentOpsJob/);
     assert.match(block, /late_publication_recovery/);
     assert.match(block, /duplicate/);
+    assert.match(block, /buildPrintBackfillIdempotencyKey\(payload\)[\s\S]{0,80}true/);
   }
 });
 

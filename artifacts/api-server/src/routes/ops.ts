@@ -2593,7 +2593,7 @@ router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
     maxAttempts: 3,
     source: "macmini-api",
   };
-  const created = await createIdempotentOpsJob("print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload));
+  const created = await createIdempotentOpsJob("print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload), false, true);
   res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "print-backfill", ...created });
 });
 
