@@ -588,6 +588,8 @@ async function materializeCampaignExports(items) {
           variant: "web",
           imageMaxWidth: 1600,
           imageQuality: 72,
+          asOfDate: monthEndForEvidence,
+          requiredDatesByInsertion: Object.fromEntries(group.items.map((item) => [item.id, item.requiredDays])),
           requestedBy: "evidence-monthly-report",
           source: "monthly-report",
         }),
@@ -624,28 +626,32 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
     readyGroups.push(group);
   }
   if (!readyGroups.length) return results;
-  let batch;
+  const batchItems = [];
   try {
-    batch = await api("/api/campaign-evidence-exports/jobs/batch", {
-      method: "POST",
-      body: JSON.stringify({
-        competencia,
-        asOfDate,
-        campaigns: readyGroups.map((group) => ({ piCodigo: group.piCodigo })),
-        mode: "prints-only",
-        variant: "web",
-        imageMaxWidth: 1600,
-        imageQuality: 72,
-        requestedBy: "evidence-monthly-report",
-        source: "monthly-report",
-      }),
-      timeoutMs: MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
-    });
+    for (let index = 0; index < readyGroups.length; index += 25) {
+      const groupBatch = readyGroups.slice(index, index + 25);
+      const batch = await api("/api/campaign-evidence-exports/jobs/batch", {
+        method: "POST",
+        body: JSON.stringify({
+          competencia,
+          asOfDate,
+          campaigns: groupBatch.map((group) => ({ piCodigo: group.piCodigo })),
+          mode: "prints-only",
+          variant: "web",
+          imageMaxWidth: 1600,
+          imageQuality: 72,
+          requestedBy: "evidence-monthly-report",
+          source: "monthly-report",
+        }),
+        timeoutMs: MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
+      });
+      batchItems.push(...(batch.items || []));
+    }
   } catch (error) {
     console.warn(`[monthly-report] pacotes completos opcionais indisponíveis: ${error instanceof Error ? error.message : String(error)}`);
     return results;
   }
-  const itemByPi = new Map((batch.items || []).map((item) => [String(item.piCodigo), item]));
+  const itemByPi = new Map(batchItems.map((item) => [String(item.piCodigo), item]));
   await Promise.all(readyGroups.map(async (group) => {
     try {
       const created = itemByPi.get(String(group.piCodigo));

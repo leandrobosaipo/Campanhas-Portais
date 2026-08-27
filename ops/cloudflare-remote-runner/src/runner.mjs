@@ -7611,6 +7611,9 @@ async function executePiSiteExport(job) {
   const pdfResolution = Math.max(72, Math.min(180, Number.parseInt(String(payload.pdfResolution || "120"), 10) || 120));
   const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const requiredDatesByInsertion = payload.requiredDatesByInsertion && typeof payload.requiredDatesByInsertion === "object"
+    ? payload.requiredDatesByInsertion
+    : {};
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
@@ -7648,7 +7651,10 @@ async function executePiSiteExport(job) {
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
   for (const insertion of insertions) {
-    const capture = await ensureInsertionCaptureCoverage(insertion, null, { allowRecovery: false });
+    const requiredDates = Array.isArray(requiredDatesByInsertion[String(insertion.id)])
+      ? requiredDatesByInsertion[String(insertion.id)]
+      : null;
+    const capture = await ensureInsertionCaptureCoverage(insertion, requiredDates, { allowRecovery: false });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }

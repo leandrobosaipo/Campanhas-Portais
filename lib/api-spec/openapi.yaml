@@ -1177,6 +1177,18 @@ paths:
                   minimum: 45
                   maximum: 90
                   default: 72
+                asOfDate:
+                  type: string
+                  format: date
+                  description: Data de corte auditada usada pelo relatório mensal.
+                requiredDatesByInsertion:
+                  type: object
+                  description: Datas exatas já exigidas pelo relatório, indexadas pelo ID da inserção.
+                  additionalProperties:
+                    type: array
+                    items:
+                      type: string
+                      format: date
       responses:
         "200":
           description: Existing idempotent PI/site export returned
