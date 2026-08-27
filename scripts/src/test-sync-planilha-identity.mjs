@@ -10,6 +10,16 @@ test("sincronizacao compara PI pela identidade normalizada", () => {
   assert.doesNotMatch(syncSource, /\(item\.piCodigo \?\? ""\) === normalizedPiCode/);
 });
 
+test("duplicata interrompe antes de criar ou atualizar cadastros", () => {
+  const duplicateGate = syncSource.indexOf("if (canonicalInsertionCandidates.length > 1)");
+  const continueAfterGate = syncSource.indexOf("continue;", duplicateGate);
+  const firstEnsure = syncSource.indexOf("const siteId = await ensureSite(row.siteSigla);");
+
+  assert.ok(duplicateGate >= 0, "o gate de duplicidade deve existir");
+  assert.ok(continueAfterGate > duplicateGate, "o gate de duplicidade deve interromper a linha");
+  assert.ok(firstEnsure > continueAfterGate, "nenhum ensure mutável pode executar antes do gate");
+});
+
 test("reconciliacao usa a mesma identidade canonica", () => {
   assert.match(reconcileSource, /normalizeCampaignPiIdentity/);
   assert.match(reconcileSource, /buildCampaignInsertionIdentity/);

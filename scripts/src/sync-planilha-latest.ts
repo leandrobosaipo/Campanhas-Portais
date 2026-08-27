@@ -525,10 +525,6 @@ async function main() {
     const agencyInfo = splitAgencyValue(row.agenciaValor);
     const clientName = inferClientName(row.peca, row.campanha);
     const piCodigo = normalizePi(row.peca, row.agenciaValor);
-    const siteId = await ensureSite(row.siteSigla);
-    const clientProfile = await inferClientProfileFromPiReference(piCodigo, clientName);
-    const clientId = await ensureByName(clientsTable, clientName, { profile: clientProfile });
-    const agencyId = await ensureByName(agenciesTable, agencyInfo.agencyName);
     const normalizedCampaignName = normalizeSpaces(row.campanha);
     const localFormatoNormalizado = normalizeFormato(row.local);
     const insertionIdentity = buildCampaignInsertionIdentity({
@@ -564,6 +560,11 @@ async function main() {
       );
       continue;
     }
+
+    const siteId = await ensureSite(row.siteSigla);
+    const clientProfile = await inferClientProfileFromPiReference(piCodigo, clientName);
+    const clientId = await ensureByName(clientsTable, clientName, { profile: clientProfile });
+    const agencyId = await ensureByName(agenciesTable, agencyInfo.agencyName);
 
     if (row.competenciaResolved !== row.competenciaSheet) {
       warnings.push(
