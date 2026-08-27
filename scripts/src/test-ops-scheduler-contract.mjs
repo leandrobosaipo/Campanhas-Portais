@@ -14,7 +14,7 @@ test("reconcile é protegido e a criação idempotente é atômica", () => {
   assert.match(ops, /router\.post\("\/ops\/schedules\/reconcile"/);
   assert.match(ops, /pg_advisory_xact_lock\(hashtext\(\$1\)\)/);
   assert.match(ops, /payload_json::jsonb ->> 'idempotencyKey'/);
-  assert.match(ops, /retryFailed && existing\.rows\[0\]\.status === "failed"/,
+  assert.match(ops, /shouldRetryFailedOpsJob\(existing\.rows\[0\]\.status, retryFailed\)/,
     "retry explícito deve reabrir atomicamente o mesmo job falho");
   assert.match(ops, /idempotencyKey, false, true/,
     "reconcile deve habilitar retry somente para estado failed");

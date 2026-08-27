@@ -110,19 +110,24 @@ function parseIsoLikeDate(value: string | null | undefined) {
 function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureAt: string | null) {
   const captureAtDate = parseIsoLikeDate(requestedCaptureAt);
   if (!captureAtDate) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "invalid_capture_at" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, targetDate: null as string | null, targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "invalid_capture_at" };
   }
   if (!Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "empty_samples" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, targetDate: formatIsoDate(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "empty_samples" };
   }
   const maxAllowed = captureAtDate.getTime() + 90 * 1000;
   const parsedSamples = contentDateSamples
     .map((value) => ({ raw: value, parsed: parseIsoLikeDate(value) }))
     .filter((item) => item.parsed);
   if (parsedSamples.length === 0) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: contentDateSamples.length, reason: "unparseable_samples" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: contentDateSamples.length, targetDate: formatIsoDate(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "unparseable_samples" };
   }
   const futureSamples = parsedSamples.filter((item) => item.parsed!.getTime() > maxAllowed);
+  const targetDate = formatIsoDate(captureAtDate);
+  const observedDates = Array.from(new Set(parsedSamples.map((item) => formatIsoDate(item.parsed!))));
+  const matchingTargetDateSamples = parsedSamples
+    .filter((item) => formatIsoDate(item.parsed!) === targetDate)
+    .map((item) => item.raw);
   const maxObserved = parsedSamples.reduce<Date | null>((acc, item) => (
     !acc || item.parsed!.getTime() > acc.getTime() ? item.parsed! : acc
   ), null);
@@ -132,6 +137,10 @@ function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureA
     futureSamples: futureSamples.slice(0, 5).map((item) => item.raw),
     parsedCount: parsedSamples.length,
     sampleCount: contentDateSamples.length,
+    targetDate,
+    targetDateMatches: matchingTargetDateSamples.length > 0,
+    matchingTargetDateSamples: matchingTargetDateSamples.slice(0, 5),
+    observedDates,
     reason: futureSamples.length ? "future_samples" : null,
   };
 }
@@ -530,6 +539,9 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const contentDateSamples = Array.isArray(metadata.contentDateSamples)
     ? metadata.contentDateSamples.filter((value: unknown) => typeof value === "string")
     : [];
+  const contentRelativeTimeSamples = Array.isArray(metadata.contentRelativeTimeSamples)
+    ? metadata.contentRelativeTimeSamples.filter((value: unknown) => typeof value === "string")
+    : [];
   const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === "object"
     ? metadata.retroContentProof
     : null;
@@ -562,6 +574,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     requireRetroContentProof?: boolean;
     minRetroContentMatches?: number;
     allowAuditedReconstruction?: boolean;
+    requireAbsoluteEditorialDates?: boolean;
+    requireEditorialDateMatchTarget?: boolean;
   };
   // A recovery after a late publication cannot honestly recreate the editorial
   // page as it looked on the contracted day.  It is still a valid, explicitly
@@ -669,6 +683,13 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const contentTimelineOk = contentTimeline.ok ||
     (contentTimeline.reason === "empty_samples" && (isScheduledLikeCaptureClass || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
+  const requireAbsoluteEditorialDates = effectiveAuditConfig.requireAbsoluteEditorialDates === true;
+  const requireEditorialDateMatchTarget = effectiveAuditConfig.requireEditorialDateMatchTarget === true;
+  const relativeContentTimeline = {
+    ok: !requireAbsoluteEditorialDates || contentRelativeTimeSamples.length === 0,
+    required: requireAbsoluteEditorialDates,
+    relativeSamples: contentRelativeTimeSamples.slice(0, 10),
+  };
   const captureClassContractOk = captureClassTrustContext.trusted || !explicitCaptureClass;
   const visualsOk = Boolean(
     visualAuditAvailable &&
@@ -731,6 +752,27 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
       detail: contentTimeline.reason === "future_samples"
         ? `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`
         : `A evidência não contém amostras editoriais válidas. reason=${contentTimeline.reason}; parsed=${contentTimeline.parsedCount}/${contentTimeline.sampleCount}.`,
+    });
+  }
+  if (requireAbsoluteEditorialDates && !contentTimeline.maxObserved) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      label: "Data editorial absoluta ausente",
+      detail: "A prova histórica precisa conter ao menos uma data editorial absoluta visível.",
+    });
+  }
+  if (requireEditorialDateMatchTarget && contentTimeline.targetDateMatches !== true) {
+    issues.push({
+      code: "editorial_date_target_mismatch",
+      label: "Data interna da notícia divergente",
+      detail: `A notícia visível precisa ter a data-alvo ${canonicalTargetDate}. Datas encontradas: ${contentTimeline.observedDates.join(", ") || "nenhuma"}.`,
+    });
+  }
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      label: "Data editorial relativa na prova",
+      detail: `A prova histórica exige datas absolutas, mas contém: ${relativeContentTimeline.relativeSamples.join(" | ")}.`,
     });
   }
   if (requireRetroContentProof && retroContentProof?.status !== "approved") {
@@ -941,6 +983,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
       resolvedGroupId: resolvedMapping?.groupId ?? null,
     },
     contentTimeline,
+    relativeContentTimeline,
     retroContentProof,
     mediaProof: {
       ok: mediaMatchesInsertion,
@@ -971,7 +1014,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     playerProofOk,
     visualsOk,
     issues,
-    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

@@ -187,7 +187,7 @@ export function buildPendingPublicationView<T extends {
       item.siteSigla,
       item.format?.normalized ?? item.format?.adops ?? item.format?.sheet,
     );
-    const allowedMediaFormats = new Set((operationalMediaProfile?.formats ?? []).map((value: unknown) => String(value).toUpperCase()));
+    const allowedMediaFormats = new Set<string>((operationalMediaProfile?.formats ?? []).map((value: unknown) => String(value).toUpperCase()));
     const operationalMediaFiles = mediaFiles.filter((file: any) => {
       const value = `${file?.mimeType ?? ""} ${file?.name ?? ""}`.toUpperCase();
       if (!value.trim()) return true;

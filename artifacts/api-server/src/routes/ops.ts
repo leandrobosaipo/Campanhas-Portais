@@ -1601,7 +1601,7 @@ router.get("/ops/docs", (_req, res): void => {
 </html>`);
 });
 
-function buildOpsApiCatalog() {
+export function buildOpsApiCatalog() {
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
   const auth = "-H \"Authorization: Bearer $OPS_API_TOKEN\" -H \"Content-Type: application/json\"";
   const sections = [
@@ -1779,7 +1779,7 @@ function buildOpsApiCatalog() {
       {
         id: "active-campaign-operations",
         method: "GET",
-        path: "/api/campaign-operations/active?date=YYYY-MM-DD",
+        path: "/api/campaign-operations/active",
         purpose: "Ler a aba do mês corrente, cruzar com Drive, AdOps e evidências, e retornar ações recomendadas sem criar jobs.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08"`,
@@ -1787,7 +1787,7 @@ function buildOpsApiCatalog() {
       {
         id: "active-campaign-operations-site",
         method: "GET",
-        path: "/api/campaign-operations/active?date=YYYY-MM-DD&siteSigla=PERRENGUE",
+        path: "/api/campaign-operations/active",
         purpose: "Filtrar o diagnóstico operacional por portal.",
         authRequired: false,
         curl: `curl -fsSL "${base}/api/campaign-operations/active?date=2026-07-08&siteSigla=PERRENGUE"`,
@@ -1958,7 +1958,7 @@ function buildOpsApiCatalog() {
   })));
   return {
     ok: true,
-    version: "adops-ops-api-catalog-v2",
+    version: "adops-ops-api-catalog-v3",
     generatedAt: nowIso(),
     baseUrlEnv: "ADOPS_API_BASE_URL",
     auth: {
@@ -2117,26 +2117,41 @@ function openApiSchemaForExample(value: unknown): Record<string, unknown> {
   return {};
 }
 
-function buildOpsOpenApiDocument() {
+export function buildOpsOpenApiDocument() {
   const catalog = buildOpsApiCatalog();
   const paths: Record<string, Record<string, unknown>> = {};
   for (const endpoint of catalog.endpoints) {
     const method = String(endpoint.method).toLowerCase();
-    const pathKey = endpoint.path.replace(/\{([^}]+)\}/g, "{$1}");
-    const pathParams = Array.from(endpoint.path.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
+    const [pathTemplate, queryTemplate = ""] = endpoint.path.split("?");
+    const pathKey = pathTemplate!.replace(/\{([^}]+)\}/g, "{$1}");
+    const pathParams = Array.from(pathTemplate!.matchAll(/\{([^}]+)\}/g)).map((match) => match[1]);
+    const queryParams = queryTemplate.split("&").filter(Boolean).map((item) => ({
+      name: item.split("=")[0],
+      in: "query",
+      required: false,
+      schema: { type: "string" },
+    }));
     const bodyExample = method === "post" ? parseCurlBodyExample(endpoint.curl) : null;
     paths[pathKey] ??= {};
+    const campaignOperationParameters = endpoint.id.startsWith("active-campaign-operations")
+      ? [
+          { name: "date", in: "query", required: false, schema: { type: "string", format: "date" } },
+          { name: "siteSigla", in: "query", required: false, schema: { type: "string" } },
+        ]
+      : [];
     paths[pathKey][method] = {
       summary: endpoint.purpose,
       description: `${endpoint.sectionTitle}. ${endpoint.purpose}`,
       tags: [endpoint.sectionTitle],
       security: endpoint.authRequired ? [{ bearerAuth: [] }] : [],
-      parameters: pathParams.map((name) => ({
+      parameters: [...pathParams.map((name) => ({
         name,
         in: "path",
         required: true,
         schema: { type: "string" },
-      })),
+      })), ...queryParams, ...campaignOperationParameters].filter((parameter, index, all) =>
+        all.findIndex((candidate) => candidate.name === parameter.name && candidate.in === parameter.in) === index,
+      ),
       ...(bodyExample ? {
         requestBody: {
           required: true,
@@ -2149,7 +2164,10 @@ function buildOpsOpenApiDocument() {
         },
       } : {}),
       responses: {
-        "200": { description: "Resposta bem-sucedida." },
+        "200": endpoint.id.startsWith("active-campaign-operations") ? {
+          description: "Diagnóstico read-only campaign-operations-v2.",
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CampaignOperationsV2" } } },
+        } : { description: "Resposta bem-sucedida." },
         "202": { description: "Job criado para execução assíncrona." },
         "400": { description: "Payload inválido." },
         "401": { description: "Token operacional ausente ou inválido." },
@@ -2178,6 +2196,19 @@ function buildOpsOpenApiDocument() {
           type: "http",
           scheme: "bearer",
           bearerFormat: "OPS_API_TOKEN",
+        },
+      },
+      schemas: {
+        CampaignOperationsV2: {
+          type: "object",
+          required: ["version", "date", "summary", "items", "upcomingItems"],
+          properties: {
+            version: { type: "string", const: "campaign-operations-v2" },
+            date: { type: "string", format: "date" },
+            summary: { type: "object", additionalProperties: true },
+            items: { type: "array", items: { type: "object", additionalProperties: true } },
+            upcomingItems: { type: "array", items: { type: "object", additionalProperties: true } },
+          },
         },
       },
     },

@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { createHash } from "node:crypto";
+import { normalizeLocalFormato, resolveSiteFormat, type SiteFormatResolution } from "./adrotate-sites";
 
 export const CAMPAIGN_SHEET_VERSION = "current-sheet-campaigns-v1" as const;
 
@@ -61,6 +62,7 @@ export type CurrentSheetCampaignRow = {
   periodoFim: string | null;
   localFormato: string;
   localFormatoNormalizado: string;
+  formatResolution: SiteFormatResolution;
   status: string;
   processoRealizado: string;
   processoEnviado: string;
@@ -352,6 +354,7 @@ export async function loadCurrentSheetCampaigns(options: {
       const parsedPeriod = parsePeriodo(periodoOriginal, sheetName);
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;
 
+      const formatResolution = resolveSiteFormat(site, localFormato);
       const parsedRow: CurrentSheetCampaignRow = {
         version: CAMPAIGN_SHEET_VERSION,
         sheetName,
@@ -364,7 +367,8 @@ export async function loadCurrentSheetCampaigns(options: {
         periodoInicio: parsedPeriod.inicio,
         periodoFim: parsedPeriod.fim,
         localFormato,
-        localFormatoNormalizado: normalizeFormato(localFormato),
+        localFormatoNormalizado: formatResolution.canonicalFormat ?? normalizeLocalFormato(localFormato),
+        formatResolution,
         status,
         processoRealizado,
         processoEnviado,

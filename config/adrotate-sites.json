@@ -60,6 +60,7 @@
           "MEGABANNER",
           "MEGABANNER TOPO — HEADER — 825x120"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": "#header-ads-row",
@@ -306,6 +307,13 @@
         "scrollMode": "slot",
         "auditOverrides": {
           "preferArticleFallbackForRetro": true,
+          "criticalContentSelectors": [
+            "[data-adops-retro-primary-article=\"1\"] img"
+          ],
+          "requireCriticalContentPainted": true,
+          "requireAbsoluteEditorialDates": true,
+          "requireEditorialDateMatchTarget": true,
+          "requireVisiblePageDate": true,
           "gifFrameSelection": "source_preferred",
           "allowViewportImageMisses": 1,
           "requireStableFrame": false,
@@ -597,6 +605,7 @@
           "MEGABANNER",
           "MEGABANNER TPO"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".g.g-1",
@@ -784,6 +793,7 @@
           "MEGABANNER TOPO",
           "MEGABANNER"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
@@ -799,7 +809,9 @@
           "finalPngSlotMinContentStddev": 4,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true
+          "requireSlotVisibleInViewport": true,
+          "requireAbsoluteEditorialDates": true,
+          "requireVisiblePageDate": true
         }
       },
       {
@@ -922,6 +934,7 @@
         "aliases": [
           "MEGABANNER TOPO"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
@@ -1085,6 +1098,7 @@
           "MEGABANNER TOPO",
           "MEGABANNER"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".g.g-1",
