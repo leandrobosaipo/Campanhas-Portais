@@ -55,11 +55,14 @@ test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
     identityMode: null,
     siteSigla: "AFL",
     piCodigo: "3172",
+    sourceIdentity: { decision: "confirmed", canonicalPi: "3172" },
     format: { normalized: "VIDEO" },
     period: { start: "2026-08-24", end: "2026-08-26" },
     drive: {
       folderId: "sanear-folder",
+      folderPath: "/AFL/AGOSTO/PI 3172 - SANEAR",
       mediaStatus: "candidate_found",
+      documentStatus: "candidate_found",
       mediaFiles: [{ id: "sanear-mp4", name: "SANEAR ESTIAGEM_V03.mp4", mimeType: "video/mp4", kind: "video" }],
     },
     adops: { campaignId: 1042, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
@@ -81,6 +84,7 @@ test("Sanear video sem campanha canônica bloqueia publicação preventiva", () 
     publicationStatus: "ready_for_preflight",
     identityMode: null,
     piCodigo: "3172",
+    sourceIdentity: { decision: "confirmed", canonicalPi: "3172" },
     drive: { folderId: "sanear-folder", mediaStatus: "candidate_found" },
     adops: { campaignId: 0, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
     publicationHealth: { status: "prepublication_pending", reason: "drive_media_not_linked" },
@@ -107,6 +111,7 @@ test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", (
       documentStatus: "candidate_found",
       inventoryScanId: "scan-2",
     },
+    publicationHealth: { status: "blocked_upstream", reason: "drive_media_not_linked" },
   })], "2026-08-13T21:30:00.000Z");
   assert.equal(plan.blockers.length, 0);
   assert.equal(plan.actions[0]?.type, "drive_pi_publish");
@@ -117,6 +122,9 @@ test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", (
   assert.equal(plan.actions[0]?.event.expectedPiCodigo, "17420");
   assert.equal(plan.actions[0]?.event.publish, true);
   assert.equal(plan.actions[0]?.event.generateEvidence, false);
+  assert.equal(plan.actions[0]?.event.allowPdfInsertions, false);
+  assert.equal(plan.actions[0]?.event.parsedPi.piCodigo, "17420");
+  assert.equal(plan.actions[0]?.event.parsedPi.insertions[0].siteSigla, "PERRENGUE");
 });
 
 test("reconciliador publica mídia canônica já validada sem recriar campanha", () => {

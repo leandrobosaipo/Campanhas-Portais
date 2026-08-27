@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPendingPublicationView } from "../../artifacts/api-server/src/lib/campaign-evidence-export";
+import { buildPendingPublicationView, resolveCompositePublicationTarget } from "../../artifacts/api-server/src/lib/campaign-evidence-export";
 import { extractDrivePiCandidates } from "../../artifacts/api-server/src/lib/drive-campaign-media";
 
 function pendingItem(overrides: Record<string, unknown> = {}) {
@@ -99,6 +99,15 @@ test("formato VIDEO seleciona o MP4 quando a pasta também contém GIF", () => {
   assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
   assert.equal(view.items[0]?.identityMode, "sheet_drive_composite");
   assert.deepEqual(view.items[0]?.operationalIdentity.source.media.map((file: { id: string }) => file.id), ["sanear-mp4"]);
+});
+
+test("VIDEO usa o fluxo operacional MP4 nativo nos portais sem perfil explícito", () => {
+  for (const siteSigla of ["PERRENGUE", "ROO"]) {
+    const target = resolveCompositePublicationTarget(siteSigla, "VIDEO");
+    assert.equal(target?.groupId, 6);
+    assert.deepEqual(target?.formats, ["MP4"]);
+    assert.deepEqual(target?.deliveryTransforms, { MP4: { mode: "passthrough" } });
+  }
 });
 
 test("nova varredura do mesmo arquivo preserva o fingerprint", () => {

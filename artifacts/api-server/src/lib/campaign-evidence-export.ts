@@ -6,13 +6,15 @@ export function resolveCompositePublicationTarget(siteSigla: unknown, localForma
   const format = String(localFormat ?? "").trim().toUpperCase().replace(/\s+/g, " ");
   const siteConfig = (adrotateSites as Record<string, any>)[site];
   const matches = (siteConfig?.formatMappings ?? []).filter((mapping: any) => (
-    mapping?.operationalMediaProfile
-    && (mapping?.aliases ?? []).some((alias: unknown) => String(alias ?? "").trim().toUpperCase().replace(/\s+/g, " ") === format)
+    (mapping?.aliases ?? []).some((alias: unknown) => String(alias ?? "").trim().toUpperCase().replace(/\s+/g, " ") === format)
   ));
   if (matches.length !== 1) return null;
+  const profile = matches[0].operationalMediaProfile
+    ?? (format === "VIDEO" ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } } : null);
+  if (!profile) return null;
   return {
     groupId: Number(matches[0].groupId),
-    ...JSON.parse(JSON.stringify(matches[0].operationalMediaProfile)),
+    ...JSON.parse(JSON.stringify(profile)),
   };
 }
 

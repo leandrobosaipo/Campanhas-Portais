@@ -22,7 +22,7 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
       continue;
     }
     if (cod5_status === "published") continue;
-    if (cod5_status !== "ready_for_publication" && cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
+    if (!["ready_for_preflight", "ready_for_publication"].includes(cod5_status) && cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
       const cod5_folderId = cod5_item.drive.folderId;
       const cod5_folderPath = cod5_string(cod5_item?.drive?.folderPath);
       const cod5_canonicalPi = cod5_string(cod5_item?.sourceIdentity?.canonicalPi || cod5_item?.piCodigo);
@@ -121,6 +121,15 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
       continue;
     }
     if (cod5_status === "ready_for_preflight") {
+      const cod5_campaignId = Number(cod5_item?.adops?.campaignId || 0);
+      if (!Number.isInteger(cod5_campaignId) || cod5_campaignId <= 0) {
+        cod5_blockers.push({
+          insertionId: cod5_insertionId,
+          code: "prepublication_missing_canonical_campaign",
+          reason: "A publicação preventiva requer campanha canônica.",
+        });
+        continue;
+      }
       const cod5_folderId = cod5_string(cod5_item?.drive?.folderId);
       const cod5_folderPath = cod5_string(cod5_item?.drive?.folderPath);
       const cod5_canonicalPi = cod5_string(cod5_item?.sourceIdentity?.canonicalPi);
@@ -143,7 +152,7 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
           eventType: "folder_updated",
           explicitFolder: true,
           strictInsertionScope: true,
-          expectedCampaignId: Number(cod5_item?.adops?.campaignId || 0),
+          expectedCampaignId: cod5_campaignId,
           expectedInsertionId: cod5_insertionId,
           expectedPiCodigo: cod5_canonicalPi,
           // The monthly source is authoritative for the contracted slot and
