@@ -106,7 +106,7 @@ function auditNonPublishedRules(allRules) {
   }
   for (const [key, bucket] of bySiteGroup.entries()) {
     const published = bucket.filter((item) => item.statusPublished === true);
-    const drafts = bucket.filter((item) => item.statusPublished !== true);
+    const drafts = bucket.filter((item) => item.statusPublished !== true && item.enabled !== false);
     if (published.length === 1 && drafts.length > 0) {
       issues.push(issue("warning", "non_published_rule_same_position", `Existe regra não publicada para a mesma posição ${key}. Ela não afeta o runtime, mas pode confundir no painel.`, {
         key,
