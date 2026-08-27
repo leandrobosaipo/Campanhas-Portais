@@ -93,3 +93,22 @@ test("artefatos rejeitam symlink sem escrever fora da raiz", async () => {
     await fs.rm(outside, { recursive: true, force: true });
   }
 });
+
+test("artefatos rejeitam symlink em cada arquivo alvo sem alterar o destino", async () => {
+  const reportRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../docs/harness-reports/retroactive-recovery");
+  const inside = await fs.mkdtemp(path.join(reportRoot, "test-file-symlink-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "adops-harness-file-outside-"));
+  try {
+    for (const name of ["results.json", "summary.md"]) {
+      const external = path.join(outside, name);
+      await fs.writeFile(external, "unchanged\n");
+      await fs.symlink(external, path.join(inside, name));
+      await assert.rejects(() => writeHarnessArtifacts(inside, { mode: "check", status: "checked" }), /symlink/i);
+      assert.equal(await fs.readFile(external, "utf8"), "unchanged\n");
+      await fs.unlink(path.join(inside, name));
+    }
+  } finally {
+    await fs.rm(inside, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});

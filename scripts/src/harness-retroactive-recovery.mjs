@@ -189,12 +189,20 @@ async function assertSafeOutputDir(outputDir) {
   if (metadata?.isSymbolicLink()) throw new Error(`Diretório de saída contém symlink: ${current}`);
 }
 
+async function assertSafeOutputFile(filePath) {
+  const metadata = await fs.lstat(filePath).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (metadata?.isSymbolicLink()) throw new Error(`Arquivo de saída contém symlink: ${filePath}`);
+}
+
 export async function writeHarnessArtifacts(outputDir, result) {
   await assertSafeOutputDir(outputDir);
   await fs.mkdir(outputDir, { recursive: true });
+  const resultsPath = path.join(outputDir, "results.json");
+  const summaryPath = path.join(outputDir, "summary.md");
+  await Promise.all([assertSafeOutputFile(resultsPath), assertSafeOutputFile(summaryPath)]);
   const safe = sanitize(result);
-  await fs.writeFile(path.join(outputDir, "results.json"), `${JSON.stringify(safe, null, 2)}\n`);
-  await fs.writeFile(path.join(outputDir, "summary.md"), ["# Retroactive Recovery Harness", "", `- Mode: ${safe.mode}`, `- Status: ${safe.status}`, safe.release ? `- Release: ${safe.release}` : null, safe.jobId ? `- Job ID: ${safe.jobId}` : null, safe.insertionId ? `- Insertion: ${safe.insertionId}` : null, safe.dates ? `- Dates: ${safe.dates.join(", ")}` : null].filter(Boolean).join("\n") + "\n");
+  await fs.writeFile(resultsPath, `${JSON.stringify(safe, null, 2)}\n`);
+  await fs.writeFile(summaryPath, ["# Retroactive Recovery Harness", "", `- Mode: ${safe.mode}`, `- Status: ${safe.status}`, safe.release ? `- Release: ${safe.release}` : null, safe.jobId ? `- Job ID: ${safe.jobId}` : null, safe.insertionId ? `- Insertion: ${safe.insertionId}` : null, safe.dates ? `- Dates: ${safe.dates.join(", ")}` : null].filter(Boolean).join("\n") + "\n");
 }
 
 async function main() {
