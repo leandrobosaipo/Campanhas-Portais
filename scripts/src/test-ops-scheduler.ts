@@ -454,6 +454,8 @@ test("Cloudflare em modo Mac Mini observa sem escrever no D1", () => {
 test("Worker encaminha todo contrato ops para o control plane Mac Mini", () => {
   assert.equal(shouldProxyOpsToMacMini("macmini", "/api/ops/jobs/print-batch"), true);
   assert.equal(shouldProxyOpsToMacMini("macmini", "/api/ops/queue/overview"), true);
+  assert.equal(shouldProxyOpsToMacMini("macmini", "/api/ops/daily-print-status"), true);
+  assert.equal(shouldProxyOpsToMacMini("cloudflare", "/api/ops/daily-print-status"), false);
   assert.equal(shouldProxyOpsToMacMini("cloudflare", "/api/ops/jobs/print-batch"), false);
   assert.equal(shouldProxyOpsToMacMini("macmini", "/api/insertions/2713"), false);
 });

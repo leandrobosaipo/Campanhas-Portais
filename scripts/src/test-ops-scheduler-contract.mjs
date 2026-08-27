@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const ops = await readFile(new URL("../../artifacts/api-server/src/routes/ops.ts", import.meta.url), "utf8");
 const app = await readFile(new URL("../../artifacts/api-server/src/app.ts", import.meta.url), "utf8");
 const worker = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
+const telegramWorker = await readFile(new URL("../../ops/cloudflare-telegram-bot/src/index.ts", import.meta.url), "utf8");
 const insertions = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
 const compose = await readFile(new URL("../../ops/portainer/adops-stack/docker-compose.yml", import.meta.url), "utf8");
 
@@ -87,4 +88,11 @@ test("reconciliacao consulta auditoria viva antes de criar recuperacao", () => {
   assert.match(ops, /suppressCompletedPrintRecoveries/);
   assert.match(ops, /auditGateEvaluated/);
   assert.match(insertions, /method: "HEAD", signal: AbortSignal\.timeout\(10_000\)/);
+});
+
+test("alerta Telegram usa o universo canônico do lote diário", () => {
+  const alertFunction = telegramWorker.match(/async function sendDailyPrintAlert[\s\S]*?\n}/)?.[0] ?? "";
+  assert.match(alertFunction, /\/api\/ops\/daily-print-status\?date=/);
+  assert.doesNotMatch(alertFunction, /capture-proof\/audit/);
+  assert.match(alertFunction, /failedInsertionIds/);
 });

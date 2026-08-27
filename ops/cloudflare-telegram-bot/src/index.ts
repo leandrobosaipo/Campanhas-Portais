@@ -988,9 +988,25 @@ async function sendDailySummary(
 }
 
 async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
-  const audit = await adopsFetch(env, `/api/insertions/capture-proof/audit?date=${encodeURIComponent(date)}`) as CaptureAuditSummary;
-  const pending = audit.items.filter((item) => !["ok", "ok_best_effort"].includes(item.status)).map((item) => item.insertionId).sort((a, b) => a - b);
-  const resolved = audit.totalEligible > 0 && audit.ok === audit.totalEligible && audit.missing === 0 && audit.invalid === 0;
+  const daily = await adopsFetch(env, `/api/ops/daily-print-status?date=${encodeURIComponent(date)}`, {}, true) as {
+    lastAttempt?: {
+      status?: string;
+      expected?: number;
+      approved?: number;
+      missing?: number;
+      invalid?: number;
+      failedInsertionIds?: number[];
+    } | null;
+  };
+  const attempt = daily.lastAttempt;
+  const expected = Number(attempt?.expected ?? 0);
+  const approved = Number(attempt?.approved ?? 0);
+  const missing = Number(attempt?.missing ?? 0);
+  const invalid = Number(attempt?.invalid ?? 0);
+  const pending = Array.isArray(attempt?.failedInsertionIds)
+    ? attempt.failedInsertionIds.filter(Number.isInteger).sort((a, b) => a - b)
+    : [];
+  const resolved = attempt?.status === "completed" && expected > 0 && approved === expected && missing === 0 && invalid === 0;
   const state = resolved ? "resolved" : escalation ? "blocked_0830" : "recovery_in_progress";
   const claim = await adopsFetch(env, "/api/ops/daily-print-alerts/claim", {
     method: "POST",
@@ -998,10 +1014,10 @@ async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
   }, true) as { claimed?: boolean };
   if (claim.claimed !== true) return;
   const text = resolved
-    ? `AdOps: auditoria de ${date} concluída. ${audit.ok} de ${audit.totalEligible} prints aprovados.`
+    ? `AdOps: auditoria de ${date} concluída. ${approved} de ${expected} prints aprovados.`
     : [
         escalation ? `AdOps: bloqueio mantido às 08h30 para ${date}.` : `AdOps: recuperação automática em andamento para ${date}.`,
-        `Elegíveis: ${audit.totalEligible} · auditados: ${audit.ok} · pendentes: ${audit.missing} · inválidos: ${audit.invalid}`,
+        `Elegíveis: ${expected} · auditados: ${approved} · pendentes: ${missing} · inválidos: ${invalid}`,
         `Inserções: ${pending.length ? pending.join(", ") : "causa ainda sem IDs"}`,
       ].join("\n");
   await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
