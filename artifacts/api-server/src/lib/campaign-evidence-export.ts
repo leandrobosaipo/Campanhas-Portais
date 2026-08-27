@@ -181,6 +181,12 @@ export function buildPendingPublicationView<T extends {
       item.siteSigla,
       item.format?.normalized ?? item.format?.adops ?? item.format?.sheet,
     );
+    const allowedMediaFormats = new Set((operationalMediaProfile?.formats ?? []).map((value: unknown) => String(value).toUpperCase()));
+    const operationalMediaFiles = mediaFiles.filter((file: any) => {
+      const value = `${file?.mimeType ?? ""} ${file?.name ?? ""}`.toUpperCase();
+      if (!value.trim()) return true;
+      return [...allowedMediaFormats].some((format) => value.includes(format));
+    });
     const gates = {
       sheetUnique: operationalCounts.get(operationalKey(item)) === 1,
       insertionUnique: item.adops?.status === "matched"
@@ -189,7 +195,7 @@ export function buildPendingPublicationView<T extends {
         && Number(item.adops?.operationalMatchCount ?? 1) === 1,
       approvedOperationalTarget: isCompositePublicationTarget(item.siteSigla, item.format?.normalized ?? item.format?.adops ?? item.format?.sheet),
       folderUnique: item.drive?.status === "matched" && Boolean(item.drive?.folderId) && Boolean(item.drive?.folderPath),
-      mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && mediaFiles.length === 1,
+      mediaUnique: item.drive?.mediaStatus === "candidate_found" && item.drive?.mediaMatchesFormat === true && operationalMediaFiles.length === 1,
       destinationPolicyValid: textFiles.length <= 1,
       destinationCandidateUnique: textFiles.length === 1,
       campaignConsistent: !(item.blockingIssues ?? []).some((issue: unknown) => /nome da campanha diverge/i.test(String(issue))),
@@ -241,7 +247,7 @@ export function buildPendingPublicationView<T extends {
       folderPath: item.drive?.folderPath,
       inventoryScanId: item.drive?.inventoryScanId,
       expectedPiCodigo: compositeReady ? canonicalPi : null,
-      media: mediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
+      media: operationalMediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       pdfDocuments: pdfFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       destinationDocuments: textFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       destinationMode,

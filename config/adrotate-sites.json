@@ -685,6 +685,16 @@
         "slotSelector": ".g.g-6",
         "contextSelector": ".g.g-6",
         "scrollMode": "slot",
+        "operationalMediaProfile": {
+          "formats": [
+            "MP4"
+          ],
+          "deliveryTransforms": {
+            "MP4": {
+              "mode": "passthrough"
+            }
+          }
+        },
         "auditOverrides": {
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4,

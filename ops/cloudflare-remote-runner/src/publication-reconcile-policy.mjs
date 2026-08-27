@@ -2,6 +2,14 @@ function cod5_string(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+export function filterOperationalMediaCandidates(items, formats) {
+  const allowed = new Set((Array.isArray(formats) ? formats : []).map((value) => String(value).toUpperCase()));
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    const value = `${item?.mimeType || ""} ${item?.name || ""}`.toUpperCase();
+    return [...allowed].some((format) => value.includes(format));
+  });
+}
+
 export function planCampaignPublicationReconciliation(items, checkedAt, options = {}) {
   const cod5_mode = options.mode === "preflight" ? "preflight" : "apply";
   const cod5_actions = [];
@@ -14,7 +22,7 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
       continue;
     }
     if (cod5_status === "published") continue;
-    if (cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
+    if (cod5_status !== "ready_for_publication" && cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
       const cod5_folderId = cod5_item.drive.folderId;
       const cod5_folderPath = cod5_string(cod5_item?.drive?.folderPath);
       const cod5_canonicalPi = cod5_string(cod5_item?.sourceIdentity?.canonicalPi || cod5_item?.piCodigo);

@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
-import { planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
+import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
 import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
@@ -2130,6 +2130,9 @@ async function prepareOperationalDeliveryMedia(filePath, profile) {
 
   const source = await readOperationalVideoMetadata(filePath);
   const transform = profile?.deliveryTransforms?.MP4;
+  if (transform?.mode === "passthrough") {
+    return { transformed: false, source, metadata: source, filePath, transform };
+  }
   const exactTransform = transform?.mode === "contain-pad"
     && Number(transform.sourceWidth) === source.width
     && Number(transform.sourceHeight) === source.height
@@ -6792,6 +6795,11 @@ async function executeOperationalMediaPublish(payload) {
   const site = siteId ? await privateApiGet(`/api/sites/${siteId}`) : null;
   validateOperationalPublicationScope({ campaignId, insertionId, siteSigla: site?.sigla, identityMode: payload?.identityMode });
   validateOperationalPublicationContract(payload, { insertion, campaign, site });
+  const mediaProfile = await loadOperationalMediaProfile(site?.sigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const approvedMediaProfile = normalizeOperationalMediaProfile(payload?.mediaProfile);
+  if (!approvedMediaProfile || JSON.stringify(mediaProfile) !== JSON.stringify(approvedMediaProfile)) {
+    throw new Error("Perfil de mídia/transformação mudou desde o fingerprint aprovado; nenhuma mutação foi aplicada.");
+  }
 
   const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");
   const mediaId = firstNonEmptyString(payload?.media?.id, payload?.media?.driveFileId);
@@ -6804,7 +6812,7 @@ async function executeOperationalMediaPublish(payload) {
   validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
   if (destinationItem) validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
   if (payload.identityMode === "sheet_drive_composite") validateOperationalDriveItem(payload.pdfDocument, pdfItem, "PDF");
-  const mediaCandidates = folderItems.filter((item) => isImageMediaItem(item) || isVideoMediaItem(item));
+  const mediaCandidates = filterOperationalMediaCandidates(folderItems, mediaProfile.formats);
   const pdfCandidates = folderItems.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
   if (mediaCandidates.length !== 1 || textCandidates.length > 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, um destino opcional inequívoco e o PDF esperado.");
@@ -6822,11 +6830,6 @@ async function executeOperationalMediaPublish(payload) {
   if (!payload?.media?.md5Checksum) throw new Error("Snapshot operacional não possui checksum autoritativo da mídia; atualize o inventário antes de publicar.");
   if (String(materialized.md5 || "").toLowerCase() !== String(payload.media.md5Checksum).toLowerCase()) throw new Error("Checksum do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
   if (payload?.media?.size && Number(materialized.bytes) !== Number(payload.media.size)) throw new Error("Tamanho do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
-  const mediaProfile = await loadOperationalMediaProfile(site?.sigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
-  const approvedMediaProfile = normalizeOperationalMediaProfile(payload?.mediaProfile);
-  if (!approvedMediaProfile || JSON.stringify(mediaProfile) !== JSON.stringify(approvedMediaProfile)) {
-    throw new Error("Perfil de mídia/transformação mudou desde o fingerprint aprovado; nenhuma mutação foi aplicada.");
-  }
   const deliveryMedia = await prepareOperationalDeliveryMedia(materialized.filePath, mediaProfile);
   const mediaMetadata = deliveryMedia.metadata;
   const mediaFormat = String(mediaMetadata.format || "GIF").toUpperCase();
@@ -6854,7 +6857,7 @@ async function executeOperationalMediaPublish(payload) {
   const stagedReadback = await assertOperationalMediaReadback({
     mediaUrl: stagedUrl,
     expectedSha256: deliverySha256,
-    expectedProfile: { ...mediaProfile, format: mediaFormat },
+    expectedProfile: { ...mediaProfile, width: mediaMetadata.width, height: mediaMetadata.height, format: mediaFormat },
     archivePath: deliveryMedia.filePath,
   });
   const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, deliverySha256].join(":" )).digest("hex");
@@ -6867,7 +6870,7 @@ async function executeOperationalMediaPublish(payload) {
     : await assertOperationalMediaReadback({
         mediaUrl,
         expectedSha256: deliverySha256,
-        expectedProfile: { ...mediaProfile, format: mediaFormat },
+        expectedProfile: { ...mediaProfile, width: mediaMetadata.width, height: mediaMetadata.height, format: mediaFormat },
         archivePath: deliveryMedia.filePath,
       });
   const [latestInsertion, latestCampaign] = await Promise.all([

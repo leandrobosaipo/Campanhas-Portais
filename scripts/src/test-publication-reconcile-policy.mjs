@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { planCampaignPublicationReconciliation } from "../../ops/cloudflare-remote-runner/src/publication-reconcile-policy.mjs";
+import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "../../ops/cloudflare-remote-runner/src/publication-reconcile-policy.mjs";
 
 function item(overrides = {}) {
   return {
@@ -50,6 +50,9 @@ test("reconciliador cria preflight operacional para rascunho sem PI/PDF", () => 
 
 test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
   const plan = planCampaignPublicationReconciliation([item({
+    resolutionStatus: "ready_for_preflight",
+    publicationStatus: "ready_for_preflight",
+    identityMode: null,
     siteSigla: "AFL",
     piCodigo: "3172",
     format: { normalized: "VIDEO" },
@@ -74,6 +77,9 @@ test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
 
 test("Sanear video sem campanha canônica bloqueia publicação preventiva", () => {
   const plan = planCampaignPublicationReconciliation([item({
+    resolutionStatus: "ready_for_preflight",
+    publicationStatus: "ready_for_preflight",
+    identityMode: null,
     piCodigo: "3172",
     drive: { folderId: "sanear-folder", mediaStatus: "candidate_found" },
     adops: { campaignId: 0, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
@@ -117,6 +123,7 @@ test("reconciliador publica mídia canônica já validada sem recriar campanha",
   const plan = planCampaignPublicationReconciliation([item({
     resolutionStatus: "ready_for_publication",
     publicationStatus: "ready_for_publication",
+    publicationHealth: { status: "blocked_upstream", reason: "drive_media_not_linked" },
     identityMode: "authoritative_pi",
     piCodigo: "17420",
     sourceIdentity: { decision: "confirmed", canonicalPi: "17420" },
@@ -192,4 +199,17 @@ test("release mantém API em modo monitor e documenta o job protegido", async ()
   assert.match(deploy, /--connect-timeout 10 --max-time 30/);
   assert.doesNotMatch(deploy, /portainer_curl -X POST "\$\{PORTAINER_API\}\/endpoints\/\$\{ENDPOINT_ID\}\/docker\/containers\/\$\{CONTAINER_ID\}\/start"/);
   assert.match(openapi, /\/ops\/jobs\/campaign-publication-reconcile:/);
+});
+
+test("AFL VIDEO usa MP4 validado sem compressor externo", async () => {
+  const config = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+  const mapping = config.AFL.formatMappings.find((item) => item.groupId === 6);
+  assert.deepEqual(mapping.operationalMediaProfile.formats, ["MP4"]);
+  assert.equal(mapping.operationalMediaProfile.deliveryTransforms.MP4.mode, "passthrough");
+  const runner = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
+  assert.match(runner, /transform\?\.mode === "passthrough"/);
+  assert.deepEqual(filterOperationalMediaCandidates([
+    { name: "SANEAR ESTIAGEM_V03.mp4", mimeType: "video/mp4" },
+    { name: "estiagem_825x120.gif", mimeType: "image/gif" },
+  ], ["MP4"]).map((item) => item.name), ["SANEAR ESTIAGEM_V03.mp4"]);
 });

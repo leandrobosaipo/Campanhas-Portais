@@ -67,6 +67,40 @@ test("identidade operacional única libera publicação sem liberar identidade c
   assert.equal(view.items[0]?.adops.insertionId, 1944);
 });
 
+test("formato VIDEO seleciona o MP4 quando a pasta também contém GIF", () => {
+  const item = pendingItem({
+    piCodigo: "3172",
+    siteSigla: "AFL",
+    campaignName: "ESTIAGEM",
+    period: { start: "2026-08-24", end: "2026-08-26", original: "24/08-26/08" },
+    format: { sheet: "VIDEO", adops: "Video", normalized: "VIDEO" },
+    sourceIdentity: {
+      decision: "confirmed",
+      canonicalPi: "3172",
+      sources: { sheetPi: "3172", adopsPi: "3172", driveFolderPiCandidates: ["3172"], drivePdfPiCandidates: ["3172"] },
+    },
+    drive: {
+      status: "matched",
+      folderId: "sanear-folder",
+      folderPath: "/AFL/AGOSTO/PI 3172",
+      mediaStatus: "candidate_found",
+      documentStatus: "candidate_found",
+      mediaMatchesFormat: true,
+      mediaFiles: [
+        { id: "sanear-mp4", name: "SANEAR ESTIAGEM_V03.mp4", mimeType: "video/mp4", size: "135285635", md5Checksum: "9cf0b171a16f614acfec65201ab8002b" },
+        { id: "sanear-gif", name: "estiagem_825x120.gif", mimeType: "image/gif", size: "116645", md5Checksum: "b173753773409c92657320b7e4439d5f" },
+      ],
+      pdfFiles: [{ id: "pi-3172", name: "PI 3172.pdf", mimeType: "application/pdf", size: "224927", md5Checksum: "d52a0d9f1ad9f8b526bf46814455cc06" }],
+      textFiles: [],
+    },
+    adops: { status: "matched", operationalMatchCount: 1, campaignId: 1005, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false, statusNormalizado: "rascunho" },
+  });
+  const view = buildPendingPublicationView({ date: "2026-08-26", generatedAt: "2026-08-27T06:00:00.000Z", summary: { needsPublication: 1, needsEvidence: 1 }, items: [item], upcomingItems: [] });
+  assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
+  assert.equal(view.items[0]?.identityMode, "sheet_drive_composite");
+  assert.deepEqual(view.items[0]?.operationalIdentity.source.media.map((file: { id: string }) => file.id), ["sanear-mp4"]);
+});
+
 test("campanha publicada continua publicada quando falta somente evidência", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
