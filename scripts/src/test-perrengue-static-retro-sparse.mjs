@@ -6,6 +6,7 @@ const {
   applyPerrengueStaticRetroPreview,
   collectRetroContentEvidence,
   normalizePerrengueWpRestBefore,
+  shouldCollectRetroContentEvidence,
 } = require("./capture-insertion-proof.cjs");
 
 function makePost(day, title = `Post ${day}`, category = "Notícias", categorySlug = "noticias") {
@@ -121,6 +122,15 @@ function makePage(indexPayload, pageType = "home") {
 }
 
 const mapping = { domain: "perrenguematogrosso.com", page: "home" };
+
+assert.equal(shouldCollectRetroContentEvidence({
+  captureClass: "historical_recovery",
+  reconstructionReason: "late_publication_recovery",
+}), true);
+assert.equal(shouldCollectRetroContentEvidence({
+  captureClass: "scheduled",
+  reconstructionReason: null,
+}), false);
 const applyPreview = (posts, captureAt) => applyPerrengueStaticRetroPreview(
   makePage(posts),
   mapping,

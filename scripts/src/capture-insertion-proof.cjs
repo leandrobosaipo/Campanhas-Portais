@@ -5403,6 +5403,10 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
   return { ...collected, manifest, manifestHash, retroContentProof };
 }
 
+function shouldCollectRetroContentEvidence({ captureClass }) {
+  return captureClass === "historical_recovery";
+}
+
 async function measureSlotVisibility(page, selector) {
   return await page.evaluate((resolvedSelector) => {
     const slot = document.querySelector(resolvedSelector);
@@ -7473,8 +7477,10 @@ async function main() {
     // o editorial original se o portal não possui snapshot assinado daquela
     // data; exigir essa amostra vazia só bloqueia uma prova visual válida do
     // banner. As capturas históricas normais continuam exigindo essa prova.
-    const isHistoricalCapture = captureClass === "historical_recovery" &&
-      args.reconstructionReason !== "late_publication_recovery";
+    const isHistoricalCapture = shouldCollectRetroContentEvidence({
+      captureClass,
+      reconstructionReason: args.reconstructionReason,
+    });
     const retroContentEvidence = isHistoricalCapture
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
@@ -8250,6 +8256,7 @@ if (require.main === module) {
     applyOmtRetroPreview,
     applyPerrengueStaticRetroPreview,
     collectRetroContentEvidence,
+    shouldCollectRetroContentEvidence,
     applyPerrengueStaticRetroAd,
     buildStaticRetroSlotPlan,
     shouldAllowConfiguredRetroSlotReconstruction,
