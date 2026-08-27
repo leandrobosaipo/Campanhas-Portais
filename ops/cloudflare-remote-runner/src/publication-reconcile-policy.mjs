@@ -15,11 +15,33 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
     }
     if (cod5_status === "published") continue;
     if (cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
+      const cod5_folderId = cod5_item.drive.folderId;
+      const cod5_folderPath = cod5_string(cod5_item?.drive?.folderPath);
+      const cod5_canonicalPi = cod5_string(cod5_item?.sourceIdentity?.canonicalPi || cod5_item?.piCodigo);
       cod5_actions.push({
         type: "drive_pi_publish",
         insertionId: cod5_insertionId,
-        folderId: cod5_item.drive.folderId,
-        generateEvidence: false,
+        event: {
+          eventId: `campaign-reconcile:${cod5_insertionId}:${cod5_folderId}`,
+          driveFileId: cod5_folderId,
+          name: cod5_folderPath.split("/").filter(Boolean).at(-1) || `PI ${cod5_canonicalPi || cod5_insertionId}`,
+          mimeType: "application/vnd.google-apps.folder",
+          path: cod5_folderPath || null,
+          parentFolderId: null,
+          modifiedTime: checkedAt,
+          webViewLink: null,
+          eventType: "folder_updated",
+          explicitFolder: true,
+          strictInsertionScope: true,
+          expectedCampaignId: Number(cod5_item?.adops?.campaignId || 0),
+          expectedInsertionId: cod5_insertionId,
+          expectedPiCodigo: cod5_canonicalPi || null,
+          publish: true,
+          generateEvidence: false,
+          purgeCache: true,
+          mode: cod5_mode,
+          source: "campaign-publication-reconcile-api-publish",
+        },
       });
       continue;
     }

@@ -64,7 +64,9 @@ test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
   })], "2026-08-23T12:00:00.000Z");
   assert.equal(plan.actions[0]?.type, "drive_pi_publish");
   assert.equal(plan.actions[0]?.insertionId, 2645);
-  assert.equal(plan.actions[0]?.generateEvidence, false);
+  assert.equal(plan.actions[0]?.event?.driveFileId, "sanear-folder");
+  assert.equal(plan.actions[0]?.event?.expectedInsertionId, 2645);
+  assert.equal(plan.actions[0]?.event?.generateEvidence, false);
 });
 
 test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", () => {

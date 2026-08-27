@@ -36,3 +36,15 @@ Ele falha apenas no teste de contrato fora desta fatia: `test-async-daily-print-
 
 - Ação preventiva é produzida pelo reconciliador; execução operacional, deploy e qualquer job real não foram acionados.
 - O teste amplo permanece vermelho por um source-grep defasado fora do ownership desta Task.
+
+## Apêndice de revisão — contrato consumido pelo runner
+
+### RED
+
+O teste preventivo passou a exigir `action.event.driveFileId`, `action.event.expectedInsertionId` e `action.event.generateEvidence === false`. Falhou como esperado porque a primeira implementação deixava esses campos no nível de `action`, enquanto o runner chama `executeDrivePiIngest(action.event)`.
+
+### GREEN
+
+`node --test scripts/src/test-publication-reconcile-policy.mjs scripts/src/test-daily-print-status.mjs` — 15 testes aprovados.
+
+A ação agora reutiliza o shape do `event` de preflight existente, incluindo identidade da pasta, escopo estrito da inserção, publicação e `generateEvidence: false`. Nenhum job, deploy ou mutação operacional foi executado.
