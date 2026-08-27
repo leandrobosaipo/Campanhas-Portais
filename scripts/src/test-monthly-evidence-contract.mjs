@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as contract from "./monthly-evidence-contract.mjs";
 
-test("relatorio agendado nao enfileira pacotes opcionais", () => {
-  assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: true, skipRequested: false }), false);
+test("relatorio completo preserva pacotes mesmo quando agendado", () => {
+  assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: true, skipRequested: false }), true);
   assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: false, skipRequested: false }), true);
   assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: false, skipRequested: true }), false);
 });
