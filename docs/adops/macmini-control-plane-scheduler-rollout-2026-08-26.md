@@ -175,9 +175,12 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 
 O refresh incremental já atualizou o consumidor para `8/8`, sem pendências atuais. O job natural das 22h15 e seu readback posterior continuam pendentes como gate independente.
 
+- As sete janelas naturais de recuperação, de 18h30 a 21h30, consultaram a auditoria canônica sem criar jobs concorrentes quando a data já estava completa.
+- No fechamento das 21h30, a decisão foi `not_due`, `jobId=null`, a fila estava vazia e os três runners tinham heartbeat recente (`2026-08-26 21:32:19-04`).
+
 - [x] Reconciliação natural das 17h30 chega a estado terminal.
 - [x] Lote natural das 18h chega a estado terminal.
-- [ ] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
+- [x] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
 - [ ] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
 - [ ] Recuperação/escalonamento de 08h00/08h30 é validada no próximo dia.
 - [ ] Três ciclos, totalizando 72 horas, permanecem sem regressão.
