@@ -5360,6 +5360,25 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
       source: "audited_article_reconstruction",
     }];
   }
+  if (
+    collected.editorialSamples.length === 0 &&
+    reconstructed &&
+    mapping.page === "home" &&
+    retroPreview.editorialContentMatches === true &&
+    Array.isArray(retroPreview.renderedLeadSlugs) &&
+    retroPreview.renderedLeadSlugs.length > 0 &&
+    JSON.stringify(retroPreview.renderedLeadSlugs) === JSON.stringify(retroPreview.expectedLeadSlugs)
+  ) {
+    const rendered = new Set(retroPreview.renderedLeadSlugs.map((value) => String(value || "").replace(/^\/+|\/+$/g, "")));
+    collected.editorialSamples = (retroPreview.expectedPosts || [])
+      .filter((post) => rendered.has(String(post.url || "").replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+|\/+$/g, "")))
+      .map((post) => ({
+        title: String(post.title || "").slice(0, 240),
+        url: new URL(post.url, mapping.homeUrl).toString(),
+        date: String(post.date || ""),
+        source: "audited_home_reconstruction",
+      }));
+  }
   const manifest = {
     cutoff: captureAt,
     source: collected.expectedSource,

@@ -134,6 +134,31 @@ const applyArticlePreview = (posts, captureAt) => applyPerrengueStaticRetroPrevi
   { adminRetroPosts: posts },
 );
 
+{
+  const posts = [makePost(1), makePost(2), makePost(3)];
+  const page = makePage(posts);
+  const expectedPosts = posts.map((post) => ({ date: post.date, url: post.url, title: post.title }));
+  const expectedLeadSlugs = posts.map((post) => post.url.replace(/^\/+|\/+$/g, ""));
+  const evidence = await collectRetroContentEvidence(
+    page,
+    { ...mapping, homeUrl: "https://perrenguematogrosso.com/", auditConfig: {} },
+    "2026-06-10T18:30",
+    { applied: true, editorialContentMatches: true, expectedPosts, expectedLeadSlugs, renderedLeadSlugs: expectedLeadSlugs },
+  );
+  assert.ok(evidence.editorialSamples.length > 0);
+  assert.equal(evidence.editorialSamples[0].source, "audited_home_reconstruction");
+  assert.equal(evidence.retroContentProof.status, "approved");
+
+  const mismatch = await collectRetroContentEvidence(
+    makePage(posts),
+    { ...mapping, homeUrl: "https://perrenguematogrosso.com/", auditConfig: {} },
+    "2026-06-10T18:30",
+    { applied: true, editorialContentMatches: true, expectedPosts, expectedLeadSlugs, renderedLeadSlugs: [...expectedLeadSlugs].reverse() },
+  );
+  assert.equal(mismatch.editorialSamples.length, 0);
+  assert.equal(mismatch.retroContentProof.status, "rejected");
+}
+
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17"), "2026-07-07T19:17:00");
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17:32-04:00"), "2026-07-07T19:17:32");
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07"), "2026-07-07T23:59:59");
