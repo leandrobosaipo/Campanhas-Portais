@@ -10,17 +10,34 @@ process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url));
 
 test("backfill usa criacao idempotente nos dois providers", () => {
-  for (const [source, handler] of [
-    [api, 'router.post("/ops/jobs/print-backfill"'],
-    [worker, 'if (path === "/api/ops/jobs/print-backfill")'],
-  ]) {
-    const start = source.indexOf(handler);
-    const block = source.slice(start, start + 3200);
-    assert.match(block, /createIdempotentOpsJob/);
+  const apiStart = api.indexOf('router.post("/ops/jobs/print-backfill"');
+  const apiBlock = api.slice(apiStart, apiStart + 3200);
+  assert.match(apiBlock, /createIdempotentOpsJob\("print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey\(payload\), false, true\)/);
+
+  const workerStart = worker.indexOf('if (path === "/api/ops/jobs/print-backfill")');
+  const workerBlock = worker.slice(workerStart, workerStart + 3200);
+  assert.match(workerBlock, /createIdempotentOpsJob\(env, "print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey\(payload\), true\)/);
+
+  for (const block of [apiBlock, workerBlock]) {
     assert.match(block, /late_publication_recovery/);
     assert.match(block, /duplicate/);
-    assert.match(block, /buildPrintBackfillIdempotencyKey\(payload\)[\s\S]{0,80}true/);
   }
+});
+
+test("retry idempotente reabre somente failed e preserva o mesmo jobId", () => {
+  const apiStart = api.indexOf("async function createIdempotentOpsJob");
+  const apiBlock = api.slice(apiStart, apiStart + 3600);
+  assert.match(apiBlock, /retryFailed && existing\.rows\[0\]\.status === "failed"/);
+  assert.match(apiBlock, /WHERE id = \$3 AND status = 'failed'/);
+  assert.match(apiBlock, /jobId: existing\.rows\[0\]\.id, status: "ready_for_runner" as const, duplicate: false/);
+  assert.match(apiBlock, /status: existing\.rows\[0\]\.status,[\s\S]{0,80}duplicate: true/);
+
+  const workerStart = worker.indexOf("async function createIdempotentOpsJob");
+  const workerBlock = worker.slice(workerStart, workerStart + 3600);
+  assert.match(workerBlock, /retryFailed && existing\.status === "failed"/);
+  assert.match(workerBlock, /WHERE id = \? AND status = \? AND result_json IS \? AND updated_at = \?/);
+  assert.match(workerBlock, /jobId: existing\.id, status: "ready_for_runner" as JobStatus, duplicate: false/);
+  assert.match(workerBlock, /jobId: existing\.id, status: existing\.status, duplicate: true/);
 });
 
 test("backfill limita retry temporario e nao repete bloqueio", () => {
