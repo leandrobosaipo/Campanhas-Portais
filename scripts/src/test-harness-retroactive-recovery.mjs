@@ -38,6 +38,34 @@ test("check nunca faz POST", async () => {
   assert.equal(calls.some((call) => call.method === "POST"), false);
 });
 
+test("check preserva respostas nomeadas, release e redige token no artefato", async () => {
+  const reportRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../docs/harness-reports/retroactive-recovery");
+  const outputDir = await fs.mkdtemp(path.join(reportRoot, "test-check-artifact-"));
+  const previousRelease = process.env.ADOPS_RELEASE_SHA;
+  process.env.ADOPS_RELEASE_SHA = "release-from-env";
+  try {
+    const result = await runHarness({
+      mode: "check",
+      api: {
+        get: async (requestPath) => ({ requestPath, nested: { token: "must-not-persist", state: "observed" } }),
+        post: async () => assert.fail("check não pode chamar POST"),
+      },
+    });
+    assert.equal(result.release, "release-from-env");
+    assert.deepEqual(Object.keys(result.checks), ["preflightJobs", "publicationJobs", "queueOverview", "runtimeReadiness"]);
+    assert.equal(result.checks.queueOverview.nested.token, "must-not-persist");
+    await writeHarnessArtifacts(outputDir, result);
+    const stored = JSON.parse(await fs.readFile(path.join(outputDir, "results.json"), "utf8"));
+    assert.equal(stored.checks.queueOverview.nested.state, "observed");
+    assert.equal(JSON.stringify(stored).includes("must-not-persist"), false);
+    assert.equal(JSON.stringify(stored).includes('"token"'), false);
+  } finally {
+    if (previousRelease === undefined) delete process.env.ADOPS_RELEASE_SHA;
+    else process.env.ADOPS_RELEASE_SHA = previousRelease;
+    await fs.rm(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("execute acompanha o mesmo job ate completed", async () => {
   const calls = [];
   const result = await runHarness({ mode: "execute", release: "release-42", insertionId: 2645, fromDate: "2026-08-24", toDate: "2026-08-26", api: fakeApi(calls, { createJobId: "job-2645", progress: ["ready_for_runner", "running", "completed"] }), sleep: async () => undefined });

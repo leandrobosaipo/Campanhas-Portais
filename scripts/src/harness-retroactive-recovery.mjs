@@ -76,17 +76,17 @@ export async function waitForTerminalJob(api, jobId, timeoutMs, { now = Date.now
 
 export async function runHarness(options) {
   const { mode, api = createApi(), timeoutMs = 2_700_000, now, sleep: wait } = options;
-  const release = options.release ?? process.env.CF_PAGES_COMMIT_SHA ?? process.env.GIT_COMMIT ?? null;
+  const release = options.release ?? process.env.ADOPS_RELEASE_SHA ?? process.env.CF_PAGES_COMMIT_SHA ?? process.env.GIT_COMMIT ?? null;
   if (!new Set(["check", "execute", "verify"]).has(mode)) throw new Error("mode deve ser check, execute ou verify.");
 
   if (mode === "check") {
-    const checks = await Promise.all([
+    const [preflightJobs, publicationJobs, queueOverview, runtimeReadiness] = await Promise.all([
       api.get("/api/ops/jobs?kind=drive-pi-preflight&limit=10"),
       api.get("/api/ops/jobs?kind=adrotate-publish&limit=10"),
       api.get("/api/ops/queue/overview"),
       api.get("/api/ops/runtime-readiness"),
     ]);
-    return { mode, release, status: "checked", checks: checks.length };
+    return { mode, release, status: "checked", checks: { preflightJobs, publicationJobs, queueOverview, runtimeReadiness } };
   }
 
   requireExecuteSlice(options);
