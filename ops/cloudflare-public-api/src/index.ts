@@ -2180,18 +2180,13 @@ async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: stri
     )
   )`;
   const notBeforeReady = `AND (json_extract(ops_jobs.payload_json, '$.notBefore') IS NULL OR json_extract(ops_jobs.payload_json, '$.notBefore') <= ?)`;
-  const sql = kinds?.length
-    ? `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`
-    : `SELECT * FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`;
-  const statement = env.adops_ops.prepare(sql);
-  const row = await statement.bind(...(kinds ?? []), nowIso()).first<OpsJobRecord>();
-  if (!row) return null;
-  const claimed = await env.adops_ops
-    .prepare(`UPDATE ops_jobs SET status = 'running', runner_id = ?, error_text = NULL, updated_at = ? WHERE id = ? AND status = 'ready_for_runner'`)
-    .bind(runnerId, nowIso(), row.id)
-    .run();
-  if ((claimed.meta?.changes ?? 0) !== 1) return null;
-  return env.adops_ops.prepare(`SELECT * FROM ops_jobs WHERE id = ? LIMIT 1`).bind(row.id).first<OpsJobRecord>();
+  const candidate = kinds?.length
+    ? `SELECT id FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`
+    : `SELECT id FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`;
+  return env.adops_ops
+    .prepare(`UPDATE ops_jobs SET status = 'running', runner_id = ?, error_text = NULL, updated_at = ? WHERE id = (${candidate}) AND status = 'ready_for_runner' RETURNING *`)
+    .bind(runnerId, nowIso(), ...(kinds ?? []), nowIso())
+    .first<OpsJobRecord>();
 }
 
 function todayInCuiaba() {
