@@ -38,6 +38,34 @@ A primeira etapa da execução deve reconfirmar a causa no runtime atual usando 
 
 Nenhuma outra inserção ou data entra em backfill por inferência. Uma ampliação depende de nova evidência e autorização.
 
+## Casos operacionais já aprovados
+
+### PI 91159 — Vira Saúde — AFL
+
+- A inserção canônica é `#2693`, no período de 21/08 a 31/08/2026.
+- As evidências de 21/08 a 26/08 já estão auditadas e não serão regeneradas.
+- O defeito é de publicação atual: a mídia esperada não foi observada no grupo AdRotate `14` (`exactLiveMatches=[]`, `expectedMediaObserved=false`, `publicConfirmation=reported_only`).
+- A reconciliação deve preservar `#2693` como canônica e tratar as duplicidades `#2714` e campanha `#1014` / inserção `#2779`, ambas sem mídia, sem apagar histórico antes de backup e comprovação de ausência de referência.
+- Aceite: mídia correta observada ao vivo no grupo `14`, relação AdOps/AdRotate canônica e HTML público coerente. Prints auditados permanecem intactos.
+
+### PI 3172 — Sanear — AFL — Vídeo
+
+- A inserção é `#2645`, no período de 24/08 a 26/08/2026.
+- O Drive contém `SANEAR ESTIAGEM_V03.mp4`; a API reconhece o arquivo como `VIDEO`.
+- A inserção está em rascunho, sem `mediaUrl` e com `bannerPublicadoNoSite=false`; o grupo esperado é `6`.
+- Ordem obrigatória: vincular/publicar pelo fluxo existente; confirmar vídeo vivo no grupo `6` e no HTML público; criar um `print-backfill` de 24/08 a 26/08; acompanhar o mesmo `jobId`; validar auditoria, data, slot, frame do vídeo, miniatura, modal e download.
+
+## Prevenções já aprovadas
+
+- Normalizar PI por dígitos antes de localizar ou criar campanha.
+- Impedir duplicidade por PI normalizada, portal, formato e período.
+- Não tratar `bannerPublicadoNoSite=true` como confirmação viva suficiente.
+- Separar saúde de publicação de saúde de evidências.
+- Não ocultar falha de publicação porque há prints antigos auditados.
+- Detectar antes do período mídia presente no Drive e ausente no AdOps/AdRotate.
+- No início do período, registrar `blocked_upstream` com motivo e ação necessária quando a publicação não estiver viva; a inserção continua visível na lista de evidências.
+- Reutilizar somente `drive-pi-preflight`, `adrotate-publish`, `print-backfill` e auditoria.
+
 ## Fontes e precedência
 
 Para publicação e identidade comercial:
