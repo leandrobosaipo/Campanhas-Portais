@@ -188,6 +188,8 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Teste do gerador e compilação Python passaram; o readback de `https://adops-api.codigo5.com.br/api/openapi.json` confirmou todos os `$ref` e propriedades no consumidor público.
 - Deploy por volumes `adops_app_source_988c92cda6d9` e `adops_web_public_988c92cda6d9`, após backup `adops-before-988c92cda6d9-20260827T025739Z.sql.gz`.
 - Após o corte, API, web, Postgres, runners e monitor do Drive ficaram saudáveis; fila zerada e três runners com heartbeat recente.
+- O domínio público do Worker e a API privada retornaram simultaneamente `provider=macmini`, as mesmas contagens e o mesmo `lastHeartbeatAt`; isso comprova que o deployment público está em proxy e não mantém um segundo writer.
+- Quatro `drive-pi-ingest` criados pelo monitor do Google Drive durante o readback (`424aef3d`, `d9565a6a`, `f16ff02d`, `386e31ef`) foram acompanhados até `completed`; nenhum era rotina de print e a fila voltou a zero.
 
 ## Preflight de integração
 
