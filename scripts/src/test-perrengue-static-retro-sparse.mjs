@@ -141,7 +141,7 @@ const applyArticlePreview = (posts, captureAt) => applyPerrengueStaticRetroPrevi
   const expectedLeadSlugs = posts.map((post) => post.url.replace(/^\/+|\/+$/g, ""));
   const evidence = await collectRetroContentEvidence(
     page,
-    { ...mapping, homeUrl: "https://perrenguematogrosso.com/", auditConfig: {} },
+    { domain: mapping.domain, pageLabel: "Home", homeUrl: "https://perrenguematogrosso.com/", auditConfig: {} },
     "2026-06-10T18:30",
     { applied: true, editorialContentMatches: true, expectedPosts, expectedLeadSlugs, renderedLeadSlugs: expectedLeadSlugs },
   );
@@ -157,6 +157,15 @@ const applyArticlePreview = (posts, captureAt) => applyPerrengueStaticRetroPrevi
   );
   assert.equal(mismatch.editorialSamples.length, 0);
   assert.equal(mismatch.retroContentProof.status, "rejected");
+
+  const conflictingMapping = await collectRetroContentEvidence(
+    makePage(posts),
+    { ...mapping, page: "article", pageLabel: "Home", homeUrl: "https://perrenguematogrosso.com/", auditConfig: {} },
+    "2026-06-10T18:30",
+    { applied: true, editorialContentMatches: true, expectedPosts, expectedLeadSlugs, renderedLeadSlugs: expectedLeadSlugs },
+  );
+  assert.equal(conflictingMapping.editorialSamples.length, 0);
+  assert.equal(conflictingMapping.retroContentProof.status, "rejected");
 }
 
 assert.equal(normalizePerrengueWpRestBefore("2026-07-07T19:17"), "2026-07-07T19:17:00");

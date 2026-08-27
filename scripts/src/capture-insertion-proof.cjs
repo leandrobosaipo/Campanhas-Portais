@@ -5363,7 +5363,7 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
   if (
     collected.editorialSamples.length === 0 &&
     reconstructed &&
-    mapping.page === "home" &&
+    (mapping.page === "home" || (!mapping.page && mapping.pageLabel === "Home")) &&
     retroPreview.editorialContentMatches === true &&
     Array.isArray(retroPreview.renderedLeadSlugs) &&
     retroPreview.renderedLeadSlugs.length > 0 &&
