@@ -59,14 +59,32 @@ test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
       mediaStatus: "candidate_found",
       mediaFiles: [{ id: "sanear-mp4", name: "SANEAR ESTIAGEM_V03.mp4", mimeType: "video/mp4", kind: "video" }],
     },
-    adops: { campaignId: 0, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
+    adops: { campaignId: 1042, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
     publicationHealth: { status: "prepublication_pending", reason: "drive_media_not_linked" },
   })], "2026-08-23T12:00:00.000Z");
   assert.equal(plan.actions[0]?.type, "drive_pi_publish");
   assert.equal(plan.actions[0]?.insertionId, 2645);
   assert.equal(plan.actions[0]?.event?.driveFileId, "sanear-folder");
+  assert.equal(plan.actions[0]?.event?.strictInsertionScope, true);
+  assert.equal(plan.actions[0]?.event?.expectedCampaignId, 1042);
   assert.equal(plan.actions[0]?.event?.expectedInsertionId, 2645);
+  assert.equal(plan.actions[0]?.event?.expectedPiCodigo, "3172");
   assert.equal(plan.actions[0]?.event?.generateEvidence, false);
+});
+
+test("Sanear video sem campanha canônica bloqueia publicação preventiva", () => {
+  const plan = planCampaignPublicationReconciliation([item({
+    piCodigo: "3172",
+    drive: { folderId: "sanear-folder", mediaStatus: "candidate_found" },
+    adops: { campaignId: 0, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
+    publicationHealth: { status: "prepublication_pending", reason: "drive_media_not_linked" },
+  })], "2026-08-23T12:00:00.000Z");
+  assert.deepEqual(plan.actions, []);
+  assert.deepEqual(plan.blockers, [{
+    insertionId: 2645,
+    code: "prepublication_missing_canonical_campaign",
+    reason: "A publicação preventiva requer campanha canônica.",
+  }]);
 });
 
 test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", () => {

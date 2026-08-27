@@ -48,3 +48,15 @@ O teste preventivo passou a exigir `action.event.driveFileId`, `action.event.exp
 `node --test scripts/src/test-publication-reconcile-policy.mjs scripts/src/test-daily-print-status.mjs` — 15 testes aprovados.
 
 A ação agora reutiliza o shape do `event` de preflight existente, incluindo identidade da pasta, escopo estrito da inserção, publicação e `generateEvidence: false`. Nenhum job, deploy ou mutação operacional foi executado.
+
+## Apêndice de revisão — campanha canônica obrigatória
+
+### RED
+
+O cenário PI 3172 passou a validar o `event` integral: pasta, escopo estrito, campanha, inserção, PI e ausência de geração de evidência. Um segundo cenário sem `campaignId` canônico falhou porque ainda produzia uma ação com `expectedCampaignId: 0`.
+
+### GREEN
+
+`node --test scripts/src/test-publication-reconcile-policy.mjs scripts/src/test-daily-print-status.mjs` — 16 testes aprovados.
+
+O branch preventivo só cria `drive_pi_publish` quando `campaignId` é inteiro positivo. Sem ele, devolve `prepublication_missing_canonical_campaign` e não cria ação que o executor rejeitaria.
