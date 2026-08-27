@@ -2221,7 +2221,11 @@ async function loadOperationalMediaProfile(siteSigla, localFormat) {
   const matches = (siteConfig?.formatMappings || []).filter((mapping) => (mapping?.aliases || []).some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
   if (matches.length !== 1) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
   const profile = matches[0].operationalMediaProfile
-    ?? (normalizedFormat === "VIDEO" ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } } : null);
+    ?? (normalizedFormat === "VIDEO"
+      ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } }
+      : String(siteSigla || "").toUpperCase() === "PERRENGUE" && normalizedFormat === "LATERAL"
+        ? { width: 380, height: 120, formats: ["GIF"] }
+        : null);
   if (!profile) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
   return normalizeOperationalMediaProfile({ groupId: Number(matches[0].groupId), ...profile });
 }

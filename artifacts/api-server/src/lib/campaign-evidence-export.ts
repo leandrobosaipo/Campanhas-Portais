@@ -10,7 +10,11 @@ export function resolveCompositePublicationTarget(siteSigla: unknown, localForma
   ));
   if (matches.length !== 1) return null;
   const profile = matches[0].operationalMediaProfile
-    ?? (format === "VIDEO" ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } } : null);
+    ?? (format === "VIDEO"
+      ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } }
+      : site === "PERRENGUE" && format === "LATERAL"
+        ? { width: 380, height: 120, formats: ["GIF"] }
+        : null);
   if (!profile) return null;
   return {
     groupId: Number(matches[0].groupId),
@@ -187,7 +191,11 @@ export function buildPendingPublicationView<T extends {
     const operationalMediaFiles = mediaFiles.filter((file: any) => {
       const value = `${file?.mimeType ?? ""} ${file?.name ?? ""}`.toUpperCase();
       if (!value.trim()) return true;
-      return [...allowedMediaFormats].some((format) => value.includes(format));
+      const formatAllowed = [...allowedMediaFormats].some((format) => value.includes(format));
+      const expectedDimensions = operationalMediaProfile?.width && operationalMediaProfile?.height
+        ? `${operationalMediaProfile.width}X${operationalMediaProfile.height}`
+        : null;
+      return formatAllowed && (!expectedDimensions || value.includes(expectedDimensions));
     });
     const gates = {
       sheetUnique: operationalCounts.get(operationalKey(item)) === 1,

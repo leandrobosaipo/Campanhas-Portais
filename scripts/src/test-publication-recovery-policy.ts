@@ -110,6 +110,35 @@ test("VIDEO usa o fluxo operacional MP4 nativo nos portais sem perfil explícito
   }
 });
 
+test("PERRENGUE LATERAL seleciona somente o GIF 380x120", () => {
+  const target = resolveCompositePublicationTarget("PERRENGUE", "LATERAL");
+  assert.deepEqual(target, { groupId: 6, width: 380, height: 120, formats: ["GIF"] });
+  const source = pendingItem({
+    piCodigo: "3171",
+    campaignName: "ESTIAGEM",
+    format: { sheet: "LATERAL", adops: "Lateral", normalized: "LATERAL" },
+    sourceIdentity: {
+      decision: "confirmed",
+      canonicalPi: "3171",
+      sources: { sheetPi: "3171", adopsPi: "3171", driveFolderPiCandidates: ["3171"], drivePdfPiCandidates: ["3171"] },
+    },
+    drive: {
+      status: "matched", folderId: "sanear-folder", folderPath: "/PERRENGUE/AGOSTO/PI 3171",
+      mediaStatus: "candidate_found", documentStatus: "candidate_found", mediaMatchesFormat: true,
+      mediaFiles: [
+        { id: "lateral", name: "estiagem_380x120.gif", mimeType: "image/gif", size: "1", md5Checksum: "a".repeat(32) },
+        { id: "topo", name: "estiagem_825x120.gif", mimeType: "image/gif", size: "1", md5Checksum: "b".repeat(32) },
+      ],
+      pdfFiles: [{ id: "pi", name: "PI 3171.pdf", mimeType: "application/pdf", size: "1", md5Checksum: "c".repeat(32) }],
+      textFiles: [],
+    },
+    adops: { status: "matched", operationalMatchCount: 1, campaignId: 1006, insertionId: 2650, mediaUrl: null, bannerPublicadoNoSite: false },
+  });
+  const view = buildPendingPublicationView({ date: "2026-08-27", generatedAt: "2026-08-27T14:00:00.000Z", summary: { needsPublication: 1, needsEvidence: 1 }, items: [source], upcomingItems: [] });
+  assert.equal(view.items[0]?.resolutionStatus, "ready_for_publication");
+  assert.deepEqual(view.items[0]?.operationalIdentity.source.media.map((file: { id: string }) => file.id), ["lateral"]);
+});
+
 test("nova varredura do mesmo arquivo preserva o fingerprint", () => {
   const source = pendingItem();
   const build = (inventoryScanId: string) => buildPendingPublicationView({
