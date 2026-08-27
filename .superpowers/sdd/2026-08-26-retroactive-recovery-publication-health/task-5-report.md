@@ -30,7 +30,7 @@ Ele falha apenas no teste de contrato fora desta fatia: `test-async-daily-print-
 
 ## Commit
 
-PENDING_SHA
+20bdc9a5a4ceb2baf1369ebe372774c444552e39
 
 ## Riscos
 
