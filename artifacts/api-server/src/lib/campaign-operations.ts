@@ -360,6 +360,98 @@ type LiveAdSlot = {
   mediaBasename: string | null;
 };
 
+export type PublicationReadback = {
+  insertionId: number;
+  groupId: number;
+  mediaBasename: string;
+  publicHtmlOk: boolean;
+  mediaFound: boolean;
+  adFound: boolean;
+};
+
+export function publicationReadbackConfirms(input: {
+  insertionId: number;
+  expectedGroupId: number | null;
+  expectedMediaBasename: string | null;
+  readback: PublicationReadback | null | undefined;
+}) {
+  const { readback } = input;
+  return Boolean(
+    readback
+    && readback.insertionId === input.insertionId
+    && readback.groupId === input.expectedGroupId
+    && readback.mediaBasename === input.expectedMediaBasename
+    && readback.publicHtmlOk
+    && readback.mediaFound
+    && readback.adFound,
+  );
+}
+
+function asJobObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    try {
+      return asJobObject(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+export function buildSuccessfulPublicationReadbacks(rows: Array<{ payloadJson: unknown; resultJson: unknown }>) {
+  const readbacks = new Map<number, PublicationReadback>();
+  for (const row of rows) {
+    const payload = asJobObject(row.payloadJson);
+    const result = asJobObject(row.resultJson);
+    const execution = asJobObject(result?.execution);
+    const wpCliResult = asJobObject(execution?.wpCliResult);
+    const expectedMedia = asJobObject(execution?.expectedMedia);
+    const publicHtmlValidation = asJobObject(execution?.publicHtmlValidation);
+    const insertionId = payload?.insertionId;
+    const groupId = wpCliResult?.group_id;
+    const mediaBasenameValue = expectedMedia?.mediaBasename;
+    if (
+      !Number.isInteger(insertionId)
+      || !Number.isInteger(groupId)
+      || typeof mediaBasenameValue !== "string"
+      || typeof publicHtmlValidation?.ok !== "boolean"
+      || typeof publicHtmlValidation?.mediaFound !== "boolean"
+      || typeof publicHtmlValidation?.adFound !== "boolean"
+      || readbacks.has(insertionId as number)
+    ) continue;
+    readbacks.set(insertionId as number, {
+      insertionId: insertionId as number,
+      groupId: groupId as number,
+      mediaBasename: mediaBasenameValue,
+      publicHtmlOk: publicHtmlValidation.ok,
+      mediaFound: publicHtmlValidation.mediaFound,
+      adFound: publicHtmlValidation.adFound,
+    });
+  }
+  return readbacks;
+}
+
+async function loadSuccessfulPublicationReadbacks() {
+  try {
+    const result = await db.execute(sql`
+      select payload_json as "payloadJson", result_json as "resultJson"
+      from ops_jobs
+      where kind = 'adrotate-publish'
+        and status = 'completed'
+        and payload_json::jsonb ->> 'mode' = 'apply'
+        and updated_at >= now() - interval '90 days'
+      order by updated_at desc
+    `);
+    return buildSuccessfulPublicationReadbacks(result.rows as Array<{ payloadJson: unknown; resultJson: unknown }>);
+  } catch {
+    return new Map<number, PublicationReadback>();
+  }
+}
+
+export async function getSuccessfulPublicationReadback(insertionId: number) {
+  return (await loadSuccessfulPublicationReadbacks()).get(insertionId) ?? null;
+}
+
 function mediaBasename(value: string | null | undefined) {
   if (!value) return null;
   try {
@@ -619,7 +711,7 @@ export async function getActiveCampaignOperations(options: {
 } = {}): Promise<CampaignOperationsActiveResult> {
   const date = options.date ?? todayInCuiaba();
   const includeEvidence = options.includeEvidence !== false;
-  const [sheet, insertions] = await Promise.all([
+  const [sheet, insertions, publicationReadbacks] = await Promise.all([
     loadCurrentSheetCampaigns({
       date,
       siteSigla: options.siteSigla ?? null,
@@ -627,6 +719,7 @@ export async function getActiveCampaignOperations(options: {
       scope: options.sheetScope ?? "daily",
     }),
     loadEnrichedInsertions(),
+    loadSuccessfulPublicationReadbacks(),
   ]);
   const liveSlotsByPage = new Map<string, LiveAdSlot[]>();
 
@@ -668,7 +761,14 @@ export async function getActiveCampaignOperations(options: {
     const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
     const liveSlots = await fetchLiveSlotsForInsertion(insertion, liveSlotsByPage);
     const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, liveSlots);
-    const exactPublicSlot = hasExactPublicSlot(insertion, liveSlots);
+    const sampledExactPublicSlot = hasExactPublicSlot(insertion, liveSlots);
+    const expectedMediaBasename = mediaBasename(insertion?.mediaUrl);
+    const exactPublicSlot = sampledExactPublicSlot || Boolean(insertion && publicationReadbackConfirms({
+      insertionId: insertion.id,
+      expectedGroupId,
+      expectedMediaBasename,
+      readback: publicationReadbacks.get(insertion.id),
+    }));
     const publicConfirmation = exactPublicSlot
       ? "confirmed" as const
       : insertion?.bannerPublicadoNoSite === true

@@ -74,7 +74,7 @@ import {
 import { findDriveCampaignMedia } from "../lib/drive-campaign-media";
 import { getDriveInventoryStatus } from "../lib/drive-inventory";
 import { toPublicDriveInventoryStatus } from "../lib/drive-inventory-public";
-import { getActiveCampaignOperations } from "../lib/campaign-operations";
+import { getActiveCampaignOperations, getSuccessfulPublicationReadback, publicationReadbackConfirms } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
 import {
   buildMonthlyEvidenceSource,
@@ -1790,6 +1790,13 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     mediaBasename,
     adminBaseUrl,
   });
+  const publicationReadback = await getSuccessfulPublicationReadback(insertion.id);
+  const publicationJobConfirmed = publicationReadbackConfirms({
+    insertionId: insertion.id,
+    expectedGroupId: groupId,
+    expectedMediaBasename: mediaBasename,
+    readback: publicationReadback,
+  });
 
   const fallbackCandidates = planned
     .filter((item) => item.insertionId !== insertion.id)
@@ -1847,6 +1854,12 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
       otherLiveMediaInGroup,
       capturePolicy: "Aprovar somente evidência cuja mídia observada corresponda à mídia esperada da inserção; mídia rotativa diferente exige nova tentativa da mesma data.",
     },
+    publicationConfirmation: publicationJobConfirmed ? {
+      source: "completed_adrotate_publish_job",
+      confirmed: true,
+      groupId: publicationReadback?.groupId ?? null,
+      mediaBasename: publicationReadback?.mediaBasename ?? null,
+    } : null,
     plannedSelf,
     exactLiveMatches,
     historicalAdminMatches,
