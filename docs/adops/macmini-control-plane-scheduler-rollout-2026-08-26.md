@@ -140,6 +140,9 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 
 ## Readback das evidências e da interface
 
+- O job natural das 22h15 foi criado com a chave idempotente `evidence-monthly-report:2026-08-26:22:15`, `jobId=0b3d5407-261e-4dcb-b7ba-345f1e4bf376`, e terminou `completed` às 22h23 sem repetição concorrente.
+- A execução completa levou `469278 ms`: planilha `42171 ms`, regras `2671 ms`, geração do relatório `424372 ms` e publicação `9169 ms`.
+- O snapshot público foi atualizado às `22:16:12 America/Cuiaba`, em modo completo, com `383` prints e `publicationGate.missing=0`.
 - As oito inserções elegíveis (`2692`, `2693`, `2192`, `1861`, `2712`, `2713`, `1842`, `2278`) retornaram `status=audited`, `checklistValidation.approved=true`, `evidenceStatus=approved`, zero bloqueios e artefato HTTP 200 para 26/08.
 - O filtro público `evidence=missing` com publicações ativas renderizou `Nenhuma campanha encontrada`, sem ocultar as pendências históricas quando o filtro é removido.
 - A miniatura de `#2713` para 26/08 foi renderizada e abriu o modal com a imagem, data, navegação e links operacionais.
@@ -173,7 +176,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 
 ## Gates pendentes
 
-O refresh incremental já atualizou o consumidor para `8/8`, sem pendências atuais. O job natural das 22h15 e seu readback posterior continuam pendentes como gate independente.
+O refresh incremental e o job natural das 22h15 atualizaram o consumidor para `8/8`, sem pendências atuais. O próximo gate independente é a recuperação/escalonamento da manhã seguinte.
 
 - As sete janelas naturais de recuperação, de 18h30 a 21h30, consultaram a auditoria canônica sem criar jobs concorrentes quando a data já estava completa.
 - No fechamento das 21h30, a decisão foi `not_due`, `jobId=null`, a fila estava vazia e os três runners tinham heartbeat recente (`2026-08-26 21:32:19-04`).
@@ -181,7 +184,7 @@ O refresh incremental já atualizou o consumidor para `8/8`, sem pendências atu
 - [x] Reconciliação natural das 17h30 chega a estado terminal.
 - [x] Lote natural das 18h chega a estado terminal.
 - [x] Recuperações de 18h30 a 21h30 não criam jobs equivalentes concorrentes.
-- [ ] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
+- [x] Relatório das 22h15 chega a estado terminal e o consumidor público reflete o estado canônico.
 - [ ] Recuperação/escalonamento de 08h00/08h30 é validada no próximo dia.
 - [ ] Três ciclos, totalizando 72 horas, permanecem sem regressão.
 - [x] URLs, miniaturas, modal, downloads e filtro `evidence=missing` são validados no relatório público após o refresh incremental.
