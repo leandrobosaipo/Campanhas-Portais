@@ -681,6 +681,28 @@ function parseIsoDate(value: unknown) {
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
 }
 
+function buildPrintBackfillIdempotencyKey(payload: {
+  insertionId: number | null;
+  campaignId: number | null;
+  piCodigo: string | null;
+  siteSigla: string | null;
+  siteId: number | null;
+  competencia: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+}) {
+  const scope = payload.insertionId
+    ? `insertion:${payload.insertionId}`
+    : payload.campaignId
+      ? `campaign:${payload.campaignId}`
+      : payload.piCodigo && payload.siteSigla
+        ? `pi-site:${payload.piCodigo.replace(/\D/g, "").replace(/^0+(?=\d)/, "")}:${payload.siteSigla}`
+        : payload.siteId
+          ? `site:${payload.siteId}`
+          : `competencia:${payload.competencia}`;
+  return `print-backfill:${scope}:${payload.fromDate ?? "period-start"}:${payload.toDate ?? "period-end"}:late_publication_recovery`;
+}
+
 function parseIsoTimestamp(value: unknown) {
   const raw = readOptionalString(value);
   if (!raw) return null;
@@ -2530,7 +2552,7 @@ router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
     });
     return;
   }
-  const jobId = await createOpsJob("print-backfill", {
+  const payload = {
     insertionId,
     campaignId,
     siteId,
@@ -2541,9 +2563,13 @@ router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
     toDate,
     replace: typeof req.body?.replace === "boolean" ? req.body.replace : false,
     force: typeof req.body?.force === "boolean" ? req.body.force : false,
+    reconstructionReason: "late_publication_recovery",
+    attempt: 1,
+    maxAttempts: 3,
     source: "macmini-api",
-  }, "ops-api");
-  res.status(202).json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" });
+  };
+  const created = await createIdempotentOpsJob("print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload));
+  res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "print-backfill", ...created });
 });
 
 router.post("/ops/jobs/print-batch", async (req, res): Promise<void> => {

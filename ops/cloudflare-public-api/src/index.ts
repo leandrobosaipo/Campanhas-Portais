@@ -1285,6 +1285,28 @@ function parseIsoDateString(value: unknown) {
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
 }
 
+function buildPrintBackfillIdempotencyKey(payload: {
+  insertionId: number | null;
+  campaignId: number | null;
+  piCodigo: string | null;
+  siteSigla: string | null;
+  siteId: number | null;
+  competencia: string | null;
+  fromDate: string | null;
+  toDate: string | null;
+}) {
+  const scope = payload.insertionId
+    ? `insertion:${payload.insertionId}`
+    : payload.campaignId
+      ? `campaign:${payload.campaignId}`
+      : payload.piCodigo && payload.siteSigla
+        ? `pi-site:${payload.piCodigo.replace(/\D/g, "").replace(/^0+(?=\d)/, "")}:${payload.siteSigla}`
+        : payload.siteId
+          ? `site:${payload.siteId}`
+          : `competencia:${payload.competencia}`;
+  return `print-backfill:${scope}:${payload.fromDate ?? "period-start"}:${payload.toDate ?? "period-end"}:late_publication_recovery`;
+}
+
 function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event: DrivePiEventPayload } | { ok: false; response: Response } {
   const driveFileId = readOptionalString(body.driveFileId);
   const name = readOptionalString(body.name);
@@ -2754,7 +2776,7 @@ export default {
         if (!insertionId && !campaignId && !siteId && !competencia && !piCodigo) {
           return badRequest("Informe insertionId, campaignId, piCodigo+siteSigla, siteId ou competencia para limitar o backfill.");
         }
-        const jobId = await createOpsJob(env, "print-backfill", {
+        const payload = {
           competencia,
           siteId,
           insertionId,
@@ -2766,9 +2788,12 @@ export default {
           replace: body.replace === true,
           force: body.force === true,
           reconstructionReason: "late_publication_recovery",
+          attempt: 1,
+          maxAttempts: 3,
           source: "cloudflare-protected-api",
-        }, "ops-api");
-        return json({ ok: true, jobId, kind: "print-backfill", status: "ready_for_runner" }, { status: 202 });
+        };
+        const created = await createIdempotentOpsJob(env, "print-backfill", payload, "ops-api", buildPrintBackfillIdempotencyKey(payload));
+        return json({ ok: true, kind: "print-backfill", ...created }, { status: created.duplicate ? 200 : 202 });
       }
 
       if (path === "/api/ops/jobs/print-single") {
