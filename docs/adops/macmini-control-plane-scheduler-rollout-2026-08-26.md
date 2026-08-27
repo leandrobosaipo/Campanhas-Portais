@@ -232,3 +232,15 @@ O refresh incremental e o job natural das 22h15 atualizaram o consumidor para `8
 ## Regra de encerramento
 
 Não concluir por build, HTTP 200, job criado ou job em execução. Encerrar somente após estados terminais, auditoria, consumidor real, 72 horas e integração documentada.
+
+## Fechamento finito das PIs 91159 e 3172 — 2026-08-27
+
+- PI 91159 / inserção `#2693`: relação canônica corrigida no grupo 14 e duplicatas operacionais reconciliadas sem apagar dados. Evidências auditadas de 21/08 a 26/08 foram preservadas.
+- PI 3172 / inserção `#2645`: vídeo do Drive publicado no grupo 6 e inserção marcada `publicado` com mídia MP4 canônica.
+- O publicador deixou de revalidar como pendente o estado que ele próprio acabou de vincular; IDs, campanha, portal, formato, período, mídia e CAS final continuam obrigatórios.
+- Retry de reconciliação falha reabre atomicamente o mesmo `jobId`; chamadas concorrentes permanecem deduplicadas pelo advisory lock.
+- Backfill único `d9be2980-9447-4a0d-b679-c189a60e7c7e` terminou `completed` para 24/08, 25/08 e 26/08.
+- As três evidências ficaram `audited`, com checklist aprovado, artefato acessível e validação visual do frame SANEAR no slot de vídeo.
+- Após refresh incremental por data, o relatório público contém as três evidências, `missingDates=[]`, e o harness `verify` confirmou HTML, miniatura, modal e download.
+- Rollback preservado pelos backups `adops-before-52325b4b21b8-20260827T065839Z.sql.gz` e `adops-before-01c8cd2ec7df-20260827T070927Z.sql.gz`.
+- Este fechamento substitui o gate antigo de espera de 72 horas por validação finita, conforme decisão humana registrada acima. A integração da branch continua separada porque `origin/main` diverge e o checkout principal contém mudanças alheias.

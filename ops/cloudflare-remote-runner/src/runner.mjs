@@ -7079,10 +7079,14 @@ async function executeCampaignPublicationReconcile(job) {
       percentTotal: 20 + Math.round((cod5_done / Math.max(1, cod5_plan.actions.length)) * 70),
     });
     if (cod5_action.type === "drive_pi_publish") {
+      const cod5_driveResult = await executeDrivePiIngest(cod5_action.event);
+      if (cod5_driveResult?.stage === "needs_review") {
+        throw new Error(`drive_pi_publish exige revisão: ${JSON.stringify(cod5_driveResult.reviewReasons ?? [])}`);
+      }
       cod5_results.push({
         type: cod5_action.type,
         insertionId: cod5_action.insertionId,
-        result: await executeDrivePiIngest(cod5_action.event),
+        result: cod5_driveResult,
       });
     } else if (cod5_action.type === "operational_media_publish") {
       cod5_results.push({

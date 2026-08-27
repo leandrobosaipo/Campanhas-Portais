@@ -222,6 +222,8 @@ await check("runner-expõe-candidatos-de-midia-no-preflight", async () => {
 
 await check("reconcile-valida-arquivo-por-atestado-do-preflight", async () => {
   const runner = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  assert(/cod5_driveResult\?\.stage === "needs_review"[\s\S]*throw new Error\(`drive_pi_publish exige revisão:/.test(runner),
+    "reconcile pai deve falhar quando o ingest filho exige revisão");
   const api = read(apiOpsRoutePath);
   assertIncludes(runner, [
     "sourcePreflightJobId",
