@@ -2170,6 +2170,7 @@ async function listOpsIncidents(env: Env, limit = 50) {
 }
 
 async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: string | null) {
+  const primary = env.adops_ops.withSession("first-primary");
   const placeholders = kinds?.length ? kinds.map(() => "?").join(",") : "";
   const dependencyReady = `AND (
     json_extract(ops_jobs.payload_json, '$.dependsOnJobId') IS NULL
@@ -2183,7 +2184,7 @@ async function claimNextOpsJob(env: Env, kinds: JobKind[] | null, runnerId: stri
   const candidate = kinds?.length
     ? `SELECT id FROM ops_jobs WHERE status = 'ready_for_runner' AND kind IN (${placeholders}) ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`
     : `SELECT id FROM ops_jobs WHERE status = 'ready_for_runner' ${dependencyReady} ${notBeforeReady} ORDER BY created_at ASC LIMIT 1`;
-  return env.adops_ops
+  return primary
     .prepare(`UPDATE ops_jobs SET status = 'running', runner_id = ?, error_text = NULL, updated_at = ? WHERE id = (${candidate}) AND status = 'ready_for_runner' RETURNING *`)
     .bind(runnerId, nowIso(), ...(kinds ?? []), nowIso())
     .first<OpsJobRecord>();
