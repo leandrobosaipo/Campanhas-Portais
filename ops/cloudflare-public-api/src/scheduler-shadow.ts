@@ -15,5 +15,7 @@ export function buildCloudflareSchedulerAction(provider: string | null | undefin
 }
 
 export function shouldProxyOpsToMacMini(provider: string | null | undefined, path: string) {
-  return provider?.trim() === "macmini" && (path === "/api/ops" || path.startsWith("/api/ops/"));
+  return provider?.trim() === "macmini"
+    && !path.startsWith("/api/ops/runner/")
+    && (path === "/api/ops" || path.startsWith("/api/ops/"));
 }
