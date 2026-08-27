@@ -548,20 +548,15 @@ async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: 
   };
 }
 
-function resolveEvidenceHealth(
-  evidence: Awaited<ReturnType<typeof resolveEvidence>>,
-  publicationHealth: PublicationHealth,
-): EvidenceHealth {
+export function classifyEvidenceHealth(evidence: Pick<Awaited<ReturnType<typeof resolveEvidence>>, "status" | "auditedDates" | "missingDates" | "invalidDates">): EvidenceHealth {
   return {
-    status: publicationHealth.status === "blocked_upstream"
-      ? "blocked_upstream"
-      : evidence.status === "approved"
-        ? "complete"
-        : evidence.status === "missing"
-          ? "missing"
-          : evidence.status === "invalid"
-            ? "invalid"
-            : "not_applicable",
+    status: evidence.status === "approved"
+      ? "complete"
+      : evidence.status === "missing"
+        ? "missing"
+        : evidence.status === "invalid"
+          ? "invalid"
+          : "not_applicable",
     auditedDates: evidence.auditedDates,
     missingDates: evidence.missingDates,
     invalidDates: evidence.invalidDates,
@@ -693,7 +688,7 @@ export async function getActiveCampaignOperations(options: {
       driveMediaAvailable: drive.mediaFiles.length > 0,
       duplicateInsertionIds,
     });
-    const evidenceHealth = resolveEvidenceHealth(evidence, publicationHealth);
+    const evidenceHealth = classifyEvidenceHealth(evidence);
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 

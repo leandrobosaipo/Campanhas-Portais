@@ -3,7 +3,7 @@ import test from "node:test";
 
 process.env.DATABASE_URL ||= "postgresql://localhost/adops_publication_health_test";
 
-const { classifyPublicationHealth } = await import("../../artifacts/api-server/src/lib/campaign-operations");
+const { classifyEvidenceHealth, classifyPublicationHealth } = await import("../../artifacts/api-server/src/lib/campaign-operations");
 
 test("evidencia antiga nao oculta midia atual ausente", () => {
   const result = classifyPublicationHealth({
@@ -32,4 +32,26 @@ test("video no Drive sem mediaUrl bloqueia antes do periodo", () => {
   });
   assert.equal(result.status, "prepublication_pending");
   assert.equal(result.reason, "drive_media_not_linked");
+});
+
+test("publicacao bloqueada nao invalida evidencia auditada", () => {
+  const publicationHealth = classifyPublicationHealth({
+    inPeriod: true,
+    mediaUrl: "https://cdn.example/vira-saude.gif",
+    bannerPublicadoNoSite: true,
+    expectedGroupId: 14,
+    expectedMediaObserved: false,
+    publicConfirmation: "reported_only",
+    duplicateInsertionIds: [],
+  });
+  const result = classifyEvidenceHealth({
+    status: "approved",
+    auditedDates: ["2026-08-21"],
+    missingDates: [],
+    invalidDates: [],
+  });
+
+  assert.equal(publicationHealth.status, "blocked_upstream");
+  assert.equal(result.status, "complete");
+  assert.deepEqual(result.auditedDates, ["2026-08-21"]);
 });
