@@ -175,6 +175,34 @@ def build_openapi_document() -> dict[str, Any]:
     source_hash = hashlib.sha256(route_fingerprint.encode("utf-8")).hexdigest()
     operation_count = sum(len(operations) for operations in paths.values())
 
+    def set_response_schema(path: str, method: str, schema_name: str) -> None:
+        operation = paths.get(path, {}).get(method)
+        if operation:
+            operation["responses"]["200"]["content"]["application/json"]["schema"] = {
+                "$ref": f"#/components/schemas/{schema_name}"
+            }
+
+    set_response_schema("/api/ops/schedules/reconcile", "post", "ScheduleReconcileResponse")
+    set_response_schema("/api/ops/queue/overview", "get", "QueueOverviewResponse")
+    set_response_schema("/api/ops/daily-print-status", "get", "DailyPrintStatusResponse")
+    set_response_schema("/api/ops/runner/heartbeat", "post", "RunnerHeartbeatResponse")
+
+    heartbeat_operation = paths.get("/api/ops/runner/heartbeat", {}).get("post")
+    if heartbeat_operation:
+        heartbeat_operation["requestBody"] = {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunnerHeartbeatRequest"}}},
+        }
+
+    for operation_path in (
+        "/api/ops/runner/jobs/{id}/progress",
+        "/api/ops/runner/jobs/{id}/complete",
+        "/api/ops/runner/jobs/{id}/fail",
+    ):
+        operation = paths.get(operation_path, {}).get("post")
+        if operation and operation.get("parameters"):
+            operation["parameters"][0]["schema"] = {"type": "string", "format": "uuid"}
+
     capture_status_path = paths.get("/api/insertions/{id}/capture-proof/status", {})
     if "get" in capture_status_path:
         capture_status_path["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {
@@ -441,6 +469,150 @@ def build_openapi_document() -> dict[str, Any]:
                 "OpsJobStatus": {
                     "type": "string",
                     "enum": ["queued", "ready_for_runner", "running", "completed", "failed"],
+                },
+                "OpsJob": {
+                    "type": "object",
+                    "required": ["jobId", "kind", "status"],
+                    "properties": {
+                        "id": {"type": "string", "format": "uuid"},
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "kind": {"type": "string"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "runnerId": {"type": ["string", "null"]},
+                        "claimedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "heartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                        "createdAt": {"type": ["string", "null"], "format": "date-time"},
+                        "updatedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "completedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "failedAt": {"type": ["string", "null"], "format": "date-time"},
+                        "attempt": {"type": ["integer", "null"], "minimum": 1},
+                        "maxAttempts": {"type": ["integer", "null"], "minimum": 1},
+                        "incidentLayer": {"type": ["string", "null"]},
+                        "errorCode": {"type": ["string", "null"]},
+                        "error": {"type": ["string", "null"]},
+                        "failedInsertionIds": {"type": ["array", "null"], "items": {"type": "integer", "minimum": 1}},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                        "durationMs": {"type": ["number", "null"], "minimum": 0},
+                        "queueWaitMs": {"type": ["number", "null"], "minimum": 0},
+                        "captureMs": {"type": ["number", "null"], "minimum": 0},
+                        "auditMs": {"type": ["number", "null"], "minimum": 0},
+                        "uploadMs": {"type": ["number", "null"], "minimum": 0},
+                        "reportMs": {"type": ["number", "null"], "minimum": 0},
+                        "payload": {"type": ["object", "null"], "additionalProperties": True},
+                        "result": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": True,
+                },
+                "CanonicalScheduleDecision": {
+                    "type": "object",
+                    "required": ["routineKind", "targetDate", "timezone", "scheduledFor", "dispatchWindow", "due"],
+                    "properties": {
+                        "routineKind": {"type": "string"},
+                        "jobKind": {"type": ["string", "null"]},
+                        "targetDate": {"type": "string", "format": "date"},
+                        "timezone": {"type": "string", "const": "America/Cuiaba"},
+                        "scheduledFor": {"type": "string", "format": "date-time"},
+                        "dispatchWindow": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$"},
+                        "due": {"type": "boolean"},
+                        "scheduleId": {"type": ["string", "null"]},
+                        "idempotencyKey": {"type": ["string", "null"]},
+                        "outcome": {"type": ["string", "null"], "enum": ["created", "duplicate", "not_due", "blocked", "failed", None]},
+                        "jobId": {"type": ["string", "null"], "format": "uuid"},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                    },
+                    "additionalProperties": True,
+                },
+                "ScheduleReconcileResponse": {
+                    "type": "object",
+                    "required": ["ok", "dryRun", "auditGateEvaluated", "timezone", "decisions"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "dryRun": {"type": "boolean"},
+                        "auditGateEvaluated": {"type": "boolean"},
+                        "timezone": {"type": "string", "const": "America/Cuiaba"},
+                        "decisions": {"type": "array", "items": {"$ref": "#/components/schemas/CanonicalScheduleDecision"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "QueueOverviewResponse": {
+                    "type": "object",
+                    "required": ["now", "queue", "totals", "runners", "scheduler"],
+                    "properties": {
+                        "now": {"anyOf": [{"$ref": "#/components/schemas/OpsJob"}, {"type": "null"}]},
+                        "queue": {"type": "array", "items": {"$ref": "#/components/schemas/OpsJob"}},
+                        "scheduled": {"type": "array", "items": {"$ref": "#/components/schemas/OpsJob"}},
+                        "totals": {"type": "object", "additionalProperties": {"type": ["integer", "null"], "minimum": 0}},
+                        "runners": {"type": "object", "properties": {
+                            "lastHeartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                            "hasRecentRunner": {"type": ["boolean", "null"]},
+                            "count": {"type": ["integer", "null"], "minimum": 0},
+                            "registeredCount": {"type": ["integer", "null"], "minimum": 0},
+                        }, "additionalProperties": True},
+                        "scheduler": {"type": "object", "properties": {
+                            "provider": {"type": "string", "enum": ["macmini", "cloudflare"]},
+                            "timezone": {"type": "string", "const": "America/Cuiaba"},
+                            "evaluatedAt": {"type": "string", "format": "date-time"},
+                            "nextDecision": {"anyOf": [{"$ref": "#/components/schemas/CanonicalScheduleDecision"}, {"type": "null"}]},
+                            "decisions": {"type": "array", "items": {"$ref": "#/components/schemas/CanonicalScheduleDecision"}},
+                        }, "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "DailyPrintAttempt": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "targetDate": {"type": "string", "format": "date"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "expected": {"type": ["integer", "null"], "minimum": 0},
+                        "approved": {"type": ["integer", "null"], "minimum": 0},
+                        "missing": {"type": ["integer", "null"], "minimum": 0},
+                        "invalid": {"type": ["integer", "null"], "minimum": 0},
+                        "errorCode": {"type": ["string", "null"]},
+                        "failedInsertionIds": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                        "nextRecoveryAt": {"type": ["string", "null"], "format": "date-time"},
+                    },
+                    "additionalProperties": True,
+                },
+                "DailyPrintStatusResponse": {
+                    "type": "object",
+                    "required": ["timeZone", "schedule", "requestedDate", "lastAttempt"],
+                    "properties": {
+                        "timeZone": {"type": "string", "const": "America/Cuiaba"},
+                        "schedule": {"type": "string", "const": "18:00"},
+                        "nextRunAt": {"type": ["string", "null"], "format": "date-time"},
+                        "requestedDate": {"type": "string", "format": "date"},
+                        "lastAttempt": {"$ref": "#/components/schemas/DailyPrintAttempt"},
+                        "lastFullyApproved": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "RunnerHeartbeatRequest": {
+                    "type": "object",
+                    "required": ["runnerId"],
+                    "properties": {
+                        "runnerId": {"type": "string", "minLength": 1, "maxLength": 120},
+                        "version": {"type": ["string", "null"]},
+                        "jobId": {"type": ["string", "null"], "format": "uuid"},
+                        "heartbeatAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastCycleAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastSuccessAt": {"type": ["string", "null"], "format": "date-time"},
+                        "lastError": {"type": ["string", "null"]},
+                        "capabilities": {"type": "object", "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
+                },
+                "RunnerHeartbeatResponse": {
+                    "type": "object",
+                    "required": ["ok", "runnerId", "receivedAt", "jobLease"],
+                    "properties": {
+                        "ok": {"type": "boolean"},
+                        "error": {"type": ["string", "null"], "enum": ["lease_lost", None]},
+                        "runnerId": {"type": "string"},
+                        "receivedAt": {"type": "string", "format": "date-time"},
+                        "jobLease": {"type": ["object", "null"], "additionalProperties": True},
+                    },
+                    "additionalProperties": False,
                 },
                 "PiSiteExportJobStatus": {
                     "type": "object",

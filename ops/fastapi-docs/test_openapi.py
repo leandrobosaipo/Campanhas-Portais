@@ -21,6 +21,14 @@ assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["req
 assert document["paths"]["/api/insertions/{id}/capture-proof/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofStatusResponse"
 assert "RetroContentProof" in document["components"]["schemas"]
 assert document["components"]["schemas"]["CaptureProofJobRequest"]["required"] == ["date", "candidate", "promote"]
+assert document["paths"]["/api/ops/schedules/reconcile"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ScheduleReconcileResponse"
+assert document["paths"]["/api/ops/queue/overview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/QueueOverviewResponse"
+assert document["paths"]["/api/ops/daily-print-status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/DailyPrintStatusResponse"
+assert document["paths"]["/api/ops/runner/heartbeat"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/RunnerHeartbeatRequest"
+assert document["paths"]["/api/ops/runner/jobs/{id}/progress"]["post"]["parameters"][0]["schema"]["format"] == "uuid"
+ops_job_properties = document["components"]["schemas"]["OpsJob"]["properties"]
+for required_property in ["heartbeatAt", "runnerId", "incidentLayer", "errorCode", "failedInsertionIds", "nextRecoveryAt", "queueWaitMs", "captureMs", "auditMs", "uploadMs", "reportMs"]:
+    assert required_property in ops_job_properties
 assert len(document["x-cod5-route-fingerprint-sha256"]) == 64
 
 redoc_html = redoc().body.decode("utf-8")
