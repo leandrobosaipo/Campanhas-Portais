@@ -39,6 +39,13 @@ pnpm --dir scripts run harness:retroactive-recovery -- \
   --output-dir=docs/harness-reports/retroactive-recovery/2645-verify
 ```
 
-`verify` confirma o status auditado e checklist aprovado para cada data e testa separadamente os consumidores `html`, `thumbnail`, `modal` e `download` na URL pública da evidência. Ele não cria jobs.
+`verify` confirma o status auditado e checklist aprovado para cada data e faz apenas validação HTTP, sem simular clique visual:
 
-Cada execução escreve apenas `results.json` e `summary.md` dentro de `docs/harness-reports/retroactive-recovery/`. Campos com nomes de segredo são removidos antes da gravação.
+- `html`: página pública do relatório;
+- `thumbnail`: URL pública da evidência;
+- `modal`: `data.json` do relatório, que precisa conter a inserção, data e URL da evidência;
+- `download`: `/api/insertions/:id/evidences/:date/download`.
+
+O browser continua sendo o gate operacional final para interação visual. O harness não cria jobs nesse modo.
+
+Cada execução escreve apenas `results.json` e `summary.md` dentro de `docs/harness-reports/retroactive-recovery/`. O diretório rejeita qualquer symlink existente entre essa raiz e o destino. Campos com nomes de segredo são removidos antes da gravação.

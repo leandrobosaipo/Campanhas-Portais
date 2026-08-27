@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
-import { parseHarnessArgs, runHarness } from "./harness-retroactive-recovery.mjs";
+import { fileURLToPath } from "node:url";
+import { parseHarnessArgs, runHarness, writeHarnessArtifacts } from "./harness-retroactive-recovery.mjs";
 
 function sequenceClock(values) {
   let index = 0;
@@ -20,9 +24,9 @@ function fakeApi(calls, scenario) {
       calls.push({ method: "POST", path });
       return { jobId: scenario.createJobId, status: "ready_for_runner" };
     },
-    async publicAsset(asset) {
-      calls.push({ kind: "public_asset", asset });
-      assert.ok(scenario.publicAssets.includes(asset));
+    async publicAsset(target) {
+      calls.push({ type: "public_asset", ...target });
+      assert.ok(scenario.publicAssets.includes(target.kind));
       return { ok: true };
     },
   };
@@ -57,10 +61,35 @@ test("timeout retorna job e ultimo progresso", async () => {
 
 test("verify consulta cada consumidor separadamente", async () => {
   const calls = [];
-  await runHarness({ mode: "verify", insertionId: 2645, fromDate: "2026-08-24", toDate: "2026-08-26", api: fakeApi(calls, { auditedDates: ["2026-08-24", "2026-08-25", "2026-08-26"], publicAssets: ["html", "thumbnail", "modal", "download"] }) });
-  assert.deepEqual(calls.filter((call) => call.kind === "public_asset").map((call) => call.asset), ["html", "thumbnail", "modal", "download"]);
+  await runHarness({ mode: "verify", insertionId: 2645, fromDate: "2026-08-24", toDate: "2026-08-26", reportUrl: "https://reports.example/adops/", deliveryApiBase: "https://api.example", api: fakeApi(calls, { auditedDates: ["2026-08-24", "2026-08-25", "2026-08-26"], publicAssets: ["html", "thumbnail", "modal", "download"] }) });
+  assert.deepEqual(calls.filter((call) => call.type === "public_asset").map((call) => [call.kind, call.url]), [
+    ["html", "https://reports.example/adops/"],
+    ["thumbnail", "https://cdn.example/evidence.png"],
+    ["modal", "https://reports.example/adops/data.json"],
+    ["download", "https://api.example/api/insertions/2645/evidences/2026-08-24/download"],
+  ]);
 });
 
 test("parser aceita o separador do pnpm", () => {
   assert.equal(parseHarnessArgs(["--", "--mode=check", "--output-dir=docs/harness-reports/retroactive-recovery/test"]).mode, "check");
+});
+
+test("rejeita data impossivel antes de consultar a API", async () => {
+  await assert.rejects(() => runHarness({ mode: "verify", insertionId: 2645, fromDate: "2026-02-30", toDate: "2026-03-01", api: fakeApi([], { publicAssets: [] }) }), /Datas devem ser/);
+});
+
+test("artefatos rejeitam symlink sem escrever fora da raiz", async () => {
+  const reportRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../docs/harness-reports/retroactive-recovery");
+  await fs.mkdir(reportRoot, { recursive: true });
+  const inside = await fs.mkdtemp(path.join(reportRoot, "test-symlink-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "adops-harness-outside-"));
+  const link = path.join(inside, "escape");
+  try {
+    await fs.symlink(outside, link);
+    await assert.rejects(() => writeHarnessArtifacts(path.join(link, "child"), { mode: "check", status: "checked" }), /symlink/i);
+    await assert.rejects(fs.access(path.join(outside, "results.json")));
+  } finally {
+    await fs.rm(inside, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
 });
