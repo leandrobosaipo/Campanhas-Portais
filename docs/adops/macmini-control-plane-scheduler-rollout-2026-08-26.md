@@ -63,6 +63,7 @@ O status histórico de `2026-08-25` informa `nextRecoveryAt=null`; ele não prom
 9. O resultado do gate é reutilizado por janela; a recuperação matinal reavalia a cada cinco minutos até 08h30 para detectar publicação tardia.
 10. A telemetria do `print-batch` passou a separar fila, captura, upload e auditoria sem converter tempos ausentes em zero (`18ece9a28ebbfb4c0afb00559b08f7b34936f3bd`).
 11. O corte revelou que `campaign-evidence-export` já estava no compose, runner e Worker, mas faltava no allowlist da API canônica. O release `02093aadb0eb672aecc97fa5e47f77fc571ba54e` alinhou tipo, allowlist, labels e timeout longo; o claim permaneceu fechado para tipos desconhecidos.
+12. O alerta das 18h45 consultou a auditoria genérica e reivindicou um falso incidente para `#1860` (`9` elegíveis), enquanto o lote canônico estava completo em `8/8`. O Worker do Telegram passou a consumir `/api/ops/daily-print-status`, já encaminhado ao Mac Mini pelo roteamento global quando provider=`macmini`; o fallback D1 continua disponível no rollback `cloudflare`.
 
 ## Lote natural das 18h
 
@@ -114,6 +115,17 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O timeout preserva o contrato anterior: `30` minutos enquanto aguarda e `120` minutos em execução.
 - Readback após o deploy: API, PostgreSQL e web saudáveis; runners principal e individual ativos. O runner individual passou a registrar `nenhum job pronto` para o pool de exportação, sem o erro de tipo inválido.
 - Revisão independente encontrou o drift de timeout antes do deploy; após a correção, não restou P0/P1.
+
+## Correção do universo do alerta Telegram
+
+- Commit: `28dc8cae342a21985ec9295f071e999e1b26d757`.
+- Worker: `adops-telegram-bot`, versão `247dc403-4b44-41e5-8ea4-8c846587e23f`.
+- O teste vermelho reproduziu a consulta indevida a `capture-proof/audit`; o contrato passou a exigir `daily-print-status` e `failedInsertionIds` canônicos.
+- Testes: scheduler `33/33`, contratos/observabilidade `16/16` e typecheck oficial do Telegram aprovados.
+- Revisão independente bloqueou um primeiro proxy redundante que quebraria o rollback; a versão publicada usa somente o roteamento global por provider.
+- Readback público após o deploy: `expected=8`, `approved=8`, `missing=0`, `invalid=0`, `status=completed`.
+- O cron natural das 20h15 reivindicou `resolved` com `pending_ids=[]`; o falso claim anterior `recovery_in_progress:[1860]` foi preservado como trilha de auditoria.
+- Health do bot confirmou username, webhook base e notificações configurados. A tabela comprova deduplicação/disparo; a confirmação visual no grupo do Telegram não é observável pela API do bot e permanece como limite explícito da evidência.
 
 ## Readback incremental do relatório público
 
