@@ -48,6 +48,25 @@ test("reconciliador cria preflight operacional para rascunho sem PI/PDF", () => 
   assert.deepEqual(plan.actions[0]?.payload.mediaProfile, { groupId: 2, width: 670, height: 90, formats: ["GIF"] });
 });
 
+test("Sanear video no Drive sem mediaUrl exige preflight e publicacao", () => {
+  const plan = planCampaignPublicationReconciliation([item({
+    siteSigla: "AFL",
+    piCodigo: "3172",
+    format: { normalized: "VIDEO" },
+    period: { start: "2026-08-24", end: "2026-08-26" },
+    drive: {
+      folderId: "sanear-folder",
+      mediaStatus: "candidate_found",
+      mediaFiles: [{ id: "sanear-mp4", name: "SANEAR ESTIAGEM_V03.mp4", mimeType: "video/mp4", kind: "video" }],
+    },
+    adops: { campaignId: 0, insertionId: 2645, mediaUrl: null, bannerPublicadoNoSite: false },
+    publicationHealth: { status: "prepublication_pending", reason: "drive_media_not_linked" },
+  })], "2026-08-23T12:00:00.000Z");
+  assert.equal(plan.actions[0]?.type, "drive_pi_publish");
+  assert.equal(plan.actions[0]?.insertionId, 2645);
+  assert.equal(plan.actions[0]?.generateEvidence, false);
+});
+
 test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", () => {
   const plan = planCampaignPublicationReconciliation([item({
     resolutionStatus: "ready_for_preflight",
@@ -71,7 +90,7 @@ test("reconciliador retoma a pasta exata quando PI/PDF já foram confirmadas", (
   assert.equal(plan.actions[0]?.event.expectedInsertionId, 1944);
   assert.equal(plan.actions[0]?.event.expectedPiCodigo, "17420");
   assert.equal(plan.actions[0]?.event.publish, true);
-  assert.equal(plan.actions[0]?.event.generateEvidence, true);
+  assert.equal(plan.actions[0]?.event.generateEvidence, false);
 });
 
 test("reconciliador publica mídia canônica já validada sem recriar campanha", () => {

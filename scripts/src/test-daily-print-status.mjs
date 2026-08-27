@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { selectDailyPrintCandidates } from "../../ops/shared/daily-print-candidates.mjs";
 import { buildDailyPrintStatus } from "../../ops/shared/daily-print-status.mjs";
+
+test("scheduler ignora insercao bloqueada upstream", () => {
+  const selected = selectDailyPrintCandidates([{
+    adops: { insertionId: 2645, mediaUrl: "https://cdn.example/sanear.mp4", bannerPublicadoNoSite: true },
+    publicationHealth: { status: "blocked_upstream" },
+    evidence: { requiredDates: ["2026-08-24"], missingDates: ["2026-08-24"] },
+  }], "2026-08-24");
+  assert.deepEqual(selected, []);
+});
 
 test("resume a última rotina usando somente a auditoria canônica do próprio lote", () => {
   const result = buildDailyPrintStatus({

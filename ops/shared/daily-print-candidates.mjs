@@ -12,6 +12,7 @@ export function selectDailyPrintCandidates(items, targetDate, options = {}) {
     : null;
   return (Array.isArray(items) ? items : []).filter((item) => {
     const insertionId = positiveInteger(item?.adops?.insertionId);
+    if (item?.publicationHealth?.status === "blocked_upstream") return false;
     if (pendingIds.size > 0 && !pendingIds.has(insertionId)) return false;
     if (competencia && String(item?.adops?.competencia || "").toUpperCase() !== competencia) return false;
     const publicConfirmed = item?.adops?.publicConfirmation === "confirmed";

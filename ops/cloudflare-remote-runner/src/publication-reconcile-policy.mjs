@@ -14,6 +14,15 @@ export function planCampaignPublicationReconciliation(items, checkedAt, options 
       continue;
     }
     if (cod5_status === "published") continue;
+    if (cod5_item?.publicationHealth?.reason === "drive_media_not_linked" && cod5_item?.drive?.folderId && cod5_insertionId) {
+      cod5_actions.push({
+        type: "drive_pi_publish",
+        insertionId: cod5_insertionId,
+        folderId: cod5_item.drive.folderId,
+        generateEvidence: false,
+      });
+      continue;
+    }
     if (cod5_status === "ready_for_publication" && ["operational_identity", "sheet_drive_composite"].includes(cod5_item?.identityMode)) {
       const cod5_campaignId = Number(cod5_item?.adops?.campaignId || 0);
       const cod5_source = cod5_item?.operationalIdentity?.source;
