@@ -298,6 +298,28 @@ export function buildCampaignExportIdempotencyKey({ piCodigo, siteSigla, compete
   return `monthly-evidence-v2-${crypto.createHash("sha256").update(canonical).digest("hex")}`;
 }
 
+export function shouldMaterializeOptionalMonthlyExports({ scheduled = false, skipRequested = false } = {}) {
+  return !scheduled && !skipRequested;
+}
+
+export function isScheduledMonthlyReportPayload(payload) {
+  const source = String(payload?.source || "");
+  return source === "cloudflare-cron-evidence-monthly-report"
+    || (source === "macmini-canonical-scheduler" && payload?.routineKind === "evidence-monthly-report");
+}
+
+export function isReusableAuditedEvidence(status) {
+  const checklist = status?.checklistValidation;
+  return status?.status === "audited"
+    && status?.hasValidUrl === true
+    && status?.isReachable === true
+    && checklist?.approved === true
+    && checklist?.preliminary !== true
+    && checklist?.evidenceStatus === "approved"
+    && Array.isArray(checklist?.blockingIssues)
+    && checklist.blockingIssues.length === 0;
+}
+
 export function isMonthlyReportPublishable(summary) {
   return Number(summary?.missing || 0) === 0 && Number(summary?.invalid || 0) === 0;
 }

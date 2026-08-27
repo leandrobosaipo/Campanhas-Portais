@@ -2,6 +2,49 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as contract from "./monthly-evidence-contract.mjs";
 
+test("relatorio agendado nao enfileira pacotes opcionais", () => {
+  assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: true, skipRequested: false }), false);
+  assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: false, skipRequested: false }), true);
+  assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: false, skipRequested: true }), false);
+});
+
+test("distingue payload agendado de requisicao manual", () => {
+  assert.equal(contract.isScheduledMonthlyReportPayload({
+    source: "macmini-canonical-scheduler",
+    routineKind: "evidence-monthly-report",
+  }), true);
+  assert.equal(contract.isScheduledMonthlyReportPayload({
+    source: "cloudflare-cron-evidence-monthly-report",
+  }), true);
+  assert.equal(contract.isScheduledMonthlyReportPayload({
+    source: "macmini-protected-api",
+    routineKind: "evidence-monthly-report",
+  }), false);
+  assert.equal(contract.isScheduledMonthlyReportPayload({
+    source: "macmini-canonical-scheduler",
+    routineKind: "daily-print",
+  }), false);
+});
+
+test("pacote reutiliza evidencia final auditada sem exigir reconstrucao", () => {
+  const approved = {
+    status: "audited",
+    hasValidUrl: true,
+    isReachable: true,
+    checklistValidation: {
+      approved: true,
+      preliminary: false,
+      evidenceStatus: "approved",
+      blockingIssues: [],
+    },
+  };
+
+  assert.equal(contract.isReusableAuditedEvidence(approved), true);
+  assert.equal(contract.isReusableAuditedEvidence({ ...approved, status: "invalid_audit" }), false);
+  assert.equal(contract.isReusableAuditedEvidence({ ...approved, checklistValidation: { ...approved.checklistValidation, approved: false } }), false);
+  assert.equal(contract.isReusableAuditedEvidence({ ...approved, hasValidUrl: false }), false);
+});
+
 test("seleciona somente insercoes canonicas retornadas por campaign-operations", () => {
   const active = [{ id: 1827 }, { id: 1831 }];
   const month = [{ id: 1826 }, { id: 1827 }, { id: 1831 }, { id: 1900 }];

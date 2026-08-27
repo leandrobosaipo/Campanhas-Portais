@@ -13,6 +13,7 @@ import { planCampaignPublicationReconciliation } from "./publication-reconcile-p
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
 import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
+import { isReusableAuditedEvidence, isScheduledMonthlyReportPayload } from "../../../scripts/src/monthly-evidence-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -6398,6 +6399,7 @@ async function executeEvidenceMonthlyReport(job) {
         ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
         ADOPS_REPORT_SKIP_PUBLISH: "0",
         ADOPS_REPORT_SKIP_EXPORTS: incremental ? "1" : "0",
+        ADOPS_REPORT_SCHEDULED: isScheduledMonthlyReportPayload(payload) ? "1" : "0",
         ADOPS_REPORT_REFRESH_MODE: incremental ? "incremental" : "full",
         ADOPS_REPORT_REFRESH_REVISION: refreshRevision ? String(refreshRevision) : "",
       },
@@ -7433,7 +7435,7 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
     : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
-async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride = null) {
+async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride = null, { allowRecovery = true } = {}) {
   const start = parseIsoDate(insertion.periodoInicio);
   const end = parseIsoDate(insertion.periodoFim);
   const today = parseIsoDate(new Intl.DateTimeFormat("en-CA", {
@@ -7460,6 +7462,17 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
     ? Array.from(new Set(requiredDatesOverride.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))))).sort()
     : eachIsoDay(start, effectiveEnd);
   const firstPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
+  if (!allowRecovery) {
+    const blocked = firstPassStatuses.filter((status) => !isReusableAuditedEvidence(status));
+    if (blocked.length) {
+      throw new Error(`A inserção #${insertion.id} tem ${blocked.length} evidência(s) sem checklist final aprovado; o pacote não regenera provas.`);
+    }
+    return {
+      invalidatedEvidenceIds: [],
+      regeneratedDates: [],
+      finalStatuses: firstPassStatuses,
+    };
+  }
   const hasInvalid = firstPassStatuses.some((item) => item?.status === "invalid_audit" || item?.status === "invalid_url");
   if (hasInvalid && !Array.isArray(requiredDatesOverride)) {
     const fixed = await privateApi(`/api/insertions/${insertion.id}/capture-proof/fix-invalid`, {});
@@ -7564,7 +7577,7 @@ async function executePiSiteExport(job) {
 
   await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
   for (const insertion of insertions) {
-    const capture = await ensureInsertionCaptureCoverage(insertion);
+    const capture = await ensureInsertionCaptureCoverage(insertion, null, { allowRecovery: false });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }

@@ -37,6 +37,7 @@ import {
   selectReportEvidenceDates,
   isJsonContentType,
   selectCanonicalInsertions,
+  shouldMaterializeOptionalMonthlyExports,
 } from "./monthly-evidence-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -76,6 +77,10 @@ const monthSlugNames = [
 ];
 const generatedAt = new Date();
 const refreshMode = process.env.ADOPS_REPORT_REFRESH_MODE === "incremental" ? "incremental" : "full";
+const materializeOptionalExports = shouldMaterializeOptionalMonthlyExports({
+  scheduled: process.env.ADOPS_REPORT_SCHEDULED === "1",
+  skipRequested: process.env.ADOPS_REPORT_SKIP_EXPORTS === "1",
+});
 const refreshRevision = Math.max(0, Number.parseInt(process.env.ADOPS_REPORT_REFRESH_REVISION || "0", 10) || 0);
 const targetDate = process.env.ADOPS_REPORT_DATE || formatIsoDateInZone(generatedAt, timeZone);
 const targetMonth = process.env.ADOPS_REPORT_MONTH || targetDate.slice(0, 7);
@@ -560,7 +565,7 @@ async function materializeCampaignExports(items) {
       results.set(group.key, preloaded[group.key]);
       return;
     }
-    if (process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") return;
+    if (!materializeOptionalExports) return;
     try {
       const idempotencyKey = buildCampaignExportIdempotencyKey({
         piCodigo: group.piCodigo,
@@ -610,7 +615,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   for (const group of groups.values()) {
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
     const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
-    if (!required || evidenceDays.length !== required || process.env.ADOPS_REPORT_SKIP_EXPORTS === "1") continue;
+    if (!required || evidenceDays.length !== required || !materializeOptionalExports) continue;
     readyGroups.push(group);
   }
   if (!readyGroups.length) return results;
