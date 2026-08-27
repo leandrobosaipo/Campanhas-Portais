@@ -5092,7 +5092,7 @@ async function executeAdrotateLinkJob(payload) {
   };
 }
 
-async function executeAdrotatePublishJob(payload) {
+async function executeAdrotatePublishJob(payload, { compositePendingGuardAlreadyValidated = false } = {}) {
   const insertionId = readPositiveInteger(payload?.insertionId);
   if (!insertionId) {
     throw new Error("adrotate-publish exige insertionId positivo.");
@@ -5130,7 +5130,7 @@ async function executeAdrotatePublishJob(payload) {
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? checklist.insertion?.siteSigla ?? null;
   if (payload?.publicationGuard) {
     validateAdrotatePublicationGuard(payload.publicationGuard, { insertion, campaign, site });
-    if (payload.publicationGuard.identityMode === "sheet_drive_composite") {
+    if (payload.publicationGuard.identityMode === "sheet_drive_composite" && !compositePendingGuardAlreadyValidated) {
       const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(targetDate)}`);
       const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
       validateCompositePendingGuard(liveItem, payload.publicationGuard);
@@ -6920,8 +6920,8 @@ async function executeOperationalMediaPublish(payload) {
       expectedUpdatedAt: patchedInsertion?.updatedAt,
     };
     const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: false, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
-    preview = await executeAdrotatePublishJob({ ...publishBase, apply: false });
-    published = await executeAdrotatePublishJob({ ...publishBase, apply: true });
+    preview = await executeAdrotatePublishJob({ ...publishBase, apply: false }, { compositePendingGuardAlreadyValidated: true });
+    published = await executeAdrotatePublishJob({ ...publishBase, apply: true }, { compositePendingGuardAlreadyValidated: true });
     let historicalSnapshotOk = false;
     if (String(latestInsertion.periodoFim || "") < todayInCuiaba() && published?.wpCliResult?.ad_id) {
       const afterSnapshot = await snapshotSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey });

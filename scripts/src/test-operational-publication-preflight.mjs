@@ -792,6 +792,8 @@ assert.match(runnerSource, /insertionAfterPublish = await privateApiPatch[\s\S]*
   "PATCH de publicação deve continuar o CAS iniciado pelo preflight");
 assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublish\?\.updatedAt \|\| patchedInsertion\?\.updatedAt/,
   "rollback deve usar a versão devolvida pelo PATCH final do publicador");
+assert.match(runnerSource, /executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: false \}, \{ compositePendingGuardAlreadyValidated: true \}\)[\s\S]*executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: true \}, \{ compositePendingGuardAlreadyValidated: true \}\)/,
+  "publicação operacional não pode revalidar como pendente o estado que ela própria acabou de vincular");
 const adrotateConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
 for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
