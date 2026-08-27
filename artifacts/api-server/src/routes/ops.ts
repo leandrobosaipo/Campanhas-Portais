@@ -910,7 +910,7 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
   return id;
 }
 
-async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string, activeOnly = false) {
+async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string, activeOnly = false, retryFailed = false) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -926,6 +926,17 @@ async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unk
       [kind, idempotencyKey, activeOnly],
     );
     if (existing.rows[0]) {
+      if (retryFailed && existing.rows[0].status === "failed") {
+        const retriedAt = nowIso();
+        await client.query(
+          `UPDATE ops_jobs
+              SET status = 'ready_for_runner', payload_json = $1, result_json = NULL, error_text = NULL, runner_id = NULL, updated_at = $2
+            WHERE id = $3 AND status = 'failed'`,
+          [JSON.stringify({ ...payload, idempotencyKey }), retriedAt, existing.rows[0].id],
+        );
+        await client.query("COMMIT");
+        return { jobId: existing.rows[0].id, status: "ready_for_runner" as const, duplicate: false, existingNotBefore: null };
+      }
       await client.query("COMMIT");
       return {
         jobId: existing.rows[0].id,
@@ -2407,7 +2418,7 @@ router.post("/ops/jobs/campaign-publication-reconcile", async (req, res): Promis
     insertionId,
     mode,
     source: "macmini-protected-api",
-  }, "ops-api", idempotencyKey);
+  }, "ops-api", idempotencyKey, false, true);
   res.status(created.duplicate ? 200 : 202).json({ ok: true, kind: "campaign-publication-reconcile", ...created });
 });
 
