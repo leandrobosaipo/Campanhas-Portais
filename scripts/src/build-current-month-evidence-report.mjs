@@ -528,12 +528,12 @@ async function mapLimit(values, limit, fn) {
   return results;
 }
 
-async function waitForCompactJob(jobId, label, timeoutMs) {
+async function waitForCompactJob(jobId, label, timeoutMs, statusPath) {
   const deadline = Date.now() + timeoutMs;
   const delays = [2_000, 4_000, 8_000, 15_000];
   let attempt = 0;
   for (;;) {
-    const progress = await api(`/api/ops/jobs/${encodeURIComponent(jobId)}/progress`);
+    const progress = await api(statusPath(jobId));
     if (progress.status === "completed") return progress;
     if (progress.status === "failed") throw new Error(`${label} falhou: ${progress.error || "erro sem detalhe"}.`);
     if (Date.now() >= deadline) throw new Error(`Timeout em ${label}.`);
@@ -597,7 +597,12 @@ async function materializeCampaignExports(items, asOfDate) {
         timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
       });
       if (created.status !== "completed") {
-        await waitForCompactJob(created.jobId, `pacote por portal ${group.piCodigo}/${group.siteSigla}`, MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS);
+        await waitForCompactJob(
+          created.jobId,
+          `pacote por portal ${group.piCodigo}/${group.siteSigla}`,
+          MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
+          (jobId) => `/api/pi-site-exports/jobs/${encodeURIComponent(jobId)}`,
+        );
       }
       results.set(group.key, buildPiSiteExportDownloadUrl(deliveryApiBase, created.jobId));
     } catch (error) {
@@ -659,7 +664,12 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
         throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
       }
       if (created.status !== "completed") {
-        await waitForCompactJob(created.jobId, `pacote completo ${group.piCodigo}`, MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS);
+        await waitForCompactJob(
+          created.jobId,
+          `pacote completo ${group.piCodigo}`,
+          MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
+          (jobId) => `/api/campaign-evidence-exports/jobs/${encodeURIComponent(jobId)}`,
+        );
       }
       results.set(group.key, buildCampaignEvidenceExportDownloadUrl(deliveryApiBase, created.jobId));
     } catch (error) {
@@ -1797,10 +1807,8 @@ async function main() {
   });
 
   const exportsStartedAtMs = Date.now();
-  const [exportLinks, completeExportLinks] = await Promise.all([
-    materializeCampaignExports(enriched, monthEndForEvidence),
-    materializeCompleteCampaignExports(enriched, monthEndForEvidence),
-  ]);
+  const exportLinks = await materializeCampaignExports(enriched, monthEndForEvidence);
+  const completeExportLinks = await materializeCompleteCampaignExports(enriched, monthEndForEvidence);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
   for (const item of enriched) {
     const canonicalPi = canonicalCommercialPi(item.piCodigo);

@@ -32,13 +32,16 @@ test("publicacao compara o relatorio anterior antes da troca atomica", () => {
 });
 
 test("relatorio aguarda os jobs de ZIP e bloqueia publicacao sem os dois escopos", () => {
-  assert.match(source, /waitForCompactJob\(created\.jobId, `pacote por portal/);
-  assert.match(source, /waitForCompactJob\(created\.jobId, `pacote completo/);
+  assert.match(source, /waitForCompactJob\(\s*created\.jobId,\s*`pacote por portal/);
+  assert.match(source, /waitForCompactJob\(\s*created\.jobId,\s*`pacote completo/);
   assert.match(source, /Relatório sem ZIP por portal/);
   assert.match(source, /Relatório sem ZIP completo/);
   assert.match(source, /requiredDatesByInsertion:/);
   assert.match(source, /readyGroups\.slice\(index, index \+ 3\)/);
   assert.match(source, /materializeCampaignExports\(enriched, monthEndForEvidence\)/);
+  assert.match(source, /\/api\/pi-site-exports\/jobs\/\$\{encodeURIComponent\(jobId\)\}/);
+  assert.match(source, /\/api\/campaign-evidence-exports\/jobs\/\$\{encodeURIComponent\(jobId\)\}/);
+  assert.doesNotMatch(source, /Promise\.all\(\[\s*materializeCampaignExports/);
 });
 
 const insertion = {
