@@ -204,6 +204,11 @@ test("release mantém API em modo monitor e documenta o job protegido", async ()
   const openapi = await readFile(new URL("../../lib/api-spec/openapi.yaml", import.meta.url), "utf8");
   assert.match(deploy, /\$\{DRIVE_INTEGRATION_MODE:-monitor\}/);
   assert.match(deploy, /portainer_start_container\(\)/);
+  const startBeforeSmoke = deploy.indexOf("for container_name in adops-postgres adops-api adops-web");
+  assert.ok(
+    startBeforeSmoke >= 0 && startBeforeSmoke < deploy.indexOf("stable_checks=0"),
+    "containers do stack devem iniciar antes do smoke público",
+  );
   assert.match(deploy, /--connect-timeout 10 --max-time 30/);
   assert.doesNotMatch(deploy, /portainer_curl -X POST "\$\{PORTAINER_API\}\/endpoints\/\$\{ENDPOINT_ID\}\/docker\/containers\/\$\{CONTAINER_ID\}\/start"/);
   assert.match(openapi, /\/ops\/jobs\/campaign-publication-reconcile:/);
