@@ -8,6 +8,4 @@
 
 export interface HealthStatus {
   status: string;
-  /** @nullable */
-  releaseSha?: string | null;
 }

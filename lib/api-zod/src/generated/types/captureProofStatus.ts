@@ -7,8 +7,6 @@
  */
 import type { AuditChecklistValidation } from "./auditChecklistValidation";
 import type { CaptureProofStatusAudit } from "./captureProofStatusAudit";
-import type { CaptureProofStatusPixelDateProof } from "./captureProofStatusPixelDateProof";
-import type { CaptureProofStatusReview } from "./captureProofStatusReview";
 import type { CaptureProofStatusStatus } from "./captureProofStatusStatus";
 import type { ReadinessAudit } from "./readinessAudit";
 
@@ -28,9 +26,5 @@ export interface CaptureProofStatus {
   /** @nullable */
   audit?: CaptureProofStatusAudit;
   checklistValidation: AuditChecklistValidation;
-  /** @nullable */
-  pixelDateProof?: CaptureProofStatusPixelDateProof;
-  /** @nullable */
-  review?: CaptureProofStatusReview;
   status: CaptureProofStatusStatus;
 }

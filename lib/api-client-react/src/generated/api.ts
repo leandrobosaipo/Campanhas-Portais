@@ -26,6 +26,7 @@ import type {
   CampaignPublicationReconcileJobAccepted,
   CaptureProofReconciliationRequest,
   CaptureProofReconciliationResponse,
+  CaptureProofReviewBody,
   CaptureProofStatus,
   Client,
   ClientBreakdown,
@@ -84,8 +85,13 @@ import type {
   ListOpsJobs200,
   ListOpsJobsParams,
   MediaConsistencyResult,
+  MediaSelectionBody,
   OpsJobAccepted,
   OpsRuntimeTopology,
+  PrintBackfillJobAccepted,
+  PrintBackfillRequest,
+  ReviewCaptureProof200,
+  SelectInsertionDriveMedia200,
   Site,
   SiteBreakdown,
   UpdateAgencyBody,
@@ -434,6 +440,93 @@ export const useCreateCampaignPublicationReconcileJob = <
   return useMutation(
     getCreateCampaignPublicationReconcileJobMutationOptions(options),
   );
+};
+
+/**
+ * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+ * @summary Create or retrieve an idempotent retroactive evidence backfill
+ */
+export const getCreatePrintBackfillJobUrl = () => {
+  return `/api/ops/jobs/print-backfill`;
+};
+
+export const createPrintBackfillJob = async (
+  printBackfillRequest: PrintBackfillRequest,
+  options?: RequestInit,
+): Promise<PrintBackfillJobAccepted> => {
+  return customFetch<PrintBackfillJobAccepted>(getCreatePrintBackfillJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(printBackfillRequest),
+  });
+};
+
+export const getCreatePrintBackfillJobMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPrintBackfillJob>>,
+    TError,
+    { data: BodyType<PrintBackfillRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPrintBackfillJob>>,
+  TError,
+  { data: BodyType<PrintBackfillRequest> },
+  TContext
+> => {
+  const mutationKey = ["createPrintBackfillJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPrintBackfillJob>>,
+    { data: BodyType<PrintBackfillRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPrintBackfillJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePrintBackfillJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPrintBackfillJob>>
+>;
+export type CreatePrintBackfillJobMutationBody = BodyType<PrintBackfillRequest>;
+export type CreatePrintBackfillJobMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Create or retrieve an idempotent retroactive evidence backfill
+ */
+export const useCreatePrintBackfillJob = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPrintBackfillJob>>,
+    TError,
+    { data: BodyType<PrintBackfillRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createPrintBackfillJob>>,
+  TError,
+  { data: BodyType<PrintBackfillRequest> },
+  TContext
+> => {
+  return useMutation(getCreatePrintBackfillJobMutationOptions(options));
 };
 
 /**
@@ -5122,3 +5215,181 @@ export function useGetDashboardCritical<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const getReviewCaptureProofUrl = (id: number) => {
+  return `/api/insertions/${id}/capture-proof/reviews`;
+};
+
+export const reviewCaptureProof = async (
+  id: number,
+  captureProofReviewBody: CaptureProofReviewBody,
+  options?: RequestInit,
+): Promise<ReviewCaptureProof200> => {
+  return customFetch<ReviewCaptureProof200>(getReviewCaptureProofUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(captureProofReviewBody),
+  });
+};
+
+export const getReviewCaptureProofMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    TError,
+    { id: number; data: BodyType<CaptureProofReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reviewCaptureProof>>,
+  TError,
+  { id: number; data: BodyType<CaptureProofReviewBody> },
+  TContext
+> => {
+  const mutationKey = ["reviewCaptureProof"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    { id: number; data: BodyType<CaptureProofReviewBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return reviewCaptureProof(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReviewCaptureProofMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reviewCaptureProof>>
+>;
+export type ReviewCaptureProofMutationBody = BodyType<CaptureProofReviewBody>;
+export type ReviewCaptureProofMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const useReviewCaptureProof = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reviewCaptureProof>>,
+    TError,
+    { id: number; data: BodyType<CaptureProofReviewBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reviewCaptureProof>>,
+  TError,
+  { id: number; data: BodyType<CaptureProofReviewBody> },
+  TContext
+> => {
+  return useMutation(getReviewCaptureProofMutationOptions(options));
+};
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const getSelectInsertionDriveMediaUrl = (id: number) => {
+  return `/api/insertions/${id}/media-selection`;
+};
+
+export const selectInsertionDriveMedia = async (
+  id: number,
+  mediaSelectionBody: MediaSelectionBody,
+  options?: RequestInit,
+): Promise<SelectInsertionDriveMedia200> => {
+  return customFetch<SelectInsertionDriveMedia200>(
+    getSelectInsertionDriveMediaUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(mediaSelectionBody),
+    },
+  );
+};
+
+export const getSelectInsertionDriveMediaMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    TError,
+    { id: number; data: BodyType<MediaSelectionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+  TError,
+  { id: number; data: BodyType<MediaSelectionBody> },
+  TContext
+> => {
+  const mutationKey = ["selectInsertionDriveMedia"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    { id: number; data: BodyType<MediaSelectionBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return selectInsertionDriveMedia(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SelectInsertionDriveMediaMutationResult = NonNullable<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>
+>;
+export type SelectInsertionDriveMediaMutationBody =
+  BodyType<MediaSelectionBody>;
+export type SelectInsertionDriveMediaMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const useSelectInsertionDriveMedia = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+    TError,
+    { id: number; data: BodyType<MediaSelectionBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof selectInsertionDriveMedia>>,
+  TError,
+  { id: number; data: BodyType<MediaSelectionBody> },
+  TContext
+> => {
+  return useMutation(getSelectInsertionDriveMediaMutationOptions(options));
+};

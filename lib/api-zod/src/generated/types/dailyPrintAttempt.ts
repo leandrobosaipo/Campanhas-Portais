@@ -24,4 +24,9 @@ export interface DailyPrintAttempt {
   /** @minimum 0 */
   invalid: number;
   summary: string;
+  /** @nullable */
+  errorCode?: string | null;
+  failedInsertionIds?: number[];
+  /** @nullable */
+  nextRecoveryAt?: Date | null;
 }

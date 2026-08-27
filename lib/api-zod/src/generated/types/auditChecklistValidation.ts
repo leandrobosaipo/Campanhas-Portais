@@ -12,8 +12,13 @@ import type { AuditChecklistValidationEvidenceStatus } from "./auditChecklistVal
 import type { AuditChecklistValidationIssuesItem } from "./auditChecklistValidationIssuesItem";
 import type { AuditChecklistValidationWarningsItem } from "./auditChecklistValidationWarningsItem";
 
+/**
+ * A blocked response always contains at least one structured blockingIssues entry.
+ */
 export interface AuditChecklistValidation {
+  /** Preliminary approval in pre_upload; terminal approval only in final. */
   approved: boolean;
+  preliminary: boolean;
   version: string;
   insertionId: number;
   date: Date;

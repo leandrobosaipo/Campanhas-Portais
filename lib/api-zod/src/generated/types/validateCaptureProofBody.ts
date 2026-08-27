@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ValidateCaptureProofBodyMetadata } from "./validateCaptureProofBodyMetadata";
+import type { ValidateCaptureProofBodyPhase } from "./validateCaptureProofBodyPhase";
 
 export interface ValidateCaptureProofBody {
   insertionId: number;
   date: Date;
   metadata?: ValidateCaptureProofBodyMetadata;
+  phase?: ValidateCaptureProofBodyPhase;
 }

@@ -5,6 +5,240 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+export type CaptureProofReviewBodyDecision =
+  (typeof CaptureProofReviewBodyDecision)[keyof typeof CaptureProofReviewBodyDecision];
+
+export const CaptureProofReviewBodyDecision = {
+  approved: "approved",
+  rejected: "rejected",
+} as const;
+
+export interface CaptureProofReviewBody {
+  date: string;
+  decision: CaptureProofReviewBodyDecision;
+  /**
+   * @maxLength 2000
+   * @nullable
+   */
+  note?: string | null;
+  /** @pattern ^[a-f0-9]{64}$ */
+  expectedArtifactSha256: string;
+  /** @minLength 3 */
+  reviewedBy: string;
+}
+
+export interface MediaSelectionBody {
+  driveFileId: string;
+  /** @nullable */
+  canonicalUrl?: string | null;
+  /**
+   * @nullable
+   * @pattern ^[a-fA-F0-9]{64}$
+   */
+  sha256?: string | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  bytes?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  width?: number | null;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  height?: number | null;
+  /** @minLength 8 */
+  reason: string;
+  /** @minLength 3 */
+  selectedBy: string;
+}
+
+export type PiSiteExportJobBodyMode =
+  (typeof PiSiteExportJobBodyMode)[keyof typeof PiSiteExportJobBodyMode];
+
+export const PiSiteExportJobBodyMode = {
+  delivery: "delivery",
+  full: "full",
+  "prints-only": "prints-only",
+  pdf: "pdf",
+  "full-pdf": "full-pdf",
+} as const;
+
+export type PiSiteExportJobBodyVariant =
+  (typeof PiSiteExportJobBodyVariant)[keyof typeof PiSiteExportJobBodyVariant];
+
+export const PiSiteExportJobBodyVariant = {
+  original: "original",
+  web: "web",
+} as const;
+
+export type PiSiteExportJobBodyDeliveryReason =
+  (typeof PiSiteExportJobBodyDeliveryReason)[keyof typeof PiSiteExportJobBodyDeliveryReason];
+
+export const PiSiteExportJobBodyDeliveryReason = {
+  standard: "standard",
+  retroactive: "retroactive",
+  correction: "correction",
+  rejected_rework: "rejected_rework",
+} as const;
+
+export interface PiSiteExportJobBody {
+  piCodigo: string;
+  siteSigla: string;
+  mode?: PiSiteExportJobBodyMode;
+  variant?: PiSiteExportJobBodyVariant;
+  splitZipByPosition?: boolean;
+  positions?: string[];
+  deliveryReason?: PiSiteExportJobBodyDeliveryReason;
+  sendTelegram?: boolean;
+  /** @nullable */
+  chatId?: string | null;
+  /** @nullable */
+  requestedBy?: string | null;
+  /** @nullable */
+  source?: string | null;
+}
+
+export type PublicationHealthStatus =
+  (typeof PublicationHealthStatus)[keyof typeof PublicationHealthStatus];
+
+export const PublicationHealthStatus = {
+  ok: "ok",
+  prepublication_pending: "prepublication_pending",
+  blocked_upstream: "blocked_upstream",
+} as const;
+
+export type PublicationHealthReason =
+  (typeof PublicationHealthReason)[keyof typeof PublicationHealthReason];
+
+export const PublicationHealthReason = {
+  confirmed: "confirmed",
+  drive_media_not_linked: "drive_media_not_linked",
+  media_missing: "media_missing",
+  adrotate_relation_missing: "adrotate_relation_missing",
+  expected_media_not_observed: "expected_media_not_observed",
+  public_html_not_confirmed: "public_html_not_confirmed",
+  duplicate_identity: "duplicate_identity",
+} as const;
+
+export type PublicationHealthRequiredAction =
+  (typeof PublicationHealthRequiredAction)[keyof typeof PublicationHealthRequiredAction];
+
+export const PublicationHealthRequiredAction = {
+  none: "none",
+  resolve_media: "resolve_media",
+  reconcile_duplicate: "reconcile_duplicate",
+  publish_adrotate: "publish_adrotate",
+  verify_publication: "verify_publication",
+} as const;
+
+export interface PublicationHealth {
+  status: PublicationHealthStatus;
+  reason: PublicationHealthReason;
+  requiredAction: PublicationHealthRequiredAction;
+  /**
+   * @minimum 1
+   * @nullable
+   */
+  expectedGroupId: number | null;
+  expectedMediaObserved: boolean;
+  duplicateInsertionIds: number[];
+}
+
+export type EvidenceHealthStatus =
+  (typeof EvidenceHealthStatus)[keyof typeof EvidenceHealthStatus];
+
+export const EvidenceHealthStatus = {
+  complete: "complete",
+  missing: "missing",
+  invalid: "invalid",
+  blocked_upstream: "blocked_upstream",
+  not_applicable: "not_applicable",
+} as const;
+
+export interface EvidenceHealth {
+  status: EvidenceHealthStatus;
+  auditedDates: string[];
+  missingDates: string[];
+  invalidDates: string[];
+}
+
+export type RetroactiveBackfillItemStatus =
+  (typeof RetroactiveBackfillItemStatus)[keyof typeof RetroactiveBackfillItemStatus];
+
+export const RetroactiveBackfillItemStatus = {
+  audited: "audited",
+  failed: "failed",
+  skipped_existing: "skipped_existing",
+  blocked_reconstruction: "blocked_reconstruction",
+  blocked_upstream: "blocked_upstream",
+} as const;
+
+export interface RetroactiveBackfillItem {
+  /** @minimum 1 */
+  insertionId: number;
+  date: string;
+  status: RetroactiveBackfillItemStatus;
+  /**
+   * @minimum 0
+   * @maximum 3
+   */
+  attempts: number;
+  /** @nullable */
+  evidenceUrl: string | null;
+  /** @nullable */
+  errorCode: string | null;
+  /** @nullable */
+  error: string | null;
+  /** @nullable */
+  checklistStatus: string | null;
+}
+
+export type PrintBackfillRequest = unknown & {
+  /** @minimum 1 */
+  insertionId?: number;
+  /** @minimum 1 */
+  campaignId?: number;
+  /** @minimum 1 */
+  siteId?: number;
+  /** @minLength 1 */
+  competencia?: string;
+  /** @minLength 1 */
+  piCodigo?: string;
+  /** @minLength 1 */
+  siteSigla?: string;
+  fromDate?: string;
+  toDate?: string;
+  replace?: boolean;
+  force?: boolean;
+};
+
+export type PrintBackfillJobAcceptedStatus =
+  (typeof PrintBackfillJobAcceptedStatus)[keyof typeof PrintBackfillJobAcceptedStatus];
+
+export const PrintBackfillJobAcceptedStatus = {
+  queued: "queued",
+  ready_for_runner: "ready_for_runner",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface PrintBackfillJobAccepted {
+  ok: true;
+  kind: "print-backfill";
+  jobId: string;
+  status: PrintBackfillJobAcceptedStatus;
+  duplicate: boolean;
+  /** @nullable */
+  existingNotBefore?: string | null;
+  [key: string]: unknown;
+}
+
 export type CaptureProofReconciliationRequestMode =
   (typeof CaptureProofReconciliationRequestMode)[keyof typeof CaptureProofReconciliationRequestMode];
 
@@ -130,6 +364,11 @@ export interface DailyPrintAttempt {
   /** @minimum 0 */
   invalid: number;
   summary: string;
+  /** @nullable */
+  errorCode?: string | null;
+  failedInsertionIds?: number[];
+  /** @nullable */
+  nextRecoveryAt?: string | null;
 }
 
 export type DailyPrintStatusLastFullyApproved = {
@@ -265,8 +504,6 @@ export interface MediaConsistencyResult {
 
 export interface HealthStatus {
   status: string;
-  /** @nullable */
-  releaseSha?: string | null;
 }
 
 export interface ErrorResponse {
@@ -1079,18 +1316,6 @@ export interface ReadinessAudit {
  */
 export type CaptureProofStatusAudit = { [key: string]: unknown } | null;
 
-/**
- * @nullable
- */
-export type CaptureProofStatusPixelDateProof = {
-  [key: string]: unknown;
-} | null;
-
-/**
- * @nullable
- */
-export type CaptureProofStatusReview = { [key: string]: unknown } | null;
-
 export type CaptureProofStatusStatus =
   (typeof CaptureProofStatusStatus)[keyof typeof CaptureProofStatusStatus];
 
@@ -1125,8 +1350,13 @@ export type AuditChecklistValidationBlockingIssuesItem = {
 
 export type AuditChecklistValidationWarningsItem = { [key: string]: unknown };
 
+/**
+ * A blocked response always contains at least one structured blockingIssues entry.
+ */
 export interface AuditChecklistValidation {
+  /** Preliminary approval in pre_upload; terminal approval only in final. */
   approved: boolean;
+  preliminary: boolean;
   version: string;
   insertionId: number;
   date: string;
@@ -1156,117 +1386,24 @@ export interface CaptureProofStatus {
   /** @nullable */
   audit?: CaptureProofStatusAudit;
   checklistValidation: AuditChecklistValidation;
-  /** @nullable */
-  pixelDateProof?: CaptureProofStatusPixelDateProof;
-  /** @nullable */
-  review?: CaptureProofStatusReview;
   status: CaptureProofStatusStatus;
 }
 
-export type CaptureProofReviewBodyDecision =
-  (typeof CaptureProofReviewBodyDecision)[keyof typeof CaptureProofReviewBodyDecision];
-
-export const CaptureProofReviewBodyDecision = {
-  approved: "approved",
-  rejected: "rejected",
-} as const;
-
-export interface CaptureProofReviewBody {
-  date: string;
-  decision: CaptureProofReviewBodyDecision;
-  /**
-   * @maxLength 2000
-   * @nullable
-   */
-  note?: string | null;
-  /** @pattern ^[a-f0-9]{64}$ */
-  expectedArtifactSha256: string;
-  /** @minLength 3 */
-  reviewedBy: string;
-}
-
-export interface MediaSelectionBody {
-  driveFileId: string;
-  /** @nullable */
-  canonicalUrl?: string | null;
-  /**
-   * @nullable
-   * @pattern ^[a-fA-F0-9]{64}$
-   */
-  sha256?: string | null;
-  /**
-   * @minimum 1
-   * @nullable
-   */
-  bytes?: number | null;
-  /**
-   * @minimum 1
-   * @nullable
-   */
-  width?: number | null;
-  /**
-   * @minimum 1
-   * @nullable
-   */
-  height?: number | null;
-  /** @minLength 8 */
-  reason: string;
-  /** @minLength 3 */
-  selectedBy: string;
-}
-
-export type PiSiteExportJobBodyMode =
-  (typeof PiSiteExportJobBodyMode)[keyof typeof PiSiteExportJobBodyMode];
-
-export const PiSiteExportJobBodyMode = {
-  delivery: "delivery",
-  full: "full",
-  "prints-only": "prints-only",
-  pdf: "pdf",
-  "full-pdf": "full-pdf",
-} as const;
-
-export type PiSiteExportJobBodyVariant =
-  (typeof PiSiteExportJobBodyVariant)[keyof typeof PiSiteExportJobBodyVariant];
-
-export const PiSiteExportJobBodyVariant = {
-  original: "original",
-  web: "web",
-} as const;
-
-export type PiSiteExportJobBodyDeliveryReason =
-  (typeof PiSiteExportJobBodyDeliveryReason)[keyof typeof PiSiteExportJobBodyDeliveryReason];
-
-export const PiSiteExportJobBodyDeliveryReason = {
-  standard: "standard",
-  retroactive: "retroactive",
-  correction: "correction",
-  rejected_rework: "rejected_rework",
-} as const;
-
-export interface PiSiteExportJobBody {
-  piCodigo: string;
-  siteSigla: string;
-  mode?: PiSiteExportJobBodyMode;
-  variant?: PiSiteExportJobBodyVariant;
-  splitZipByPosition?: boolean;
-  positions?: string[];
-  deliveryReason?: PiSiteExportJobBodyDeliveryReason;
-  sendTelegram?: boolean;
-  /** @nullable */
-  chatId?: string | null;
-  /** @nullable */
-  requestedBy?: string | null;
-  /** @nullable */
-  source?: string | null;
-}
-
 export type ValidateCaptureProofBodyMetadata = { [key: string]: unknown };
+
+export type ValidateCaptureProofBodyPhase =
+  (typeof ValidateCaptureProofBodyPhase)[keyof typeof ValidateCaptureProofBodyPhase];
+
+export const ValidateCaptureProofBodyPhase = {
+  pre_upload: "pre_upload",
+  final: "final",
+} as const;
 
 export interface ValidateCaptureProofBody {
   insertionId: number;
   date: string;
   metadata?: ValidateCaptureProofBodyMetadata;
+  phase?: ValidateCaptureProofBodyPhase;
 }
 
 export interface DashboardSummary {
@@ -1552,14 +1689,6 @@ export type GetCaptureProofStatusParams = {
   date: string;
 };
 
-export type ReviewCaptureProof200 = { [key: string]: unknown };
-
-export type SelectInsertionDriveMedia200 = { [key: string]: unknown };
-
-export type CreatePiSiteExportJob202 = { [key: string]: unknown };
-
-export type GetPiSiteExportJob200 = { [key: string]: unknown };
-
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;
   variant?: ExportInsertionEvidencesVariant;
@@ -1768,3 +1897,7 @@ export type GetDashboardCriticalParams = {
    */
   competencia?: string | null;
 };
+
+export type ReviewCaptureProof200 = { [key: string]: unknown };
+
+export type SelectInsertionDriveMedia200 = { [key: string]: unknown };

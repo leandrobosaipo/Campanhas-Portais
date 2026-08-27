@@ -78,5 +78,9 @@
     "playwright": "1.59.1",
     "tsx": "catalog:",
     "xlsx": "^0.18.5"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "6.0.1"
   }
 }

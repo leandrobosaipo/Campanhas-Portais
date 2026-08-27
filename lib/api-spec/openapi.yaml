@@ -1644,8 +1644,110 @@ paths:
                 items:
                   $ref: "#/components/schemas/InsertionWithRelations"
 
+  /insertions/{id}/capture-proof/reviews:
+    post:
+      operationId: reviewCaptureProof
+      tags: [operations, insertions]
+      summary: Approve or reject the exact final proof artifact
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CaptureProofReviewBody" }
+      responses:
+        "200":
+          description: Review persisted and matching jobs resumed when complete
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "409":
+          description: Artifact hash changed or pixel audit is not approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /insertions/{id}/media-selection:
+    post:
+      operationId: selectInsertionDriveMedia
+      tags: [operations, insertions]
+      summary: Persist an audited Drive media selection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MediaSelectionBody" }
+      responses:
+        "200":
+          description: Media selection persisted
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
 components:
   schemas:
+    CaptureProofReviewBody:
+      type: object
+      additionalProperties: false
+      properties:
+        date: { type: string, format: date }
+        decision: { type: string, enum: [approved, rejected] }
+        note: { type: [string, "null"], maxLength: 2000 }
+        expectedArtifactSha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        reviewedBy: { type: string, minLength: 3 }
+      required: [date, decision, expectedArtifactSha256, reviewedBy]
+
+    MediaSelectionBody:
+      type: object
+      additionalProperties: false
+      properties:
+        driveFileId: { type: string }
+        canonicalUrl: { type: [string, "null"], format: uri }
+        sha256: { type: [string, "null"], pattern: "^[a-fA-F0-9]{64}$" }
+        bytes: { type: [integer, "null"], minimum: 1 }
+        width: { type: [integer, "null"], minimum: 1 }
+        height: { type: [integer, "null"], minimum: 1 }
+        reason: { type: string, minLength: 8 }
+        selectedBy: { type: string, minLength: 3 }
+      required: [driveFileId, reason, selectedBy]
+
+    PiSiteExportJobBody:
+      type: object
+      additionalProperties: false
+      properties:
+        piCodigo: { type: string }
+        siteSigla: { type: string }
+        mode:
+          type: string
+          enum: [delivery, full, prints-only, pdf, full-pdf]
+          default: delivery
+        variant:
+          type: string
+          enum: [original, web]
+          default: web
+        splitZipByPosition: { type: boolean, enum: [true], default: true }
+        positions:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        deliveryReason:
+          type: string
+          enum: [standard, retroactive, correction, rejected_rework]
+          default: standard
+        sendTelegram: { type: boolean, default: true }
+        chatId: { type: [string, "null"] }
+        requestedBy: { type: [string, "null"] }
+        source: { type: [string, "null"] }
+      required: [piCodigo, siteSigla]
     PublicationHealth:
       type: object
       additionalProperties: false

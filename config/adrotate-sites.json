@@ -8,6 +8,7 @@
     "articleFallbackUrl": "https://perrenguematogrosso.com/festa-celebracao-307-anos-cuiaba-parque-das-aguas-video/",
     "browserTitle": "Perrengue Mato Grosso",
     "hostLabel": "perrenguematogrosso.com",
+    "drivePathAliases": ["/PERRENGUE"],
     "originIp": "186.209.113.107",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-perr-2026-c5",
@@ -384,6 +385,7 @@
     "articleFallbackUrl": "https://omatogrossense.com/motociclista-e-ferido-por-linha-de-pipa-e-acaba-hospitalizado-em-cuiaba-veja-video/",
     "browserTitle": "O Matogrossense",
     "hostLabel": "omatogrossense.com",
+    "drivePathAliases": ["/O MATOGROSSENSE", "/OMT"],
     "originIp": "66.253.112.200",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-omt-2026-c5",
@@ -556,6 +558,7 @@
     "articleFallbackUrl": "https://afolhalivre.com/horoscopo/",
     "browserTitle": "A Folha Livre",
     "hostLabel": "afolhalivre.com",
+    "drivePathAliases": ["/AFL"],
     "originIp": "66.253.112.200",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-afl-2026-c5",
@@ -587,6 +590,8 @@
       ]
     },
     "auditConfig": {
+      "requireAbsoluteEditorialDates": true,
+      "requireVisiblePageDate": true,
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 2000,
       "viewportTrimBottomPx": 0,
@@ -746,6 +751,7 @@
     "articleFallbackUrl": "https://portalnortemt.com/ex-jogadores-do-manchester-united-criticam-postura-da-argentina-na-final-da-copa/",
     "browserTitle": "Portal Norte MT",
     "hostLabel": "portalnortemt.com",
+    "drivePathAliases": ["/PNMT"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-pnmt-2026-c5",
     "pageDateSelectors": [
@@ -888,6 +894,7 @@
     "articleFallbackUrl": "https://portalpantanalmt.com/prefeitura-compra-cacau-por-r-77-a-embalagem-de-500-g-preco-supera-valor-cobrado-pela-propria-fabricante/",
     "browserTitle": "Portal Pantanal MT",
     "hostLabel": "portalpantanalmt.com",
+    "drivePathAliases": ["/PMMT", "/PPMT"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-ppmt-2026-c5",
     "pageDateSelectors": [
@@ -1051,6 +1058,7 @@
     "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
     "browserTitle": "Roo Notícias",
     "hostLabel": "roonoticias.com",
+    "drivePathAliases": ["/ROO NOTICIAS", "/ROO"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-roo-2026-c5",
     "pageDateSelectors": [

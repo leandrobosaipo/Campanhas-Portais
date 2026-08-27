@@ -2048,6 +2048,7 @@ const DEFAULT_PAGE_DATE_SELECTORS = [
   ".header-datestamp-short",
   "time[data-omt-live-datestamp='1']",
   "time.js-topbar-datetime",
+  ".cod5-adops-frozen-datestamp",
   "[data-omt-localtime]",
   "[data-omt-localtime-el]",
   "[data-omt-localtime-full]",
@@ -2069,6 +2070,7 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
   const mergedSelectors = mergePageDateSelectors(selectors);
   return await page.evaluate(({ selectors, labels: frozen, siteDomain: rawSiteDomain }) => {
     const siteDomain = String(rawSiteDomain || "");
+    const isAfl = siteDomain.includes("afolhalivre.com");
     const shortLabel = siteDomain.includes("perrenguematogrosso.com")
       ? frozen.perrengueShort
       : siteDomain.includes("omatogrossense.com")
@@ -2083,6 +2085,21 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
             el.setAttribute("data-preview-active", "1");
           }
           el.setAttribute("data-omt-preview-at", frozen.iso);
+          if (isAfl && el.matches("time.js-topbar-datetime")) {
+            el.setAttribute("data-adops-frozen-visible-label", frozen.full);
+            el.style.setProperty("display", "none", "important");
+            let frozenLabel = el.parentElement?.querySelector(":scope > .cod5-adops-frozen-datestamp");
+            if (!frozenLabel && el.parentElement) {
+              frozenLabel = document.createElement("span");
+              frozenLabel.className = "cod5-adops-frozen-datestamp";
+              el.insertAdjacentElement("afterend", frozenLabel);
+            }
+            if (frozenLabel) {
+              frozenLabel.textContent = frozen.full;
+              frozenLabel.setAttribute("data-omt-preview-at", frozen.iso);
+              frozenLabel.setAttribute("data-adops-frozen-visible-label", frozen.full);
+            }
+          }
           const attrText = `${el.className || ""} ${Array.from(el.attributes || []).map((attr) => `${attr.name}=${attr.value || ""}`).join(" ")}`;
           if (/short/i.test(attrText)) {
             el.textContent = shortLabel;
@@ -2100,14 +2117,17 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
 }
 
 async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt) {
-  if (!captureAt || !String(mapping?.domain || "").includes("omatogrossense.com")) {
+  const requireVisiblePageDate =
+    String(mapping?.domain || "").includes("omatogrossense.com") ||
+    mapping?.auditConfig?.requireVisiblePageDate === true;
+  if (!captureAt || !requireVisiblePageDate) {
     return { ok: true, skipped: true };
   }
   const [targetDate] = String(captureAt).split("T");
   const [year, month, day] = targetDate.split("-");
   const expectedDate = `${day}/${month}/${year}`;
   const labels = buildFrozenPageDateLabels(captureAt);
-  const expectedTexts = [expectedDate, labels?.full, labels?.omtShort].filter(Boolean);
+  const expectedTexts = [expectedDate, labels?.full, labels?.short, labels?.omtShort].filter(Boolean);
   const selectors = mergePageDateSelectors(mapping.pageDateSelectors);
   const audit = await page.evaluate(({ selectors: rawSelectors, expectedDate: rawExpectedDate, expectedTexts: rawExpectedTexts }) => {
     const isVisible = (el) => {
@@ -2127,16 +2147,62 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       }
     }
     return {
-      ok: values.some((item) => item.ok),
+      ok: values.length > 0 && values.every((item) => item.ok),
       expectedDate: rawExpectedDate,
       expectedTexts: rawExpectedTexts,
       values: values.slice(0, 20),
     };
   }, { selectors, expectedDate, expectedTexts });
   if (!audit.ok) {
-    throw new Error(`capture_audit_failed: omt_visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
+    throw new Error(`capture_audit_failed: visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
   }
   return audit;
+}
+
+async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt) {
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  await page.waitForTimeout(180);
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  return assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt);
+}
+
+async function stampFrozenPageDateIntoViewport(page, mapping, captureAt, viewportPng) {
+  if (!String(mapping?.domain || "").includes("afolhalivre.com")) return { applied: false, reason: "not_afl" };
+  const labels = buildFrozenPageDateLabels(captureAt);
+  if (!labels?.full) throw new Error("capture_audit_failed: afl_frozen_datestamp_label_missing");
+  const label = page.locator(".cod5-adops-frozen-datestamp").first();
+  if (await label.count() < 1 || !await label.isVisible()) {
+    throw new Error("capture_audit_failed: afl_frozen_datestamp_not_visible");
+  }
+  const box = await label.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport?.width) throw new Error("capture_audit_failed: afl_frozen_datestamp_box_missing");
+  const python = `
+import sys
+from PIL import Image, ImageDraw, ImageFont
+base_path, font_path, label, x_raw, y_raw, width_raw, height_raw, viewport_width_raw = sys.argv[1:]
+base = Image.open(base_path).convert("RGBA")
+scale = base.width / float(viewport_width_raw)
+x = round(float(x_raw) * scale)
+y = round(float(y_raw) * scale)
+width = round(float(width_raw) * scale)
+height = round(float(height_raw) * scale)
+draw = ImageDraw.Draw(base)
+draw.rectangle((x - 2, y - 1, x + width + 4, y + height + 1), fill=(255, 255, 255, 255))
+font = ImageFont.truetype(font_path, max(12, round(12 * scale)))
+bbox = draw.textbbox((0, 0), label, font=font)
+text_height = bbox[3] - bbox[1]
+text_y = y + max(0, round((height - text_height) / 2) - bbox[1])
+draw.text((x, text_y), label, font=font, fill=(82, 82, 91, 255))
+base.convert("RGB").save(base_path, format="PNG", optimize=True)
+`;
+  execFileSync(CAPTURE_PYTHON_BIN, [
+    "-c", python, viewportPng, WINDOWS_FRAME_FONT, labels.full,
+    String(box.x), String(box.y), String(box.width), String(box.height), String(viewport.width),
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  return { applied: true, box, label: labels.full };
 }
 
 async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
@@ -2576,6 +2642,37 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
         timeZone: "America/Cuiaba",
       }).format(date).replace(",", "");
     };
+    const isEditorialDateText = (value) => {
+      const normalized = text(value).replace(/\s+/g, " ");
+      return /^(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}(?:\/\d{4})?(?:\s+\d{1,2}:\d{2})?$/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}:\d{2}$/i.test(normalized);
+    };
+    const normalizeArticleDate = (article, postDate) => {
+      const absoluteDate = formatDate(postDate);
+      if (!article || !absoluteDate) return 0;
+      const candidates = new Set(Array.from(article.querySelectorAll(
+        "[data-adops-retro-date-node='1'], time, [datetime], .post-date, .entry-date, .posted-on, [data-date], [data-datetime], .text-xs span",
+      )));
+      for (const node of Array.from(article.querySelectorAll("*"))) {
+        if (node instanceof HTMLElement && node.children.length === 0 && isEditorialDateText(node.textContent)) {
+          candidates.add(node);
+        }
+      }
+      let rewritten = 0;
+      for (const node of candidates) {
+        if (!(node instanceof HTMLElement)) continue;
+        const tagged = node.getAttribute("data-adops-retro-date-node") === "1";
+        if (!tagged && !isEditorialDateText(node.textContent) && !node.matches("time,[datetime],.post-date,.entry-date,.posted-on,[data-date],[data-datetime]")) continue;
+        node.textContent = absoluteDate;
+        node.setAttribute("data-adops-retro-date-node", "1");
+        if (node.hasAttribute("datetime")) node.setAttribute("datetime", postDate);
+        if (node.hasAttribute("data-date")) node.setAttribute("data-date", postDate);
+        if (node.hasAttribute("data-datetime")) node.setAttribute("data-datetime", postDate);
+        rewritten += 1;
+      }
+      return rewritten;
+    };
 
     const hero = document.querySelector("main .hero-section article.hero-post");
     const heroPost = retroPosts.find((post) => post.image) || retroPosts[0];
@@ -2587,8 +2684,10 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const heroExcerpt = hero.querySelector("p");
     if (heroExcerpt) heroExcerpt.textContent = heroPost.excerpt || "";
     setCategory(hero, heroPost);
+    const heroDateText = formatDate(heroPost.date);
     hero.setAttribute("data-adops-retro-post-slug", heroPost.slug);
     hero.setAttribute("data-adops-retro-post-date", heroPost.date);
+    const heroDateNodesUpdated = normalizeArticleDate(hero, heroPost.date);
 
     const latest = Array.from(document.querySelectorAll("main .hero-section aside article.post-card-compact"));
     const sidebarPosts = retroPosts.filter((post) => post.slug !== heroPost.slug).slice(0, latest.length);
@@ -2600,11 +2699,50 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       const title = article.querySelector("h1,h2,h3,h4");
       if (title) title.textContent = post.title;
       setCategory(article, post);
-      const dateNode = article.querySelector(".text-xs span, time");
-      if (dateNode) dateNode.textContent = formatDate(post.date);
       article.setAttribute("data-adops-retro-post-slug", post.slug);
       article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
     });
+
+    const rewriteRelativeDates = (root) => {
+      let rewritten = 0;
+      for (const node of Array.from(root?.querySelectorAll?.("*") || [])) {
+        if (!(node instanceof HTMLElement) || node.children.length > 0) continue;
+        const value = node.textContent?.replace(/\s+/g, " ").trim() || "";
+        if (!/\b(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(value)) continue;
+        const retroArticle = node.closest("[data-adops-retro-post-date]");
+        const postDate = retroArticle?.getAttribute("data-adops-retro-post-date") || "";
+        rewritten += normalizeArticleDate(retroArticle, postDate);
+      }
+      return rewritten;
+    };
+    const main = document.querySelector("main");
+    const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
+    if (main) {
+      window.__cod5AflRetroDateObserver?.disconnect?.();
+      let rewriteQueued = false;
+      window.__cod5AflRetroDateObserver = new MutationObserver(() => {
+        if (rewriteQueued) return;
+        rewriteQueued = true;
+        queueMicrotask(() => {
+          rewriteQueued = false;
+          rewriteRelativeDates(main);
+        });
+      });
+      window.__cod5AflRetroDateObserver.observe(main, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      const normalizeAllRetroDates = () => {
+        for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
+          normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
+        }
+      };
+      window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
+      if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
+      window.__cod5AflRetroDateInterval = window.setInterval(normalizeAllRetroDates, 120);
+    }
 
     const reservedArticles = new Set([hero, ...latest]);
     const remainingArticles = Array.from(document.querySelectorAll("main article"))
@@ -2621,10 +2759,9 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       const excerpt = article.querySelector("p");
       if (excerpt && post.excerpt) excerpt.textContent = post.excerpt;
       setCategory(article, post);
-      const dateNodes = article.querySelectorAll("time, .text-xs span, .post-date, .entry-date");
-      dateNodes.forEach((dateNode) => { dateNode.textContent = formatDate(post.date); });
       article.setAttribute("data-adops-retro-post-slug", post.slug);
       article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
     });
 
     const renderedHeroSlug = hero.getAttribute("data-adops-retro-post-slug") || "";
@@ -2652,6 +2789,10 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       expectedLatestSlugs,
       renderedLatestSlugs,
       rewrittenArticles: 1 + latest.length + remainingArticles.length,
+      heroDateText,
+      heroDateNodesUpdated,
+      relativeDatesRewritten,
+      relativeDateObserverActive: Boolean(main),
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts });
@@ -7406,6 +7547,7 @@ async function main() {
       throw new Error(`${code}: ${failedSource}`);
     }
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
+    await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
@@ -8253,6 +8395,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     applyAflRetroPreview,
+    stabilizeVisibleRetroDatesBeforeCapture,
     applyOmtRetroPreview,
     applyPerrengueStaticRetroPreview,
     collectRetroContentEvidence,

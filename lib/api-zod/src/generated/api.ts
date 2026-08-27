@@ -103,6 +103,54 @@ export const CreateCampaignPublicationReconcileJobResponse = zod.object({
 });
 
 /**
+ * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+ * @summary Create or retrieve an idempotent retroactive evidence backfill
+ */
+
+export const createPrintBackfillJobBodySixReplaceDefault = false;
+export const createPrintBackfillJobBodySixForceDefault = false;
+
+export const CreatePrintBackfillJobBody = zod
+  .union([
+    zod.unknown(),
+    zod.unknown(),
+    zod.unknown(),
+    zod.unknown(),
+    zod.unknown(),
+  ])
+  .and(
+    zod.object({
+      insertionId: zod.number().min(1).optional(),
+      campaignId: zod.number().min(1).optional(),
+      siteId: zod.number().min(1).optional(),
+      competencia: zod.string().min(1).optional(),
+      piCodigo: zod.string().min(1).optional(),
+      siteSigla: zod.string().min(1).optional(),
+      fromDate: zod.coerce.date().optional(),
+      toDate: zod.coerce.date().optional(),
+      replace: zod
+        .boolean()
+        .default(createPrintBackfillJobBodySixReplaceDefault),
+      force: zod.boolean().default(createPrintBackfillJobBodySixForceDefault),
+    }),
+  );
+
+export const CreatePrintBackfillJobResponse = zod.object({
+  ok: zod.boolean(),
+  kind: zod.literal("print-backfill"),
+  jobId: zod.string().uuid(),
+  status: zod.enum([
+    "queued",
+    "ready_for_runner",
+    "running",
+    "completed",
+    "failed",
+  ]),
+  duplicate: zod.boolean(),
+  existingNotBefore: zod.coerce.date().nullish(),
+});
+
+/**
  * @summary List operational jobs in compact form
  */
 export const listOpsJobsQueryLimitDefault = 20;
@@ -164,6 +212,9 @@ export const GetDailyPrintStatusResponse = zod.object({
         .number()
         .min(getDailyPrintStatusResponseLastAttemptOneInvalidMin),
       summary: zod.string(),
+      errorCode: zod.string().nullish(),
+      failedInsertionIds: zod.array(zod.number()).optional(),
+      nextRecoveryAt: zod.coerce.date().nullish(),
     }),
     zod.null(),
   ]),
@@ -1188,19 +1239,28 @@ export const GetCaptureProofStatusResponse = zod.object({
     zod.null(),
   ]),
   audit: zod.record(zod.string(), zod.unknown()).nullish(),
-  checklistValidation: zod.object({
-    approved: zod.boolean(),
-    version: zod.string(),
-    insertionId: zod.number(),
-    date: zod.coerce.date(),
-    metadataPresent: zod.boolean(),
-    evidenceStatus: zod.enum(["approved", "blocked"]),
-    contract: zod.record(zod.string(), zod.unknown()),
-    audit: zod.record(zod.string(), zod.unknown()).nullish(),
-    issues: zod.array(zod.record(zod.string(), zod.unknown())),
-    blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
-    warnings: zod.array(zod.record(zod.string(), zod.unknown())),
-  }),
+  checklistValidation: zod
+    .object({
+      approved: zod
+        .boolean()
+        .describe(
+          "Preliminary approval in pre_upload; terminal approval only in final.",
+        ),
+      preliminary: zod.boolean(),
+      version: zod.string(),
+      insertionId: zod.number(),
+      date: zod.coerce.date(),
+      metadataPresent: zod.boolean(),
+      evidenceStatus: zod.enum(["approved", "blocked"]),
+      contract: zod.record(zod.string(), zod.unknown()),
+      audit: zod.record(zod.string(), zod.unknown()).nullish(),
+      issues: zod.array(zod.record(zod.string(), zod.unknown())),
+      blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
+      warnings: zod.array(zod.record(zod.string(), zod.unknown())),
+    })
+    .describe(
+      "A blocked response always contains at least one structured blockingIssues entry.",
+    ),
   status: zod.enum([
     "audited",
     "audited_best_effort",
@@ -1262,25 +1322,39 @@ export const ReconcileScheduledCaptureProofsResponse = zod.object({
 /**
  * @summary Validate capture proof, including strict readiness gates
  */
+export const validateCaptureProofBodyPhaseDefault = `final`;
+
 export const ValidateCaptureProofBody = zod.object({
   insertionId: zod.number(),
   date: zod.coerce.date(),
   metadata: zod.record(zod.string(), zod.unknown()).optional(),
+  phase: zod
+    .enum(["pre_upload", "final"])
+    .default(validateCaptureProofBodyPhaseDefault),
 });
 
-export const ValidateCaptureProofResponse = zod.object({
-  approved: zod.boolean(),
-  version: zod.string(),
-  insertionId: zod.number(),
-  date: zod.coerce.date(),
-  metadataPresent: zod.boolean(),
-  evidenceStatus: zod.enum(["approved", "blocked"]),
-  contract: zod.record(zod.string(), zod.unknown()),
-  audit: zod.record(zod.string(), zod.unknown()).nullish(),
-  issues: zod.array(zod.record(zod.string(), zod.unknown())),
-  blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
-  warnings: zod.array(zod.record(zod.string(), zod.unknown())),
-});
+export const ValidateCaptureProofResponse = zod
+  .object({
+    approved: zod
+      .boolean()
+      .describe(
+        "Preliminary approval in pre_upload; terminal approval only in final.",
+      ),
+    preliminary: zod.boolean(),
+    version: zod.string(),
+    insertionId: zod.number(),
+    date: zod.coerce.date(),
+    metadataPresent: zod.boolean(),
+    evidenceStatus: zod.enum(["approved", "blocked"]),
+    contract: zod.record(zod.string(), zod.unknown()),
+    audit: zod.record(zod.string(), zod.unknown()).nullish(),
+    issues: zod.array(zod.record(zod.string(), zod.unknown())),
+    blockingIssues: zod.array(zod.record(zod.string(), zod.unknown())),
+    warnings: zod.array(zod.record(zod.string(), zod.unknown())),
+  })
+  .describe(
+    "A blocked response always contains at least one structured blockingIssues entry.",
+  );
 
 export const ListEvidencesParams = zod.object({
   insertionId: zod.coerce.number(),
@@ -1673,4 +1747,67 @@ export const GetDashboardCriticalResponseItem = zod.object({
 });
 export const GetDashboardCriticalResponse = zod.array(
   GetDashboardCriticalResponseItem,
+);
+
+/**
+ * @summary Approve or reject the exact final proof artifact
+ */
+export const ReviewCaptureProofParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const reviewCaptureProofBodyNoteMax = 2000;
+
+export const reviewCaptureProofBodyExpectedArtifactSha256RegExp = new RegExp(
+  "^[a-f0-9]{64}$",
+);
+export const reviewCaptureProofBodyReviewedByMin = 3;
+
+export const ReviewCaptureProofBody = zod.object({
+  date: zod.coerce.date(),
+  decision: zod.enum(["approved", "rejected"]),
+  note: zod.string().max(reviewCaptureProofBodyNoteMax).nullish(),
+  expectedArtifactSha256: zod
+    .string()
+    .regex(reviewCaptureProofBodyExpectedArtifactSha256RegExp),
+  reviewedBy: zod.string().min(reviewCaptureProofBodyReviewedByMin),
+});
+
+export const ReviewCaptureProofResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
+ * @summary Persist an audited Drive media selection
+ */
+export const SelectInsertionDriveMediaParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const selectInsertionDriveMediaBodySha256RegExp = new RegExp(
+  "^[a-fA-F0-9]{64}$",
+);
+
+export const selectInsertionDriveMediaBodyReasonMin = 8;
+
+export const selectInsertionDriveMediaBodySelectedByMin = 3;
+
+export const SelectInsertionDriveMediaBody = zod.object({
+  driveFileId: zod.string(),
+  canonicalUrl: zod.string().url().nullish(),
+  sha256: zod
+    .string()
+    .regex(selectInsertionDriveMediaBodySha256RegExp)
+    .nullish(),
+  bytes: zod.number().min(1).nullish(),
+  width: zod.number().min(1).nullish(),
+  height: zod.number().min(1).nullish(),
+  reason: zod.string().min(selectInsertionDriveMediaBodyReasonMin),
+  selectedBy: zod.string().min(selectInsertionDriveMediaBodySelectedByMin),
+});
+
+export const SelectInsertionDriveMediaResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
 );
