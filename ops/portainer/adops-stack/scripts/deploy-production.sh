@@ -153,6 +153,15 @@ STACK_SWITCHED="true"
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
   bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
 
+CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+for container_name in adops-postgres adops-api adops-web adops-runner adops-runner-print-single adops-drive-pi-monitor-stack; do
+  CONTAINER_ID="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .Id' | head -n 1)"
+  CONTAINER_STATE="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .State' | head -n 1)"
+  if [[ -n "$CONTAINER_ID" && "$CONTAINER_STATE" != "running" ]]; then
+    portainer_start_container "$CONTAINER_ID" >/dev/null 2>&1 || true
+  fi
+done
+
 stable_checks=0
 for attempt in $(seq 1 60); do
   if curl -fsS --max-time 10 https://adops-api.codigo5.com.br/api/healthz >/dev/null && \
