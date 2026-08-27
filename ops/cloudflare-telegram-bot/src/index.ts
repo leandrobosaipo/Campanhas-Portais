@@ -987,7 +987,7 @@ async function sendDailySummary(
   await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
 }
 
-async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
+async function sendDailyPrintAlert(env: Env, date: string, escalation = false, publicationBlockedIds: number[] = []) {
   const daily = await adopsFetch(env, `/api/ops/daily-print-status?date=${encodeURIComponent(date)}`, {}, true) as {
     lastAttempt?: {
       status?: string;
@@ -1010,7 +1010,7 @@ async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
   const state = resolved ? "resolved" : escalation ? "blocked_0830" : "recovery_in_progress";
   const claim = await adopsFetch(env, "/api/ops/daily-print-alerts/claim", {
     method: "POST",
-    body: JSON.stringify({ date, state, pendingInsertionIds: pending }),
+    body: JSON.stringify({ date, state, pendingInsertionIds: pending, publicationBlockedIds }),
   }, true) as { claimed?: boolean };
   if (claim.claimed !== true) return;
   const text = resolved
@@ -1019,6 +1019,7 @@ async function sendDailyPrintAlert(env: Env, date: string, escalation = false) {
         escalation ? `AdOps: bloqueio mantido às 08h30 para ${date}.` : `AdOps: recuperação automática em andamento para ${date}.`,
         `Elegíveis: ${expected} · auditados: ${approved} · pendentes: ${missing} · inválidos: ${invalid}`,
         `Inserções: ${pending.length ? pending.join(", ") : "causa ainda sem IDs"}`,
+        ...(publicationBlockedIds.length ? [`Publicação bloqueada: ${publicationBlockedIds.join(", ")}`] : []),
       ].join("\n");
   await sendMessage(env, env.TELEGRAM_DEFAULT_GROUP_ID, text);
 }
@@ -1610,13 +1611,16 @@ export default {
 
   async scheduled(controller: { cron?: string; scheduledTime?: number }, env: Env): Promise<void> {
     if (normalizeText(env.TELEGRAM_NOTIFICATIONS_ENABLED) === "false") return;
-    const decision = await adopsFetch(env, "/api/ops/daily-print-alerts/evaluate") as { due?: boolean; localTime?: string; escalation?: boolean; targetDate?: string };
+    const decision = await adopsFetch(env, "/api/ops/daily-print-alerts/evaluate") as { due?: boolean; localTime?: string; escalation?: boolean; targetDate?: string; publicationBlockedIds?: number[] };
     if (decision.due !== true || !decision.targetDate) return;
     const localTime = String(decision.localTime ?? "");
     const escalation = decision.escalation === true;
     const targetDate = decision.targetDate;
     try {
-      await sendDailyPrintAlert(env, targetDate, escalation);
+      const publicationBlockedIds = Array.isArray(decision.publicationBlockedIds)
+        ? decision.publicationBlockedIds.filter(Number.isInteger).sort((a, b) => a - b)
+        : [];
+      await sendDailyPrintAlert(env, targetDate, escalation, publicationBlockedIds);
     } catch (error) {
       console.error("daily_print_alert_failed", error);
     }

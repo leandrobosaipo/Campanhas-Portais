@@ -47,6 +47,10 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - Um retry parcial deve conter somente datas sem aprovação e manter os JPEGs já auditados sem substituição.
 - Para incidentes de proveniência, o harness público deve conferir a lista exata de inserções e datas pela auditoria canônica; arquivo existente ou HTTP 200 isolado não basta.
 - A página não pode reclassificar evidência. O estado de cada dia deve ser igual ao retornado pela API.
+- Antes de qualquer execução retroativa, seguir: preflight Drive -> publicação AdRotate -> confirmação viva -> `print-backfill` -> auditoria -> relatório.
+- O harness deve acompanhar o mesmo `jobId` de `print-backfill` até `completed` ou `failed`; `duplicate=true` não autoriza criar outro job.
+- Para cada item, aceitar apenas `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`; bloqueios não recebem retry cego.
+- `#2693` não deve disparar captura; `#2645` só pode seguir para backfill após publicação e confirmação viva.
 
 Aceite focal de 21/08:
 

@@ -140,6 +140,38 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /ops/jobs/print-backfill:
+    post:
+      operationId: createPrintBackfillJob
+      tags: [operations]
+      summary: Create or retrieve an idempotent retroactive evidence backfill
+      description: The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrintBackfillRequest"
+      responses:
+        "200":
+          description: Existing idempotent backfill job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintBackfillJobAccepted"
+        "202":
+          description: New backfill accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintBackfillJobAccepted"
+        "400":
+          description: Missing or invalid bounded filter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /ops/jobs:
     get:
       operationId: listOpsJobs
@@ -1614,6 +1646,81 @@ paths:
 
 components:
   schemas:
+    PublicationHealth:
+      type: object
+      additionalProperties: false
+      required: [status, reason, requiredAction, expectedGroupId, expectedMediaObserved, duplicateInsertionIds]
+      properties:
+        status: { type: string, enum: [ok, prepublication_pending, blocked_upstream] }
+        reason: { type: string, enum: [confirmed, drive_media_not_linked, media_missing, adrotate_relation_missing, expected_media_not_observed, public_html_not_confirmed, duplicate_identity] }
+        requiredAction: { type: string, enum: [none, resolve_media, reconcile_duplicate, publish_adrotate, verify_publication] }
+        expectedGroupId: { type: [integer, "null"], minimum: 1 }
+        expectedMediaObserved: { type: boolean }
+        duplicateInsertionIds: { type: array, items: { type: integer, minimum: 1 } }
+
+    EvidenceHealth:
+      type: object
+      additionalProperties: false
+      required: [status, auditedDates, missingDates, invalidDates]
+      properties:
+        status: { type: string, enum: [complete, missing, invalid, blocked_upstream, not_applicable] }
+        auditedDates: { type: array, items: { type: string, format: date } }
+        missingDates: { type: array, items: { type: string, format: date } }
+        invalidDates: { type: array, items: { type: string, format: date } }
+
+    RetroactiveBackfillItem:
+      type: object
+      additionalProperties: false
+      required: [insertionId, date, status, attempts, evidenceUrl, errorCode, error, checklistStatus]
+      properties:
+        insertionId: { type: integer, minimum: 1 }
+        date: { type: string, format: date }
+        status: { type: string, enum: [audited, failed, skipped_existing, blocked_reconstruction, blocked_upstream] }
+        attempts: { type: integer, minimum: 0, maximum: 3 }
+        evidenceUrl: { type: [string, "null"], format: uri }
+        errorCode: { type: [string, "null"] }
+        error: { type: [string, "null"] }
+        checklistStatus: { type: [string, "null"] }
+
+    PrintBackfillRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        insertionId: { type: integer, minimum: 1 }
+        campaignId: { type: integer, minimum: 1 }
+        siteId: { type: integer, minimum: 1 }
+        competencia: { type: string, minLength: 1 }
+        piCodigo: { type: string, minLength: 1 }
+        siteSigla: { type: string, minLength: 1 }
+        fromDate: { type: string, format: date }
+        toDate: { type: string, format: date }
+        replace: { type: boolean, default: false }
+        force: { type: boolean, default: false }
+      anyOf:
+        - required: [insertionId]
+        - required: [campaignId]
+        - required: [siteId]
+        - required: [competencia]
+        - required: [piCodigo, siteSigla]
+
+    PrintBackfillJobAccepted:
+      type: object
+      additionalProperties: true
+      required: [ok, kind, jobId, status, duplicate]
+      properties:
+        ok: { type: boolean, const: true }
+        kind: { type: string, const: print-backfill }
+        jobId: { type: string, format: uuid }
+        status: { type: string, enum: [queued, ready_for_runner, running, completed, failed] }
+        duplicate: { type: boolean }
+        reconstructionReason: { type: string, const: late_publication_recovery }
+        attempt: { type: integer, const: 1 }
+        maxAttempts: { type: integer, const: 3 }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetroactiveBackfillItem"
+
     CaptureProofReconciliationRequest:
       type: object
       additionalProperties: false

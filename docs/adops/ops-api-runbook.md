@@ -162,3 +162,15 @@ Na release que introduz incidentes, confirme que `0004_ops_incidents.sql` aparec
 - Zeros à esquerda são ignorados somente na comparação de PIs puramente numéricas; o valor original continua exibido.
 - Polling compacto reduz tempo, tráfego e tokens.
 - Captura é serial; apenas exportações usam concorrência três.
+
+## Recuperação retroativa e saúde de publicação
+
+A sequência canônica é: **preflight Drive -> publicação AdRotate -> confirmação viva -> print-backfill -> auditoria -> relatório**. Não inverta a publicação e a confirmação viva com a captura: `bannerPublicadoNoSite=true`, HTTP 200 ou arquivo existente isoladamente não comprovam publicação nem evidência auditada.
+
+`POST /api/ops/jobs/print-backfill` é o único caminho retroativo. Ele exige um recorte (`insertionId`, `campaignId`, `siteId`, `competencia` ou `piCodigo` com `siteSigla`), persiste `reconstructionReason=late_publication_recovery`, `attempt=1` e `maxAttempts=3`. A mesma chave lógica devolve o mesmo `jobId` com `duplicate=true`; acompanhe esse job até `completed` ou `failed`, sem criar outro enquanto ele estiver em curso.
+
+O resultado por inserção/data é um de `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`. Se algum item falhar ou bloquear, o job pai termina `failed` preservando os resultados parciais. Evidência já auditada não é recapturada.
+
+`PublicationHealth` e `EvidenceHealth` são independentes. `blocked_upstream` de publicação impede nova captura, mas não apaga evidência auditada. Os alertas diários incorporam IDs de publicação bloqueada no claim idempotente, portanto uma alteração nessa lista pode gerar uma nova notificação sem nova rota.
+
+Inserção `#2693` não é pendência de print: suas evidências auditadas não devem ser regeneradas. Inserção `#2645` não pode ser capturada antes de publicação AdRotate e confirmação viva do vídeo.

@@ -187,6 +187,28 @@ def build_openapi_document() -> dict[str, Any]:
     set_response_schema("/api/ops/daily-print-status", "get", "DailyPrintStatusResponse")
     set_response_schema("/api/ops/runner/heartbeat", "post", "RunnerHeartbeatResponse")
 
+    print_backfill_path = paths.get("/api/ops/jobs/print-backfill", {})
+    if "post" in print_backfill_path:
+        print_backfill_path["post"].update({
+            "tags": ["Operações retroativas"],
+            "summary": "Criar ou recuperar um backfill retroativo idempotente",
+            "description": (
+                "Único caminho de captura retroativa. O payload recebe o motivo "
+                "late_publication_recovery, tentativa 1 de no máximo 3 e retorna "
+                "200 para replay idempotente ou 202 para um novo job."
+            ),
+            "responses": {
+                "200": {"description": "Job idempotente já existente.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillJobAccepted"}}}},
+                "202": {"description": "Backfill aceito para processamento assíncrono.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillJobAccepted"}}}},
+                "400": {"description": "Filtro ausente ou inválido."},
+                "401": {"description": "Token ausente ou inválido."},
+            },
+        })
+        print_backfill_path["post"]["requestBody"] = {
+            "required": True,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PrintBackfillRequest"}}},
+        }
+
     heartbeat_operation = paths.get("/api/ops/runner/heartbeat", {}).get("post")
     if heartbeat_operation:
         heartbeat_operation["requestBody"] = {
@@ -394,6 +416,81 @@ def build_openapi_document() -> dict[str, Any]:
                 },
             },
             "schemas": {
+                "PublicationHealth": {
+                    "type": "object",
+                    "required": ["status", "reason", "requiredAction", "expectedGroupId", "expectedMediaObserved", "duplicateInsertionIds"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ok", "prepublication_pending", "blocked_upstream"]},
+                        "reason": {"type": "string", "enum": ["confirmed", "drive_media_not_linked", "media_missing", "adrotate_relation_missing", "expected_media_not_observed", "public_html_not_confirmed", "duplicate_identity"]},
+                        "requiredAction": {"type": "string", "enum": ["none", "resolve_media", "reconcile_duplicate", "publish_adrotate", "verify_publication"]},
+                        "expectedGroupId": {"type": ["integer", "null"], "minimum": 1},
+                        "expectedMediaObserved": {"type": "boolean"},
+                        "duplicateInsertionIds": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                    },
+                    "additionalProperties": False,
+                },
+                "EvidenceHealth": {
+                    "type": "object",
+                    "required": ["status", "auditedDates", "missingDates", "invalidDates"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["complete", "missing", "invalid", "blocked_upstream", "not_applicable"]},
+                        "auditedDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                        "missingDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                        "invalidDates": {"type": "array", "items": {"type": "string", "format": "date"}},
+                    },
+                    "additionalProperties": False,
+                },
+                "RetroactiveBackfillItem": {
+                    "type": "object",
+                    "required": ["insertionId", "date", "status", "attempts", "evidenceUrl", "errorCode", "error", "checklistStatus"],
+                    "properties": {
+                        "insertionId": {"type": "integer", "minimum": 1},
+                        "date": {"type": "string", "format": "date"},
+                        "status": {"type": "string", "enum": ["audited", "failed", "skipped_existing", "blocked_reconstruction", "blocked_upstream"]},
+                        "attempts": {"type": "integer", "minimum": 0, "maximum": 3},
+                        "evidenceUrl": {"type": ["string", "null"], "format": "uri"},
+                        "errorCode": {"type": ["string", "null"]},
+                        "error": {"type": ["string", "null"]},
+                        "checklistStatus": {"type": ["string", "null"]},
+                    },
+                    "additionalProperties": False,
+                },
+                "PrintBackfillRequest": {
+                    "type": "object",
+                    "properties": {
+                        "insertionId": {"type": "integer", "minimum": 1},
+                        "campaignId": {"type": "integer", "minimum": 1},
+                        "siteId": {"type": "integer", "minimum": 1},
+                        "competencia": {"type": "string", "minLength": 1},
+                        "piCodigo": {"type": "string", "minLength": 1},
+                        "siteSigla": {"type": "string", "minLength": 1},
+                        "fromDate": {"type": "string", "format": "date"},
+                        "toDate": {"type": "string", "format": "date"},
+                        "replace": {"type": "boolean", "default": False},
+                        "force": {"type": "boolean", "default": False},
+                    },
+                    "anyOf": [
+                        {"required": ["insertionId"]}, {"required": ["campaignId"]}, {"required": ["siteId"]},
+                        {"required": ["competencia"]}, {"required": ["piCodigo", "siteSigla"]},
+                    ],
+                    "additionalProperties": False,
+                },
+                "PrintBackfillJobAccepted": {
+                    "type": "object",
+                    "required": ["ok", "kind", "jobId", "status", "duplicate"],
+                    "properties": {
+                        "ok": {"type": "boolean", "const": True},
+                        "kind": {"type": "string", "const": "print-backfill"},
+                        "jobId": {"type": "string", "format": "uuid"},
+                        "status": {"$ref": "#/components/schemas/OpsJobStatus"},
+                        "duplicate": {"type": "boolean"},
+                        "reconstructionReason": {"type": "string", "const": "late_publication_recovery"},
+                        "attempt": {"type": "integer", "const": 1},
+                        "maxAttempts": {"type": "integer", "const": 3},
+                        "items": {"type": "array", "items": {"$ref": "#/components/schemas/RetroactiveBackfillItem"}},
+                    },
+                    "additionalProperties": True,
+                },
                 "RetroContentProof": {
                     "type": "object",
                     "required": [

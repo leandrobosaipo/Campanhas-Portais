@@ -37,6 +37,9 @@ Variaveis opcionais:
 - Dias invalidos aparecem como celula de erro com tooltip e detalhe no modal.
 - O relatório somente apresenta o status canônico retornado pela auditoria da API. Ele não cria, promove, reclassifica ou aprova evidências.
 - `same_day_retry` permanece uma captura do próprio dia; somente `historical_recovery` exige prova editorial retroativa.
+- `publicationHealth` e `evidenceHealth` são exibidos separadamente: `blocked_upstream` de publicação não altera dias já `audited`.
+- Um backfill retroativo só ocorre depois de preflight Drive, publicação AdRotate e confirmação viva; o relatório apenas consome o resultado auditado do job `print-backfill`.
+- `#2693` permanece com evidências históricas intactas e não entra como pendência de print; `#2645` permanece bloqueada até publicação e confirmação viva.
 
 ## Saida
 

@@ -29,6 +29,15 @@ assert document["paths"]["/api/ops/runner/jobs/{id}/progress"]["post"]["paramete
 ops_job_properties = document["components"]["schemas"]["OpsJob"]["properties"]
 for required_property in ["heartbeatAt", "runnerId", "incidentLayer", "errorCode", "failedInsertionIds", "nextRecoveryAt", "queueWaitMs", "captureMs", "auditMs", "uploadMs", "reportMs"]:
     assert required_property in ops_job_properties
+schemas = document["components"]["schemas"]
+assert "PublicationHealth" in schemas
+assert "EvidenceHealth" in schemas
+assert "RetroactiveBackfillItem" in schemas
+assert schemas["RetroactiveBackfillItem"]["properties"]["status"]["enum"] == [
+    "audited", "failed", "skipped_existing", "blocked_reconstruction", "blocked_upstream"
+]
+assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillRequest"
+assert document["paths"]["/api/ops/jobs/print-backfill"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PrintBackfillJobAccepted"
 assert len(document["x-cod5-route-fingerprint-sha256"]) == 64
 
 redoc_html = redoc().body.decode("utf-8")

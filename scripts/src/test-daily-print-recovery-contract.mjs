@@ -29,6 +29,13 @@ test("alerta operacional usa claim idempotente e só resolve incidente já abert
   assert.match(telegram, /decision\.due !== true/);
 });
 
+test("alerta inclui bloqueio de publicacao no fingerprint", () => {
+  assert.match(macMiniOps, /publicationBlockedIds/);
+  assert.match(macMiniOps, /publication=\$\{publicationBlockedIds\.join/);
+  assert.match(telegram, /Publicação bloqueada:/);
+  assert.match(telegram, /daily-print-alerts\/claim/);
+});
+
 test("aprovação interrompe retries e runner não recaptura evidência válida", () => {
   assert.match(worker, /\["ok", "ok_best_effort"\]\.includes\(item\.status\)/);
   assert.match(worker, /status='completed'/);

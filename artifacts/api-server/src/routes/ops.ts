@@ -1432,8 +1432,14 @@ router.get("/ops/daily-print-status", async (req, res): Promise<void> => {
   res.json(buildDailyPrintStatus({ jobs: result.rows.map(describeJob), now: new Date(), targetDate }));
 });
 
-router.get("/ops/daily-print-alerts/evaluate", (_req, res): void => {
-  res.json(resolveDailyPrintAlertDecision(new Date()));
+router.get("/ops/daily-print-alerts/evaluate", async (_req, res): Promise<void> => {
+  const decision = resolveDailyPrintAlertDecision(new Date());
+  const operations = await getActiveCampaignOperations({ date: decision.targetDate, includeEvidence: true });
+  const publicationBlockedIds = operations.items
+    .filter((item) => item.publicationHealth?.status === "blocked_upstream")
+    .map((item) => item.adops.insertionId)
+    .filter((id): id is number => Number.isInteger(id));
+  res.json({ ...decision, publicationBlockedIds });
 });
 
 router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => {
@@ -1441,6 +1447,12 @@ router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => 
   const state = readOptionalString(req.body?.state);
   const pendingInsertionIds = Array.isArray(req.body?.pendingInsertionIds)
     ? (req.body.pendingInsertionIds as unknown[])
+      .map((item: unknown) => readOptionalNumber(item))
+      .filter((item: number | null): item is number => item !== null)
+      .sort((a: number, b: number) => a - b)
+    : [];
+  const publicationBlockedIds = Array.isArray(req.body?.publicationBlockedIds)
+    ? (req.body.publicationBlockedIds as unknown[])
       .map((item: unknown) => readOptionalNumber(item))
       .filter((item: number | null): item is number => item !== null)
       .sort((a: number, b: number) => a - b)
@@ -1457,7 +1469,7 @@ router.post("/ops/daily-print-alerts/claim", async (req, res): Promise<void> => 
     res.json({ ok: true, claimed: false, reason: "no_previous_incident" });
     return;
   }
-  const fingerprint = `${date}:${state}:${pendingInsertionIds.join(",")}`;
+  const fingerprint = `${date}:${state}:prints=${pendingInsertionIds.join(",")}:publication=${publicationBlockedIds.join(",")}`;
   const inserted = await pool.query(
     `INSERT INTO daily_print_alerts (fingerprint, target_date, state, pending_ids_json, claimed_at)
      VALUES ($1, $2, $3, $4, $5)
