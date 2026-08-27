@@ -141,6 +141,26 @@ test("classifica evidência completa sem depender do estado de publicação", ()
   assert.match(metadata.evidenceStates, /\bcomplete\b/);
 });
 
+test("publicação bloqueada continua visível com evidências auditadas", () => {
+  const metadata = contract.buildCampaignFilterMetadata({
+    items: [{
+      state: "blocked_upstream",
+      publicationHealth: { status: "blocked_upstream", reason: "expected_media_not_observed", expectedGroupId: 14 },
+      requiredDays: ["2026-08-21"],
+      auditedDays: 1,
+      missingDates: [],
+      invalidDates: [],
+    }],
+  }, "2026-08-26");
+
+  assert.match(metadata.publicationStates, /\bblocked_upstream\b/);
+  assert.match(metadata.evidenceStates, /\bcomplete\b/);
+  assert.equal(contract.buildPublicationHealthFingerprint({
+    insertionId: 2693,
+    publicationHealth: { status: "blocked_upstream", reason: "expected_media_not_observed", expectedGroupId: 14 },
+  }), "publication-health:2693:expected_media_not_observed:14");
+});
+
 test("distingue qualquer print pendente de retroativo pendente", () => {
   const currentMissing = contract.buildCampaignFilterMetadata({
     items: [{ requiredDays: ["2026-08-17"], auditedDays: 0, missingDates: ["2026-08-17"], invalidDates: [] }],

@@ -179,6 +179,7 @@ export function buildCampaignFilterMetadata(campaign, targetDate) {
   const endingWindowDate = addIsoDays(targetDate, 7);
 
   for (const item of items) {
+    if (item?.publicationHealth?.status === "blocked_upstream" || item?.state === "blocked_upstream") publicationStates.add("blocked_upstream");
     if (item?.state === "not_published") publicationStates.add("not_published");
     if (item?.state === "scheduled") publicationStates.add("scheduled");
     if (item?.bannerPublicadoNoSite === true && item?.periodoInicio <= targetDate && item?.periodoFim >= targetDate) {
@@ -212,6 +213,15 @@ export function buildCampaignFilterMetadata(campaign, targetDate) {
     publicationStates: Array.from(publicationStates).join(" "),
     evidenceStates: Array.from(evidenceStates).join(" "),
   };
+}
+
+export function buildPublicationHealthFingerprint({ insertionId, publicationHealth } = {}) {
+  if (publicationHealth?.status !== "blocked_upstream") return null;
+  const id = Number(insertionId);
+  const reason = String(publicationHealth.reason || "").trim();
+  const groupId = Number(publicationHealth.expectedGroupId);
+  if (!Number.isInteger(id) || !reason || !Number.isInteger(groupId)) return null;
+  return `publication-health:${id}:${reason}:${groupId}`;
 }
 
 export function selectCanonicalInsertions(activeInsertions, monthInsertions) {

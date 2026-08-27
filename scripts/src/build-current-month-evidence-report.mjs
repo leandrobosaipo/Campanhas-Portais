@@ -9,6 +9,7 @@ import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" }
 import {
   buildAtomicPublishCommand,
   buildCampaignFilterMetadata,
+  buildPublicationHealthFingerprint,
   buildPortalFilterOptions,
   buildCampaignExportIdempotencyKey,
   buildCampaignEvidenceExportDownloadUrl,
@@ -432,6 +433,7 @@ function statusBadge(status, label) {
 }
 
 function computeInsertionState(item, evidenceDays, today) {
+  if (item.publicationHealth?.status === "blocked_upstream") return "blocked_upstream";
   if (item.periodoInicio > today) return "scheduled";
   if (!item.bannerPublicadoNoSite) return "not_published";
   const missing = evidenceDays.filter((day) => day.status === "missing").length;
@@ -448,12 +450,14 @@ function evidenceLabel(state) {
     invalid: "erro",
     scheduled: "agendada",
     not_published: "sem publicação",
+    blocked_upstream: "publicação bloqueada",
   }[state] || state;
 }
 
 function evidenceDetails(item) {
   if (item.state === "scheduled") return `Agendada para ${fullDatePt(item.periodoInicio)}. Ainda não exige evidência.`;
   if (item.state === "not_published") return "Fora do gate das campanhas ativas enquanto o banner não estiver publicado. Os retroativos serão exigidos depois da publicação.";
+  if (item.state === "blocked_upstream") return "A publicação está bloqueada upstream; as evidências auditadas permanecem válidas.";
   if (item.state === "pending") return `Faltam ${item.missingDates.length} dia(s) com evidência auditada: ${item.missingDates.map(datePt).join(", ")}.`;
   if (item.state === "invalid") return `Há ${item.invalidDates.length} dia(s) com evidência inválida: ${item.invalidDates.map(datePt).join(", ")}.`;
   return "Todos os dias exigidos até a data alvo têm evidência auditada.";
@@ -478,7 +482,7 @@ function buildPortalGroups(items) {
       logo: siteLogoUrl(item),
       homeUrl: sitesConfig[portalKey]?.homeUrl || "",
       campaigns: new Map(),
-      stats: { total: 0, active: 0, scheduled: 0, ended: 0, ok: 0, pending: 0, invalid: 0, not_published: 0, evidences: 0 },
+      stats: { total: 0, active: 0, scheduled: 0, ended: 0, ok: 0, pending: 0, invalid: 0, not_published: 0, blocked_upstream: 0, evidences: 0 },
     };
     portal.stats.total += 1;
     if (item.periodoInicio > targetDate) portal.stats.scheduled += 1;
@@ -758,11 +762,15 @@ function renderMediaPreview(item) {
 function publicationGuidance(operation) {
   const actions = Array.isArray(operation?.requiredActions) ? operation.requiredActions : [];
   const blockers = Array.isArray(operation?.blockingIssues) ? operation.blockingIssues : [];
+  const publicationReason = String(operation?.publicationHealth?.reason || "").trim();
   const sourceReason = String(operation?.sourceIdentity?.reason || "").trim();
   const blocker = blockers.map((issue) => issue?.message || issue?.label || issue?.code || issue).find(Boolean)
+    || publicationReason
     || sourceReason
     || (actions.includes("confirm_source_identity") ? "A identidade da campanha ainda precisa ser confirmada." : "A publicação ainda não passou pelo preflight operacional.");
-  const action = actions.includes("confirm_source_identity")
+  const action = publicationReason === "expected_media_not_observed"
+    ? "Verificar a mídia esperada no grupo publicado e executar novo preflight."
+    : actions.includes("confirm_source_identity")
     ? "Confirmar a PI no documento autoritativo e executar novo preflight."
     : actions.includes("review_site_divergence")
       ? "Revisar o portal com a PI, a planilha e a inserção canônica."
@@ -798,9 +806,9 @@ function renderInsertion(item) {
   const retroactiveLabel = item.retroactiveMissingDates?.length === 1
     ? "1 retroativo pendente"
     : `${item.retroactiveMissingDates?.length || 0} retroativos pendentes`;
-  const publicationPending = item.state === "not_published"
+  const publicationPending = ["not_published", "blocked_upstream"].includes(item.state)
     ? `<div class="publication-pending" role="note">
-        <strong>Banner não publicado</strong>
+        <strong>${item.state === "blocked_upstream" ? "Publicação bloqueada" : "Banner não publicado"}</strong>
         <span>${escapeHtml(retroactiveLabel)}</span>
         ${item.retroactiveMissingDates?.length ? `<small>Datas: ${escapeHtml(item.retroactiveMissingDates.map(fullDatePt).join(", "))}</small>` : ""}
         ${item.publicationBlocker ? `<small><b>Motivo:</b> ${escapeHtml(item.publicationBlocker)}</small>` : ""}
@@ -810,7 +818,7 @@ function renderInsertion(item) {
   const endedBadge = item.periodoFim < targetDate
     ? statusBadge("scheduled", `Encerrada em ${fullDatePt(item.periodoFim)}`)
     : "";
-  const stateLabel = item.state === "ok" ? "Em dia" : item.state === "scheduled" ? "Agendada" : item.state === "not_published" ? "Banner não publicado" : item.state === "invalid" ? "Evidência com erro" : "Print pendente";
+  const stateLabel = item.state === "ok" ? "Em dia" : item.state === "scheduled" ? "Agendada" : item.state === "not_published" ? "Banner não publicado" : item.state === "blocked_upstream" ? "Publicação bloqueada" : item.state === "invalid" ? "Evidência com erro" : "Print pendente";
   const evidenceSummary = item.requiredDays.length
     ? `${item.auditedDays} de ${item.requiredDays.length} ${item.requiredDays.length === 1 ? "print aprovado" : "prints aprovados"}`
     : "Nenhum print exigido até esta data";
@@ -852,6 +860,7 @@ function renderCampaign(campaign, portalKey) {
   const scheduled = campaign.items.filter((item) => item.state === "scheduled").length;
   const invalid = campaign.items.filter((item) => item.state === "invalid").length;
   const notPublished = campaign.items.filter((item) => item.state === "not_published").length;
+  const blockedUpstream = campaign.items.filter((item) => item.state === "blocked_upstream").length;
   const campaignAudited = campaign.items.reduce((sum, item) => sum + item.auditedDays, 0);
   const campaignRequired = campaign.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
   const endingWindow = new Date(`${targetDate}T00:00:00.000Z`);
@@ -882,6 +891,8 @@ function renderCampaign(campaign, portalKey) {
       ? `${pending} ${pending === 1 ? "inserção com print pendente" : "inserções com prints pendentes"}`
       : notPublished
         ? `${notPublished} ${notPublished === 1 ? "inserção sem publicação" : "inserções sem publicação"}`
+        : blockedUpstream
+          ? `${blockedUpstream} ${blockedUpstream === 1 ? "publicação bloqueada" : "publicações bloqueadas"}`
         : scheduled
           ? `${scheduled} ${scheduled === 1 ? "inserção agendada" : "inserções agendadas"}`
           : "Todas as inserções estão em dia";
@@ -918,6 +929,7 @@ function renderPortal(portal) {
         <span><b>${portal.stats.pending}</b> com prints pendentes</span>
         <span><b>${portal.stats.invalid}</b> com erro</span>
         <span><b>${portal.stats.not_published}</b> sem publicação</span>
+        <span><b>${portal.stats.blocked_upstream}</b> publicação bloqueada</span>
       </div>
     </div>
     ${portal.campaigns.map((campaign) => renderCampaign(campaign, portal.key)).join("")}
@@ -933,7 +945,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
   const modalData = Object.fromEntries(insertions.map((item) => [item.modalId, { ...item, mediaUrl: safePublicMediaUrl(item.mediaUrl) }]));
   const portalOptions = buildPortalFilterOptions(portals);
   const currentEvidenceIssues = Number(summary.pending || 0) + Number(summary.invalid || 0);
-  const currentAttentionCount = currentEvidenceIssues + Number(summary.notPublished || 0);
+  const currentAttentionCount = currentEvidenceIssues + Number(summary.notPublished || 0) + Number(summary.blockedUpstream || 0);
   const historicalAttemptIssues = Number(dailyPrintStatus?.lastAttempt?.missing || 0) + Number(dailyPrintStatus?.lastAttempt?.invalid || 0);
   const recoveredAfterAttempt = historicalAttemptIssues > 0 && currentEvidenceIssues === 0;
   const routineSummary = recoveredAfterAttempt
@@ -950,6 +962,9 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     Number(summary.notPublished || 0) > 0
       ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published">${icon("plugin")}<span>Ver ${summary.notPublished} ${summary.notPublished === 1 ? "campanha sem publicação" : "campanhas sem publicação"}</span></button>`
       : "",
+    Number(summary.blockedUpstream || 0) > 0
+      ? `<button type="button" class="attention-action bad" data-quick-publication="blocked_upstream">${icon("warn")}<span>Ver ${summary.blockedUpstream} ${summary.blockedUpstream === 1 ? "publicação bloqueada" : "publicações bloqueadas"}</span></button>`
+      : "",
   ].filter(Boolean).join("") || `<span class="attention-clear">${icon("ok")} Campanhas publicadas em dia</span>`;
   const compactAttentionAction = Number(summary.invalid || 0) > 0
     ? `<button type="button" class="attention-action bad" data-quick-evidence="invalid">${icon("warn")}<span>${summary.invalid} ${summary.invalid === 1 ? "erro" : "erros"}</span></button>`
@@ -957,6 +972,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       ? `<button type="button" class="attention-action warn" data-quick-evidence="missing">${icon("warn")}<span>${summary.pending} ${summary.pending === 1 ? "print pendente" : "prints pendentes"}</span></button>`
       : Number(summary.notPublished || 0) > 0
         ? `<button type="button" class="attention-action neutral" data-quick-publication="not_published">${icon("plugin")}<span>${summary.notPublished} ${summary.notPublished === 1 ? "sem publicação" : "sem publicação"}</span></button>`
+        : Number(summary.blockedUpstream || 0) > 0
+          ? `<button type="button" class="attention-action bad" data-quick-publication="blocked_upstream">${icon("warn")}<span>${summary.blockedUpstream} ${summary.blockedUpstream === 1 ? "publicação bloqueada" : "publicações bloqueadas"}</span></button>`
         : `<span class="attention-clear">${icon("ok")} Em dia</span>`;
   return `<!doctype html>
 <html lang="pt-BR">
@@ -1288,7 +1305,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           <div class="filter-field">
             <label for="publicationFilterDesktop">Publicação</label>
             <select class="publication-filter" id="publicationFilterDesktop">
-              <option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option>
+              <option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="blocked_upstream">Publicação bloqueada</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option>
             </select>
           </div>
           <div class="filter-field">
@@ -1358,7 +1375,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       <div class="tool-row">
         <div class="filter-field"><label for="campaignSearch">Buscar campanha, PI ou portal</label><input class="search" id="campaignSearch" type="search" placeholder="Buscar campanha, PI ou portal" autocomplete="off"></div>
         <div class="filter-field"><label for="portalFilter">Portal</label><select class="portal-filter" id="portalFilter">${portalOptions.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></div>
-        <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option></select></div>
+        <div class="filter-field"><label for="publicationFilter">Publicação</label><select class="publication-filter" id="publicationFilter"><option value="all">Todas</option><option value="active">Ativas</option><option value="not_published">Não publicadas</option><option value="blocked_upstream">Publicação bloqueada</option><option value="scheduled">Agendadas</option><option value="ending">Encerrando</option><option value="ended">Encerradas</option></select></div>
         <div class="filter-field"><label for="evidenceFilter">Evidências</label><select class="evidence-filter" id="evidenceFilter"><option value="all">Todas</option><option value="complete">Completas</option><option value="missing">Qualquer print pendente</option><option value="retroactive_missing">Retroativos pendentes</option><option value="invalid">Com erro</option></select></div>
       </div>
       <div class="filter-actions"><button class="clear-filters" type="button" id="clearFilters">Limpar filtros</button></div>
@@ -1545,7 +1562,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       lastOperationsTrigger?.focus();
     });
     const params = new URLSearchParams(window.location.search);
-    const validPublications = new Set(['all', 'active', 'not_published', 'scheduled', 'ending', 'ended']);
+    const validPublications = new Set(['all', 'active', 'not_published', 'blocked_upstream', 'scheduled', 'ending', 'ended']);
     const validEvidenceStates = new Set(['all', 'complete', 'missing', 'retroactive_missing', 'invalid']);
     const legacyState = String(params.get('state') || '').toLowerCase();
     const legacyPublication = ({ active: 'active', not_published: 'not_published', scheduled: 'scheduled', ending: 'ending', ended: 'ended' })[legacyState] || 'active';
@@ -1746,8 +1763,12 @@ async function main() {
     const campaign = campaignMap.get(item.campanhaId);
     const operation = operationByInsertionId.get(item.id);
     const publicConfirmed = operation?.adops?.publicConfirmation === "confirmed";
+    const publicationHealth = operation?.publicationHealth || item.publicationHealth || null;
+    const evidenceHealth = operation?.evidenceHealth || item.evidenceHealth || null;
     const effectiveItem = {
       ...item,
+      publicationHealth,
+      evidenceHealth,
       bannerPublicadoNoSite: item.bannerPublicadoNoSite === true || publicConfirmed,
     };
     const state = computeInsertionState(effectiveItem, evidenceDays, targetDate);
@@ -1758,6 +1779,9 @@ async function main() {
     return {
       ...effectiveItem,
       publicConfirmed,
+      publicationHealth,
+      evidenceHealth,
+      publicationFingerprint: buildPublicationHealthFingerprint({ insertionId: item.id, publicationHealth }),
       campanhaName: item.campanhaName || campaign?.name || `Campanha ${item.campanhaId || "-"}`,
       clienteNome: item.clienteNome || campaign?.clienteNome || "-",
       agenciaNome: item.agenciaNome || campaign?.agenciaNome || "-",
@@ -1772,8 +1796,8 @@ async function main() {
       missingDates,
       retroactiveMissingDates,
       invalidDates,
-      publicationBlocker: state === "not_published" ? guidance.blocker : "",
-      publicationAction: state === "not_published" ? guidance.action : "",
+      publicationBlocker: ["not_published", "blocked_upstream"].includes(state) ? guidance.blocker : "",
+      publicationAction: ["not_published", "blocked_upstream"].includes(state) ? guidance.action : "",
       statusDetail: evidenceDetails({ ...item, state, missingDates, invalidDates }),
       modalId: `ins-${item.id}`,
     };
@@ -1802,6 +1826,7 @@ async function main() {
     pending: enriched.filter((item) => item.state === "pending").length,
     invalid: enriched.filter((item) => item.state === "invalid").length,
     notPublished: enriched.filter((item) => item.state === "not_published").length,
+    blockedUpstream: enriched.filter((item) => item.state === "blocked_upstream").length,
     auditedDays: enriched.reduce((sum, item) => sum + item.auditedDays, 0),
     missingDates: enriched.reduce((sum, item) => sum + item.missingDates.length, 0),
     invalidDates: enriched.reduce((sum, item) => sum + item.invalidDates.length, 0),
