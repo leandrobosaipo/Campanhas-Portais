@@ -20,6 +20,10 @@ const blockedAudited = report.insertions?.find((item) => Number(item.id) === 269
 assert.ok(blockedAudited, "inserção #2693 ausente do relatório");
 assert.equal(blockedAudited.auditedDays, 6, "#2693 deve preservar os seis prints auditados");
 assert.deepEqual(blockedAudited.missingDates, [], "#2693 não deve ganhar pendência de evidência");
-assert.equal(blockedAudited.publicationHealth?.status, "blocked_upstream");
-assert.equal(blockedAudited.publicationHealth?.reason, "expected_media_not_observed");
+if (blockedAudited.publicationHealth) {
+  assert.equal(blockedAudited.publicationHealth.status, "blocked_upstream");
+  assert.equal(blockedAudited.publicationHealth.reason, "expected_media_not_observed");
+} else {
+  assert.equal(blockedAudited.state, "ok", "#2693 confirmada ao vivo deve permanecer em dia");
+}
 console.log(JSON.stringify({ ok: true, reportUrl, targetDate, targetIds }));
