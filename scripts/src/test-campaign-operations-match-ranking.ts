@@ -270,3 +270,30 @@ test("detecta duplicidade por PI portal formato e periodo", () => {
   ];
   assert.deepEqual(findDuplicateCampaignInsertions({ piCodigo: "PI 91159", siteSigla: "AFL", localFormato: "INTERNO DE NOTICIAS", periodoInicio: "2026-08-21", periodoFim: "2026-08-31" }, candidates).map((item) => item.id), [2693, 2714]);
 });
+
+test("nao confunde identidade completa ao variar PI, portal, formato ou periodo", () => {
+  const candidate = {
+    ...insertion({ id: 2693 }),
+    piCodigo: "91159",
+    siteSigla: "AFL",
+    localFormatoNormalizado: "INTERNO DE NOTICIAS",
+    periodoInicio: "2026-08-21",
+    periodoFim: "2026-08-31",
+  };
+  const identity = {
+    piCodigo: "PI 91159",
+    siteSigla: "AFL",
+    localFormato: "INTERNO DE NOTICIAS",
+    periodoInicio: "2026-08-21",
+    periodoFim: "2026-08-31",
+  };
+
+  for (const mismatch of [
+    { piCodigo: "91160" },
+    { siteSigla: "OMT" },
+    { localFormato: "HOME 1" },
+    { periodoFim: "2026-09-01" },
+  ]) {
+    assert.deepEqual(findDuplicateCampaignInsertions({ ...identity, ...mismatch }, [candidate]), []);
+  }
+});
