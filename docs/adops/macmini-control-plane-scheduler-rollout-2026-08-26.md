@@ -166,6 +166,19 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - Após readback saudável e fila vazia, uma única repetição controlada concluiu o deploy.
 - Rollback preservado: selecionar os volumes versionados anteriores e `ADOPS_CONTROL_PLANE_PROVIDER=cloudflare` para retornar temporariamente ao caminho legado.
 
+### Isolamento do relatório mensal e dos pacotes opcionais
+
+- O relatório natural das 22h15 revelou que a versão anterior enfileirava `pi-site-export` opcionais e que esses pacotes podiam tentar reconstruir provas já auditadas.
+- O release `8d28b18615f84b210c4e92d3308ffa6b630f8f47` impede o relatório agendado de criar esses pacotes; a execução manual continua disponível.
+- `pi-site-export` passou a reutilizar somente evidência final auditada, com URL alcançável e checklist final aprovado. O pacote falha fechado e não chama captura ou correção de evidência.
+- Testes do contrato mensal: `32/32`; revisão independente: nenhum bloqueio P0/P1.
+- Deploy concluído em volumes `adops_app_source_8d28b18615f8` e `adops_web_public_8d28b18615f8`, após backup `adops-before-8d28b18615f8-20260827T023952Z.sql.gz`.
+- O Portainer expirou a resposta da atualização, mas o readback confirmou a stack persistida, três leituras estáveis, API e painel saudáveis e SHA público correto.
+- Os jobs herdados chegaram a estado terminal: dois pacotes concluíram reutilizando artefatos sem `regeneratedDates` ou `invalidatedEvidenceIds`; os demais falharam fechados por checklist, timeout da fila ou interrupção controlada do runner.
+- O job interrompido pela troca de volume foi encerrado como `runner_interrupted`, preservando o resultado parcial e sem criar retry concorrente.
+- Fila final: `running=0`, `queued=0`, `readyForRunner=0`; três runners com heartbeat recente.
+- O print `#2713` de 26/08 manteve a URL anterior, respondeu HTTP 200 e continuou `audited`, com checklist final aprovado e zero bloqueios. A data permaneceu `8/8` aprovada.
+
 ## Preflight de integração
 
 - A branch do scheduler parte exatamente do commit terminal da rotina autocorretiva de prints: `be813b54147df8d75ac98c69d6ad91ae4ea623b9`.
