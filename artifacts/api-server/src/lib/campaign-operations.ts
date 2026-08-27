@@ -20,10 +20,63 @@ import {
 } from "./drive-campaign-media";
 import { getEvidenceDateKey, parseDateOnly } from "./capture-audit";
 import { validateAuditChecklist } from "./audit-checklist";
-import { getAdRotateGroupId, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
+import { getAdRotateGroupId, getSiteFormatMapping, getSiteIntegration, getSupportedGroupIds, normalizeSiteMediaUrl } from "./adrotate-sites";
 import { findCampaignIdentityMatches, isFormatCompatible, selectBestAdopsMatch } from "./campaign-operations-matching";
 
 export const CAMPAIGN_OPERATIONS_VERSION = "campaign-operations-v1" as const;
+
+export type PublicationHealth = {
+  status: "ok" | "prepublication_pending" | "blocked_upstream";
+  reason: "confirmed" | "drive_media_not_linked" | "media_missing" | "adrotate_relation_missing" | "expected_media_not_observed" | "public_html_not_confirmed" | "duplicate_identity";
+  requiredAction: "none" | "resolve_media" | "reconcile_duplicate" | "publish_adrotate" | "verify_publication";
+  expectedGroupId: number | null;
+  expectedMediaObserved: boolean;
+  duplicateInsertionIds: number[];
+};
+
+export type EvidenceHealth = {
+  status: "complete" | "missing" | "invalid" | "blocked_upstream" | "not_applicable";
+  auditedDates: string[];
+  missingDates: string[];
+  invalidDates: string[];
+};
+
+type PublicationHealthInput = {
+  inPeriod: boolean;
+  mediaUrl: string | null;
+  bannerPublicadoNoSite: boolean;
+  expectedGroupId: number | null;
+  expectedMediaObserved: boolean;
+  publicConfirmation: "confirmed" | "reported_only" | "not_published";
+  driveMediaAvailable?: boolean;
+  duplicateInsertionIds: number[];
+};
+
+export function classifyPublicationHealth(input: PublicationHealthInput): PublicationHealth {
+  const blockedStatus = input.inPeriod ? "blocked_upstream" : "prepublication_pending";
+  const result = (reason: PublicationHealth["reason"], requiredAction: PublicationHealth["requiredAction"]): PublicationHealth => ({
+    status: blockedStatus,
+    reason,
+    requiredAction,
+    expectedGroupId: input.expectedGroupId,
+    expectedMediaObserved: input.expectedMediaObserved,
+    duplicateInsertionIds: input.duplicateInsertionIds,
+  });
+
+  if (!input.mediaUrl) return result(input.driveMediaAvailable ? "drive_media_not_linked" : "media_missing", "resolve_media");
+  if (!input.expectedGroupId) return result("adrotate_relation_missing", "publish_adrotate");
+  if (!input.expectedMediaObserved) return result("expected_media_not_observed", "publish_adrotate");
+  if (input.publicConfirmation !== "confirmed") return result("public_html_not_confirmed", "verify_publication");
+  if (input.duplicateInsertionIds.length) return result("duplicate_identity", "reconcile_duplicate");
+  return {
+    status: "ok",
+    reason: "confirmed",
+    requiredAction: "none",
+    expectedGroupId: input.expectedGroupId,
+    expectedMediaObserved: input.expectedMediaObserved,
+    duplicateInsertionIds: input.duplicateInsertionIds,
+  };
+}
 
 type RequiredAction =
   | "create_campaign_or_insertion"
@@ -140,6 +193,8 @@ export type CampaignOperationItem = {
     invalidDates: string[];
     missingDates: string[];
   };
+  publicationHealth: PublicationHealth;
+  evidenceHealth: EvidenceHealth;
   requiredActions: RequiredAction[];
   blockingIssues: string[];
   suggestedJobs: SuggestedJob[];
@@ -179,6 +234,8 @@ export type CampaignOperationUpcomingItem = {
     statusNormalizado: string | null;
     matchedBy: "pi_site" | "none";
   };
+  publicationHealth: PublicationHealth;
+  evidenceHealth: EvidenceHealth;
   requiredActions: RequiredAction[];
   blockingIssues: string[];
 };
@@ -337,15 +394,27 @@ function parseLiveSlotsFromHtml(html: string, pageUrl: string, supportedGroups: 
   return slots;
 }
 
-async function fetchHomeLiveSlots(siteSigla: string) {
+async function fetchLiveSlotsForInsertion(insertion: MinimalEnrichedInsertion | null, cache: Map<string, LiveAdSlot[]>) {
+  const siteSigla = insertion?.site?.sigla ?? null;
+  const mapping = getSiteFormatMapping(siteSigla, insertion?.localFormatoNormalizado ?? insertion?.localFormato);
   const site = getSiteIntegration(siteSigla);
-  if (!site) return [] as LiveAdSlot[];
+  if (!site || !mapping) return [] as LiveAdSlot[];
+  const pageUrl = mapping.page === "article" ? site.articleFallbackUrl : site.homeUrl;
+  if (!pageUrl) return [] as LiveAdSlot[];
+  const cacheKey = `${site.sigla}:${mapping.page}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey) ?? [];
   try {
-    const response = await fetch(site.homeUrl, { signal: AbortSignal.timeout(12000) });
-    if (!response.ok) return [];
+    const response = await fetch(pageUrl, { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) {
+      cache.set(cacheKey, []);
+      return [];
+    }
     const html = await response.text();
-    return parseLiveSlotsFromHtml(html, site.homeUrl, getSupportedGroupIds(siteSigla));
+    const slots = parseLiveSlotsFromHtml(html, pageUrl, getSupportedGroupIds(siteSigla));
+    cache.set(cacheKey, slots);
+    return slots;
   } catch {
+    cache.set(cacheKey, []);
     return [];
   }
 }
@@ -479,7 +548,27 @@ async function resolveEvidence(insertion: MinimalEnrichedInsertion | null, row: 
   };
 }
 
-function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null, evidenceStatus: Awaited<ReturnType<typeof resolveEvidence>>, drive: DriveCampaignMediaMatch): SuggestedJob[] {
+function resolveEvidenceHealth(
+  evidence: Awaited<ReturnType<typeof resolveEvidence>>,
+  publicationHealth: PublicationHealth,
+): EvidenceHealth {
+  return {
+    status: publicationHealth.status === "blocked_upstream"
+      ? "blocked_upstream"
+      : evidence.status === "approved"
+        ? "complete"
+        : evidence.status === "missing"
+          ? "missing"
+          : evidence.status === "invalid"
+            ? "invalid"
+            : "not_applicable",
+    auditedDates: evidence.auditedDates,
+    missingDates: evidence.missingDates,
+    invalidDates: evidence.invalidDates,
+  };
+}
+
+function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null, evidenceStatus: Awaited<ReturnType<typeof resolveEvidence>>, drive: DriveCampaignMediaMatch, publicationHealth: PublicationHealth): SuggestedJob[] {
   const jobs: SuggestedJob[] = [];
   if (drive.folderId) {
     jobs.push({
@@ -497,7 +586,7 @@ function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedI
       payload: { folderId: drive.folderId },
     });
   }
-  if (insertion && evidenceStatus.requiredDates.length) {
+  if (insertion && publicationHealth.status === "ok" && evidenceStatus.requiredDates.length) {
     jobs.push({
       type: "print_backfill",
       method: "POST",
@@ -544,13 +633,7 @@ export async function getActiveCampaignOperations(options: {
     }),
     loadEnrichedInsertions(),
   ]);
-  const liveSlotsBySite = new Map<string, LiveAdSlot[]>();
-  const getLiveSlots = async (siteSigla: string) => {
-    if (!liveSlotsBySite.has(siteSigla)) {
-      liveSlotsBySite.set(siteSigla, await fetchHomeLiveSlots(siteSigla));
-    }
-    return liveSlotsBySite.get(siteSigla) ?? [];
-  };
+  const liveSlotsByPage = new Map<string, LiveAdSlot[]>();
 
   const items: CampaignOperationItem[] = [];
   for (const row of sheet.rows) {
@@ -587,9 +670,30 @@ export async function getActiveCampaignOperations(options: {
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
-    const liveSlots = await getLiveSlots(row.blockSite);
+    const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
+    const liveSlots = await fetchLiveSlotsForInsertion(insertion, liveSlotsByPage);
     const observedLiveSlotIssues = liveSlotIssuesForInsertion(insertion, liveSlots);
     const exactPublicSlot = hasExactPublicSlot(insertion, liveSlots);
+    const publicConfirmation = exactPublicSlot
+      ? "confirmed" as const
+      : insertion?.bannerPublicadoNoSite === true
+        ? "reported_only" as const
+        : "not_published" as const;
+    const duplicateInsertionIds = compatible
+      .filter((candidate) => candidate.id !== insertion?.id)
+      .map((candidate) => candidate.id)
+      .sort((left, right) => left - right);
+    const publicationHealth = classifyPublicationHealth({
+      inPeriod: Boolean(row.periodoInicio && row.periodoFim && date >= row.periodoInicio && date <= row.periodoFim),
+      mediaUrl: insertion?.mediaUrl ?? null,
+      bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? false,
+      expectedGroupId,
+      expectedMediaObserved: exactPublicSlot,
+      publicConfirmation,
+      driveMediaAvailable: drive.mediaFiles.length > 0,
+      duplicateInsertionIds,
+    });
+    const evidenceHealth = resolveEvidenceHealth(evidence, publicationHealth);
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
@@ -670,19 +774,17 @@ export async function getActiveCampaignOperations(options: {
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
-        publicConfirmation: exactPublicSlot
-          ? "confirmed"
-          : insertion?.bannerPublicadoNoSite === true
-            ? "reported_only"
-            : "not_published",
+        publicConfirmation,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
         operationalMatchCount: compatible.length,
       },
       evidence,
+      publicationHealth,
+      evidenceHealth,
       requiredActions: unique(requiredActions),
       blockingIssues,
-      suggestedJobs: suggestedJobs(row, insertion, evidence, drive),
+      suggestedJobs: suggestedJobs(row, insertion, evidence, drive, publicationHealth),
     });
   }
 
@@ -702,6 +804,22 @@ export async function getActiveCampaignOperations(options: {
     const requiredActions: RequiredAction[] = [];
     const blockingIssues: string[] = [];
     const hasAdopsMedia = Boolean(insertion?.mediaUrl);
+    const expectedGroupId = getAdRotateGroupId(insertion?.site?.sigla ?? row.blockSite, insertion?.localFormatoNormalizado ?? insertion?.localFormato ?? row.localFormatoNormalizado);
+    const publicConfirmation = insertion?.bannerPublicadoNoSite === true ? "reported_only" as const : "not_published" as const;
+    const duplicateInsertionIds = compatible
+      .filter((candidate) => candidate.id !== insertion?.id)
+      .map((candidate) => candidate.id)
+      .sort((left, right) => left - right);
+    const publicationHealth = classifyPublicationHealth({
+      inPeriod: false,
+      mediaUrl: insertion?.mediaUrl ?? null,
+      bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? false,
+      expectedGroupId,
+      expectedMediaObserved: false,
+      publicConfirmation,
+      driveMediaAvailable: drive.mediaFiles.length > 0,
+      duplicateInsertionIds,
+    });
     // Future ads are intentionally not required to appear in public HTML before their start date.
     const liveSlotIssues: string[] = [];
 
@@ -763,9 +881,16 @@ export async function getActiveCampaignOperations(options: {
         insertionId: insertion?.id ?? null,
         mediaUrl: insertion?.mediaUrl ?? null,
         bannerPublicadoNoSite: insertion?.bannerPublicadoNoSite ?? null,
-        publicConfirmation: insertion?.bannerPublicadoNoSite === true ? "reported_only" : "not_published",
+        publicConfirmation,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
+      },
+      publicationHealth,
+      evidenceHealth: {
+        status: "not_applicable",
+        auditedDates: [],
+        missingDates: [],
+        invalidDates: [],
       },
       requiredActions: unique(requiredActions),
       blockingIssues,
