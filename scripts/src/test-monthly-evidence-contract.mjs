@@ -141,24 +141,39 @@ test("classifica evidência completa sem depender do estado de publicação", ()
   assert.match(metadata.evidenceStates, /\bcomplete\b/);
 });
 
-test("publicação bloqueada continua visível com evidências auditadas", () => {
+test("fixture #2693 preserva evidência completa durante bloqueio upstream", () => {
+  const item = {
+    insertionId: 2693,
+    state: "blocked_upstream",
+    publicationHealth: {
+      status: "blocked_upstream",
+      reason: "expected_media_not_observed",
+      expectedGroupId: 14,
+      requiredAction: "publish_adrotate",
+    },
+    requiredDays: ["2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21"],
+    auditedDays: 6,
+    missingDates: [],
+    invalidDates: [],
+  };
   const metadata = contract.buildCampaignFilterMetadata({
-    items: [{
-      state: "blocked_upstream",
-      publicationHealth: { status: "blocked_upstream", reason: "expected_media_not_observed", expectedGroupId: 14 },
-      requiredDays: ["2026-08-21"],
-      auditedDays: 1,
-      missingDates: [],
-      invalidDates: [],
-    }],
+    items: [item],
   }, "2026-08-26");
 
   assert.match(metadata.publicationStates, /\bblocked_upstream\b/);
   assert.match(metadata.evidenceStates, /\bcomplete\b/);
+  assert.equal(item.insertionId, 2693);
+  assert.equal(item.auditedDays, 6);
+  assert.deepEqual(item.missingDates, []);
   assert.equal(contract.buildPublicationHealthFingerprint({
-    insertionId: 2693,
-    publicationHealth: { status: "blocked_upstream", reason: "expected_media_not_observed", expectedGroupId: 14 },
+    insertionId: item.insertionId,
+    publicationHealth: item.publicationHealth,
   }), "publication-health:2693:expected_media_not_observed:14");
+  assert.deepEqual(contract.buildPublicationGuidance({ publicationHealth: item.publicationHealth }), {
+    blocker: "expected_media_not_observed",
+    action: "Verificar a mídia esperada no grupo publicado e executar novo preflight.",
+    requiredAction: "publish_adrotate",
+  });
 });
 
 test("distingue qualquer print pendente de retroativo pendente", () => {

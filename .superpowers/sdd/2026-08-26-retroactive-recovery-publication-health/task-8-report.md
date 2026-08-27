@@ -21,3 +21,9 @@
 ## Pendência externa
 
 O teste de alvo público continuará vermelho até que a integração publique um relatório regenerado: a URL atual ainda não contém `publicationHealth` para #2693. Nenhum deploy, alerta ou job foi acionado nesta Task.
+
+## Apêndice de revisão
+
+- `publicationGuidance` agora recebe o `publicationHealth` já resolvido da inserção e o usa como fallback quando a operação canônica não estiver disponível. Motivo e `requiredAction` específicos permanecem no dado e orientam a ação exibida.
+- Foi adicionada uma fixture local #2693 com seis evidências auditadas, zero faltantes e bloqueio `expected_media_not_observed` no grupo 14. Ela prova, sem rede, `evidence=complete` e `publication=blocked_upstream` simultaneamente.
+- O teste público foi mantido como validação de runtime e continua pendente de regeneração/publicação do relatório.

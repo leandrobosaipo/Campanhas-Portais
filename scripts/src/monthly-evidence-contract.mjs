@@ -224,6 +224,35 @@ export function buildPublicationHealthFingerprint({ insertionId, publicationHeal
   return `publication-health:${id}:${reason}:${groupId}`;
 }
 
+export function buildPublicationGuidance({ operation, publicationHealth } = {}) {
+  const resolvedHealth = publicationHealth || operation?.publicationHealth || null;
+  const actions = Array.isArray(operation?.requiredActions) ? operation.requiredActions : [];
+  const blockers = Array.isArray(operation?.blockingIssues) ? operation.blockingIssues : [];
+  const reason = String(resolvedHealth?.reason || operation?.sourceIdentity?.reason || "").trim();
+  const requiredAction = String(resolvedHealth?.requiredAction || "").trim() || null;
+  const blocker = blockers.map((issue) => issue?.message || issue?.label || issue?.code || issue).find(Boolean)
+    || reason
+    || (actions.includes("confirm_source_identity") ? "A identidade da campanha ainda precisa ser confirmada." : "A publicação ainda não passou pelo preflight operacional.");
+  const action = reason === "expected_media_not_observed"
+    ? "Verificar a mídia esperada no grupo publicado e executar novo preflight."
+    : requiredAction === "resolve_media" || actions.includes("locate_or_upload_media")
+      ? "Confirmar mídia e destino HTTPS e executar novo preflight."
+      : requiredAction === "publish_adrotate" || actions.includes("publish_on_site")
+        ? "Executar o preflight e publicar o banner no portal."
+        : requiredAction === "verify_publication"
+          ? "Verificar a publicação no portal e executar novo preflight."
+          : requiredAction === "reconcile_duplicate"
+            ? "Reconciliar a identidade duplicada antes de gerar evidências."
+            : actions.includes("confirm_source_identity")
+              ? "Confirmar a PI no documento autoritativo e executar novo preflight."
+              : actions.includes("review_site_divergence")
+                ? "Revisar o portal com a PI, a planilha e a inserção canônica."
+                : actions.includes("review_period_divergence") || actions.includes("review_format_divergence")
+                  ? "Corrigir a divergência indicada e executar novo preflight."
+                  : "Reconciliar a campanha antes de gerar evidências.";
+  return { blocker, action, requiredAction };
+}
+
 export function selectCanonicalInsertions(activeInsertions, monthInsertions) {
   const canonicalIds = new Set((activeInsertions || []).map((item) => Number(item.id)).filter(Number.isFinite));
   return (monthInsertions || []).filter((item) => canonicalIds.has(Number(item.id)));

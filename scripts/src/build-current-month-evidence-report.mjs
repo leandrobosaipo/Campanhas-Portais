@@ -9,6 +9,7 @@ import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" }
 import {
   buildAtomicPublishCommand,
   buildCampaignFilterMetadata,
+  buildPublicationGuidance,
   buildPublicationHealthFingerprint,
   buildPortalFilterOptions,
   buildCampaignExportIdempotencyKey,
@@ -759,29 +760,8 @@ function renderMediaPreview(item) {
   return `<button class="media-preview media-open" type="button" data-media-modal-id="${escapeHtml(item.modalId)}" aria-label="${escapeHtml(label)}">${media}</button>`;
 }
 
-function publicationGuidance(operation) {
-  const actions = Array.isArray(operation?.requiredActions) ? operation.requiredActions : [];
-  const blockers = Array.isArray(operation?.blockingIssues) ? operation.blockingIssues : [];
-  const publicationReason = String(operation?.publicationHealth?.reason || "").trim();
-  const sourceReason = String(operation?.sourceIdentity?.reason || "").trim();
-  const blocker = blockers.map((issue) => issue?.message || issue?.label || issue?.code || issue).find(Boolean)
-    || publicationReason
-    || sourceReason
-    || (actions.includes("confirm_source_identity") ? "A identidade da campanha ainda precisa ser confirmada." : "A publicação ainda não passou pelo preflight operacional.");
-  const action = publicationReason === "expected_media_not_observed"
-    ? "Verificar a mídia esperada no grupo publicado e executar novo preflight."
-    : actions.includes("confirm_source_identity")
-    ? "Confirmar a PI no documento autoritativo e executar novo preflight."
-    : actions.includes("review_site_divergence")
-      ? "Revisar o portal com a PI, a planilha e a inserção canônica."
-      : actions.includes("review_period_divergence") || actions.includes("review_format_divergence")
-        ? "Corrigir a divergência indicada e executar novo preflight."
-        : actions.includes("locate_or_upload_media")
-          ? "Confirmar mídia e destino HTTPS e executar novo preflight."
-          : actions.includes("publish_on_site")
-            ? "Executar o preflight e publicar o banner no portal."
-            : "Reconciliar a campanha antes de gerar evidências.";
-  return { blocker, action };
+function publicationGuidance(operation, publicationHealth) {
+  return buildPublicationGuidance({ operation, publicationHealth });
 }
 
 function renderThumbs(item) {
@@ -1775,7 +1755,7 @@ async function main() {
     const missingDates = evidenceDays.filter((day) => day.status === "missing").map((day) => day.date);
     const invalidDates = evidenceDays.filter((day) => !day.status.startsWith("audited") && day.status !== "missing").map((day) => day.date);
     const retroactiveMissingDates = missingDates.filter((date) => date < targetDate);
-    const guidance = publicationGuidance(operation);
+    const guidance = publicationGuidance(operation, publicationHealth);
     return {
       ...effectiveItem,
       publicConfirmed,
