@@ -245,7 +245,6 @@ export function buildPendingPublicationView<T extends {
       insertionId: item.adops?.insertionId,
       folderId: item.drive?.folderId,
       folderPath: item.drive?.folderPath,
-      inventoryScanId: item.drive?.inventoryScanId,
       expectedPiCodigo: compositeReady ? canonicalPi : null,
       media: operationalMediaFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),
       pdfDocuments: pdfFiles.map((file: any) => ({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size ?? null, md5Checksum: file.md5Checksum ?? null })),

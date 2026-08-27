@@ -101,6 +101,18 @@ test("formato VIDEO seleciona o MP4 quando a pasta também contém GIF", () => {
   assert.deepEqual(view.items[0]?.operationalIdentity.source.media.map((file: { id: string }) => file.id), ["sanear-mp4"]);
 });
 
+test("nova varredura do mesmo arquivo preserva o fingerprint", () => {
+  const source = pendingItem();
+  const build = (inventoryScanId: string) => buildPendingPublicationView({
+    date: "2026-08-13",
+    generatedAt: "2026-08-13T16:30:00.000Z",
+    summary: { needsPublication: 1, needsEvidence: 1 },
+    items: [{ ...source, drive: { ...source.drive, inventoryScanId } }],
+    upcomingItems: [],
+  }).items[0]?.operationalIdentity.fingerprint;
+  assert.equal(build("scan-1"), build("scan-2"));
+});
+
 test("campanha publicada continua publicada quando falta somente evidência", () => {
   const view = buildPendingPublicationView({
     date: "2026-08-13",
