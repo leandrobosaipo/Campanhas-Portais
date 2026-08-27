@@ -2,7 +2,7 @@
 
 ## Estado
 
-Rollout ativo e em monitoramento. Este documento registra somente evidências confirmadas no runtime. Gates futuros permanecem pendentes até ocorrerem.
+Rollout ativo. O monitor conversacional de 72 horas foi encerrado por decisão humana; a validação restante passa a usar somente o harness finito e os jobs canônicos.
 
 ## Release ativo
 
@@ -216,7 +216,18 @@ O refresh incremental e o job natural das 22h15 atualizaram o consumidor para `8
 - [ ] Três ciclos, totalizando 72 horas, permanecem sem regressão.
 - [x] URLs, miniaturas, modal, downloads e filtro `evidence=missing` são validados no relatório público após o refresh incremental.
 - [ ] Branch é integrada por worktree limpa sem tocar no checkout principal sujo.
-- [ ] Monitor recorrente é desativado e o handoff final é publicado.
+- [x] Monitor recorrente é desativado; o handoff final será publicado após o harness finito e as correções operacionais.
+
+## Encerramento do monitor conversacional e novo baseline — 2026-08-27
+
+- A automação `monitor-adops-scheduler-72h` foi removida após aprovação humana. Não há mais polling conversacional ou espera por janela como critério de entrega.
+- Release público no início desta execução: `988c92cda6d957311775d6208de6c9cec5fee613`, construído em `2026-08-27T02:58:53Z`.
+- API, web, PostgreSQL e monitor do Drive estavam `running/healthy`; runners principal e individual estavam `running`.
+- A fila canônica continuava em `provider=macmini`, timezone `America/Cuiaba`, com três runners recentes. Contagens ausentes permaneceram `null`, nunca convertidas em zero.
+- A inserção canônica `#2693` tinha evidências `audited` de 21/08 a 26/08, todas com URL preservada. Elas não entram em regeneração.
+- A relação viva de `#2693` ainda não observava a mídia esperada no grupo 14. A correção é de publicação/reconciliação, independente das evidências históricas aprovadas.
+- A inserção `#2645` continuava `missing` em 24/08, 25/08 e 26/08, bloqueada por `media_missing` e metadata de captura ausente. A publicação do vídeo é gate anterior ao único `print-backfill` dessas datas.
+- O próximo mecanismo de validação é finito: `check`, uma execução explícita, acompanhamento do mesmo `jobId` até estado terminal e `verify`. Nenhum cron ou monitor novo será criado.
 
 ## Regra de encerramento
 
