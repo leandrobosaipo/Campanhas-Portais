@@ -594,11 +594,10 @@ async function materializeCampaignExports(items) {
         headers: { "idempotency-key": idempotencyKey },
         timeoutMs: MONTHLY_REPORT_EXPORT_CREATE_TIMEOUT_MS,
       });
-      if (created.status === "completed") {
-        results.set(group.key, buildPiSiteExportDownloadUrl(deliveryApiBase, created.jobId));
-      } else {
-        console.warn(`[monthly-report] pacote opcional em processamento para ${group.piCodigo}/${group.siteSigla}; relatório seguirá com as evidências individuais.`);
+      if (created.status !== "completed") {
+        await waitForCompactJob(created.jobId, `pacote por portal ${group.piCodigo}/${group.siteSigla}`, MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS);
       }
+      results.set(group.key, buildPiSiteExportDownloadUrl(deliveryApiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote opcional indisponível para ${group.piCodigo}/${group.siteSigla}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -653,11 +652,10 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
       if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
         throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
       }
-      if (created.status === "completed") {
-        results.set(group.key, buildCampaignEvidenceExportDownloadUrl(deliveryApiBase, created.jobId));
-      } else {
-        console.warn(`[monthly-report] pacote completo opcional em processamento para PI ${group.piCodigo}; relatório seguirá com as evidências individuais.`);
+      if (created.status !== "completed") {
+        await waitForCompactJob(created.jobId, `pacote completo ${group.piCodigo}`, MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS);
       }
+      results.set(group.key, buildCampaignEvidenceExportDownloadUrl(deliveryApiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote completo opcional indisponível para PI ${group.piCodigo}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -709,6 +707,14 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   JSON.parse(await readFile(path.join(latestDir, "report.json"), "utf8"));
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
+  const exportEligible = insertions.filter((item) => {
+    const required = item.requiredDays?.length || 0;
+    return canonicalCommercialPi(item.piCodigo) && required > 0 && item.auditedDays === required;
+  });
+  const missingPortalZips = exportEligible.filter((item) => !item.batchDownloadUrl).map((item) => item.id);
+  const missingCompleteZips = exportEligible.filter((item) => !item.completeCampaignDownloadUrl).map((item) => item.id);
+  if (missingPortalZips.length) throw new Error(`Relatório sem ZIP por portal para inserções: ${missingPortalZips.join(", ")}.`);
+  if (missingCompleteZips.length) throw new Error(`Relatório sem ZIP completo para inserções: ${missingCompleteZips.join(", ")}.`);
   const individualSamples = takeDeliverySamples(insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl)));
   const batchSamples = takeDeliverySamples(insertions.map((item) => item.batchDownloadUrl));
   const completeSamples = takeDeliverySamples(insertions.map((item) => item.completeCampaignDownloadUrl));

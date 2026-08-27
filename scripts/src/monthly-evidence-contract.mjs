@@ -373,7 +373,7 @@ export function buildCampaignExportIdempotencyKey({ piCodigo, siteSigla, compete
 }
 
 export function shouldMaterializeOptionalMonthlyExports({ scheduled = false, skipRequested = false } = {}) {
-  return !scheduled && !skipRequested;
+  return !skipRequested;
 }
 
 export function isScheduledMonthlyReportPayload(payload) {

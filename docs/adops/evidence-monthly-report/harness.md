@@ -50,6 +50,9 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - O modal deve abrir com “Detalhes da campanha e evidência” visível.
 - “Baixar ZIP da campanha — todos os portais” deve usar `campaign-evidence-exports` e reunir a PI completa.
 - “Baixar ZIP da campanha — somente este portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
+- Em relatório completo, inclusive o agendado, os dois jobs de ZIP devem ser acompanhados pelo mesmo `jobId` até `completed` ou `failed`; `ready_for_runner` não libera botão.
+- Toda inserção com PI canônica e evidências completas deve possuir os dois downloads antes da troca atômica. URL vazia bloqueia a publicação e preserva o relatório anterior.
+- Atualização incremental com `ADOPS_REPORT_SKIP_EXPORTS=1` não pode apagar botões existentes. Se não houver pacote compatível, a publicação deve falhar fechada e aguardar a geração completa.
 - O HTML público nunca pode conter hostname interno, como `adops-api:4011`; os downloads devem usar `ADOPS_DELIVERY_API_BASE_URL`.
 - Se `ADOPS_REPORT_SKIP_PUBLISH=1`, nenhum container auxiliar deve ser criado.
 - Em `ADOPS_REPORT_REFRESH_MODE=incremental`, `ADOPS_REPORT_SKIP_EXPORTS=1` é obrigatório: o ciclo só reusa evidências existentes e não pode disparar captura, JPEG, ZIP ou exportação.
@@ -86,7 +89,9 @@ Esperado:
 - HTML contem `Evidências AdOps`.
 - HTML contem a competencia alvo.
 - Abrir um print exibe os dados da campanha sem clique adicional.
+- Clicar numa miniatura deve abrir `dialog#modal`; validar no DOM que `#modalLinks` contém “Baixar ZIP da campanha — todos os portais” e “Baixar ZIP da campanha — somente este portal”.
 - JPEG e os dois escopos de ZIP disponíveis respondem pela origem pública; ZIP responde como `application/zip`.
+- Conferir no `data.json`: para toda inserção elegível, `batchDownloadUrl` e `completeCampaignDownloadUrl` são URLs públicas não vazias.
 
 ## Incidente de 27/08/2026
 
@@ -94,3 +99,4 @@ Esperado:
 - Efeito: 94 dias auditados apareceram como inválidos, principalmente por `relative_content_time_audit_missing` e `visible_page_time_missing`.
 - Recuperação: restauração atômica do último relatório válido e hotfix isolado a partir de `c9b497`.
 - Prevenção: gate automático de regressão histórica antes da publicação e revisão obrigatória do intervalo entre o SHA ativo e o candidato.
+- Incidente complementar: o gerador aceitava jobs de exportação ainda em `ready_for_runner`, publicava URLs vazias e escondia os botões. O contrato agora exige estado terminal e os dois escopos antes de publicar.

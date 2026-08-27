@@ -31,6 +31,13 @@ test("publicacao compara o relatorio anterior antes da troca atomica", () => {
   assert.match(source, /Publicação bloqueada:.*evidência\(s\) auditada\(s\) regrediram/);
 });
 
+test("relatorio aguarda os jobs de ZIP e bloqueia publicacao sem os dois escopos", () => {
+  assert.match(source, /waitForCompactJob\(created\.jobId, `pacote por portal/);
+  assert.match(source, /waitForCompactJob\(created\.jobId, `pacote completo/);
+  assert.match(source, /Relatório sem ZIP por portal/);
+  assert.match(source, /Relatório sem ZIP completo/);
+});
+
 const insertion = {
   id: 1944,
   modalId: "ins-1944",
