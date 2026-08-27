@@ -8228,6 +8228,7 @@ if (require.main === module) {
     applyAflRetroPreview,
     applyOmtRetroPreview,
     applyPerrengueStaticRetroPreview,
+    collectRetroContentEvidence,
     applyPerrengueStaticRetroAd,
     buildStaticRetroSlotPlan,
     shouldAllowConfiguredRetroSlotReconstruction,

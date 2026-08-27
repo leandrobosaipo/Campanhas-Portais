@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   applyPerrengueStaticRetroPreview,
+  collectRetroContentEvidence,
   normalizePerrengueWpRestBefore,
 } = require("./capture-insertion-proof.cjs");
 
@@ -86,6 +87,7 @@ function makeDocument(pageType = "home") {
 
 function makePage(indexPayload, pageType = "home") {
   return {
+    lastDocument: null,
     async evaluate(fn, payload) {
       const previous = {
         document: globalThis.document,
@@ -96,6 +98,7 @@ function makePage(indexPayload, pageType = "home") {
       try {
         globalThis.HTMLElement = class HTMLElement {};
         const document = makeDocument(pageType);
+        this.lastDocument = document;
         globalThis.document = document;
         globalThis.window = {
           location: { origin: "https://perrenguematogrosso.com", pathname: pageType === "article" ? "/post-1/" : "/" },
@@ -137,10 +140,47 @@ assert.equal(normalizePerrengueWpRestBefore("2026-07-07"), "2026-07-07T23:59:59"
 assert.equal(normalizePerrengueWpRestBefore("invalido"), "");
 
 {
-  const result = await applyArticlePreview([makePost(1)], "2026-06-01T18:30");
+  const posts = [makePost(1)];
+  const page = makePage(posts, "article");
+  const articleMapping = {
+    domain: "perrenguematogrosso.com",
+    homeUrl: "https://perrenguematogrosso.com/",
+    page: "article",
+    auditConfig: {},
+  };
+  const result = await applyPerrengueStaticRetroPreview(
+    page,
+    articleMapping,
+    "2026-06-01T18:30",
+    { adminRetroPosts: posts },
+  );
   assert.equal(result.applied, true);
   assert.equal(result.articleVerified, true);
   assert.equal(result.expectedPosts[0]?.url, "/post-1/");
+  const article = page.lastDocument.querySelector("main article");
+  assert.equal(article.getAttribute("data-adops-retro-primary-article"), "1");
+  assert.equal(article.getAttribute("data-adops-retro-post-date"), posts[0].date);
+
+  const evidence = await collectRetroContentEvidence(page, articleMapping, "2026-06-01T18:30", result);
+  assert.equal(evidence.editorialSamples.length, 1);
+  assert.equal(evidence.editorialSamples[0].title, posts[0].title);
+  assert.equal(evidence.retroContentProof.status, "approved");
+  assert.equal(evidence.retroContentProof.futureCount, 0);
+  assert.match(evidence.manifestHash, /^[a-f0-9]{64}$/);
+}
+
+{
+  const unsupportedPage = {
+    async evaluate() {
+      throw new Error("unsupported page must not be evaluated");
+    },
+  };
+  assert.equal(await applyPerrengueStaticRetroPreview(
+    unsupportedPage,
+    { domain: "perrenguematogrosso.com", page: "category" },
+    "2026-06-01T18:30",
+    { adminRetroPosts: [makePost(1)] },
+  ), false);
 }
 
 {
