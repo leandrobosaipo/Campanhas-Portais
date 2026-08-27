@@ -175,7 +175,9 @@ async function privateApi(pathname, body, extraHeaders = {}) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
@@ -6114,6 +6116,69 @@ function isAuditApprovedStatus(status) {
   return status.status === "audited" && approved === true && issues.length === 0;
 }
 
+const RETROACTIVE_RETRY_DELAYS_MS = [0, 2_000, 5_000];
+const RETROACTIVE_RETRYABLE_CODES = new Set(["http_429", "http_502", "http_503", "http_504", "network_timeout", "runner_interrupted", "upload_transient"]);
+const RETROACTIVE_RECONSTRUCTION_CODES = new Set(["reconstruction_not_allowed", "final_checklist_blocked"]);
+const RETROACTIVE_UPSTREAM_CODES = new Set(["blocked_upstream", "publication_not_live", "media_unavailable"]);
+
+function retroactiveErrorCode(error) {
+  return String(error?.code || error?.errorCode || "").trim() || "retroactive_capture_failed";
+}
+
+function isRetryableRetroactiveError(error) {
+  return RETROACTIVE_RETRYABLE_CODES.has(retroactiveErrorCode(error));
+}
+
+function classifyRetroactiveError(error) {
+  const code = retroactiveErrorCode(error);
+  return {
+    code,
+    retryable: isRetryableRetroactiveError(error),
+    status: RETROACTIVE_RECONSTRUCTION_CODES.has(code)
+      ? "blocked_reconstruction"
+      : RETROACTIVE_UPSTREAM_CODES.has(code)
+        ? "blocked_upstream"
+        : "failed",
+    message: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+  };
+}
+
+async function executeRetroactiveTarget(input) {
+  const identity = input?.identity || {};
+  const readStatus = input?.readStatus;
+  const capture = input?.capture;
+  const wait = input?.sleep || sleep;
+  if (typeof readStatus !== "function" || typeof capture !== "function") throw new Error("Alvo retroativo exige readStatus e capture.");
+
+  const startedAt = new Date().toISOString();
+  let before;
+  try {
+    before = await readStatus();
+  } catch (error) {
+    const classified = classifyRetroactiveError(error);
+    return { ...identity, status: classified.status, attempts: 0, evidenceUrl: null, errorCode: classified.code, error: classified.message, checklistStatus: null, startedAt, finishedAt: new Date().toISOString() };
+  }
+  if (input.skipExisting !== false && isAuditApprovedStatus(before)) {
+    return { ...identity, status: "skipped_existing", attempts: 0, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: null, error: null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+  }
+
+  for (let index = 0; index < RETROACTIVE_RETRY_DELAYS_MS.length; index += 1) {
+    if (RETROACTIVE_RETRY_DELAYS_MS[index]) await wait(RETROACTIVE_RETRY_DELAYS_MS[index]);
+    try {
+      const captureResult = await capture();
+      const after = await readStatus();
+      if (!isAuditApprovedStatus(after)) throw Object.assign(new Error("Checklist final não aprovado."), { code: "final_checklist_blocked" });
+      return { ...identity, status: "audited", attempts: index + 1, evidenceUrl: after?.arquivoUrl ?? after?.evidence?.arquivoUrl ?? captureResult?.item?.uploadedUrl ?? null, errorCode: null, error: null, checklistStatus: after?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+    } catch (error) {
+      const classified = classifyRetroactiveError(error);
+      if (!classified.retryable || index === RETROACTIVE_RETRY_DELAYS_MS.length - 1) {
+        return { ...identity, status: classified.status, attempts: index + 1, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: classified.code, error: classified.message, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+      }
+    }
+  }
+  throw new Error("Loop de retry retroativo terminou sem resultado.");
+}
+
 function clampDateRange(startDate, endDate, fromDate, toDate) {
   const start = parseIsoDate(startDate);
   const end = parseIsoDate(endDate);
@@ -6199,64 +6264,41 @@ async function executePrintBackfill(job) {
   }
 
   for (const { insertionId, date, captureAt } of captureTargets) {
-      const before = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
-        status: "status_error",
-        error: error instanceof Error ? error.message : String(error),
-      }));
-      if (!replaceRequested && isAuditApprovedStatus(before)) {
-        items.push({
-          insertionId,
-          date,
-          status: "skipped",
-          reason: "already_audited",
-          approved: true,
-        });
-        continue;
-      }
-
-      try {
-        const capture = await enqueueAndWaitCaptureProof({
+    try {
+      const result = await executeRetroactiveTarget({
+        identity: { insertionId, date },
+        readStatus: () => privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`),
+        capture: () => enqueueAndWaitCaptureProof({
           outerJobId: job.id,
           insertionId,
           date,
           captureAt,
-          replace: replaceRequested || !isAuditApprovedStatus(before),
+          replace: replaceRequested,
           force,
           candidate: true,
           promote: true,
           reconstructionReason: "late_publication_recovery",
-        });
-        const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
-          status: "status_error",
-          error: error instanceof Error ? error.message : String(error),
-        }));
-        items.push({
-          insertionId,
-          date,
-          status: isAuditApprovedStatus(after) ? "ok" : "error",
-          approved: isAuditApprovedStatus(after),
-          captureSkipped: false,
-          evidenceUrl: after?.arquivoUrl ?? capture?.item?.uploadedUrl ?? null,
-          checklistStatus: after?.status ?? null,
-          error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
-        });
-      } catch (error) {
-        items.push({
-          insertionId,
-          date,
-          status: "error",
-          approved: false,
-          captureSkipped: false,
-          evidenceUrl: before?.arquivoUrl ?? null,
-          checklistStatus: before?.status ?? null,
-          error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
-        });
-        continue;
-      }
+        }),
+      });
+      items.push(result);
+    } catch (error) {
+      items.push({
+        insertionId,
+        date,
+        status: "failed",
+        attempts: 0,
+        captureSkipped: false,
+        evidenceUrl: null,
+        checklistStatus: null,
+        errorCode: retroactiveErrorCode(error),
+        error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+      });
+      continue;
+    }
   }
 
-  const errors = items.filter((item) => item.status === "error");
-  return {
+  const errors = items.filter((item) => ["failed", "blocked_reconstruction", "blocked_upstream"].includes(item.status));
+  const executionResult = {
     ok: errors.length === 0,
     mode: resolved.mode,
     campaignId: resolved.campaignId ?? null,
@@ -6269,11 +6311,17 @@ async function executePrintBackfill(job) {
     force,
     totalInsertions: new Set(captureTargets.map((target) => target.insertionId)).size,
     totalDates: captureTargets.length,
-    generatedOrValidated: items.filter((item) => item.status === "ok" || item.status === "skipped").length,
+    generatedOrValidated: items.filter((item) => item.status === "audited" || item.status === "skipped_existing").length,
     errors: errors.length,
     skipped,
     items,
   };
+  if (errors.length) {
+    const error = new Error(`retroactive_backfill_partial_failed:${errors.length}`);
+    error.jobResult = executionResult;
+    throw error;
+  }
+  return executionResult;
 }
 
 async function executePrintSingle(job) {
@@ -8059,6 +8107,8 @@ export {
   validateOperationalPublicationContract,
   validateOperationalPublicationScope,
   validateOperationalDriveItem,
+  executeRetroactiveTarget,
+  isRetryableRetroactiveError,
 };
 
 if (process.env.ADOPS_RUNNER_TEST_MODE !== "1") {
