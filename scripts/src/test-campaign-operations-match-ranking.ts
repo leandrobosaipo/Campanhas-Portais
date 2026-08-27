@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   type CampaignOperationMatchCandidate,
+  findDuplicateCampaignInsertions,
   findCampaignIdentityMatches,
   isFormatCompatible,
+  normalizeCampaignPiIdentity,
   selectBestAdopsMatch,
 } from "../../artifacts/api-server/src/lib/campaign-operations-matching";
 
@@ -253,4 +255,18 @@ test("seleciona PNMT DENGUE #1839 e descarta rascunho ou cancelada", () => {
   });
   const result = selectBestAdopsMatch({ localFormato: "HOME 1", periodoInicio: "2026-08-03", periodoFim: "2026-08-17" }, [draft, canceled, canonical]);
   assert.equal(result.insertion?.id, 1839);
+});
+
+test("normaliza variantes textuais da PI 91159", () => {
+  for (const value of ["91159", "PI 91159", "PI 91159 - PREF PVA"]) {
+    assert.equal(normalizeCampaignPiIdentity(value), "91159");
+  }
+});
+
+test("detecta duplicidade por PI portal formato e periodo", () => {
+  const candidates = [
+    { ...insertion({ id: 2693 }), piCodigo: "91159", siteSigla: "AFL", localFormatoNormalizado: "INTERNO DE NOTICIAS", periodoInicio: "2026-08-21", periodoFim: "2026-08-31" },
+    { ...insertion({ id: 2714, mediaUrl: null, bannerPublicadoNoSite: false }), piCodigo: "PI 91159 - PREF PVA", siteSigla: "AFL", localFormatoNormalizado: "INTERNO DE NOTICIAS", periodoInicio: "2026-08-21", periodoFim: "2026-08-31" },
+  ];
+  assert.deepEqual(findDuplicateCampaignInsertions({ piCodigo: "PI 91159", siteSigla: "AFL", localFormato: "INTERNO DE NOTICIAS", periodoInicio: "2026-08-21", periodoFim: "2026-08-31" }, candidates).map((item) => item.id), [2693, 2714]);
 });

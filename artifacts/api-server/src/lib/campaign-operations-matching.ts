@@ -8,6 +8,15 @@ type MatchRow = Pick<CurrentSheetCampaignRow, "localFormato" | "periodoInicio" |
 
 type CampaignIdentityRow = Pick<CurrentSheetCampaignRow, "piCodigo" | "campaignName" | "blockSite" | "periodoInicio" | "periodoFim">;
 
+type CampaignInsertionIdentityInput = {
+  piCodigo?: unknown;
+  siteSigla?: unknown;
+  localFormato?: unknown;
+  localFormatoNormalizado?: unknown;
+  periodoInicio?: unknown;
+  periodoFim?: unknown;
+};
+
 type CampaignIdentityCandidate = CampaignOperationMatchCandidate & {
   campaignName: string | null;
   piCodigo: string | null;
@@ -25,15 +34,32 @@ export type CampaignOperationMatchCandidate = {
   mediaUrl: string | null;
 };
 
-function piDigits(value: string | null | undefined) {
-  return String(value ?? "").match(/\d+/g)?.join("") || null;
+export function normalizeCampaignPiIdentity(value: unknown) {
+  const digits = String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  return digits || null;
+}
+
+export function buildCampaignInsertionIdentity(input: CampaignInsertionIdentityInput) {
+  const pi = normalizeCampaignPiIdentity(input.piCodigo);
+  const site = normalizeForMatch(String(input.siteSigla ?? ""));
+  const format = normalizeFormato(String(input.localFormatoNormalizado ?? input.localFormato ?? ""));
+  const start = String(input.periodoInicio ?? "");
+  const end = String(input.periodoFim ?? "");
+  return pi && site && format && /^\d{4}-\d{2}-\d{2}$/.test(start) && /^\d{4}-\d{2}-\d{2}$/.test(end)
+    ? `${pi}:${site}:${format}:${start}:${end}`
+    : null;
+}
+
+export function findDuplicateCampaignInsertions<T extends CampaignOperationMatchCandidate & CampaignInsertionIdentityInput>(input: CampaignInsertionIdentityInput, candidates: T[]) {
+  const identity = buildCampaignInsertionIdentity(input);
+  return identity ? candidates.filter((candidate) => buildCampaignInsertionIdentity(candidate) === identity) : [];
 }
 
 export function findCampaignIdentityMatches<T extends CampaignIdentityCandidate>(row: CampaignIdentityRow, candidates: T[]) {
-  const sheetPi = piDigits(row.piCodigo);
+  const sheetPi = normalizeCampaignPiIdentity(row.piCodigo);
   return candidates.filter((candidate) => {
     if (normalizeForMatch(candidate.siteSigla) !== normalizeForMatch(row.blockSite)) return false;
-    if (sheetPi) return piDigits(candidate.piCodigo) === sheetPi;
+    if (sheetPi) return normalizeCampaignPiIdentity(candidate.piCodigo) === sheetPi;
     const sheetCampaign = normalizeForMatch(row.campaignName);
     const adopsCampaign = normalizeForMatch(candidate.campaignName);
     return Boolean(sheetCampaign && adopsCampaign && (sheetCampaign === adopsCampaign || sheetCampaign.includes(adopsCampaign) || adopsCampaign.includes(sheetCampaign)))
