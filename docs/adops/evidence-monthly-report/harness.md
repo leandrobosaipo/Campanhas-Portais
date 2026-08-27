@@ -58,6 +58,9 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - Um retry parcial deve conter somente datas sem aprovação e manter os JPEGs já auditados sem substituição.
 - Para incidentes de proveniência, o harness público deve conferir a lista exata de inserções e datas pela auditoria canônica; arquivo existente ou HTTP 200 isolado não basta.
 - A página não pode reclassificar evidência. O estado de cada dia deve ser igual ao retornado pela API.
+- Antes da publicação, comparar o `data.json` público anterior com o novo por `insertionId + date`. Qualquer transição de `audited`/`audited_best_effort` para outro estado bloqueia a troca atômica.
+- Uma correção exclusiva do relatório deve partir do SHA ativo em produção. Não publicar uma `main` adiantada sem revisar todo o intervalo `release_ativo..candidato`.
+- Após publicar, comparar `summary.auditedDays`, `summary.invalidDates` e a lista exata de dias. Queda de auditadas ou aumento de inválidas exige rollback imediato.
 - Antes de qualquer execução retroativa, seguir: preflight Drive -> publicação AdRotate -> confirmação viva -> `print-backfill` -> auditoria -> relatório.
 - O harness deve acompanhar o mesmo `jobId` de `print-backfill` até `completed` ou `failed`; `duplicate=true` não autoriza criar outro job.
 - Para cada item, aceitar apenas `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`; bloqueios não recebem retry cego.
@@ -84,3 +87,10 @@ Esperado:
 - HTML contem a competencia alvo.
 - Abrir um print exibe os dados da campanha sem clique adicional.
 - JPEG e os dois escopos de ZIP disponíveis respondem pela origem pública; ZIP responde como `application/zip`.
+
+## Incidente de 27/08/2026
+
+- Causa: o release `0887bfc` levou junto regras posteriores ao release ativo `c9b497`; elas foram reaplicadas a provas históricas já auditadas.
+- Efeito: 94 dias auditados apareceram como inválidos, principalmente por `relative_content_time_audit_missing` e `visible_page_time_missing`.
+- Recuperação: restauração atômica do último relatório válido e hotfix isolado a partir de `c9b497`.
+- Prevenção: gate automático de regressão histórica antes da publicação e revisão obrigatória do intervalo entre o SHA ativo e o candidato.

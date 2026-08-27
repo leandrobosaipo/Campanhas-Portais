@@ -19,6 +19,7 @@ import {
   buildMonthlyReportManifest,
   buildSevenDayForecast,
   classifyEvidenceStatus,
+  findHistoricalAuditRegressions,
   findReportsMountSource,
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
@@ -1869,6 +1870,20 @@ async function main() {
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH !== "1") {
     const publishStartedAtMs = Date.now();
+    const previousResponse = await fetchWithTimeout(
+      `${publicUrl}data.json?v=${encodeURIComponent(generatedAt.toISOString())}`,
+      { redirect: "follow", headers: { "cache-control": "no-cache" } },
+      20_000,
+    );
+    if (previousResponse.ok) {
+      const regressions = findHistoricalAuditRegressions(await previousResponse.json(), data);
+      if (regressions.length > 0) {
+        const sample = regressions.slice(0, 10).map((item) => `${item.insertionId}:${item.date}`).join(", ");
+        throw new Error(`Publicação bloqueada: ${regressions.length} evidência(s) auditada(s) regrediram (${sample}).`);
+      }
+    } else if (previousResponse.status !== 404) {
+      throw new Error(`Publicação bloqueada: relatório anterior indisponível para comparação (${previousResponse.status}).`);
+    }
     if (!isMonthlyReportPublishable(summary.publicationGate)) {
       console.warn(
         `[monthly-report] publicando o estado operacional atual: ` +

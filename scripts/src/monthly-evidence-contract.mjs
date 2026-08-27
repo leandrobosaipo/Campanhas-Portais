@@ -278,6 +278,34 @@ export function classifyEvidenceStatus(status) {
   return "invalid";
 }
 
+export function findHistoricalAuditRegressions(previousData, nextData) {
+  const nextByInsertion = new Map(
+    (nextData?.insertions ?? []).map((insertion) => [String(insertion.id), insertion]),
+  );
+  const auditedStatuses = new Set(["audited", "audited_best_effort"]);
+  const regressions = [];
+
+  for (const previousInsertion of previousData?.insertions ?? []) {
+    const nextInsertion = nextByInsertion.get(String(previousInsertion.id));
+    const nextByDate = new Map(
+      (nextInsertion?.evidenceDays ?? []).map((day) => [day.date, day]),
+    );
+    for (const previousDay of previousInsertion.evidenceDays ?? []) {
+      if (!auditedStatuses.has(previousDay.status)) continue;
+      const nextDay = nextByDate.get(previousDay.date);
+      if (nextDay && auditedStatuses.has(nextDay.status)) continue;
+      regressions.push({
+        insertionId: previousInsertion.id,
+        date: previousDay.date,
+        previousStatus: previousDay.status,
+        nextStatus: nextDay?.status ?? "missing",
+      });
+    }
+  }
+
+  return regressions;
+}
+
 export function adaptAggregatedEvidenceDay(day) {
   const approved = day?.status === "audited" || day?.status === "audited_best_effort";
   return {
