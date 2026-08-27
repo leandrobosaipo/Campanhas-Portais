@@ -100,6 +100,7 @@ Durante o lote, seis aprovações atravessaram minutos diferentes e criaram seis
 - O canário natural das 19h retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e nenhum job criado.
 - A consulta ao histórico confirmou zero registros com `scheduleId=daily-print-recovery:2026-08-26:19:00`.
 - O canário natural das 19h30 também retornou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null`; nenhum registro com `scheduleId=daily-print-recovery:2026-08-26:19:30` foi persistido.
+- Após a janela natural das 20h, o reconcile idempotente confirmou `auditGateEvaluated=true`, `outcome=not_due`, `jobId=null` e `nextRecoveryAt=null` para `daily-print-recovery:2026-08-26:20:00`. A consulta ao histórico retornou zero jobs desse `scheduleId`.
 - A fila permaneceu vazia e os três runners mantiveram heartbeat recente.
 
 ## Observabilidade de estágios e correção do runner de exportação
