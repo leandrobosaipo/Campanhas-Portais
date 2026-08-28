@@ -333,6 +333,7 @@ test("relatório renderizado expõe progresso vivo acessível e preserva o snaps
   assert.match(output, />Print pendente</);
   assert.match(output, /\.live-audited\s*\{[^}]*position:\s*relative[^}]*overflow:\s*visible/s);
   assert.match(output, /\.live-audited \.live-badge\s*\{[^}]*position:\s*absolute/s);
+  assert.match(output, /timeZone: 'America\/Cuiaba'/);
 });
 
 test("cliente vivo usa somente GET, todos os contratos e polling finito", () => {

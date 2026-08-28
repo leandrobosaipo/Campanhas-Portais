@@ -1473,7 +1473,14 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     updateCountdown();
     setInterval(updateCountdown, 60000);
     const liveApiBase = 'https://adops-api.codigo5.com.br';
-    const liveTargetDate = '${escapeHtml(targetDate)}';
+    const liveTargetDate = (() => {
+      try {
+        const current = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Cuiaba' }).format(new Date());
+        return /^\d{4}-\d{2}-\d{2}$/.test(current) ? current : '${escapeHtml(targetDate)}';
+      } catch {
+        return '${escapeHtml(targetDate)}';
+      }
+    })();
     const liveSummary = document.getElementById('livePrintSummary');
     const liveUpdatedAt = document.getElementById('livePrintUpdatedAt');
     const liveProgressBar = document.getElementById('livePrintProgressBar');
