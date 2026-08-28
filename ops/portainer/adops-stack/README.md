@@ -102,6 +102,8 @@ TARGET_DATABASE_URL=...
 
 `scripts/deploy-production.sh` cria volumes identificados pelo SHA da release. O upload usa containers auxiliares com nome determinístico por volume.
 
+O backup PostgreSQL é iniciado em modo destacado pela API Docker e acompanhado pelo mesmo `execId` até terminar, com limite de 150 segundos. O stack não é trocado se o backup falhar ou exceder esse limite; não volte a usar a chamada síncrona sujeita ao timeout HTTP do Portainer.
+
 Se Cloudflare/Portainer devolver timeout ou `524` depois de criar o container, a repetição consulta o nome existente e retoma o mesmo volume. Respostas não JSON nunca são enviadas diretamente ao `jq`.
 
 O stack só é trocado depois de validar:

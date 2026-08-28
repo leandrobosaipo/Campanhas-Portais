@@ -67,7 +67,7 @@ env_value() {
 
 wait_portainer_exec() {
   local exec_id="$1" state exit_code
-  for _ in {1..40}; do
+  for _ in {1..600}; do
     state="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
     if [[ "$(jq -r '.Running' <<<"$state")" == "false" ]]; then
       exit_code="$(jq -r '.ExitCode' <<<"$state")"
@@ -97,7 +97,7 @@ EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
   Cmd:["sh","-lc",("pg_dump -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" | gzip -c > " + $file)]
 }')"
 EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
+portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
 EXIT_CODE="$(wait_portainer_exec "$EXEC_ID" || true)"
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
 
