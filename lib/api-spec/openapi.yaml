@@ -145,7 +145,7 @@ paths:
       operationId: createPrintBackfillJob
       tags: [operations]
       summary: Create or retrieve an idempotent retroactive evidence backfill
-      description: The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+      description: The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job. Terminal item results preserve the child capture job, capture log, checklist blockers and required next action.
       requestBody:
         required: true
         content:
@@ -1796,7 +1796,7 @@ components:
     RetroactiveBackfillItem:
       type: object
       additionalProperties: false
-      required: [insertionId, date, status, attempts, evidenceUrl, errorCode, error, checklistStatus]
+      required: [insertionId, date, status, attempts, evidenceUrl, errorCode, error, captureJobId, captureLogId, blockingIssues, nextAction, checklistStatus]
       properties:
         insertionId: { type: integer, minimum: 1 }
         date: { type: string, format: date }
@@ -1805,6 +1805,10 @@ components:
         evidenceUrl: { type: [string, "null"], format: uri }
         errorCode: { type: [string, "null"] }
         error: { type: [string, "null"] }
+        captureJobId: { type: [string, "null"] }
+        captureLogId: { type: [string, "null"] }
+        blockingIssues: { type: array, items: { type: string } }
+        nextAction: { type: [string, "null"] }
         checklistStatus: { type: [string, "null"] }
 
     PrintBackfillRequest:

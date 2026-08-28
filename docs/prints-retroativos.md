@@ -125,6 +125,7 @@ Ela tambem valida:
 - data/hora do desktop da moldura
 - data/hora exibida pelo site
 - coerencia temporal do conteudo da home (datas dos cards/blocos <= captureAt)
+- ausência de datas editoriais relativas não resolvidas quando a regra exige datas absolutas; `contentRelativeTimeSamples=[]` comprova que a verificação foi executada
 - imagens visiveis da primeira dobra
 - imagens do slot do anuncio
 - backgrounds da primeira dobra

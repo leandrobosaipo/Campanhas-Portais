@@ -17,6 +17,7 @@ function fakeApi(calls, scenario) {
     async get(path) {
       calls.push({ method: "GET", path });
       if (path.includes("/progress")) return { status: scenario.progress[Math.min(progressIndex++, scenario.progress.length - 1)] };
+      if (path.startsWith("/api/ops/jobs/")) return scenario.job ?? {};
       if (path.includes("capture-proof/status")) return { status: "audited", checklistValidation: { approved: true }, arquivoUrl: "https://cdn.example/evidence.png" };
       return scenario.audit ?? scenario.queue ?? scenario.readiness ?? {};
     },
@@ -77,8 +78,13 @@ test("execute acompanha o mesmo job ate completed", async () => {
 
 test("failed nao cria segundo job", async () => {
   const calls = [];
-  const result = await runHarness({ mode: "execute", insertionId: 2645, fromDate: "2026-08-24", toDate: "2026-08-26", api: fakeApi(calls, { createJobId: "job-failed", progress: ["running", "failed"] }), sleep: async () => undefined });
+  const result = await runHarness({ mode: "execute", insertionId: 2645, fromDate: "2026-08-24", toDate: "2026-08-26", api: fakeApi(calls, {
+    createJobId: "job-failed",
+    progress: ["running", "failed"],
+    job: { result: { execution: { items: [{ insertionId: 2645, date: "2026-08-24", status: "failed", errorCode: "slot_not_found", captureJobId: "capture-2645", captureLogId: "log-2645", blockingIssues: [] }] } } },
+  }), sleep: async () => undefined });
   assert.equal(result.status, "failed");
+  assert.equal(result.job.result.execution.items[0].errorCode, "slot_not_found");
   assert.equal(calls.filter((call) => call.method === "POST").length, 1);
 });
 

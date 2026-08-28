@@ -106,6 +106,32 @@ test("bloqueio de reconstrucao nao recebe retry", async () => {
   assert.equal(attempts, 1);
 });
 
+test("falha retroativa preserva job filho e bloqueios do checklist", async () => {
+  const result = await runner.executeRetroactiveTarget({
+    identity: { insertionId: 2712, date: "2026-08-27" },
+    readStatus: async () => ({ status: "missing" }),
+    capture: async () => {
+      throw Object.assign(new Error("Checklist final não aprovado."), {
+        code: "final_checklist_blocked",
+        captureJobId: "capture-job-2712",
+      });
+    },
+    readFailure: async () => ({
+      captureLogId: "log-2712",
+      errorCode: "relative_content_time_audit_missing",
+      blockingIssues: ["relative_content_time_audit_missing"],
+      nextAction: "Reexecutar após corrigir o metadata temporal.",
+    }),
+    sleep: async () => undefined,
+  });
+
+  assert.equal(result.status, "blocked_reconstruction");
+  assert.equal(result.captureJobId, "capture-job-2712");
+  assert.equal(result.captureLogId, "log-2712");
+  assert.equal(result.errorCode, "relative_content_time_audit_missing");
+  assert.deepEqual(result.blockingIssues, ["relative_content_time_audit_missing"]);
+});
+
 test("filtro de competencia usa o seletor compartilhado", () => {
   const start = runnerSource.indexOf("async function executePrintBackfill");
   const end = runnerSource.indexOf("async function executePrintSingle", start);

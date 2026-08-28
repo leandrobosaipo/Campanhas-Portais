@@ -1,6 +1,6 @@
 # Harness de recuperação retroativa
 
-O harness executa uma fatia explícita de uma inserção. Ele não agenda automação e não cria retry de job: depois de um único `POST /api/ops/jobs/print-backfill`, acompanha o mesmo `jobId` até `completed`, `failed` ou o timeout finito (máximo de 45 minutos).
+O harness executa uma fatia explícita de uma inserção. Ele não agenda automação e não cria retry de job: depois de um único `POST /api/ops/jobs/print-backfill`, acompanha o mesmo `jobId` até `completed`, `failed` ou o timeout finito (máximo de 45 minutos). Ao chegar no estado terminal, consulta uma vez o job completo e grava o resultado por inserção/data.
 
 Use a base da API já configurada em `ADOPS_PUBLIC_API_BASE_URL`. Quando o endpoint exigir autenticação, use a variável operacional existente (`ADOPS_OPS_API_TOKEN`, `OPS_API_TOKEN` ou `ADOPS_INTERNAL_API_TOKEN`); o harness não imprime seus valores.
 
@@ -26,7 +26,9 @@ pnpm --dir scripts run harness:retroactive-recovery -- \
   --output-dir=docs/harness-reports/retroactive-recovery/2645-2026-08-24-a-26
 ```
 
-`execute` exige `insertion-id`, `from-date` e `to-date`; não há recorte implícito. A resposta `failed` encerra a execução sem criar outro job.
+`execute` exige `insertion-id`, `from-date` e `to-date`; não há recorte implícito. A resposta `failed` encerra a execução sem criar outro job. O resultado terminal precisa preservar `errorCode`, `captureJobId`, `captureLogId`, `blockingIssues` e `nextAction`; não aceite somente `capture_process_failed_exit_1` como diagnóstico.
+
+Não use monitoramento aberto. O harness tem um único POST, polling finito do mesmo `jobId`, um único readback terminal e fim.
 
 ## Verificar consumidores
 

@@ -3242,6 +3242,22 @@ function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
   };
 }
 
+function evaluateRelativeContentTimeline(contentRelativeTimeSamples, required) {
+  const relativeSamples = Array.isArray(contentRelativeTimeSamples)
+    ? contentRelativeTimeSamples.filter((value) => typeof value === "string" && value.trim()).slice(0, 10)
+    : [];
+  return {
+    ok: required !== true || relativeSamples.length === 0,
+    required: required === true,
+    relativeSamples,
+  };
+}
+
+function dateInCuiaba(value) {
+  const parsed = parseIsoLikeDate(value);
+  return parsed ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba" }).format(parsed) : null;
+}
+
 function normalizeEditorialUrl(value) {
   try {
     const parsed = new URL(String(value || ""), "https://adops.invalid");
@@ -3328,10 +3344,30 @@ function evaluateRetroCaptureGate(payload) {
     });
   }
   const contentTimeline = evaluateContentTimeline(payload.contentDateSamples, requestedCaptureAt);
+  const requestedContentDate = dateInCuiaba(requestedCaptureAt);
+  const targetDateMatches = Array.isArray(payload.contentDateSamples)
+    && payload.contentDateSamples.some((value) => dateInCuiaba(value) === requestedContentDate);
+  contentTimeline.targetDateMatches = targetDateMatches;
+  const relativeContentTimeline = evaluateRelativeContentTimeline(
+    payload.contentRelativeTimeSamples,
+    payload.requireAbsoluteEditorialDates,
+  );
   if (!contentTimeline.ok && (payload.requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
       code: "content_time_mismatch",
       detail: `maxObserved=${contentTimeline.maxObserved || "n/a"} futureSamples=${contentTimeline.futureSamples.join(" | ") || "n/a"}`,
+    });
+  }
+  if (payload.requireAbsoluteEditorialDates === true && ["empty_samples", "unparseable_samples"].includes(contentTimeline.reason)) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      detail: `reason=${contentTimeline.reason}`,
+    });
+  }
+  if (payload.requireEditorialDateMatchTarget === true && !targetDateMatches) {
+    issues.push({
+      code: "editorial_date_target_mismatch",
+      detail: `targetDate=${requestedContentDate || "n/a"}`,
     });
   }
   if (payload.requireRetroContentProof && payload.retroContentProof?.status !== "approved") {
@@ -3341,6 +3377,12 @@ function evaluateRetroCaptureGate(payload) {
     } else {
       for (const issue of proofIssues) issues.push(issue);
     }
+  }
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      detail: `relativeSamples=${relativeContentTimeline.relativeSamples.join(" | ")}`,
+    });
   }
   if (payload.requireSlotVisibleInViewport && !payload.slotVisibility?.mostlyVisible) {
     issues.push({
@@ -3365,6 +3407,7 @@ function evaluateRetroCaptureGate(payload) {
     issues,
     codes: issues.map((item) => item.code),
     contentTimeline,
+    relativeContentTimeline,
     retroContentProof: payload.retroContentProof || null,
   };
 }
@@ -5319,6 +5362,7 @@ function compactMetadataForPersistence(metadata) {
   return {
     ...metadata,
     contentDateSamples: Array.isArray(metadata.contentDateSamples) ? metadata.contentDateSamples.slice(0, 25) : [],
+    contentRelativeTimeSamples: Array.isArray(metadata.contentRelativeTimeSamples) ? metadata.contentRelativeTimeSamples.slice(0, 10) : [],
     editorialSamples: Array.isArray(metadata.editorialSamples) ? metadata.editorialSamples.slice(0, 25) : [],
     dynamicFields: [],
     gifFrameCandidates: [],
@@ -5419,6 +5463,7 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
           "[class*='ultima'] li",
         ]));
     const samples = [];
+    const relativeTimeSamples = [];
     const seen = new Set();
     for (const selector of cardSelectors) {
       let cards = [];
@@ -5430,6 +5475,8 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
         const url = new URL(link.href, window.location.href).toString();
         const key = new URL(url).pathname.replace(/\/+$/, "") || "/";
         if (seen.has(key)) continue;
+        const relativeTime = String(card.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
+        if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
         const date = readDate(card);
         if (!date) continue;
         const titleNode = card.querySelector("h1,h2,h3,h4,.entry-title,[class*='title']");
@@ -5471,6 +5518,7 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     const marker = document.querySelector('meta[name="cod5-adops-retro-preview"][content="active"]');
     return {
       editorialSamples: samples,
+      contentRelativeTimeSamples: relativeTimeSamples.slice(0, 10),
       expectedPosts,
       expectedSource,
       previewActive: Boolean(marker),
@@ -7051,6 +7099,7 @@ async function main() {
   let systemDateTime = null;
   let metadata = null;
   let contentDateSamples = [];
+  let contentRelativeTimeSamples = [];
   let editorialSamples = [];
   let retroContentManifest = null;
   let retroContentProof = null;
@@ -7627,11 +7676,15 @@ async function main() {
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
           editorialSamples: [],
+          contentRelativeTimeSamples: [],
           manifest: null,
           retroContentProof: null,
         };
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
+    contentRelativeTimeSamples = Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
+      ? retroContentEvidence.contentRelativeTimeSamples.slice(0, 10)
+      : [];
     retroContentManifest = retroContentEvidence.manifest;
     retroContentProof = retroContentEvidence.retroContentProof;
 
@@ -7653,6 +7706,8 @@ async function main() {
       pageDateObserved,
       pageDateText,
       contentDateSamples,
+      contentRelativeTimeSamples,
+      requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       retroContentProof,
       requireRetroContentProof: isHistoricalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
@@ -7869,6 +7924,7 @@ async function main() {
       pageDateText,
       pageDateObserved,
       contentDateSamples,
+      contentRelativeTimeSamples,
       editorialSamples,
       retroContentManifest,
       retroContentProof,
@@ -8429,8 +8485,10 @@ if (require.main === module) {
     normalizeMediaIdentityUrl,
     parseIsoLikeDate,
     evaluateContentTimeline,
+    evaluateRelativeContentTimeline,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    compactMetadataForPersistence,
     requiresRetroEditorialProof,
     buildEvidenceReplacementArchivePlan,
   };

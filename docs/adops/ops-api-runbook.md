@@ -171,6 +171,12 @@ A sequência canônica é: **preflight Drive -> publicação AdRotate -> confirm
 
 O resultado por inserção/data é um de `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`. Se algum item falhar ou bloquear, o job pai termina `failed` preservando os resultados parciais. Evidência já auditada não é recapturada.
 
+Cada item terminal também preserva `captureJobId`, `captureLogId`, `errorCode`, `blockingIssues` e `nextAction`. A origem desses campos é o log estruturado da própria captura. O erro de transporte continua disponível, mas não substitui a causa do checklist.
+
+Para reconstrução histórica com `requireAbsoluteEditorialDates`, o capturador deve persistir `contentDateSamples` e `contentRelativeTimeSamples`, mesmo quando a lista relativa estiver vazia. Campo ausente significa auditoria não executada; lista vazia significa auditoria executada e nenhuma data relativa encontrada. Nunca aprove removendo esse gate.
+
+Incidente de 27/08/2026: seis cards foram mostrados como pendentes, mas eram evidências ausentes. A inserção `#2192` foi recuperada e auditada. `#2712`, `#2713` e `#1842` chegaram ao checklist final e foram bloqueadas porque o capturador não persistia `contentRelativeTimeSamples`. `#2692` foi bloqueada por conteúdo retroativo não confirmado e `#2278` por slot não encontrado. As duas últimas causas não autorizam captura forçada.
+
 `PublicationHealth` e `EvidenceHealth` são independentes. `blocked_upstream` de publicação impede nova captura, mas não apaga evidência auditada. Os alertas diários incorporam IDs de publicação bloqueada no claim idempotente, portanto uma alteração nessa lista pode gerar uma nova notificação sem nova rota.
 
 Inserção `#2693` não é pendência de print: suas evidências auditadas não devem ser regeneradas. Inserção `#2645` não pode ser capturada antes de publicação AdRotate e confirmação viva do vídeo.

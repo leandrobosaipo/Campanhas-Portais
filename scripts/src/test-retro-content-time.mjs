@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
 
 const require = createRequire(import.meta.url);
+const source = await readFile(new URL("./capture-insertion-proof.cjs", import.meta.url), "utf8");
 const {
   evaluateContentTimeline,
   evaluateRelativeContentTimeline,
@@ -96,5 +98,8 @@ assert.equal(compact.contentDateSamples.length, 25);
 assert.equal(compact.contentRelativeTimeSamples.length, 10);
 assert.equal(compact.contentDateSamples[0], "15/07/2026 0:00");
 assert.equal(compact.contentRelativeTimeSamples[0], "há 1 dias");
+assert.match(source, /contentRelativeTimeSamples = Array\.isArray\(retroContentEvidence\.contentRelativeTimeSamples\)/);
+assert.match(source, /requireAbsoluteEditorialDates: mapping\.auditConfig\?\.requireAbsoluteEditorialDates === true/);
+assert.match(source, /contentRelativeTimeSamples,/);
 
 console.log("ok: retro proofs reject unresolved relative editorial dates");

@@ -249,6 +249,9 @@ async function enqueueAndWaitCaptureProof({ outerJobId, outerAttempt = 1, insert
     if (["failed", "cancelled"].includes(String(job?.status || ""))) {
       const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
       const error = new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
+      error.code = String(item?.errorCode || job?.errorCode || "retroactive_capture_failed");
+      error.captureJobId = jobId;
+      error.blockingIssues = Array.isArray(item?.blockingIssues) ? item.blockingIssues : [];
       error.captureTimings = summarizeCaptureJobTimings(job);
       throw error;
     }
@@ -6187,6 +6190,26 @@ function classifyRetroactiveError(error) {
         ? "blocked_upstream"
         : "failed",
     message: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+    captureJobId: typeof error?.captureJobId === "string" ? error.captureJobId : null,
+    blockingIssues: Array.isArray(error?.blockingIssues) ? error.blockingIssues : [],
+  };
+}
+
+function retroactiveFailureFromLog(payload) {
+  const latest = payload?.latest && typeof payload.latest === "object" ? payload.latest : null;
+  if (!latest) return null;
+  const checklistIssues = latest?.metadata?.checklistValidation?.blockingIssues;
+  const retroIssues = latest?.summary?.retroGate?.issues;
+  const stages = Array.isArray(latest?.stages) ? latest.stages : [];
+  const blockingIssues = (Array.isArray(checklistIssues) ? checklistIssues : Array.isArray(retroIssues) ? retroIssues : [])
+    .map((issue) => typeof issue === "string" ? issue : issue?.code)
+    .filter(Boolean);
+  const stageErrorCode = [...stages].reverse().find((stage) => typeof stage?.errorCode === "string")?.errorCode;
+  return {
+    captureLogId: typeof latest.id === "string" ? latest.id : null,
+    errorCode: blockingIssues[0] || stageErrorCode || latest.probableCause || null,
+    blockingIssues,
+    nextAction: typeof latest.nextAction === "string" ? latest.nextAction : null,
   };
 }
 
@@ -6194,6 +6217,7 @@ async function executeRetroactiveTarget(input) {
   const identity = input?.identity || {};
   const readStatus = input?.readStatus;
   const capture = input?.capture;
+  const readFailure = input?.readFailure;
   const wait = input?.sleep || sleep;
   if (typeof readStatus !== "function" || typeof capture !== "function") throw new Error("Alvo retroativo exige readStatus e capture.");
 
@@ -6203,10 +6227,10 @@ async function executeRetroactiveTarget(input) {
     before = await readStatus();
   } catch (error) {
     const classified = classifyRetroactiveError(error);
-    return { ...identity, status: classified.status, attempts: 0, evidenceUrl: null, errorCode: classified.code, error: classified.message, checklistStatus: null, startedAt, finishedAt: new Date().toISOString() };
+    return { ...identity, status: classified.status, attempts: 0, evidenceUrl: null, errorCode: classified.code, error: classified.message, captureJobId: classified.captureJobId, captureLogId: null, blockingIssues: classified.blockingIssues, nextAction: null, checklistStatus: null, startedAt, finishedAt: new Date().toISOString() };
   }
   if (input.skipExisting !== false && isAuditApprovedStatus(before)) {
-    return { ...identity, status: "skipped_existing", attempts: 0, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: null, error: null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+    return { ...identity, status: "skipped_existing", attempts: 0, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: null, error: null, captureJobId: null, captureLogId: null, blockingIssues: [], nextAction: null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
   }
 
   for (let index = 0; index < RETROACTIVE_RETRY_DELAYS_MS.length; index += 1) {
@@ -6215,11 +6239,12 @@ async function executeRetroactiveTarget(input) {
       const captureResult = await capture();
       const after = await readStatus();
       if (!isAuditApprovedStatus(after)) throw Object.assign(new Error("Checklist final não aprovado."), { code: "final_checklist_blocked" });
-      return { ...identity, status: "audited", attempts: index + 1, evidenceUrl: after?.arquivoUrl ?? after?.evidence?.arquivoUrl ?? captureResult?.item?.uploadedUrl ?? null, errorCode: null, error: null, checklistStatus: after?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+      return { ...identity, status: "audited", attempts: index + 1, evidenceUrl: after?.arquivoUrl ?? after?.evidence?.arquivoUrl ?? captureResult?.item?.uploadedUrl ?? null, errorCode: null, error: null, captureJobId: captureResult?.jobId ?? null, captureLogId: captureResult?.item?.captureLogId ?? null, blockingIssues: [], nextAction: null, checklistStatus: after?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
     } catch (error) {
       const classified = classifyRetroactiveError(error);
       if (!classified.retryable || index === RETROACTIVE_RETRY_DELAYS_MS.length - 1) {
-        return { ...identity, status: classified.status, attempts: index + 1, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: classified.code, error: classified.message, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+        const observedFailure = typeof readFailure === "function" ? await readFailure().catch(() => null) : null;
+        return { ...identity, status: classified.status, attempts: index + 1, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: observedFailure?.errorCode || classified.code, error: classified.message, captureJobId: classified.captureJobId, captureLogId: observedFailure?.captureLogId ?? null, blockingIssues: observedFailure?.blockingIssues?.length ? observedFailure.blockingIssues : classified.blockingIssues, nextAction: observedFailure?.nextAction ?? null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
       }
     }
   }
@@ -6315,6 +6340,7 @@ async function executePrintBackfill(job) {
       const result = await executeRetroactiveTarget({
         identity: { insertionId, date },
         readStatus: () => privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`),
+        readFailure: async () => retroactiveFailureFromLog(await privateApiGet(`/api/insertions/${insertionId}/capture-proof/logs?date=${encodeURIComponent(date)}`)),
         capture: () => enqueueAndWaitCaptureProof({
           outerJobId: job.id,
           outerAttempt: payload?.attempt,
@@ -6340,6 +6366,10 @@ async function executePrintBackfill(job) {
         checklistStatus: null,
         errorCode: retroactiveErrorCode(error),
         error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+        captureJobId: null,
+        captureLogId: null,
+        blockingIssues: [],
+        nextAction: null,
       });
       continue;
     }
@@ -8639,6 +8669,7 @@ export {
   validateOperationalPublicationScope,
   validateOperationalDriveItem,
   executeRetroactiveTarget,
+  retroactiveFailureFromLog,
   buildRunnerCaptureIdempotencyKey,
   isRetryableRetroactiveError,
   privateApiGet,

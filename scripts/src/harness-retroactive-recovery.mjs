@@ -66,7 +66,10 @@ export async function waitForTerminalJob(api, jobId, timeoutMs, { now = Date.now
   let progress;
   for (;;) {
     progress = await api.get(`/api/ops/jobs/${encodeURIComponent(jobId)}/progress`);
-    if (terminalStatuses.has(progress.status)) return progress;
+    if (terminalStatuses.has(progress.status)) {
+      const job = await api.get(`/api/ops/jobs/${encodeURIComponent(jobId)}`);
+      return { ...progress, job };
+    }
     if (now() >= deadline) {
       throw Object.assign(new Error(`Timeout aguardando job ${jobId}.`), { code: "job_timeout", jobId, progress });
     }
@@ -100,7 +103,7 @@ export async function runHarness(options) {
     });
     if (!created.jobId) throw new Error("Resposta do print-backfill sem jobId.");
     const progress = await waitForTerminalJob(api, created.jobId, timeoutMs, { now, sleep: wait });
-    return { mode, release, jobId: created.jobId, status: progress.status, progress, insertionId: options.insertionId, dates };
+    return { mode, release, jobId: created.jobId, status: progress.status, progress, job: progress.job, insertionId: options.insertionId, dates };
   }
 
   const evidence = [];
