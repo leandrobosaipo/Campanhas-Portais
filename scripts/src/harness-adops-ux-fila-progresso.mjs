@@ -116,6 +116,13 @@ const PHASES = [
         cmd: "node",
         args: ["scripts/src/test-monthly-report-incremental-refresh.mjs"],
       },
+      {
+        id: "campaign_evidence_private_route",
+        title: "Campaign evidence immutable export",
+        critical: true,
+        cmd: "node",
+        args: ["--test", "scripts/src/test-campaign-evidence-private-route.mjs"],
+      },
     ],
   },
 ];

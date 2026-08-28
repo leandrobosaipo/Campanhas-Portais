@@ -8253,6 +8253,66 @@ async function executePiSiteExport(job) {
   };
 }
 
+async function executeCampaignEvidenceExport(job) {
+  const payload = job?.payload || {};
+  const piCodigo = normalizePiDigits(payload.piCodigo);
+  const competencia = String(payload.competencia || "").trim().toUpperCase();
+  const asOfDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.asOfDate || "")) ? String(payload.asOfDate) : null;
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const evidenceFingerprint = Array.isArray(payload.evidenceFingerprint) ? payload.evidenceFingerprint : [];
+  const evidenceFingerprintSignature = String(payload.evidenceFingerprintSignature || "");
+  if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
+  if (!evidenceFingerprint.length || !evidenceFingerprintSignature) {
+    throw new Error("campaign-evidence-export sem descritor imutável assinado.");
+  }
+
+  await progressJob(job.id, {
+    stage: "materializando ZIP completo da campanha",
+    piCodigo,
+    competencia,
+    insertionIds: payload.insertionIds || [],
+  });
+  const params = new URLSearchParams({
+    piCodigo,
+    competencia,
+    download: "1",
+    imageMaxWidth: String(imageMaxWidth),
+    imageQuality: String(imageQuality),
+  });
+  if (asOfDate) params.set("asOfDate", asOfDate);
+  const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`, { evidenceFingerprint, evidenceFingerprintSignature });
+  const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
+  const artifactObjectKey = [
+    ADOPS_EXPORT_BASE_PATH,
+    "campanhas",
+    slugifyPathPart(piCodigo),
+    slugifyPathPart(competencia),
+    slugifyPathPart(job.id),
+    artifactFileName,
+  ].join("/");
+  await uploadBufferToSpaces({ buffer: artifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: artifactObjectKey, contentType: "application/zip" });
+  const downloadUrl = `${spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET)}/${artifactObjectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+  return {
+    stage: "completed",
+    piCodigo,
+    competencia,
+    asOfDate,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    insertionIds: payload.insertionIds || [],
+    siteSiglas: payload.siteSiglas || [],
+    evidenceCount: evidenceFingerprint.length,
+    downloadUrl,
+    artifactBytes: artifact.buffer.length,
+    artifactContentType: "application/zip",
+    artifactFileName,
+    artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+  };
+}
+
 async function handleJob(job, assertLease = () => undefined) {
   const payload = job?.payload || {};
   if (!job?.kind) {
