@@ -6492,7 +6492,6 @@ async function executeEvidenceMonthlyReport(job) {
         ADOPS_REPORT_DATE: targetDate,
         ADOPS_REPORT_MONTH: targetDate.slice(0, 7),
         ADOPS_REPORT_COMPETENCIA: competencia,
-        ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL,
         ADOPS_REPORT_SKIP_PUBLISH: "0",
         ADOPS_REPORT_SKIP_EXPORTS: incremental ? "1" : "0",
         ADOPS_REPORT_SCHEDULED: isScheduledMonthlyReportPayload(payload) ? "1" : "0",

@@ -14,6 +14,7 @@ assert.match(worker, /settleMonthlyReportRefresh/);
 assert.match(runner, /markMonthlyReportRefreshAfterApproval/);
 assert.match(runner, /ADOPS_REPORT_SKIP_EXPORTS: incremental \? "1" : "0"/);
 assert.match(runner, /ADOPS_REPORT_REFRESH_REVISION/);
+assert.doesNotMatch(runner, /ADOPS_PUBLIC_API_BASE_URL: OPS_API_BASE_URL/);
 assert.match(report, /ADOPS_REPORT_REFRESH_MODE/);
 assert.match(report, /sincronização automática/);
 assert.match(report, /refreshRevision/);
@@ -26,4 +27,4 @@ const materializeExportsIndex = report.indexOf("const exportLinks = await materi
 assert.ok(previousSnapshotIndex >= 0 && previousSnapshotIndex < reuseDownloadsIndex);
 assert.ok(reuseDownloadsIndex >= 0 && reuseDownloadsIndex < materializeExportsIndex);
 
-console.log("monthly report incremental refresh: 19/19 checks passed");
+console.log("monthly report incremental refresh: 20/20 checks passed");
