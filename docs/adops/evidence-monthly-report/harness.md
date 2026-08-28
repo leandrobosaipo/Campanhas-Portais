@@ -120,4 +120,5 @@ Esperado:
 - Recuperação: restauração atômica do último relatório válido e hotfix isolado a partir de `c9b497`.
 - Prevenção: gate automático de regressão histórica antes da publicação e revisão obrigatória do intervalo entre o SHA ativo e o candidato.
 - Contrato imutável: uma regra editorial nova só bloqueia evidências que declaram essa regra em `metadata.requiredGates`; o runner grava os três gates nas capturas novas. Evidências antigas não são reprovadas por campos inexistentes em seu contrato original.
+- Downloads de ZIP: o relatório aponta para a API pública que conhece o estado dos jobs e redireciona ao artefato imutável; nunca montar o link na API privada quando o job pertence ao control plane público.
 - Incidente complementar: o gerador aceitava jobs de exportação ainda em `ready_for_runner`, publicava URLs vazias e escondia os botões. O contrato agora exige estado terminal e os dois escopos antes de publicar.

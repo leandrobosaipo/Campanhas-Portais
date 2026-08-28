@@ -621,7 +621,7 @@ async function materializeCampaignExports(items, asOfDate) {
           (jobId) => `/api/pi-site-exports/jobs/${encodeURIComponent(jobId)}`,
         );
       }
-      results.set(group.key, buildPiSiteExportDownloadUrl(deliveryApiBase, created.jobId));
+      results.set(group.key, buildPiSiteExportDownloadUrl(apiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote opcional indisponível para ${group.piCodigo}/${group.siteSigla}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -693,7 +693,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
           (jobId) => `/api/campaign-evidence-exports/jobs/${encodeURIComponent(jobId)}`,
         );
       }
-      results.set(group.key, buildCampaignEvidenceExportDownloadUrl(deliveryApiBase, created.jobId));
+      results.set(group.key, buildCampaignEvidenceExportDownloadUrl(apiBase, created.jobId));
     } catch (error) {
       console.warn(`[monthly-report] pacote completo opcional indisponível para PI ${group.piCodigo}: ${error instanceof Error ? error.message : String(error)}`);
     }
