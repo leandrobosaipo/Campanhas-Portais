@@ -6172,7 +6172,11 @@ const RETROACTIVE_RECONSTRUCTION_CODES = new Set(["reconstruction_not_allowed", 
 const RETROACTIVE_UPSTREAM_CODES = new Set(["blocked_upstream", "publication_not_live", "media_unavailable"]);
 
 function retroactiveErrorCode(error) {
-  return String(error?.code || error?.errorCode || "").trim() || "retroactive_capture_failed";
+  const explicit = String(error?.code || error?.errorCode || "").trim();
+  if (explicit) return explicit;
+  return /fetch failed|econnreset|etimedout|network/i.test(String(error?.message || error || ""))
+    ? "network_timeout"
+    : "retroactive_capture_failed";
 }
 
 function isRetryableRetroactiveError(error) {
@@ -6207,7 +6211,7 @@ function retroactiveFailureFromLog(payload) {
   const stageErrorCode = [...stages].reverse().find((stage) => typeof stage?.errorCode === "string")?.errorCode;
   return {
     captureLogId: typeof latest.id === "string" ? latest.id : null,
-    errorCode: blockingIssues[0] || stageErrorCode || latest.probableCause || null,
+    errorCode: blockingIssues[0] || stageErrorCode || latest?.summary?.errorCode || latest.probableCause || null,
     blockingIssues,
     nextAction: typeof latest.nextAction === "string" ? latest.nextAction : null,
   };

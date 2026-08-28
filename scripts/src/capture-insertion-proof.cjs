@@ -8338,6 +8338,8 @@ async function main() {
             confidence: analysis.confidence,
             nextAction: analysis.nextAction,
             summary: {
+              errorCode,
+              errorDetail: errorMessage.slice(0, 1000),
               gifChosenFrameIndex: frameSelection?.gifChosenFrameIndex ?? null,
               gifStrongFrameCount: Array.isArray(frameSelection?.gifFrameCandidates)
                 ? frameSelection.gifFrameCandidates.filter((item) => item.strongCandidate).length

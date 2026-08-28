@@ -78,6 +78,25 @@ test("erro 503 passa na terceira tentativa", async () => {
   assert.equal(result.attempts, 3);
 });
 
+test("falha nativa de fetch recebe retry limitado", async () => {
+  let attempts = 0;
+  const result = await runner.executeRetroactiveTarget({
+    identity: { insertionId: 1842, date: "2026-08-27" },
+    readStatus: async () => attempts >= 2
+      ? { status: "audited", approved: true, arquivoUrl: "https://cdn.example/1842.png" }
+      : { status: "missing" },
+    capture: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("fetch failed");
+      return { item: { uploadedUrl: "https://cdn.example/1842.png" } };
+    },
+    sleep: async () => undefined,
+  });
+
+  assert.equal(result.status, "audited");
+  assert.equal(result.attempts, 2);
+});
+
 test("GET 503 preserva codigo estruturado para o retry", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 });
@@ -130,6 +149,19 @@ test("falha retroativa preserva job filho e bloqueios do checklist", async () =>
   assert.equal(result.captureLogId, "log-2712");
   assert.equal(result.errorCode, "relative_content_time_audit_missing");
   assert.deepEqual(result.blockingIssues, ["relative_content_time_audit_missing"]);
+});
+
+test("log preserva erro ocorrido entre duas etapas da captura", () => {
+  const failure = runner.retroactiveFailureFromLog({
+    latest: {
+      id: "log-2278",
+      summary: { errorCode: "slot_not_found", errorDetail: "slot .g.g-1 não encontrado" },
+      stages: [{ stage: "page_resolved", status: "ok" }],
+    },
+  });
+
+  assert.equal(failure.errorCode, "slot_not_found");
+  assert.equal(failure.captureLogId, "log-2278");
 });
 
 test("filtro de competencia usa o seletor compartilhado", () => {
