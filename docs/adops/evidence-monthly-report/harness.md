@@ -51,9 +51,9 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - A quantidade de `.thumb` deve representar todos os dias auditados, nao apenas uma amostra.
 - O modal deve abrir tanto em thumb auditada quanto em celula `missing` ou `invalid`.
 - O modal deve abrir com “Detalhes da campanha e evidência” visível.
-- “Baixar ZIP da campanha — todos os portais” deve usar `campaign-evidence-exports` e reunir a PI completa.
+- “Baixar todos os prints desta campanha” deve aparecer em cada box de inserção, usar `campaign-evidence-exports` e reunir a PI completa em todos os formatos.
 - O runner de `campaign-evidence-export` deve materializar o ZIP pelo descritor imutável assinado; função ausente, regeneração de captura ou download sem fingerprint bloqueiam o harness.
-- “Baixar ZIP da campanha — somente este portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
+- “Baixar prints desta campanha neste portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
 - Em relatório completo, inclusive o agendado, os dois jobs de ZIP devem ser acompanhados pelo mesmo `jobId` até `completed` ou `failed`; `ready_for_runner` não libera botão.
 - O ZIP por portal recebe `asOfDate` e `requiredDatesByInsertion`; não pode cobrar o dia corrente antes do corte usado pelo relatório.
 - O Worker público deve preservar `asOfDate` e `requiredDatesByInsertion` no payload de `pi-site-export`; descartar o recorte faz o runner reconstruir datas fora do relatório e bloqueia a publicação.
@@ -109,7 +109,7 @@ Esperado:
 - HTML contem `Evidências AdOps`.
 - HTML contem a competencia alvo.
 - Abrir um print exibe os dados da campanha sem clique adicional.
-- Clicar numa miniatura deve abrir `dialog#modal`; validar no DOM que `#modalLinks` contém “Baixar ZIP da campanha — todos os portais” e “Baixar ZIP da campanha — somente este portal”.
+- Clicar numa miniatura deve abrir `dialog#modal`; validar no DOM que `#modalLinks` contém “Baixar todos os prints desta campanha” e “Baixar prints desta campanha neste portal”.
 - JPEG e os dois escopos de ZIP disponíveis respondem pela origem pública; ZIP responde como `application/zip`.
 - Conferir no `data.json`: para toda inserção elegível, `batchDownloadUrl` e `completeCampaignDownloadUrl` são URLs públicas não vazias.
 

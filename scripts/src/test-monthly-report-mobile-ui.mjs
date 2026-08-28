@@ -262,10 +262,14 @@ test("visualizador móvel navega por data sem IDs duplicados", () => {
   assert.match(output, /<details class="modal-details" open><summary>Detalhes da campanha e evidência<\/summary>/);
 });
 
-test("downloads do modal explicam o escopo da campanha e usam origem publica", () => {
+test("box da insercao oferece o ZIP completo da campanha em todos os formatos", () => {
   const output = html();
-  assert.match(output, /Baixar ZIP da campanha — todos os portais/);
-  assert.match(output, /Baixar ZIP da campanha — somente este portal/);
+  const insertionActions = output.match(/<div class="links insertion-actions">[\s\S]*?<\/div>/)?.[0] || "";
+  assert.match(insertionActions, /href="https:\/\/adops-api\.codigo5\.com\.br\/api\/campaign-evidence-exports\/jobs\/campaign-job\/download"/);
+  assert.match(insertionActions, /Baixar todos os prints desta campanha/);
+  assert.match(output, /Baixar prints desta campanha neste portal/);
+  assert.doesNotMatch(output, /Baixar ZIP da campanha — todos os portais/);
+  assert.doesNotMatch(output, /Baixar ZIP da campanha — somente este portal/);
   assert.match(output, /Baixar JPEG deste print/);
   assert.doesNotMatch(output, /http:\/\/adops-api:4011/);
 });

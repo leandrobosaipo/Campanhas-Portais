@@ -867,6 +867,7 @@ function renderInsertion(item) {
         ${publicationPending}
         <div class="bar" role="progressbar" aria-label="Progresso das evidências da inserção ${escapeHtml(item.id)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="width:${progress}%"></i></div>
         <div class="links insertion-actions">
+          ${linkButton(item.completeCampaignDownloadUrl, "Baixar todos os prints desta campanha", "image")}
           ${linkButton(item.portalUrl, "Abrir portal", "link")}
           ${linkButton(item.adrotateAdUrl || item.adrotateGroupUrl, "Ver anúncio", "plugin")}
           ${mediaAction}
@@ -928,7 +929,7 @@ function renderCampaign(campaign, portalKey) {
       <div class="campaign-identity">
         <h3>${escapeHtml(campaign.name)}</h3>
         <p>${escapeHtml(campaign.cliente || "-")} · ${escapeHtml(campaign.agencia || "-")} · ${escapeHtml(campaign.pi || "sem PI")}</p>
-        <div class="campaign-downloads">${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "Baixar ZIP da campanha — todos os portais", "image") : ""}${batchDownloadUrl ? linkButton(batchDownloadUrl, "Baixar ZIP da campanha — somente este portal", "image") : ""}</div>
+        <div class="campaign-downloads">${completeCampaignDownloadUrl ? linkButton(completeCampaignDownloadUrl, "Baixar todos os prints desta campanha", "image") : ""}${batchDownloadUrl ? linkButton(batchDownloadUrl, "Baixar prints desta campanha neste portal", "image") : ""}</div>
         ${commercialExportBlocker ? `<p class="note">${escapeHtml(commercialExportBlocker)}</p>` : ""}
       </div>
       <div class="campaign-summary" aria-label="Resumo da campanha">
@@ -1780,8 +1781,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         ].map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
         modalLinks.innerHTML = [
           iconLink(day?.downloadUrl, 'Baixar JPEG deste print'),
-          iconLink(item.completeCampaignDownloadUrl, 'Baixar ZIP da campanha — todos os portais'),
-          iconLink(item.batchDownloadUrl, 'Baixar ZIP da campanha — somente este portal'),
+          iconLink(item.completeCampaignDownloadUrl, 'Baixar todos os prints desta campanha'),
+          iconLink(item.batchDownloadUrl, 'Baixar prints desta campanha neste portal'),
           iconLink(item.portalUrl, 'Abrir portal'),
           iconLink(item.adrotateAdUrl || item.adrotateGroupUrl, item.adrotateAdUrl ? 'Ver anúncio' : 'Ver grupo do anúncio'),
           iconLink(item.mediaUrl, 'Abrir mídia'),
