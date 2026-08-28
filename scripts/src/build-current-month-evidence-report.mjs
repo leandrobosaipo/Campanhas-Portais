@@ -42,6 +42,7 @@ import {
   isJsonContentType,
   selectCanonicalInsertions,
   shouldMaterializeOptionalMonthlyExports,
+  reuseMonthlyDownloadUrls,
 } from "./monthly-evidence-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -279,6 +280,17 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function readPreviousPublicData() {
+  try {
+    const response = await fetchWithTimeout(`${publicUrl}data.json?v=${Date.now()}`, {
+      headers: { "cache-control": "no-cache" }, redirect: "follow",
+    }, 20_000);
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1729,7 +1741,7 @@ async function main() {
   ])));
   const relationMap = new Map();
 
-  const enriched = eligible.map((item) => {
+  let enriched = eligible.map((item) => {
     const contractualDays = canonicalRequiredDates(item)
       .filter((date) => date >= bounds.start && date <= bounds.end);
     const requiredDays = selectReportEvidenceDates(contractualDays, {
@@ -1806,15 +1818,19 @@ async function main() {
     };
   });
 
+  const previousPublicData = refreshMode === "incremental" ? await readPreviousPublicData() : null;
+  enriched = refreshMode === "incremental" ? reuseMonthlyDownloadUrls(enriched, previousPublicData) : enriched;
   const exportsStartedAtMs = Date.now();
   const exportLinks = await materializeCampaignExports(enriched, monthEndForEvidence);
   const completeExportLinks = await materializeCompleteCampaignExports(enriched, monthEndForEvidence);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
   for (const item of enriched) {
     const canonicalPi = canonicalCommercialPi(item.piCodigo);
-    item.batchDownloadUrl = canonicalPi ? exportLinks.get(`${normalize(item.siteSigla)}:${normalize(canonicalPi)}`) || "" : "";
+    item.batchDownloadUrl = canonicalPi
+      ? materializeOptionalExports ? exportLinks.get(`${normalize(item.siteSigla)}:${normalize(canonicalPi)}`) || "" : item.batchDownloadUrl || ""
+      : "";
     const completeKey = `${canonicalPi}:${normalize(item.competencia)}`;
-    item.completeCampaignDownloadUrl = completeExportLinks.get(completeKey) || "";
+    item.completeCampaignDownloadUrl = materializeOptionalExports ? completeExportLinks.get(completeKey) || "" : item.completeCampaignDownloadUrl || "";
     item.commercialExportBlocker = canonicalPi ? "" : "Aguardando PI/PDF para habilitar os ZIPs por PI.";
   }
 

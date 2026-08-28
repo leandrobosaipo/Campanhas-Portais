@@ -237,6 +237,25 @@ test("gera report.json nao listado e chave estavel baseada nas evidencias aprova
   assert.match(left, /^monthly-evidence-v2-[a-f0-9]{64}$/);
 });
 
+test("refresh incremental reutiliza ZIP apenas com as mesmas evidências", () => {
+  const current = [{
+    id: 10, piCodigo: "PI 91159", siteSigla: "AFL", competencia: "AGOSTO/2026",
+    evidenceDays: [{ date: "2026-08-26", id: 88, status: "audited", url: "https://cdn.example/88.png" }],
+  }];
+  const previous = { insertions: [{
+    ...current[0],
+    batchDownloadUrl: "https://api.example/portal.zip",
+    completeCampaignDownloadUrl: "https://api.example/all.zip",
+  }] };
+  assert.deepEqual(contract.reuseMonthlyDownloadUrls(current, previous), [{
+    ...current[0],
+    batchDownloadUrl: "https://api.example/portal.zip",
+    completeCampaignDownloadUrl: "https://api.example/all.zip",
+  }]);
+  const changed = [{ ...current[0], evidenceDays: [...current[0].evidenceDays, { date: "2026-08-27", id: 89, status: "audited", url: "https://cdn.example/89.png" }] }];
+  assert.equal(contract.reuseMonthlyDownloadUrls(changed, previous)[0].batchDownloadUrl, "");
+});
+
 test("bloqueia publicacao com pendencias e monta troca atomica com rollback", () => {
   assert.equal(contract.isMonthlyReportPublishable({ missing: 0, invalid: 0 }), true);
   assert.equal(contract.isMonthlyReportPublishable({ missing: 1, invalid: 0 }), false);

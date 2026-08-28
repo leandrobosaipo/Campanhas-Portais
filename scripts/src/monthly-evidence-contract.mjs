@@ -372,6 +372,102 @@ export function buildCampaignExportIdempotencyKey({ piCodigo, siteSigla, compete
   return `monthly-evidence-v2-${crypto.createHash("sha256").update(canonical).digest("hex")}`;
 }
 
+export function buildMonthlyDeliveryFingerprint(item) {
+  const canonicalPi = canonicalCommercialPi(item?.piCodigo);
+  if (!canonicalPi) return null;
+  return buildCampaignExportIdempotencyKey({
+    piCodigo: canonicalPi,
+    siteSigla: item.siteSigla,
+    competencia: item.competencia,
+    evidences: (item.evidenceDays || []).filter((day) => String(day.status || "").startsWith("audited") && day.url),
+  });
+}
+
+function isHttpsUrl(value) {
+  try {
+    return new URL(String(value || "")).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function monthlyDeliveryKey(item, includePortal = true) {
+  const piCodigo = canonicalCommercialPi(item?.piCodigo);
+  const competencia = normalizeFilterValue(item?.competencia);
+  const siteSigla = normalizeFilterValue(item?.siteSigla);
+  return piCodigo && competencia && (!includePortal || siteSigla)
+    ? [piCodigo, ...(includePortal ? [siteSigla] : []), competencia].join("\u0000")
+    : null;
+}
+
+function groupMonthlyDeliveries(items, includePortal) {
+  const groups = new Map();
+  for (const item of items || []) {
+    const key = monthlyDeliveryKey(item, includePortal);
+    if (!key) continue;
+    const group = groups.get(key) || { key, item: { ...item, evidenceDays: [] }, items: [] };
+    group.items.push(item);
+    group.item.evidenceDays.push(...(item.evidenceDays || []));
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+function monthlyPortalFingerprint(group) {
+  return buildMonthlyDeliveryFingerprint(group.item);
+}
+
+function reusableHttpsUrl(items, field) {
+  const urls = new Set(items.map((item) => String(item?.[field] || "")).filter(isHttpsUrl));
+  return urls.size === 1 ? urls.values().next().value : "";
+}
+
+export function indexReusableMonthlyDownloads(previousData) {
+  const portal = new Map();
+  const complete = new Map();
+  const insertions = Array.isArray(previousData?.insertions) ? previousData.insertions : [];
+  const portalGroups = groupMonthlyDeliveries(insertions, true);
+  for (const group of portalGroups.values()) {
+    portal.set(group.key, {
+      fingerprint: monthlyPortalFingerprint(group),
+      url: reusableHttpsUrl(group.items, "batchDownloadUrl"),
+    });
+  }
+  for (const group of groupMonthlyDeliveries(insertions, false).values()) {
+    const portalFingerprints = Array.from(groupMonthlyDeliveries(group.items, true).values(), monthlyPortalFingerprint)
+      .filter(Boolean)
+      .sort();
+    complete.set(group.key, {
+      fingerprints: JSON.stringify(portalFingerprints),
+      url: reusableHttpsUrl(group.items, "completeCampaignDownloadUrl"),
+    });
+  }
+  return { portal, complete };
+}
+
+export function reuseMonthlyDownloadUrls(items, previousData) {
+  const reusable = indexReusableMonthlyDownloads(previousData);
+  const portalGroups = groupMonthlyDeliveries(items, true);
+  const portalUrls = new Map();
+  for (const group of portalGroups.values()) {
+    const previous = reusable.portal.get(group.key);
+    portalUrls.set(group.key, previous?.fingerprint === monthlyPortalFingerprint(group) ? previous.url : "");
+  }
+  const completeUrls = new Map();
+  for (const group of groupMonthlyDeliveries(items, false).values()) {
+    const fingerprints = Array.from(groupMonthlyDeliveries(group.items, true).values(), monthlyPortalFingerprint)
+      .filter(Boolean)
+      .sort();
+    const previous = reusable.complete.get(group.key);
+    completeUrls.set(group.key, previous?.fingerprints === JSON.stringify(fingerprints) ? previous.url : "");
+  }
+  return (items || []).map((item) => ({
+    ...item,
+    batchDownloadUrl: portalUrls.get(monthlyDeliveryKey(item, true)) || "",
+    completeCampaignDownloadUrl: completeUrls.get(monthlyDeliveryKey(item, false)) || "",
+  }));
+}
+
 export function shouldMaterializeOptionalMonthlyExports({ scheduled = false, skipRequested = false } = {}) {
   return !skipRequested;
 }

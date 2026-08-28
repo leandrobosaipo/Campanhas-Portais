@@ -17,5 +17,8 @@ assert.match(runner, /ADOPS_REPORT_REFRESH_REVISION/);
 assert.match(report, /ADOPS_REPORT_REFRESH_MODE/);
 assert.match(report, /sincronização automática/);
 assert.match(report, /refreshRevision/);
+assert.match(report, /readPreviousPublicData/);
+assert.match(report, /reuseMonthlyDownloadUrls/);
+assert.match(report, /data\.json\?v=\$\{Date\.now\(\)\}/);
 
-console.log("monthly report incremental refresh: 14/14 checks passed");
+console.log("monthly report incremental refresh: 17/17 checks passed");
