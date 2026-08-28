@@ -12,6 +12,7 @@ import { buildRunnerPools } from "./runner-concurrency.mjs";
 import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
+import { buildDailyPrintLiveProgress } from "../../shared/daily-print-status.mjs";
 import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
 import { isReusableAuditedEvidence, isScheduledMonthlyReportPayload } from "../../../scripts/src/monthly-evidence-contract.mjs";
 
@@ -5982,24 +5983,41 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     pendingInsertionIds: [...pendingInsertionIds],
     competencia,
   });
+  const candidateInsertionIds = candidates
+    .map((item) => readPositiveInteger(item?.adops?.insertionId))
+    .filter(Boolean);
   const captured = [];
   const skipped = [];
   const failed = [];
+  const publishLiveProgress = async (runningInsertionId = null, extra = {}) => progressJob(job.id, {
+    stage: "capture_async_dispatch",
+    targetDate,
+    itemsDone: captured.length + skipped.length + failed.length,
+    itemsTotal: candidates.length,
+    percentTotal: candidates.length ? Math.round(((captured.length + skipped.length + failed.length) / candidates.length) * 100) : 100,
+    liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
+    ...extra,
+  });
+  await progressJob(job.id, {
+    stage: "capture_async_dispatch",
+    targetDate,
+    itemsDone: 0,
+    itemsTotal: candidateInsertionIds.length,
+    percentTotal: candidates.length ? 0 : 100,
+    liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId: null }),
+  });
   let transportError = null;
-  for (const [index, item] of candidates.entries()) {
+  for (const item of candidates) {
     assertLease();
     const insertionId = readPositiveInteger(item?.adops?.insertionId);
     const missingDates = Array.isArray(item?.evidence?.missingDates) ? item.evidence.missingDates : [];
     const invalidDates = Array.isArray(item?.evidence?.invalidDates) ? item.evidence.invalidDates : [];
     if (!missingDates.includes(targetDate) && !invalidDates.includes(targetDate)) {
       skipped.push({ insertionId, status: "skipped_existing", reason: "evidencia_auditada" });
+      await publishLiveProgress(null, { insertionId });
       continue;
     }
-    await progressJob(job.id, {
-      stage: "capture_async_dispatch",
-      targetDate,
-      itemsDone: index,
-      itemsTotal: candidates.length,
+    await publishLiveProgress(insertionId, {
       insertionId,
       replace: invalidDates.includes(targetDate),
     });
@@ -6017,6 +6035,7 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       });
       assertLease();
       captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null, timings: capture.timings });
+      await publishLiveProgress(null, { insertionId });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
       const blockedReconstruction = payload?.recoveryMode === "late_publication_recovery"
@@ -6027,6 +6046,7 @@ async function executePrintBatch(job, assertLease = () => undefined) {
         error: safeProcessOutput(transportError, 800),
         timings: error && typeof error === "object" ? error.captureTimings ?? null : null,
       });
+      await publishLiveProgress(null, { insertionId });
       // A bad portal or audit gate must not suppress the remaining portals.
       // The canonical audit below determines the batch outcome after every
       // eligible insertion had its own documented attempt.
@@ -6064,6 +6084,13 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     captured,
     skipped,
     failed,
+    liveProgress: buildDailyPrintLiveProgress({
+      candidateInsertionIds,
+      captured,
+      skipped,
+      failed,
+      runningInsertionId: null,
+    }),
     audit: {
       totalEligible: audit.totalEligible,
       ok: audit.ok,
