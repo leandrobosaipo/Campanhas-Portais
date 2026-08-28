@@ -9,7 +9,7 @@ import {
 } from "../../artifacts/api-server/src/lib/adrotate-sites.ts";
 import captureModule from "./capture-insertion-proof.cjs";
 
-const { applyAflRetroPreview, stabilizeVisibleRetroDatesBeforeCapture } = captureModule;
+const { applyAflRetroPreview, applyPerrengueStaticRetroAd, stabilizeVisibleRetroDatesBeforeCapture } = captureModule;
 
 const portalDefaults = {
   requireSignedRetroPreview: true,
@@ -180,6 +180,23 @@ try {
   assert.equal(articleResult.expectedPosts[0].id, 123);
   assert.equal(await page.locator("main article h1").textContent(), "Idosa morre após atropelamento");
   assert.equal(await page.locator("main article a").getAttribute("href"), "https://afolhalivre.com/idosa-morre/");
+
+  await page.setContent(`
+    <header><div class="omt-header-top"><div id="block-8"><!-- anúncio encerrado --></div></div></header>
+  `);
+  const slotResult = await applyPerrengueStaticRetroAd(page, {
+    domain: "afolhalivre.com",
+    page: "home",
+    slotSelector: ".g.g-1",
+    contextSelector: ".g.g-1",
+    auditConfig: { allowAuditedReconstruction: true },
+  }, "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='825' height='120'/>", "banner.svg", {
+    allowConfiguredSlotReconstruction: true,
+    reconstructionReason: "late_publication_recovery",
+  });
+  assert.equal(slotResult.applied, true);
+  assert.equal(await page.locator("header .omt-header-top #block-8 > .g.g-1").count(), 1);
+  assert.equal(await page.locator(".g.g-1").getAttribute("data-adops-reconstructed-slot"), "1");
 } finally {
   await browser.close();
 }

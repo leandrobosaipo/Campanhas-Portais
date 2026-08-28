@@ -4,6 +4,8 @@ O harness executa uma fatia explícita de uma inserção. Ele não agenda automa
 
 Para AFL, a reconstrução auditada cobre `home` e `article`. As duas usam os posts do WordPress anteriores ao horário contratado; `article` exige título, link e data absolutos visíveis do mesmo post reconstruído. Sem essa confirmação, a promoção continua bloqueada por `retro_content_unverified` ou `content_time_mismatch`. Nunca afrouxe esses gates para concluir um backfill.
 
+Quando uma campanha AFL de topo já encerrou, o AdRotate mantém o widget desktop `header .omt-header-top #block-8`, mas pode omitir o elemento `.g.g-1`. Somente `late_publication_recovery` pode reconstruir esse slot dentro do widget canônico e inserir a `mediaUrl` contratada. Captura diária, widget ausente ou outro grupo continuam bloqueados.
+
 Use a base da API já configurada em `ADOPS_PUBLIC_API_BASE_URL`. Quando o endpoint exigir autenticação, use a variável operacional existente (`ADOPS_OPS_API_TOKEN`, `OPS_API_TOKEN` ou `ADOPS_INTERNAL_API_TOKEN`); o harness não imprime seus valores.
 
 ## Check somente leitura

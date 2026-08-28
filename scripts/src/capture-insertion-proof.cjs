@@ -2959,9 +2959,11 @@ function buildStaticRetroSlotPlan(mapping) {
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
-  let contextSelector = new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
-    ? "#block-9"
-    : configuredContextSelector;
+  let contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-1"
+    ? "header .omt-header-top #block-8"
+    : new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
+      ? "#block-9"
+      : configuredContextSelector;
   if (slotSelector === contextSelector) {
     contextSelector = domain === "omatogrossense.com"
       ? ".homepage-banner-single"
@@ -2977,7 +2979,7 @@ function buildStaticRetroSlotPlan(mapping) {
   const groupId = Number(matches[0][1]);
   if (!Number.isInteger(groupId) || groupId < 1) return null;
   if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
-  if (domain === "afolhalivre.com" && groupId !== 2) return null;
+  if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "portalnortemt.com" && groupId !== 2) return null;
   if (domain === "roonoticias.com" && groupId !== 1) return null;
   return { contextSelector, groupClass: `g g-${groupId}`, groupId };
