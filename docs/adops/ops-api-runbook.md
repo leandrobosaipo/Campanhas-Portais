@@ -54,6 +54,8 @@ curl -fsSL "$ADOPS_API_BASE_URL/api/campaign-operations/pending-publication?date
 
 Para retroativos encerrados, `sourceMode=audited_reconstruction` indica que o runner remontou a página somente na sessão de captura. Em OMT e AFL, as notícias vêm da API WordPress com corte na data pedida e o banner vem da `mediaUrl` canônica do AdOps. Isso não reativa a campanha nem altera o portal. Checklist, data visível, identidade criativa e URL acessível continuam obrigatórios.
 
+Na AFL, esse contrato vale tanto para a página inicial quanto para página de artigo. A página de artigo só é válida quando o post histórico reconstruído deixa título, link e data absoluta visíveis e correlacionados no manifesto. Ausência desses elementos é bloqueio de origem editorial; não deve ser contornada com aprovação manual nem com mídia sintética fora do `print-backfill`.
+
 Para qualquer criação de job:
 
 - use `Authorization: Bearer` vindo do ambiente quando o contrato exigir;

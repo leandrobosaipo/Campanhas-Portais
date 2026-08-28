@@ -153,6 +153,33 @@ try {
     await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
     "29/07/2026 15:29",
   );
+
+  await page.setContent(`
+    <main><article>
+      <a href="https://afolhalivre.com/atual/"><img src="https://example.test/atual.jpg"></a>
+      <h1>Notícia atual</h1>
+      <time datetime="2026-08-28T10:00:00">há 2 horas</time>
+    </article></main>
+  `);
+  const articleResult = await applyAflRetroPreview(page, {
+    domain: "afolhalivre.com",
+    page: "article",
+  }, "2026-07-29T21:50:00-04:00", {
+    posts: [{
+      id: 123,
+      slug: "idosa-morre",
+      url: "https://afolhalivre.com/idosa-morre/",
+      title: "Idosa morre após atropelamento",
+      image: "https://cdn.example.test/idosa.jpg",
+      category: "Primavera",
+      date: "2026-07-29T15:29:00",
+    }],
+  });
+  assert.equal(articleResult.applied, true);
+  assert.equal(articleResult.articleVerified, true);
+  assert.equal(articleResult.expectedPosts[0].id, 123);
+  assert.equal(await page.locator("main article h1").textContent(), "Idosa morre após atropelamento");
+  assert.equal(await page.locator("main article a").getAttribute("href"), "https://afolhalivre.com/idosa-morre/");
 } finally {
   await browser.close();
 }

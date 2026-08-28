@@ -2602,11 +2602,11 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, option
 
 async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "afolhalivre.com") return false;
-  if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
+  if (!["home", "article"].includes(mapping?.page) && mapping?.pageLabel !== "Home") return false;
   const posts = Array.isArray(options.posts) ? options.posts : await fetchAflRetroPosts(captureAt);
   if (!posts.length) throw new Error(`afl_retro_preview_failed: posts_unavailable; captureAt=${captureAt}`);
 
-  const result = await page.evaluate(({ captureAt: rawCaptureAt, retroPosts }) => {
+  const result = await page.evaluate(({ captureAt: rawCaptureAt, retroPosts, pageType }) => {
     const text = (value) => String(value || "").trim();
     const absoluteUrl = (value) => {
       try { return new URL(text(value), window.location.origin).href; } catch { return text(value) || "/"; }
@@ -2673,6 +2673,46 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       }
       return rewritten;
     };
+
+    if (pageType === "article") {
+      const article = document.querySelector("main article") || document.querySelector("article") || document.querySelector("main");
+      const post = retroPosts[0];
+      if (!article || !post) return { applied: false, reason: "article_target_missing" };
+      setLink(article, post);
+      setImage(article, post, true);
+      const title = article.querySelector("h1,h2,.entry-title") || document.querySelector("main h1,h1.entry-title");
+      if (title) title.textContent = post.title;
+      let dateNodesUpdated = normalizeArticleDate(article, post.date);
+      if (dateNodesUpdated === 0) {
+        const time = document.createElement("time");
+        time.textContent = formatDate(post.date);
+        time.setAttribute("datetime", post.date);
+        time.setAttribute("data-adops-retro-date-node", "1");
+        article.prepend(time);
+        dateNodesUpdated = 1;
+      }
+      article.setAttribute("data-adops-retro-primary-article", "1");
+      article.setAttribute("data-adops-retro-post-slug", post.slug);
+      article.setAttribute("data-adops-retro-post-date", post.date);
+      document.documentElement.setAttribute("data-adops-afl-retro-preview", rawCaptureAt);
+      const expectedUrl = absoluteUrl(post.url || `/${post.slug}/`);
+      const linkedUrl = article.querySelector("a[href]")?.href || "";
+      const visible = (node) => node instanceof HTMLElement && node.getBoundingClientRect().width > 8 && node.getBoundingClientRect().height > 8;
+      return {
+        applied: true,
+        source: "afl-wp-rest",
+        posts: retroPosts.length,
+        articleVerified: visible(title) && dateNodesUpdated > 0 && linkedUrl === expectedUrl,
+        expectedArticlePath: new URL(expectedUrl).pathname,
+        expectedPosts: [post].map((item) => ({
+          id: Number(item.id || 0),
+          slug: item.slug,
+          date: item.date,
+          url: item.url,
+          title: item.title,
+        })),
+      };
+    }
 
     const hero = document.querySelector("main .hero-section article.hero-post");
     const heroPost = retroPosts.find((post) => post.image) || retroPosts[0];
@@ -2795,7 +2835,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       relativeDateObserverActive: Boolean(main),
       editorialContentMatches,
     };
-  }, { captureAt, retroPosts: posts });
+  }, { captureAt, retroPosts: posts, pageType: mapping?.page === "article" ? "article" : "home" });
 
   if (!result || result.applied !== true) {
     const reason = result && typeof result === "object" ? result.reason || JSON.stringify(result) : "unknown";
