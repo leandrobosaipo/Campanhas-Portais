@@ -576,6 +576,11 @@ async function materializeCampaignExports(items, asOfDate) {
 
   const results = new Map();
   await mapLimit(Array.from(groups.values()), 3, async (group) => {
+    const reusableUrl = group.items[0]?.batchDownloadUrl || "";
+    if (reusableUrl && group.items.every((item) => item.batchDownloadUrl === reusableUrl)) {
+      results.set(group.key, reusableUrl);
+      return;
+    }
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
     const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
     if (!required || evidenceDays.length !== required) return;
@@ -637,6 +642,11 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   const results = new Map();
   const readyGroups = [];
   for (const group of groups.values()) {
+    const reusableUrl = group.items[0]?.completeCampaignDownloadUrl || "";
+    if (reusableUrl && group.items.every((item) => item.completeCampaignDownloadUrl === reusableUrl)) {
+      results.set(group.key, reusableUrl);
+      continue;
+    }
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
     const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
     if (!required || evidenceDays.length !== required || !materializeOptionalExports) continue;
