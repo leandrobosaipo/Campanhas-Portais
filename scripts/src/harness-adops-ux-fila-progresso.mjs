@@ -117,6 +117,13 @@ const PHASES = [
         args: ["scripts/src/test-monthly-report-incremental-refresh.mjs"],
       },
       {
+        id: "historical_audit_contract_immutability",
+        title: "Historical audit contract immutability",
+        critical: true,
+        cmd: "pnpm",
+        args: ["--dir", "scripts", "exec", "node", "--import", "tsx", "--test", "src/test-retro-content-time-api.ts"],
+      },
+      {
         id: "campaign_evidence_private_route",
         title: "Campaign evidence immutable export",
         critical: true,

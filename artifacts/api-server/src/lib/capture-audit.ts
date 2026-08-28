@@ -683,8 +683,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const contentTimelineOk = contentTimeline.ok ||
     (contentTimeline.reason === "empty_samples" && (isScheduledLikeCaptureClass || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
-  const requireAbsoluteEditorialDates = effectiveAuditConfig.requireAbsoluteEditorialDates === true;
-  const requireEditorialDateMatchTarget = effectiveAuditConfig.requireEditorialDateMatchTarget === true;
+  // Gates added after an evidence was captured cannot invalidate its persisted contract.
+  // New captures explicitly declare every gate they were produced to satisfy.
+  const requireAbsoluteEditorialDates = effectiveAuditConfig.requireAbsoluteEditorialDates === true &&
+    metadataRequiredGates?.requireAbsoluteEditorialDates === true;
+  const requireEditorialDateMatchTarget = effectiveAuditConfig.requireEditorialDateMatchTarget === true &&
+    metadataRequiredGates?.requireEditorialDateMatchTarget === true;
   const relativeContentTimeline = {
     ok: !requireAbsoluteEditorialDates || contentRelativeTimeSamples.length === 0,
     required: requireAbsoluteEditorialDates,

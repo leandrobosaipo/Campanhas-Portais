@@ -723,9 +723,8 @@ export async function validateAuditChecklist(input: {
         `retroGate.ok precisa ser true. Estado: ${JSON.stringify(retroGate ?? {})}.`,
       ));
     }
-    if (requiredGates.requireAbsoluteEditorialDates) {
+    if (requiredGates.requireAbsoluteEditorialDates && metadataRequiredGates?.requireAbsoluteEditorialDates === true) {
       if (
-        metadataRequiredGates?.requireAbsoluteEditorialDates !== true ||
         !relativeContentTimeline
       ) {
         blockingIssues.push(issue(
@@ -751,9 +750,8 @@ export async function validateAuditChecklist(input: {
         ));
       }
     }
-    if (requiredGates.requireEditorialDateMatchTarget) {
+    if (requiredGates.requireEditorialDateMatchTarget && metadataRequiredGates?.requireEditorialDateMatchTarget === true) {
       if (
-        metadataRequiredGates?.requireEditorialDateMatchTarget !== true ||
         audit.contentTimeline?.targetDateMatches !== true
       ) {
         blockingIssues.push(issue(
@@ -764,10 +762,9 @@ export async function validateAuditChecklist(input: {
         ));
       }
     }
-    if (requiredGates.requireVisiblePageDate) {
+    if (requiredGates.requireVisiblePageDate && metadataRequiredGates?.requireVisiblePageDate === true) {
       const visiblePageDateAudit = metadataObject(metadata, "visiblePageDateAudit");
       if (
-        metadataRequiredGates?.requireVisiblePageDate !== true ||
         visiblePageDateAudit?.ok !== true ||
         visiblePageDateAudit?.skipped === true
       ) {

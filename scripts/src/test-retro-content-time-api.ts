@@ -11,6 +11,7 @@ test("API audit rejects relative editorial dates required by PNMT", () => {
     pageDateObserved: "2026-07-15T19:06:00-04:00",
     contentDateSamples: ["15/07/2026 16:12"],
     contentRelativeTimeSamples: ["há 6 dias"],
+    requiredGates: { requireAbsoluteEditorialDates: true },
     visualAudit: {},
     slotVisibility: {},
   }, "2026-07-15");
@@ -30,6 +31,7 @@ test("API audit rejects PNMT proof without an absolute editorial date", () => {
     pageDateObserved: "2026-07-15T19:06:00-04:00",
     contentDateSamples: [],
     contentRelativeTimeSamples: [],
+    requiredGates: { requireAbsoluteEditorialDates: true },
     visualAudit: {},
     slotVisibility: {},
   }, "2026-07-15");
@@ -50,6 +52,7 @@ test("API audit rejects an article whose visible date does not match the target 
     auditConfig: {
       requireEditorialDateMatchTarget: true,
     },
+    requiredGates: { requireEditorialDateMatchTarget: true },
     visualAudit: {},
     slotVisibility: {},
   }, "2026-07-31");
@@ -57,4 +60,21 @@ test("API audit rejects an article whose visible date does not match the target 
   assert.equal(audit.contentTimeline?.targetDateMatches, false);
   assert.equal(audit.ok, false);
   assert.ok(audit.issues.some((item) => item.code === "editorial_date_target_mismatch"));
+});
+
+test("API audit does not apply new editorial gates to a legacy persisted contract", () => {
+  const audit = evaluateCaptureMetadata({
+    siteSigla: "PNMT",
+    format: "MEGABANNER TOPO",
+    requestedCaptureAt: "2026-07-15T19:06",
+    systemDateTime: "quarta-feira, 15/07/2026, 19:06",
+    pageDateObserved: "2026-07-15T19:06:00-04:00",
+    contentDateSamples: [],
+    contentRelativeTimeSamples: [],
+    visualAudit: {},
+    slotVisibility: {},
+  }, "2026-07-15");
+
+  assert.equal(audit.issues.some((item) => item.code === "absolute_content_time_missing"), false);
+  assert.equal(audit.issues.some((item) => item.code === "relative_content_time_unresolved"), false);
 });

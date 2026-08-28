@@ -119,4 +119,5 @@ Esperado:
 - Efeito: 94 dias auditados apareceram como inválidos, principalmente por `relative_content_time_audit_missing` e `visible_page_time_missing`.
 - Recuperação: restauração atômica do último relatório válido e hotfix isolado a partir de `c9b497`.
 - Prevenção: gate automático de regressão histórica antes da publicação e revisão obrigatória do intervalo entre o SHA ativo e o candidato.
+- Contrato imutável: uma regra editorial nova só bloqueia evidências que declaram essa regra em `metadata.requiredGates`; o runner grava os três gates nas capturas novas. Evidências antigas não são reprovadas por campos inexistentes em seu contrato original.
 - Incidente complementar: o gerador aceitava jobs de exportação ainda em `ready_for_runner`, publicava URLs vazias e escondia os botões. O contrato agora exige estado terminal e os dois escopos antes de publicar.
