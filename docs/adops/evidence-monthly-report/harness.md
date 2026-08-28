@@ -59,6 +59,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - O endpoint aceita no máximo 25 campanhas, mas o relatório envia lotes de 3 para caber no timeout do proxy e reúne todos os resultados antes de publicar.
 - Quando `requiredDatesByInsertion` estiver presente, o ZIP por portal inclui somente os IDs explicitamente solicitados; inserções antigas ou duplicadas da mesma PI/portal não entram no gate do card.
 - O runner deve repassar esses IDs como `insertionIds` ao download privado; o resultado terminal não pode listar inserção fora do recorte solicitado.
+- `prints-only` empacota somente evidências auditadas; não pode bloquear ou esperar pelos relatórios opcionais de Analytics.
 - O gerador consulta cada job pela rota do próprio contrato (`pi-site-exports` ou `campaign-evidence-exports`), nunca pela rota genérica de progresso.
 - Para não disputar o mesmo runner, a fase por portal termina antes de começar a fase de todos os portais.
 - O `claim-next` da fila usa sessão D1 `first-primary` e uma única escrita atômica `UPDATE ... RETURNING`; não separar leitura e claim, pois uma réplica atrasada pode esconder jobs `ready_for_runner`.

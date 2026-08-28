@@ -223,6 +223,8 @@ test("ZIP por portal respeita as datas exatas do relatório", async () => {
   assert.match(runner, /ensureInsertionCaptureCoverage\(insertion, requiredDates/);
   assert.match(runner, /operationalInsertionIds\.filter\(\(id\) => requestedInsertionIds\.includes\(Number\(id\)\)\)/);
   assert.match(runner, /downloadParams\.set\("insertionIds", selectedInsertionIds\.join\(","\)\)/);
+  assert.match(runner, /if \(mode !== "delivery" && mode !== "prints-only"\)/);
+  assert.match(runner, /insertionIds: selectedInsertionIds,/);
   assert.match(insertionRoutes, /requestedInsertionIds[\s\S]*exportableInsertions = insertions\.filter/);
   assert.match(runner, /\(jobId\) => progressJob\(jobId, \{ stage: "heartbeat"/);
   const productionCompose = await readFile(new URL("../../ops/portainer/adops-stack/docker-compose.volume.yml", import.meta.url), "utf8");

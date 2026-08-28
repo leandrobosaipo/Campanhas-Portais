@@ -16,6 +16,13 @@ const importSafeSource = source.replace(
 );
 await writeFile(modulePath, importSafeSource, "utf8");
 const { renderHtml } = await import(`${pathToFileURL(modulePath).href}?v=${Date.now()}`);
+const LIVE_DATE = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Cuiaba",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
+const LIVE_DATE_BR = LIVE_DATE.split("-").reverse().join("/");
 after(async () => {
   await Promise.all([
     rm(modulePath, { force: true }),
@@ -36,10 +43,10 @@ const insertion = {
   mediaUrl: "https://cdn.example/media.gif",
   periodoInicio: "2026-08-01",
   periodoFim: "2026-08-31",
-  requiredDays: ["2026-08-27"],
-  evidenceDays: [{ date: "2026-08-27", status: "missing", url: "", downloadUrl: "" }],
+  requiredDays: [LIVE_DATE],
+  evidenceDays: [{ date: LIVE_DATE, status: "missing", url: "", downloadUrl: "" }],
   auditedDays: 0,
-  missingDates: ["2026-08-27"],
+  missingDates: [LIVE_DATE],
   invalidDates: [],
   retroactiveMissingDates: [],
   state: "pending",
@@ -65,7 +72,7 @@ function html() {
     sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 1 } },
     dailyPrintStatus: {
       nextRunAt: "2026-08-28T22:00:00.000Z",
-      lastAttempt: { jobId: "daily-job-1", targetDate: "2026-08-27", status: "running", expected: 1, approved: 0, missing: 1, invalid: 0, failedInsertionIds: [] },
+      lastAttempt: { jobId: "daily-job-1", targetDate: LIVE_DATE, status: "running", expected: 1, approved: 0, missing: 1, invalid: 0, failedInsertionIds: [] },
     },
   });
 }
@@ -179,7 +186,7 @@ function daily(status = "running", nextRecoveryAt = null) {
     nextRunAt: "2026-08-28T22:00:00.000Z",
     lastAttempt: {
       jobId: "daily-job-1",
-      targetDate: "2026-08-27",
+      targetDate: LIVE_DATE,
       status,
       nextRecoveryAt,
       summary: "Resumo seguro da rotina.",
@@ -250,12 +257,12 @@ async function createBehaviorHarness({ hidden = false, items = [snapshotItem(227
   const thumbs = new FakeElement("div");
   const initialCell = new FakeElement("button");
   initialCell.dataset.liveInsertionId = "2278";
-  initialCell.dataset.liveDate = "2026-08-27";
+  initialCell.dataset.liveDate = LIVE_DATE;
   initialCell.dataset.modalId = "ins-2278";
-  initialCell.dataset.date = "2026-08-27";
+  initialCell.dataset.date = LIVE_DATE;
   thumbs.append(initialCell);
   thumbs.querySelector = (selector) => selector.includes('data-live-insertion-id="2278"')
-    ? thumbs.children.find((child) => child.dataset.liveInsertionId === "2278" && child.dataset.liveDate === "2026-08-27") || null
+    ? thumbs.children.find((child) => child.dataset.liveInsertionId === "2278" && child.dataset.liveDate === LIVE_DATE) || null
     : null;
   const container = new FakeElement("article");
   container.querySelector = (selector) => selector === ".thumbs" ? thumbs : null;
@@ -329,7 +336,7 @@ test("relatório renderizado expõe progresso vivo acessível e preserva o snaps
   assert.match(output, /id="livePrintItems"/);
   assert.match(output, /id="livePrintUpdatedAt"/);
   assert.match(output, /id="livePrintProgressBar"[^>]+aria-labelledby="livePrintTitle"[^>]+aria-describedby="livePrintSummary"/);
-  assert.match(output, /data-live-insertion-id="2278" data-live-date="2026-08-27"/);
+  assert.match(output, new RegExp(`data-live-insertion-id="2278" data-live-date="${LIVE_DATE}"`));
   assert.match(output, />Print pendente</);
   assert.match(output, /\.live-audited\s*\{[^}]*position:\s*relative[^}]*overflow:\s*visible/s);
   assert.match(output, /\.live-audited \.live-badge\s*\{[^}]*position:\s*absolute/s);
@@ -438,7 +445,7 @@ test("refresh sobreposto aborta as leituras anteriores", async () => {
 test("promoção viva preserva a rota do modal e o download HTTPS", async () => {
   const harness = await createBehaviorHarness({
     items: [snapshotItem(2278, {
-      evidenceDays: [{ date: "2026-08-27", status: "audited", url: "https://cdn.example/static-2278.png", downloadUrl: "https://cdn.example/static-2278.jpg" }],
+      evidenceDays: [{ date: LIVE_DATE, status: "audited", url: "https://cdn.example/static-2278.png", downloadUrl: "https://cdn.example/static-2278.jpg" }],
       auditedDays: 1,
       missingDates: [],
     })],
@@ -451,7 +458,7 @@ test("promoção viva preserva a rota do modal e o download HTTPS", async () => 
   });
   const liveCell = harness.thumbs.children[0];
   assert.equal(liveCell.dataset.modalId, "ins-2278");
-  assert.equal(liveCell.dataset.date, "2026-08-27");
+  assert.equal(liveCell.dataset.date, LIVE_DATE);
   liveCell.click();
   assert.equal(harness.element("modal").openCount, 1);
   assert.match(harness.element("modalTitle").textContent, /#2278 · CAMPANHA 2278/);
@@ -465,7 +472,7 @@ test("modal vivo corrige somente os detalhes temporários do dia promovido", asy
       requiredDays: [],
       evidenceDays: [],
       auditedDays: 0,
-      missingDates: ["2026-08-27"],
+      missingDates: [LIVE_DATE],
       statusDetail: "Print pendente no snapshot.",
     })],
     fetchImpl: (url) => {
@@ -502,7 +509,7 @@ test("cinco estados exibem contexto completo sem erro bruto", async () => {
   });
   const rendered = harness.element("livePrintItems").textContent;
   for (const id of ids) {
-    assert.match(rendered, new RegExp(`CAMPANHA ${id}.*PI ${id}.*PORTAL${id}.*Inserção #${id}.*27/08/2026.*Causa segura ${id}`, "s"));
+    assert.match(rendered, new RegExp(`CAMPANHA ${id}.*PI ${id}.*PORTAL${id}.*Inserção #${id}.*${LIVE_DATE_BR}.*Causa segura ${id}`, "s"));
   }
   assert.doesNotMatch(rendered, /ERRO BRUTO NÃO DEVE APARECER/);
 });

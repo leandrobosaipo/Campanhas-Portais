@@ -8015,7 +8015,7 @@ async function executePiSiteExport(job) {
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
 
-  if (mode !== "delivery") {
+  if (mode !== "delivery" && mode !== "prints-only") {
     await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
     for (const insertion of insertions) {
       await ensureOperationalDocuments(insertion);
@@ -8240,7 +8240,7 @@ async function executePiSiteExport(job) {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
-    insertionIds: descriptor.insertionIds,
+    insertionIds: selectedInsertionIds,
     invalidatedEvidenceIds,
     regeneratedDates,
     analyticsPiStatus,
