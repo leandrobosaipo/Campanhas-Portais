@@ -319,6 +319,11 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  liveProgress:
+                    allOf:
+                      - $ref: "#/components/schemas/DailyPrintLiveProgress"
+                    nullable: true
         "404":
           description: Job not found
           content:
@@ -1900,6 +1905,26 @@ components:
           type: array
           items: { type: integer }
         nextRecoveryAt: { type: [string, "null"], format: date-time }
+
+    DailyPrintLiveProgress:
+      type: object
+      required: [completedInsertionIds, runningInsertionId, pendingInsertionIds, failedInsertionIds, blockedInsertionIds]
+      properties:
+        completedInsertionIds:
+          type: array
+          items: { type: integer }
+        runningInsertionId:
+          type: integer
+          nullable: true
+        pendingInsertionIds:
+          type: array
+          items: { type: integer }
+        failedInsertionIds:
+          type: array
+          items: { type: integer }
+        blockedInsertionIds:
+          type: array
+          items: { type: integer }
 
     DailyPrintStatus:
       type: object

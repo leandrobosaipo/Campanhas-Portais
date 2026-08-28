@@ -8,7 +8,7 @@ import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heart
 import { selectDailyPrintCandidates } from "../../../../ops/shared/daily-print-candidates.mjs";
 import { getCaptureProofAuditForDate } from "./insertions";
 // @ts-expect-error shared runtime module is JavaScript and intentionally reused by Worker and API.
-import { buildDailyPrintStatus } from "../../../../ops/shared/daily-print-status.mjs";
+import { buildDailyPrintStatus, normalizeDailyPrintLiveProgress } from "../../../../ops/shared/daily-print-status.mjs";
 import { resolveDailyPrintAlertDecision } from "../../../../ops/shared/daily-print-alert-decision.mjs";
 import { nextOperationalAttempt, shouldRetryFailedOpsJob } from "../lib/ops-job-retry";
 
@@ -788,6 +788,8 @@ function computeJobProgress(job: ReturnType<typeof describeJob>) {
   const result = asRecord(job.result);
   const execution = asRecord(result?.["execution"]);
   const progress = asRecord(result?.["progress"]) ?? asRecord(execution?.["progress"]);
+  const liveProgressRaw = asRecord(progress?.["liveProgress"]) ?? asRecord(execution?.["liveProgress"]) ?? asRecord(result?.["liveProgress"]);
+  const liveProgress = liveProgressRaw ? normalizeDailyPrintLiveProgress(liveProgressRaw) : null;
   const candidates: unknown[] = [progress, execution, result];
   const stageKey = readString(candidates, ["stageKey", "stage", "currentStage", "step", "current_step"]) ?? fallbackStageByStatus(job.status);
   const itemsDoneRaw = readNumber(candidates, ["itemsDone", "done", "processed", "completedItems", "countDone"]);
@@ -818,6 +820,7 @@ function computeJobProgress(job: ReturnType<typeof describeJob>) {
     updatedAt: job.updatedAt,
     runnerId,
     error,
+    liveProgress,
   };
 }
 

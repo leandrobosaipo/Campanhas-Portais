@@ -1,6 +1,42 @@
 const TIME_ZONE = "America/Cuiaba";
 const DAILY_SOURCE = "cloudflare-cron-daily-print";
 
+function insertionIds(values) {
+  return [...new Set((values || [])
+    .map((value) => Number(value?.insertionId ?? value))
+    .filter((value) => Number.isInteger(value) && value > 0))];
+}
+
+export function normalizeDailyPrintLiveProgress(value = {}) {
+  const blockedInsertionIds = insertionIds(value.blockedInsertionIds);
+  const failedInsertionIds = insertionIds(value.failedInsertionIds)
+    .filter((id) => !blockedInsertionIds.includes(id));
+  const completedInsertionIds = insertionIds(value.completedInsertionIds)
+    .filter((id) => !blockedInsertionIds.includes(id) && !failedInsertionIds.includes(id));
+  const terminal = new Set([...blockedInsertionIds, ...failedInsertionIds, ...completedInsertionIds]);
+  const runningCandidate = Number(value.runningInsertionId);
+  const runningInsertionId = Number.isInteger(runningCandidate) && runningCandidate > 0 && !terminal.has(runningCandidate)
+    ? runningCandidate
+    : null;
+  const pendingInsertionIds = insertionIds(value.pendingInsertionIds)
+    .filter((id) => !terminal.has(id) && id !== runningInsertionId);
+  return { completedInsertionIds, runningInsertionId, pendingInsertionIds, failedInsertionIds, blockedInsertionIds };
+}
+
+export function buildDailyPrintLiveProgress({ candidateInsertionIds = [], captured = [], skipped = [], failed = [], runningInsertionId = null } = {}) {
+  const completedInsertionIds = insertionIds([...captured, ...skipped]);
+  const blockedInsertionIds = insertionIds(failed.filter((item) => item?.status === "blocked_reconstruction" || item?.status === "blocked_upstream"));
+  const failedInsertionIds = insertionIds(failed.filter((item) => item?.status !== "blocked_reconstruction" && item?.status !== "blocked_upstream"));
+  const consumed = new Set([...completedInsertionIds, ...blockedInsertionIds, ...failedInsertionIds]);
+  return normalizeDailyPrintLiveProgress({
+    completedInsertionIds,
+    runningInsertionId,
+    pendingInsertionIds: insertionIds(candidateInsertionIds).filter((id) => !consumed.has(id) && id !== runningInsertionId),
+    failedInsertionIds,
+    blockedInsertionIds,
+  });
+}
+
 function dailyTargetDate(job) {
   if (job?.payload?.source === DAILY_SOURCE) return job?.payload?.date;
   if (job?.payload?.source === "macmini-canonical-scheduler" && ["daily-print", "daily-print-recovery", "daily-print-morning-recovery"].includes(job?.payload?.routineKind)) {
