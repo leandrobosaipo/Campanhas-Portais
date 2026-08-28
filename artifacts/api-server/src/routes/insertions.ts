@@ -3559,9 +3559,18 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
   }
 
   const insertions = await listPiSiteInsertions(descriptor.piCodigo, descriptor.siteSigla);
-  const selectedInsertionIds = exportOptions.mode === "full" ? descriptor.exportableInsertionIds : descriptor.evidenceInsertionIds;
+  const requestedInsertionIds = new Set(String(req.query.insertionIds ?? "")
+    .split(",")
+    .map((value) => Number.parseInt(value, 10))
+    .filter((value) => Number.isInteger(value) && value > 0));
+  const selectedInsertionIds = (exportOptions.mode === "full" ? descriptor.exportableInsertionIds : descriptor.evidenceInsertionIds)
+    .filter((id) => requestedInsertionIds.size === 0 || requestedInsertionIds.has(id));
   const exportableInsertionIds = new Set(selectedInsertionIds);
   const exportableInsertions = insertions.filter((item) => exportableInsertionIds.has(item.id));
+  if (requestedInsertionIds.size > 0 && exportableInsertions.length !== requestedInsertionIds.size) {
+    res.status(404).json({ error: "Uma ou mais inserções solicitadas não pertencem ao recorte PI/site exportável." });
+    return;
+  }
   const tempDir = await mkdtemp(join(tmpdir(), `adops-pi-site-export-${descriptor.piCodigo}-${descriptor.siteSigla}-`));
 
   if (exportOptions.mode === "pdf" || exportOptions.mode === "full-pdf") {

@@ -1089,6 +1089,12 @@ paths:
             type: string
             enum: [original, web]
             default: original
+        - name: insertionIds
+          in: query
+          description: IDs de inserção separados por vírgula. Quando informado, o ZIP contém somente esse recorte da PI/site.
+          schema:
+            type: string
+            pattern: '^\d+(,\d+)*$'
         - name: source
           in: query
           schema:

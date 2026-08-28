@@ -8199,6 +8199,7 @@ async function executePiSiteExport(job) {
     imageMaxWidth: String(imageMaxWidth),
     imageQuality: String(imageQuality),
   });
+  downloadParams.set("insertionIds", selectedInsertionIds.join(","));
   await progressJob(job.id, {
     stage: "materializando artefato comprimido",
     ...stagePayload,
