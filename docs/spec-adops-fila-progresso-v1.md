@@ -11,6 +11,8 @@ Endpoints de leitura esperados:
 - `GET /api/ops/queue/overview`
 - `GET /api/ops/jobs/:jobId/progress`
 
+O runtime é híbrido: Worker/D1 controla os jobs que nascem no Worker; Mac Mini/PostgreSQL controla os jobs canônicos privados. Toda leitura, claim, lease e prova terminal deve permanecer no control plane de origem do job.
+
 ## 2) Contrato `JobProgress`
 
 ```ts
@@ -42,6 +44,20 @@ type JobProgress = {
   error: string | null;
 };
 ```
+
+### Contrato `liveProgress` do lote diário
+
+```ts
+type DailyPrintLiveProgress = {
+  completedInsertionIds: number[];
+  runningInsertionId: number | null;
+  pendingInsertionIds: number[];
+  failedInsertionIds: number[];
+  blockedInsertionIds: number[];
+};
+```
+
+Os cinco estados visíveis são `completed`, `running`, `pending`, `failed` e `blocked`. Cada inserção pertence a no máximo um estado; `runningInsertionId` é `null` quando não houver execução. O cliente trata payload malformado como vazio e não mostra erros brutos.
 
 ## 3) Contrato `QueueOverview`
 
@@ -128,3 +144,7 @@ Falhas parciais sem bloquear UI:
 - Testes locais de auth/guards passam.
 - Harness gera artefatos em `docs/harness-reports/adops-ux-v1/<timestamp>/`.
 - Falha de gate crítico encerra com código de saída não zero.
+- O relatório mensal é um snapshot estático; a camada viva faz somente GET em `daily-print-status`, `queue/overview`, `jobs/:jobId/progress` e, para conclusão nova, no status da evidência.
+- A camada viva promove uma miniatura somente após auditoria final aprovada; sua falha preserva o snapshot estático. O polling para em estado terminal, salvo recuperação já agendada.
+- Atualização incremental consolida o snapshot, não renderiza o progresso vivo; ZIP só é reutilizado com fingerprint idêntico e ZIP incompatível bloqueia publicação.
+- Nenhuma página pública, payload vivo ou log do harness pode conter segredo.

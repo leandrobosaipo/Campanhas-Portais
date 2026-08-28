@@ -44,6 +44,9 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - A fonte deve conter campanhas encerradas; PNMT/DENGUE `#1839` deve manter suas 15 evidências existentes.
 - O HTML deve abrir em `publication=active`, permitir `ended` e fazer “Limpar filtros” voltar para `active`.
 - A geração/restauração não pode emitir qualquer requisição POST de captura.
+- O snapshot estático deve conter header, percentual e detalhe por inserção, e permanecer utilizável se a camada viva falhar.
+- A camada viva deve expor os cinco estados `completed`, `running`, `pending`, `failed` e `blocked`, usar somente GET e parar o polling em estado terminal.
+- Antes de promover miniatura viva, exigir auditoria final aprovada; progresso nunca substitui essa auditoria.
 - `summary.notPublished` deve contar insercoes sem `bannerPublicadoNoSite=true`.
 - A quantidade de `.thumb` deve representar todos os dias auditados, nao apenas uma amostra.
 - O modal deve abrir tanto em thumb auditada quanto em celula `missing` ou `invalid`.
@@ -64,6 +67,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - Falha, timeout ou credencial inválida em qualquer ZIP deixa o job do relatório como `failed` e preserva integralmente o HTML/data.json público anterior.
 - Toda inserção com PI canônica e evidências completas deve possuir os dois downloads antes da troca atômica. URL vazia bloqueia a publicação e preserva o relatório anterior.
 - Atualização incremental com `ADOPS_REPORT_SKIP_EXPORTS=1` não pode apagar botões existentes. Se não houver pacote compatível, a publicação deve falhar fechada e aguardar a geração completa.
+- Reuso incremental exige fingerprint idêntico. ZIP incompatível bloqueia a publicação, e o relatório nunca pode reduzir dias auditados silenciosamente.
 - O HTML público nunca pode conter hostname interno, como `adops-api:4011`; os downloads devem usar `ADOPS_DELIVERY_API_BASE_URL`.
 - Se `ADOPS_REPORT_SKIP_PUBLISH=1`, nenhum container auxiliar deve ser criado.
 - Em `ADOPS_REPORT_REFRESH_MODE=incremental`, `ADOPS_REPORT_SKIP_EXPORTS=1` é obrigatório: o ciclo só reusa evidências existentes e não pode disparar captura, JPEG, ZIP ou exportação.

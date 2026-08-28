@@ -68,8 +68,8 @@ Conflito de identidade bloqueia publicação. Não escolha PI, portal, período 
 | `adops-runner-print-single` | Print individual e exportações de evidências |
 | `adops-drive-pi-monitor-stack` | Credenciais Google e inventário do Drive |
 | `adops-web` | Painel web |
-| Worker `adops-api-public` | Proxy público e shadow/rollback temporário; não decide nem grava jobs no modo `macmini` |
-| PostgreSQL | Fonte canônica de jobs, claims, heartbeats e alertas operacionais |
+| Worker `adops-api-public` + D1 | Controla somente os jobs que nascem no Worker, inclusive o runner D1 dedicado e seu lease |
+| PostgreSQL + Mac Mini | Controlam os jobs canônicos privados, claims, heartbeats e alertas operacionais |
 
 Painel: `https://adops.codigo5.com.br`
 API: `https://adops-api.codigo5.com.br`
@@ -87,6 +87,10 @@ Relatório: `https://sites.codigo5.com.br/reports/adops-evidencias-agosto-2026/`
 - Empacotamento não captura, repara ou reaudita.
 - Preserve o PNG canônico; comprima somente a cópia de entrega.
 - Polling usa `/progress`; carregue o job completo apenas no final ou diagnóstico.
+- O relatório é um snapshot estático com uma camada viva somente de leitura; indisponibilidade da camada viva nunca remove o snapshot.
+- `liveProgress` separa `completed`, `running`, `pending`, `failed` e `blocked`; o polling para quando o job chega a estado terminal.
+- Atualização incremental consolida o snapshot e reutiliza somente ZIP com fingerprint idêntico; ela não desenha o progresso nem cria captura ou ZIP.
+- ZIP e captura são responsabilidades separadas. Nenhuma página pública inclui segredo.
 - Não exponha valores de tokens, cookies, headers ou arquivos `.env`.
 - Redirect é opcional: zero link publica banner sem clique; um HTTPS público publica banner clicável; link fornecido inválido ou ambíguo bloqueia.
 - GIF e MP4 são aceitos somente quando o perfil real da posição permitir e o binário passar em dimensões, codec e integridade.

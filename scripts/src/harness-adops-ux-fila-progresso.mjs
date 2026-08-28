@@ -74,6 +74,27 @@ const PHASES = [
         cmd: "pnpm",
         args: ["--dir", "scripts", "run", "test:mutation-inventory"],
       },
+      {
+        id: "daily_print_live_progress",
+        title: "Daily print live progress",
+        critical: true,
+        cmd: "pnpm",
+        args: ["--dir", "scripts", "run", "test:daily-print-live-progress"],
+      },
+      {
+        id: "daily_print_runner_live_progress",
+        title: "Daily print runner live progress",
+        critical: true,
+        cmd: "pnpm",
+        args: ["--dir", "scripts", "run", "test:daily-print-runner-live-progress"],
+      },
+      {
+        id: "monthly_report_live_polling",
+        title: "Monthly report live polling",
+        critical: true,
+        cmd: "pnpm",
+        args: ["--dir", "scripts", "run", "test:monthly-report-live-polling"],
+      },
     ],
   },
 ];

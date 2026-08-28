@@ -25,9 +25,17 @@ fonte mensal agregada
 
 O empacotamento nunca captura, repara ou reaudita. Correções pertencem a `print-single` e `print-backfill`.
 
+## Snapshot e progresso vivo
+
+O relatório publicado é um snapshot estático. A página acrescenta uma camada viva somente por GET para a rotina diária: resumo, percentual, detalhe por inserção e `liveProgress` nos cinco estados `completed`, `running`, `pending`, `failed` e `blocked`. Ela consulta `daily-print-status`, `queue/overview`, `jobs/{jobId}/progress` e, somente ao concluir uma inserção, o status da evidência para confirmar auditoria antes de promover a miniatura.
+
+O polling para em estado terminal (exceto recuperação já agendada). Se a camada viva falhar, o snapshot continua navegável e o usuário pode tentar atualizar; ela não remove, reclassifica ou invalida evidências do snapshot. Toda página e resposta pública permanece sem tokens, cookies, headers ou outros segredos.
+
+O control plane é híbrido: Worker/D1 controla jobs que nascem no Worker; Mac Mini/PostgreSQL controla jobs canônicos privados. Acompanhe cada job no control plane que o originou; não use um como confirmação do outro.
+
 ## Atualização incremental
 
-Quando uma evidência termina aprovada, o runner registra a competência como “suja”. O Worker aguarda 60 segundos desde a última aprovação próxima e executa uma revisão incremental única por competência. Ela reconsulta a fonte mensal e auditorias, atualiza HTML, `data.json`, miniaturas, contadores e modais, mas não solicita print, JPEG, ZIP nem pacote novo.
+Quando uma evidência termina aprovada, o runner registra a competência como “suja”. O Worker aguarda 60 segundos desde a última aprovação próxima e executa uma revisão incremental única por competência. Ela consolida o snapshot: reconsulta a fonte mensal e auditorias, atualiza HTML, `data.json`, miniaturas, contadores e modais, mas não desenha o progresso vivo nem solicita print, JPEG, ZIP ou pacote novo. Só reusa downloads cujo fingerprint seja idêntico; ZIP ausente ou incompatível falha fechada e preserva a versão pública anterior.
 
 O relatório lê a proveniência imutável da evidência: `captureClass` (`scheduled`, `same_day_retry` ou `historical_recovery`), `targetDate`, `capturedAt`, `sourceJobId` e `auditPolicyVersion`. Uma captura do dia não se torna retroativa no dia seguinte. Registros antigos só podem ser reconciliados quando banco, job e artefato concordam; a reconciliação reutiliza o arquivo existente e não dispara nova captura.
 

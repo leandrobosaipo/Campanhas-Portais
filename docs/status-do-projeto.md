@@ -9,6 +9,12 @@
 
 ## Resumo executivo
 
+### Progresso vivo do relatório — 27/08/2026
+
+- O runtime é híbrido: Worker/D1 controla os jobs que nele nascem; Mac Mini/PostgreSQL controla os jobs canônicos privados. Um control plane não é prova do outro.
+- O relatório público preserva o snapshot estático e acrescenta uma camada GET viva para `liveProgress`: concluídos, em execução, pendentes, falharam e bloqueados. Falha dessa leitura mantém o snapshot e oferece retry, sem expor segredo.
+- A atualização incremental consolida o snapshot após auditoria e só reutiliza ZIP com fingerprint idêntico. Captura, auditoria e ZIP continuam rotinas separadas; ZIP incompatível bloqueia a publicação.
+
 ### Reconciliação das quatro capturas inline de 21/08 — 24/08/2026
 
 - `#2692`, `#2693`, `#2712` e `#2713` possuíam evidência e log `inline-*` correlacionados, mas sem proveniência imutável. A rota interna agora oferece `dryRun|apply` para `same_day_inline`, exige coincidência de arquivo, mídia, período, auditoria visual e data em Cuiabá, e registra `same_day_retry` sem trocar a evidência.
@@ -146,7 +152,7 @@ Enquanto a PI/PDF continuar ausente:
 
 - a rotina de 17h30 sincroniza a planilha antes de reconciliar publicação; PI 9750/AFL e PI 14771/OMT não são ausentes e não podem ser recriadas;
 - o lote diário de print não deve depender de uma resposta HTTP síncrona longa: cada captura é acompanhada por job assíncrono, e auditoria incompleta abre incidente estruturado;
-- criação e leitura de jobs pela API canônica devem convergir no D1 consumido pelos runners; a fila PostgreSQL permanece somente como legado e não comprova execução;
+- jobs devem ser lidos no control plane que os originou: Worker/D1 para jobs nascidos no Worker e Mac Mini/PostgreSQL para jobs canônicos privados; um não substitui a evidência do outro;
 - recuperar a PI/PDF de `#1944` para concluir identidade comercial, faturamento e ZIP por PI; a veiculação pode ser retomada antes apenas pelo preflight operacional único;
 - manter documentação e release datadas;
 - monitorar duração, cache hits, blockers e heartbeat;

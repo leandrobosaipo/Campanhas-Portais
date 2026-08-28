@@ -159,8 +159,8 @@ Arquivo:
 Contrato:
 
 ```text
-Cloudflare deixa de executar compute do AdOps.
-Cloudflare fica apenas DNS/Tunnel/Access.
+O runtime é híbrido: Worker/D1 continua controlando os jobs que nele nascem; Mac Mini/PostgreSQL controla os jobs canônicos privados.
+Cloudflare também mantém DNS/Tunnel/Access e os componentes Worker/D1 ainda necessários; não assumir que um control plane substitui o outro.
 Historico D1/Queue/Telegram/Drive PI precisa snapshot + import idempotente.
 Nao cortar Worker/D1 antes de contagens, conflitos e rollback 72h.
 ```
@@ -200,6 +200,11 @@ Arquivos:
 - `ops/cloudflare-remote-runner/src/runner.mjs`
 - `docs/spec-adops-fila-progresso-v1.md`
 - `docs/harness-adops-ux-fila-progresso-v1.md`
+- `scripts/src/test-daily-print-live-progress.mjs`
+- `scripts/src/test-daily-print-runner-live-progress.mjs`
+- `scripts/src/test-monthly-report-live-polling.mjs`
+
+O relatório mensal combina snapshot estático com camada GET viva. `liveProgress` separa concluídos, em execução, pendentes, falharam e bloqueados; polling terminal para, falha viva preserva o snapshot e ZIP/captura seguem responsabilidades distintas.
 
 ### Telegram
 

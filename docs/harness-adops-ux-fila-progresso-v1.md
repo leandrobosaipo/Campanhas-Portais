@@ -47,6 +47,18 @@ Arquivos:
   - `pnpm --dir scripts run test:runtime-auth`
 - `scripts_mutation_inventory` (crítico)
   - `pnpm --dir scripts run test:mutation-inventory`
+- `daily_print_live_progress` (crítico)
+  - `pnpm --dir scripts run test:daily-print-live-progress`
+- `daily_print_runner_live_progress` (crítico)
+  - `pnpm --dir scripts run test:daily-print-runner-live-progress`
+- `monthly_report_live_polling` (crítico)
+  - `pnpm --dir scripts run test:monthly-report-live-polling`
+
+## Contrato rígido do relatório mensal
+
+Os gates vivos exigem header, percentual, detalhe por inserção e os cinco estados (`completed`, `running`, `pending`, `failed`, `blocked`). A camada viva usa somente GET, para em estado terminal e não expõe segredo. Antes de promover miniatura, exige auditoria final aprovada; em falha, o snapshot estático continua visível.
+
+Os gates também exigem fallback estático, modal, busca/filtros e os dois ZIPs (por portal e completo). Atualização incremental somente consolida o snapshot e reusa ZIP com fingerprint idêntico. ZIP ausente ou incompatível bloqueia a publicação; o relatório não pode reduzir dias auditados silenciosamente.
 
 ## Gate policy
 
