@@ -30,3 +30,13 @@
 - A projeção OpenAPI foi revisada para o endpoint correto (`/ops/jobs/{id}/progress`); nenhum outro path foi alterado.
 - Não houve deploy nem validação em runtime: esta task só estabelece o contrato e a projeção; a persistência do progresso é de tarefa posterior.
 - Uma tentativa adicional de `pnpm --dir ops/cloudflare-public-api exec tsc --noEmit` falhou por conflitos preexistentes entre `lib.dom.d.ts` e `worker-configuration.d.ts`, além de dois erros já existentes em `src/index.ts`. O novo import inicialmente também não tinha declaração; foi alinhado ao padrão do API server com `@ts-expect-error`. O comando oficial de build do Worker não está definido no `package.json` local.
+
+## Fix round 1
+
+- Arquivo: `ops/shared/daily-print-status.mjs`.
+- Correção: `insertionIds` aceita somente arrays; escalar, objeto e outros valores persistidos malformados são tratados como lista vazia antes de chamar `.map()`.
+- Teste: `scripts/src/test-daily-print-live-progress.mjs` agora envia campos escalares/objetos malformados e confirma arrays vazios e `runningInsertionId: null`, sem lançar.
+- Comandos e saída:
+  - `pnpm --dir scripts run test:daily-print-live-progress` — `daily print live progress: passed`.
+  - `node scripts/src/test-daily-print-status.mjs` — 8 testes passaram, 0 falhas.
+  - `git diff --check` — sem erros de whitespace.

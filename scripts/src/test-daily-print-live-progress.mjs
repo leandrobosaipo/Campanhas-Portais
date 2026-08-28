@@ -34,4 +34,18 @@ assert.deepEqual(normalizeDailyPrintLiveProgress({
   blockedInsertionIds: [4],
 });
 
+assert.deepEqual(normalizeDailyPrintLiveProgress({
+  completedInsertionIds: 2693,
+  runningInsertionId: {},
+  pendingInsertionIds: { insertionId: 2278 },
+  failedInsertionIds: "2712",
+  blockedInsertionIds: { insertionId: 2650 },
+}), {
+  completedInsertionIds: [],
+  runningInsertionId: null,
+  pendingInsertionIds: [],
+  failedInsertionIds: [],
+  blockedInsertionIds: [],
+});
+
 console.log("daily print live progress: passed");

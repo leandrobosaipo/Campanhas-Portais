@@ -2,7 +2,7 @@ const TIME_ZONE = "America/Cuiaba";
 const DAILY_SOURCE = "cloudflare-cron-daily-print";
 
 function insertionIds(values) {
-  return [...new Set((values || [])
+  return [...new Set((Array.isArray(values) ? values : [])
     .map((value) => Number(value?.insertionId ?? value))
     .filter((value) => Number.isInteger(value) && value > 0))];
 }
