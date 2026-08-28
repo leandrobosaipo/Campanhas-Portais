@@ -43,15 +43,12 @@ import {
   selectCanonicalInsertions,
   shouldMaterializeOptionalMonthlyExports,
   reuseMonthlyDownloadUrls,
+  routeJobDownloadThroughOperationsApi,
 } from "./monthly-evidence-contract.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { operationsBase: apiBase, deliveryBase: deliveryApiBase } = resolveMonthlyReportApiBases();
-function publicJobDownloadUrl(url) {
-  return String(url || "").startsWith(`${deliveryApiBase}/api/`)
-    ? `${apiBase}${String(url).slice(deliveryApiBase.length)}`
-    : String(url || "");
-}
+const publicJobDownloadUrl = (url) => routeJobDownloadThroughOperationsApi(url, apiBase);
 const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops-campanhas-portais.pages.dev").replace(/\/$/, "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const opsEnvFile = process.env.OPS_ENV_FILE || path.join(repoRoot, ".env.adops-operator.local");

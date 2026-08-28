@@ -97,6 +97,16 @@ export function buildCampaignEvidenceExportDownloadUrl(baseUrl, jobId) {
   return `${base}/api/campaign-evidence-exports/jobs/${encodeURIComponent(String(jobId || ""))}/download`;
 }
 
+export function routeJobDownloadThroughOperationsApi(value, operationsBase) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!/^\/api\/(?:pi-site-exports|campaign-evidence-exports)\/jobs\/[^/]+\/download$/.test(url.pathname)) return String(value || "");
+    return `${String(operationsBase || "").replace(/\/$/, "").replace(/\/api$/, "")}${url.pathname}${url.search}`;
+  } catch {
+    return String(value || "");
+  }
+}
+
 export function resolveMonthlyReportApiBases(env = process.env) {
   return {
     operationsBase: String(env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, ""),

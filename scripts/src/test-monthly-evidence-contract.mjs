@@ -358,6 +358,20 @@ test("download completo usa o job agregado por campanha", () => {
     contract.buildCampaignEvidenceExportDownloadUrl("https://worker.example/api/", "campaign job"),
     "https://worker.example/api/campaign-evidence-exports/jobs/campaign%20job/download",
   );
+  assert.equal(
+    contract.routeJobDownloadThroughOperationsApi(
+      "https://private.example/api/pi-site-exports/jobs/portal-job/download",
+      "https://public.example/api",
+    ),
+    "https://public.example/api/pi-site-exports/jobs/portal-job/download",
+  );
+  assert.equal(
+    contract.routeJobDownloadThroughOperationsApi(
+      "https://private.example/api/campaign-evidence-exports/jobs/campaign-job/download",
+      "https://public.example",
+    ),
+    "https://public.example/api/campaign-evidence-exports/jobs/campaign-job/download",
+  );
 });
 
 test("API interna de operacao nunca vira origem publica dos downloads do relatorio", () => {
