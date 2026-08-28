@@ -383,6 +383,39 @@ test("estado terminal sem recuperação não deixa timeout armado", async () => 
   assert.equal(harness.timers.size, 0);
 });
 
+test("progresso usa somente o job diário da data, nunca outro lote ativo", async () => {
+  const harness = await createBehaviorHarness({
+    fetchImpl: (url) => {
+      if (url.includes("daily-print-status")) return response(daily("running"));
+      if (url.includes("queue/overview")) return response({
+        now: { jobId: "other-day", kind: "print-batch", status: "running", payload: { targetDate: "2026-08-26" } },
+        queue: [],
+      });
+      if (url.includes("daily-job-1/progress")) return response(progress("running"));
+      throw new Error("o relatório não pode consultar o lote de outro dia");
+    },
+  });
+  assert.ok(harness.calls.some((call) => call.url.includes("daily-job-1/progress")));
+  assert.ok(!harness.calls.some((call) => call.url.includes("other-day/progress")));
+});
+
+test("após três erros, polling para até tentativa manual ou retorno à tela", async () => {
+  const harness = await createBehaviorHarness({ fetchImpl: async () => { throw new Error("offline"); } });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const [timerId, timer] = [...harness.timers.entries()][0];
+    assert.ok(timer, "erro temporário deve agendar uma nova consulta");
+    harness.timers.delete(timerId);
+    await timer.callback();
+    await flushMicrotasks();
+  }
+  assert.equal(harness.timers.size, 0);
+  assert.equal(harness.element("livePrintRetry").hidden, false);
+  const callsAfterStop = harness.calls.length;
+  harness.document.hidden = false;
+  harness.document.dispatch("visibilitychange");
+  assert.ok(harness.calls.length > callsAfterStop, "voltar à tela deve permitir uma nova consulta");
+});
+
 test("refresh sobreposto aborta as leituras anteriores", async () => {
   let releaseFirst;
   const firstResponse = new Promise((resolve) => { releaseFirst = resolve; });

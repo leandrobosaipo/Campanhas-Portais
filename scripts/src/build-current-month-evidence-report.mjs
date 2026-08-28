@@ -1652,8 +1652,10 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         ]);
         const activeJob = [queue?.now, ...(queue?.queue || [])]
           .filter(Boolean)
-          .find((job) => job.kind === 'print-batch' && ['queued', 'ready_for_runner', 'running'].includes(job.status));
-        const jobId = activeJob?.jobId || daily?.lastAttempt?.jobId || null;
+          .find((job) => job.kind === 'print-batch'
+            && String(job?.payload?.targetDate || job?.payload?.date || '') === liveTargetDate
+            && ['queued', 'ready_for_runner', 'running'].includes(job.status));
+        const jobId = daily?.lastAttempt?.jobId || activeJob?.jobId || null;
         const progress = jobId ? await liveGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress') : null;
         const percent = Math.max(0, Math.min(100, Math.round(Number(progress?.percentTotal || 0))));
         const completed = progress?.liveProgress?.completedInsertionIds?.length || 0;
@@ -1683,6 +1685,9 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         if (liveErrors >= 3) {
           liveSummary.textContent = 'Dados vivos indisponíveis';
           liveRetry.hidden = false;
+          liveScheduleOptions = null;
+          cancelLiveTimer();
+          return;
         }
         scheduleLiveProgress({ consecutiveErrors: liveErrors });
       }

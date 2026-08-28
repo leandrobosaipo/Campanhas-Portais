@@ -7354,12 +7354,24 @@ async function executeAnalyticsReport(payload) {
   };
 }
 
+const jobProgressResults = new Map();
+
+function mergeJobProgressResult(jobId, result) {
+  const previous = jobProgressResults.get(jobId);
+  const merged = {
+    ...(previous && typeof previous === "object" ? previous : {}),
+    ...(result && typeof result === "object" ? result : {}),
+  };
+  jobProgressResults.set(jobId, merged);
+  return merged;
+}
+
 async function progressJob(jobId, result) {
   await request(`/api/ops/runner/jobs/${encodeURIComponent(jobId)}/progress`, {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      result,
+      result: mergeJobProgressResult(jobId, result),
     }),
   });
 }
@@ -8331,9 +8343,10 @@ async function completeJob(jobId, result) {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      result,
+      result: mergeJobProgressResult(jobId, result),
     }),
   });
+  jobProgressResults.delete(jobId);
 }
 
 async function failJob(jobId, error, result = null) {
@@ -8342,9 +8355,10 @@ async function failJob(jobId, error, result = null) {
     body: JSON.stringify({
       runnerId: RUNNER_ID,
       error: String(error),
-      result,
+      result: mergeJobProgressResult(jobId, result),
     }),
   });
+  jobProgressResults.delete(jobId);
 }
 
 async function runWatchdogIfDue(force = false) {
