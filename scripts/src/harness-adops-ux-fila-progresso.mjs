@@ -95,6 +95,27 @@ const PHASES = [
         cmd: "pnpm",
         args: ["--dir", "scripts", "run", "test:monthly-report-live-polling"],
       },
+      {
+        id: "monthly_evidence_contract",
+        title: "Monthly evidence contract",
+        critical: true,
+        cmd: "node",
+        args: ["scripts/src/test-monthly-evidence-contract.mjs"],
+      },
+      {
+        id: "monthly_report_mobile_ui",
+        title: "Monthly report mobile UI",
+        critical: true,
+        cmd: "node",
+        args: ["scripts/src/test-monthly-report-mobile-ui.mjs"],
+      },
+      {
+        id: "monthly_report_incremental_refresh",
+        title: "Monthly report incremental refresh",
+        critical: true,
+        cmd: "node",
+        args: ["scripts/src/test-monthly-report-incremental-refresh.mjs"],
+      },
     ],
   },
 ];

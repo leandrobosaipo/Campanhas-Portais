@@ -53,6 +53,12 @@ Arquivos:
   - `pnpm --dir scripts run test:daily-print-runner-live-progress`
 - `monthly_report_live_polling` (crítico)
   - `pnpm --dir scripts run test:monthly-report-live-polling`
+- `monthly_evidence_contract` (crítico)
+  - `node scripts/src/test-monthly-evidence-contract.mjs`
+- `monthly_report_mobile_ui` (crítico)
+  - `node scripts/src/test-monthly-report-mobile-ui.mjs`
+- `monthly_report_incremental_refresh` (crítico)
+  - `node scripts/src/test-monthly-report-incremental-refresh.mjs`
 
 ## Contrato rígido do relatório mensal
 
