@@ -360,7 +360,7 @@ export function buildMonthlyReportManifest({ slug, title, generatedAt }) {
 
 export function buildCampaignExportIdempotencyKey({ piCodigo, siteSigla, competencia, evidences }) {
   const approved = (evidences || [])
-    .map((item) => ({ fingerprint: String(item.id ?? item.url ?? ""), date: String(item.date || "") }))
+    .map((item) => ({ fingerprint: String(item.id ?? item.evidenceId ?? item.url ?? ""), date: String(item.date || "") }))
     .filter((item) => item.fingerprint && /^\d{4}-\d{2}-\d{2}$/.test(item.date))
     .sort((left, right) => left.date.localeCompare(right.date) || left.fingerprint.localeCompare(right.fingerprint));
   const canonical = JSON.stringify({

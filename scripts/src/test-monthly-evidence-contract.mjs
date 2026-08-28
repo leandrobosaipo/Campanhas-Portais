@@ -240,7 +240,7 @@ test("gera report.json nao listado e chave estavel baseada nas evidencias aprova
 test("refresh incremental reutiliza ZIP apenas com as mesmas evidências", () => {
   const current = [{
     id: 10, piCodigo: "PI 91159", siteSigla: "AFL", competencia: "AGOSTO/2026",
-    evidenceDays: [{ date: "2026-08-26", id: 88, status: "audited", url: "https://cdn.example/88.png" }],
+    evidenceDays: [{ date: "2026-08-26", evidenceId: 88, status: "audited", url: "https://cdn.example/88.png" }],
   }];
   const previous = { insertions: [{
     ...current[0],
@@ -252,8 +252,33 @@ test("refresh incremental reutiliza ZIP apenas com as mesmas evidências", () =>
     batchDownloadUrl: "https://api.example/portal.zip",
     completeCampaignDownloadUrl: "https://api.example/all.zip",
   }]);
-  const changed = [{ ...current[0], evidenceDays: [...current[0].evidenceDays, { date: "2026-08-27", id: 89, status: "audited", url: "https://cdn.example/89.png" }] }];
+  const changed = [{ ...current[0], evidenceDays: [{ ...current[0].evidenceDays[0], evidenceId: 89 }] }];
   assert.equal(contract.reuseMonthlyDownloadUrls(changed, previous)[0].batchDownloadUrl, "");
+});
+
+test("refresh incremental recusa URL não HTTPS e ZIP completo com portal alterado", () => {
+  const current = [
+    { id: 10, piCodigo: "PI 91159", siteSigla: "AFL", competencia: "AGOSTO/2026", evidenceDays: [{ date: "2026-08-26", evidenceId: 88, status: "audited", url: "https://cdn.example/88.png" }] },
+    { id: 11, piCodigo: "PI 91159", siteSigla: "OMT", competencia: "AGOSTO/2026", evidenceDays: [{ date: "2026-08-26", evidenceId: 99, status: "audited", url: "https://cdn.example/99.png" }] },
+  ];
+  const previous = { insertions: current.map((item) => ({
+    ...item,
+    batchDownloadUrl: `https://api.example/${item.siteSigla}.zip`,
+    completeCampaignDownloadUrl: "https://api.example/all.zip",
+  })) };
+  const changedPortal = current.map((item) => item.siteSigla === "OMT"
+    ? { ...item, evidenceDays: [{ ...item.evidenceDays[0], evidenceId: 100 }] }
+    : item);
+  const reused = contract.reuseMonthlyDownloadUrls(changedPortal, previous);
+  assert.equal(reused[0].batchDownloadUrl, "https://api.example/AFL.zip");
+  assert.equal(reused[0].completeCampaignDownloadUrl, "");
+  assert.equal(reused[1].batchDownloadUrl, "");
+  assert.equal(reused[1].completeCampaignDownloadUrl, "");
+  const insecure = contract.reuseMonthlyDownloadUrls(current, {
+    insertions: previous.insertions.map((item) => ({ ...item, batchDownloadUrl: "http://api.example/portal.zip", completeCampaignDownloadUrl: "http://api.example/all.zip" })),
+  });
+  assert.equal(insecure[0].batchDownloadUrl, "");
+  assert.equal(insecure[0].completeCampaignDownloadUrl, "");
 });
 
 test("bloqueia publicacao com pendencias e monta troca atomica com rollback", () => {

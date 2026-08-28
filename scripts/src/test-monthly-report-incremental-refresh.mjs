@@ -20,5 +20,10 @@ assert.match(report, /refreshRevision/);
 assert.match(report, /readPreviousPublicData/);
 assert.match(report, /reuseMonthlyDownloadUrls/);
 assert.match(report, /data\.json\?v=\$\{Date\.now\(\)\}/);
+const previousSnapshotIndex = report.indexOf("const previousPublicData = refreshMode === \"incremental\" ? await readPreviousPublicData() : null;");
+const reuseDownloadsIndex = report.indexOf("enriched = refreshMode === \"incremental\" ? reuseMonthlyDownloadUrls(enriched, previousPublicData) : enriched;");
+const materializeExportsIndex = report.indexOf("const exportLinks = await materializeCampaignExports(enriched, monthEndForEvidence);");
+assert.ok(previousSnapshotIndex >= 0 && previousSnapshotIndex < reuseDownloadsIndex);
+assert.ok(reuseDownloadsIndex >= 0 && reuseDownloadsIndex < materializeExportsIndex);
 
-console.log("monthly report incremental refresh: 17/17 checks passed");
+console.log("monthly report incremental refresh: 19/19 checks passed");
