@@ -5989,22 +5989,26 @@ async function executePrintBatch(job, assertLease = () => undefined) {
   const captured = [];
   const skipped = [];
   const failed = [];
-  const publishLiveProgress = async (runningInsertionId = null, extra = {}) => progressJob(job.id, {
-    stage: "capture_async_dispatch",
-    targetDate,
-    itemsDone: captured.length + skipped.length + failed.length,
-    itemsTotal: candidates.length,
-    percentTotal: candidates.length ? Math.round(((captured.length + skipped.length + failed.length) / candidates.length) * 100) : 100,
-    liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
-    ...extra,
-  });
-  await progressJob(job.id, {
-    stage: "capture_async_dispatch",
-    targetDate,
+  const publishLiveProgress = async (runningInsertionId = null, extra = {}) => {
+    try {
+      await progressJob(job.id, {
+        stage: "capture_async_dispatch",
+        targetDate,
+        itemsDone: captured.length + skipped.length + failed.length,
+        itemsTotal: candidates.length,
+        percentTotal: candidates.length ? Math.round(((captured.length + skipped.length + failed.length) / candidates.length) * 100) : 100,
+        liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
+        ...extra,
+      });
+    } catch (error) {
+      const message = safeProcessOutput(error instanceof Error ? error.message : String(error), 800);
+      console.warn(`[runner] progresso diário não publicado para #${readPositiveInteger(extra.insertionId) || "?"}/${targetDate}: ${message}`);
+    }
+  };
+  await publishLiveProgress(null, {
     itemsDone: 0,
     itemsTotal: candidateInsertionIds.length,
     percentTotal: candidates.length ? 0 : 100,
-    liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId: null }),
   });
   let transportError = null;
   for (const item of candidates) {
@@ -6035,7 +6039,6 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       });
       assertLease();
       captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null, timings: capture.timings });
-      await publishLiveProgress(null, { insertionId });
     } catch (error) {
       transportError = error instanceof Error ? error.message : String(error);
       const blockedReconstruction = payload?.recoveryMode === "late_publication_recovery"
@@ -6046,12 +6049,11 @@ async function executePrintBatch(job, assertLease = () => undefined) {
         error: safeProcessOutput(transportError, 800),
         timings: error && typeof error === "object" ? error.captureTimings ?? null : null,
       });
-      await publishLiveProgress(null, { insertionId });
       // A bad portal or audit gate must not suppress the remaining portals.
       // The canonical audit below determines the batch outcome after every
       // eligible insertion had its own documented attempt.
-      continue;
     }
+    await publishLiveProgress(null, { insertionId });
   }
   const auditQuery = new URLSearchParams({ date: targetDate });
   if (competencia) auditQuery.set("competencia", competencia);
