@@ -376,3 +376,11 @@ test("explica os números dos cards sem abreviações operacionais", () => {
   assert.match(output, /item\.auditedDays \+ ' de ' \+ item\.requiredDays\.length \+ ' prints aprovados'/);
   assert.match(output, /\.metric-details summary\s*\{[^}]*min-height:\s*44px/s);
 });
+
+test("mantém o snapshot estático identificável enquanto a camada viva consulta atualizações", () => {
+  const output = html();
+  assert.match(output, /data-live-insertion-container="1944"/);
+  assert.match(output, /data-live-insertion-id="1944" data-live-date="2026-08-13"/);
+  assert.match(output, /data-live-insertion-id="1944" data-live-date="2026-08-12"/);
+  assert.match(output, /@media \(prefers-reduced-motion: reduce\)/);
+});

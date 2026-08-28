@@ -808,9 +808,9 @@ function renderThumbs(item) {
       const title = dayTitle(day, item);
       const latest = index === 0 ? `<b class="latest-label">Mais recente</b>` : "";
       if (day.status.startsWith("audited") && day.url) {
-        return `<button class="thumb audited" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}${index === 0 ? ", a mais recente" : ""}"><img src="${escapeHtml(day.downloadUrl || day.url)}" data-fallback-src="${escapeHtml(day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span>${latest}</button>`;
+        return `<button class="thumb audited" type="button" data-live-insertion-id="${escapeHtml(item.id)}" data-live-date="${escapeHtml(day.date)}" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}" aria-label="Abrir evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}${index === 0 ? ", a mais recente" : ""}"><img src="${escapeHtml(day.downloadUrl || day.url)}" data-fallback-src="${escapeHtml(day.url)}" alt="Evidência ${escapeHtml(item.id)} ${escapeHtml(day.date)}" loading="lazy" decoding="async"><span>${escapeHtml(datePt(day.date))}</span>${latest}</button>`;
       }
-      return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon("warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "Print pendente" : "Evidência inválida")}</b>${latest}</button>`;
+      return `<button class="day-card ${escapeHtml(day.status)}" type="button" data-live-insertion-id="${escapeHtml(item.id)}" data-live-date="${escapeHtml(day.date)}" data-modal-id="${escapeHtml(item.modalId)}" data-date="${escapeHtml(day.date)}" title="${escapeHtml(title)}">${icon("warn")}<span>${escapeHtml(datePt(day.date))}</span><b>${escapeHtml(day.status === "missing" ? "Print pendente" : "Evidência inválida")}</b>${latest}</button>`;
     })
     .join("");
 }
@@ -840,7 +840,7 @@ function renderInsertion(item) {
   const mediaAction = safePublicMediaUrl(item.mediaUrl)
     ? `<button class="icon-link media-action media-open" type="button" data-media-modal-id="${escapeHtml(item.modalId)}">${icon("image")}<span>Ver mídia</span></button>`
     : "";
-  return `<article class="insertion ${escapeHtml(item.state)}">
+  return `<article class="insertion ${escapeHtml(item.state)}" data-live-insertion-container="${escapeHtml(item.id)}">
     <div class="insertion-overview">
       ${renderMediaPreview(item)}
       <div class="insert-main">
@@ -1035,6 +1035,21 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .metric-details summary { min-height: 44px; display: flex; align-items: center; justify-content: flex-end; cursor: pointer; font-weight: 800; }
     .metric-details div { position: absolute; z-index: 12; top: 28px; right: 0; min-width: 290px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 12px 30px rgba(15, 35, 40, .14); }
     .metric-details span { padding: 5px 7px; border-radius: 4px; background: var(--bg); color: var(--ink); }
+    .live-print-progress { width: min(1540px, calc(100% - 28px)); margin: 0 auto 10px; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .live-print-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+    .live-print-heading h2 { margin: 0; font-size: 15px; }
+    .live-print-heading p, .live-print-heading time { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    .live-print-bar { height: 8px; overflow: hidden; border-radius: 999px; background: var(--line); }
+    .live-print-bar i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--ok); transition: width .2s ease; }
+    .live-print-progress details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--steel); font-size: 12px; font-weight: 850; }
+    .live-print-items { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding-bottom: 4px; }
+    .live-print-group { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+    .live-print-group strong, .live-print-group span { display: block; }
+    .live-print-group strong { font-size: 11px; }
+    .live-print-group span { margin-top: 3px; overflow-wrap: anywhere; color: var(--muted); font-size: 10px; }
+    .live-print-retry { min-height: 44px; justify-self: start; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; background: var(--bg); color: var(--ink); font: inherit; font-weight: 850; cursor: pointer; }
+    .live-audited { border-color: color-mix(in oklch, var(--ok) 58%, var(--line)); }
+    .live-audited .live-badge { color: var(--ok); font-size: 10px; font-weight: 900; }
     .tools { display: grid; gap: 8px; padding-bottom: 10px; }
     .operations-bar { width: min(1540px, calc(100% - 28px)); height: 64px; max-height: 72px; margin: 10px auto 0; display: grid; grid-template-columns: minmax(250px, 1fr) auto auto; gap: 8px; align-items: center; overflow: hidden; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
     .operations-summary { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
@@ -1211,6 +1226,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       #modal .modal-image img { max-height: 92dvh; }
     }
     @media (max-width: 760px) {
+      .live-print-heading { align-items: stretch; flex-direction: column; gap: 4px; }
+      .live-print-items { grid-template-columns: 1fr; }
       .topbar, .portal-head, .campaign-head, .tool-row { grid-template-columns: 1fr; }
       .topbar { min-height: 56px; padding: 8px 0; }
       .mark { width: 36px; height: 36px; border-radius: 6px; }
@@ -1304,6 +1321,15 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         <details class="metric-details"><summary>Mais números</summary><div><span>${summary.scheduled} agendadas</span><span>${summary.ended} encerradas</span><span>${summary.ok} em dia</span><span>${summary.pending} pendentes</span><span>${summary.invalid} com erro</span><span>${summary.notPublished} sem publicação</span></div></details>
       </div>
     </div>
+    <section id="livePrintProgress" class="live-print-progress" aria-labelledby="livePrintTitle">
+      <div class="live-print-heading">
+        <div><h2 id="livePrintTitle">Prints de hoje</h2><p id="livePrintSummary" aria-live="polite">Consultando a rotina…</p></div>
+        <time id="livePrintUpdatedAt">—</time>
+      </div>
+      <div id="livePrintProgressBar" class="live-print-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+      <details><summary id="livePrintDetailsSummary">Ver campanhas e prints</summary><div id="livePrintItems" class="live-print-items"></div></details>
+      <button id="livePrintRetry" class="live-print-retry" type="button" hidden>Tentar atualizar</button>
+    </section>
     <div class="wrap">
       <div class="tools desktop-tools" aria-label="Filtros do relatório">
         <div class="tool-row">
@@ -1443,6 +1469,196 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     };
     updateCountdown();
     setInterval(updateCountdown, 60000);
+    const liveApiBase = 'https://adops-api.codigo5.com.br';
+    const liveTargetDate = '${escapeHtml(targetDate)}';
+    const liveSummary = document.getElementById('livePrintSummary');
+    const liveUpdatedAt = document.getElementById('livePrintUpdatedAt');
+    const liveProgressBar = document.getElementById('livePrintProgressBar');
+    const liveProgressFill = liveProgressBar.querySelector('i');
+    const liveItems = document.getElementById('livePrintItems');
+    const liveDetailsSummary = document.getElementById('livePrintDetailsSummary');
+    const liveRetry = document.getElementById('livePrintRetry');
+    const liveInsertionById = new Map(Object.values(data).map((item) => [Number(item.id), item]));
+    let liveTimer = null;
+    let liveRequest = null;
+    let liveScheduleOptions = null;
+    let liveErrors = 0;
+    let knownCompleted = new Set();
+
+    async function liveGet(path) {
+      const response = await fetch(liveApiBase + path, { method: 'GET', headers: { accept: 'application/json' }, signal: liveRequest?.signal });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    }
+
+    function livePollingDelay({ active = false, terminal = false, nextRecoveryAt = null, consecutiveErrors = 0 } = {}) {
+      if (consecutiveErrors > 0) return [30000, 60000, 120000][Math.min(consecutiveErrors, 3) - 1];
+      if (active) return 15000;
+      if (terminal && !nextRecoveryAt) return null;
+      return nextRecoveryAt ? 60000 : null;
+    }
+
+    function scheduleLiveProgress(options) {
+      if (liveTimer) clearTimeout(liveTimer);
+      liveScheduleOptions = options;
+      const delay = livePollingDelay(options);
+      if (delay === null) return;
+      liveTimer = setTimeout(refreshLiveProgress, document.hidden ? Math.max(delay, 60000) : delay);
+    }
+
+    function renderLiveGroups(progress) {
+      const live = progress?.liveProgress || {};
+      const groups = [
+        ['Concluídos', live.completedInsertionIds || []],
+        ['Em execução', live.runningInsertionId ? [live.runningInsertionId] : []],
+        ['Pendentes', live.pendingInsertionIds || []],
+        ['Falharam', live.failedInsertionIds || []],
+        ['Bloqueados', live.blockedInsertionIds || []],
+      ];
+      liveItems.replaceChildren();
+      groups.forEach(([label, ids]) => {
+        const group = document.createElement('section');
+        group.className = 'live-print-group';
+        const title = document.createElement('strong');
+        const items = document.createElement('span');
+        title.textContent = label + ' · ' + ids.length;
+        items.textContent = ids.length
+          ? ids.map((id) => liveInsertionById.get(Number(id))?.campanhaName || ('Inserção #' + id)).join(', ')
+          : 'Nenhuma';
+        group.append(title, items);
+        liveItems.append(group);
+      });
+    }
+
+    function liveHttpsUrl(value) {
+      try {
+        const url = new URL(String(value || ''));
+        return url.protocol === 'https:' ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function isFinalApprovedProof(status) {
+      const checklist = status?.checklistValidation;
+      return status?.status === 'audited'
+        && status?.hasValidUrl === true
+        && status?.isReachable === true
+        && checklist?.approved === true
+        && checklist?.preliminary !== true
+        && checklist?.evidenceStatus === 'approved'
+        && Array.isArray(checklist?.blockingIssues)
+        && checklist.blockingIssues.length === 0
+        && Boolean(liveHttpsUrl(status?.arquivoUrl));
+    }
+
+    function promoteLiveProof(insertionId, status) {
+      if (!isFinalApprovedProof(status)) return;
+      const container = document.querySelector('[data-live-insertion-container="' + insertionId + '"]');
+      const thumbs = container?.querySelector('.thumbs');
+      if (!thumbs) return;
+      let cell = thumbs.querySelector('[data-live-insertion-id="' + insertionId + '"][data-live-date="' + liveTargetDate + '"]');
+      if (!cell) {
+        cell = document.createElement('a');
+        thumbs.prepend(cell);
+      } else if (cell.tagName !== 'A') {
+        const replacement = document.createElement('a');
+        cell.replaceWith(replacement);
+        cell = replacement;
+      }
+      const href = liveHttpsUrl(status.arquivoUrl);
+      cell.className = 'thumb audited live-audited';
+      cell.dataset.liveInsertionId = String(insertionId);
+      cell.dataset.liveDate = liveTargetDate;
+      cell.href = href;
+      cell.target = '_blank';
+      cell.rel = 'noopener noreferrer';
+      cell.setAttribute('aria-label', 'Abrir atualização ao vivo da inserção ' + insertionId + ' em ' + liveTargetDate);
+      cell.replaceChildren();
+      const image = document.createElement('img');
+      const date = document.createElement('span');
+      const badge = document.createElement('b');
+      image.src = href;
+      image.alt = 'Evidência ' + insertionId + ' ' + liveTargetDate;
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      date.textContent = liveTargetDate.split('-').reverse().join('/');
+      badge.className = 'live-badge';
+      badge.textContent = 'Atualização ao vivo';
+      cell.append(image, date, badge);
+    }
+
+    async function verifyNewlyCompleted(progress) {
+      const completed = progress?.liveProgress?.completedInsertionIds || [];
+      const fresh = completed.filter((id) => !knownCompleted.has(Number(id)));
+      await Promise.all(fresh.map(async (id) => {
+        const status = await liveGet('/api/insertions/' + encodeURIComponent(id) + '/capture-proof/status?date=' + encodeURIComponent(liveTargetDate));
+        knownCompleted.add(Number(id));
+        promoteLiveProof(Number(id), status);
+      }));
+    }
+
+    async function refreshLiveProgress() {
+      if (liveTimer) clearTimeout(liveTimer);
+      if (liveRequest) liveRequest.abort();
+      liveRequest = new AbortController();
+      try {
+        const [daily, queue] = await Promise.all([
+          liveGet('/api/ops/daily-print-status?date=' + encodeURIComponent(liveTargetDate)),
+          liveGet('/api/ops/queue/overview'),
+        ]);
+        const activeJob = [queue?.now, ...(queue?.queue || [])]
+          .filter(Boolean)
+          .find((job) => job.kind === 'print-batch' && ['queued', 'ready_for_runner', 'running'].includes(job.status));
+        const jobId = activeJob?.jobId || daily?.lastAttempt?.jobId || null;
+        const progress = jobId ? await liveGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress') : null;
+        const percent = Math.max(0, Math.min(100, Math.round(Number(progress?.percentTotal || 0))));
+        const completed = progress?.liveProgress?.completedInsertionIds?.length || 0;
+        const total = Number(progress?.itemsTotal || 0);
+        liveProgressBar.setAttribute('aria-valuenow', String(percent));
+        liveProgressFill.style.width = percent + '%';
+        liveSummary.textContent = progress
+          ? completed + ' de ' + total + ' inserções concluídas · ' + percent + '%'
+          : daily?.lastAttempt?.summary || 'Nenhuma captura ativa neste momento.';
+        liveUpdatedAt.dateTime = new Date().toISOString();
+        liveUpdatedAt.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        liveDetailsSummary.textContent = total ? 'Ver campanhas e prints · ' + completed + ' de ' + total : 'Ver campanhas e prints';
+        renderLiveGroups(progress);
+        if (progress) await verifyNewlyCompleted(progress);
+        liveErrors = 0;
+        liveRetry.hidden = true;
+        const status = String(progress?.status || daily?.lastAttempt?.status || '');
+        scheduleLiveProgress({
+          active: Boolean(activeJob) || ['queued', 'ready_for_runner', 'running'].includes(status),
+          terminal: ['completed', 'partial', 'failed'].includes(status),
+          nextRecoveryAt: daily?.lastAttempt?.nextRecoveryAt || null,
+          consecutiveErrors: 0,
+        });
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        liveErrors += 1;
+        if (liveErrors >= 3) {
+          liveSummary.textContent = 'Dados vivos indisponíveis';
+          liveRetry.hidden = false;
+        }
+        scheduleLiveProgress({ consecutiveErrors: liveErrors });
+      }
+    }
+
+    liveRetry.addEventListener('click', () => {
+      liveErrors = 0;
+      liveRetry.hidden = true;
+      liveSummary.textContent = 'Consultando a rotina…';
+      refreshLiveProgress();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && liveTimer && liveScheduleOptions) scheduleLiveProgress(liveScheduleOptions);
+    });
+    window.addEventListener('beforeunload', () => {
+      if (liveTimer) clearTimeout(liveTimer);
+      liveRequest?.abort();
+    });
+    refreshLiveProgress();
     const modal = document.getElementById('modal');
     const modalImg = document.getElementById('modalImg');
     const modalTitle = document.getElementById('modalTitle');

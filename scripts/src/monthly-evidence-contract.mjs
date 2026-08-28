@@ -132,6 +132,13 @@ export function resolveEvidenceWindow({ reportDate, now = new Date(), dailyPrint
   return { evidenceCutoffDate: reportDate, phase: "routine_overdue" };
 }
 
+export function liveReportPollingDelay({ active = false, terminal = false, nextRecoveryAt = null, consecutiveErrors = 0 } = {}) {
+  if (consecutiveErrors > 0) return [30_000, 60_000, 120_000][Math.min(consecutiveErrors, 3) - 1];
+  if (active) return 15_000;
+  if (terminal && !nextRecoveryAt) return null;
+  return nextRecoveryAt ? 60_000 : null;
+}
+
 // While today's capture window is still open, never create a missing-day debt
 // in the report.  Evidence that has already passed the canonical audit is safe
 // to show immediately, so operators can follow the batch incrementally.

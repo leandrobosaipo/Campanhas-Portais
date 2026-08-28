@@ -448,3 +448,12 @@ test("cobra o dia após término canônico ou fechamento da janela", () => {
     evidenceCutoffDate: "2026-08-20", phase: "routine_overdue",
   });
 });
+
+test("polling vivo usa intervalos finitos", () => {
+  assert.equal(contract.liveReportPollingDelay({ active: true, consecutiveErrors: 0 }), 15_000);
+  assert.equal(contract.liveReportPollingDelay({ active: false, nextRecoveryAt: "2026-08-28T00:00:00Z", consecutiveErrors: 0 }), 60_000);
+  assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 1 }), 30_000);
+  assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 2 }), 60_000);
+  assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 3 }), 120_000);
+  assert.equal(contract.liveReportPollingDelay({ terminal: true, nextRecoveryAt: null, consecutiveErrors: 0 }), null);
+});
