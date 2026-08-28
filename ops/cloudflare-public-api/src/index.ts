@@ -3637,6 +3637,7 @@ export default {
     const piSiteExportJobMatch = path.match(/^\/api\/pi-site-exports\/jobs\/([^/]+)$/);
     if (piSiteExportJobMatch) {
       const job = await getPiSiteExportJob(env, piSiteExportJobMatch[1]);
+      if (!job && privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       if (!job) return notFound("PI/site export job not found");
       return jsonNoStore(piSiteExportJobFromOpsJob(job));
     }
@@ -3644,6 +3645,7 @@ export default {
     const piSiteExportDownloadMatch = path.match(/^\/api\/pi-site-exports\/jobs\/([^/]+)\/download$/);
     if (piSiteExportDownloadMatch) {
       const job = await getPiSiteExportJob(env, piSiteExportDownloadMatch[1]);
+      if (!job && privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       if (!job) return notFound("PI/site export job not found");
       const payload = piSiteExportJobFromOpsJob(job);
       if (payload.status !== "completed" || !payload.downloadUrl) {
@@ -3659,6 +3661,7 @@ export default {
     const campaignEvidenceJobMatch = path.match(/^\/api\/campaign-evidence-exports\/jobs\/([^/]+)$/);
     if (campaignEvidenceJobMatch) {
       const job = await getCampaignEvidenceExportJob(env, campaignEvidenceJobMatch[1]);
+      if (!job && privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       if (!job) return notFound("Campaign evidence export job not found");
       return jsonNoStore(campaignEvidenceExportJobFromOpsJob(job));
     }
@@ -3666,6 +3669,7 @@ export default {
     const campaignEvidenceDownloadMatch = path.match(/^\/api\/campaign-evidence-exports\/jobs\/([^/]+)\/download$/);
     if (campaignEvidenceDownloadMatch) {
       const job = await getCampaignEvidenceExportJob(env, campaignEvidenceDownloadMatch[1]);
+      if (!job && privateApiEnabled(env)) return proxyToPrivateApi(request, env, url, { noStore: true });
       if (!job) return notFound("Campaign evidence export job not found");
       const payload = campaignEvidenceExportJobFromOpsJob(job);
       if (payload.status !== "completed" || !payload.downloadUrl) {

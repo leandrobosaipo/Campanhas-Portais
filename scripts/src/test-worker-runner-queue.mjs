@@ -271,6 +271,12 @@ test("reconciliador espera ingest concluído e usa timeout longo", async () => {
   assert.match(source, /kind === "print-batch"/);
 });
 
+test("downloads de ZIP antigos caem para a API privada quando o job não está no D1", async () => {
+  const source = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
+  const fallback = /!job && privateApiEnabled\(env\)\) return proxyToPrivateApi\(request, env, url, \{ noStore: true \}\)/g;
+  assert.equal(source.match(fallback)?.length, 4);
+});
+
 test("monitor do Drive roda separado do consumidor de jobs autorizado", async () => {
   const source = await readFile(new URL("../../ops/cloudflare-remote-runner/src/runner.mjs", import.meta.url), "utf8");
   const poolSource = source.slice(source.indexOf("async function runPool"), source.indexOf("async function runDrivePiMonitorLoop"));
