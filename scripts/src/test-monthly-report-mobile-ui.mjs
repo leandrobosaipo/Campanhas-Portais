@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 const sourcePath = new URL("./build-current-month-evidence-report.mjs", import.meta.url);
 const source = await readFile(sourcePath, "utf8");
+const publicWorkerSource = await readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8");
 const buildDir = await mkdtemp(path.join(tmpdir(), "monthly-report-mobile-ui-"));
 const modulePath = path.join(path.dirname(sourcePath.pathname), `.test-render-${path.basename(buildDir)}.mjs`);
 const importSafeSource = source.replace(
@@ -42,6 +43,12 @@ test("relatorio aguarda os jobs de ZIP e bloqueia publicacao sem os dois escopos
   assert.match(source, /\/api\/pi-site-exports\/jobs\/\$\{encodeURIComponent\(jobId\)\}/);
   assert.match(source, /\/api\/campaign-evidence-exports\/jobs\/\$\{encodeURIComponent\(jobId\)\}/);
   assert.doesNotMatch(source, /Promise\.all\(\[\s*materializeCampaignExports/);
+});
+
+test("Worker preserva o recorte imutavel do ZIP mensal", () => {
+  assert.match(publicWorkerSource, /asOfDate/);
+  assert.match(publicWorkerSource, /requiredDatesByInsertion/);
+  assert.match(publicWorkerSource, /createIdempotentOpsJob[\s\S]*asOfDate,[\s\S]*requiredDatesByInsertion/);
 });
 
 const insertion = {

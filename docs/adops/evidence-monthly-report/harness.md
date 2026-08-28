@@ -55,6 +55,7 @@ pnpm --filter @workspace/scripts run report:evidences-current-month
 - “Baixar ZIP da campanha — somente este portal” deve usar `pi-site-exports` e reunir somente a PI no portal do card.
 - Em relatório completo, inclusive o agendado, os dois jobs de ZIP devem ser acompanhados pelo mesmo `jobId` até `completed` ou `failed`; `ready_for_runner` não libera botão.
 - O ZIP por portal recebe `asOfDate` e `requiredDatesByInsertion`; não pode cobrar o dia corrente antes do corte usado pelo relatório.
+- O Worker público deve preservar `asOfDate` e `requiredDatesByInsertion` no payload de `pi-site-export`; descartar o recorte faz o runner reconstruir datas fora do relatório e bloqueia a publicação.
 - O endpoint aceita no máximo 25 campanhas, mas o relatório envia lotes de 3 para caber no timeout do proxy e reúne todos os resultados antes de publicar.
 - Quando `requiredDatesByInsertion` estiver presente, o ZIP por portal inclui somente os IDs explicitamente solicitados; inserções antigas ou duplicadas da mesma PI/portal não entram no gate do card.
 - O gerador consulta cada job pela rota do próprio contrato (`pi-site-exports` ou `campaign-evidence-exports`), nunca pela rota genérica de progresso.

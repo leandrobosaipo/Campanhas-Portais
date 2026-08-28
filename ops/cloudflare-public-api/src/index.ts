@@ -3209,10 +3209,21 @@ export default {
         const pdfResolution = boundedInteger(body.pdfResolution, 72, 180, 120);
         const imageMaxWidth = boundedInteger(body.imageMaxWidth, 800, 2560, 1600);
         const imageQuality = boundedInteger(body.imageQuality, 45, 90, 72);
+        const asOfDate = typeof body.asOfDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.asOfDate)
+          ? body.asOfDate
+          : null;
+        const requiredDatesByInsertion = Object.fromEntries(Object.entries(
+          body.requiredDatesByInsertion && typeof body.requiredDatesByInsertion === "object"
+            ? body.requiredDatesByInsertion as Record<string, unknown>
+            : {},
+        ).filter(([insertionId, dates]) => /^\d+$/.test(insertionId) && Array.isArray(dates)).map(([insertionId, dates]) => [
+          insertionId,
+          Array.from(new Set((dates as unknown[]).map(String).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))).sort(),
+        ]));
         const requestedKey = request.headers.get("idempotency-key")?.trim() || "";
         const generatedKey = await crypto.subtle.digest(
           "SHA-256",
-          new TextEncoder().encode(JSON.stringify({ piCodigo, siteSigla, mode, variant, pdfMaxWidth, pdfQuality, pdfResolution, imageMaxWidth, imageQuality })),
+          new TextEncoder().encode(JSON.stringify({ piCodigo, siteSigla, mode, variant, pdfMaxWidth, pdfQuality, pdfResolution, imageMaxWidth, imageQuality, asOfDate, requiredDatesByInsertion })),
         );
         const idempotencyKey = requestedKey || Array.from(new Uint8Array(generatedKey), (byte) => byte.toString(16).padStart(2, "0")).join("");
         if (!/^[A-Za-z0-9._:-]{8,160}$/.test(idempotencyKey)) {
@@ -3228,6 +3239,8 @@ export default {
           pdfResolution,
           imageMaxWidth,
           imageQuality,
+          asOfDate,
+          requiredDatesByInsertion,
           requestedBy: typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api",
           source: typeof body.source === "string" ? body.source : "cloudflare-public-api",
         }, typeof body.requestedBy === "string" ? body.requestedBy : "adops-public-api", idempotencyKey, true);
