@@ -1047,9 +1047,12 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .live-print-group strong, .live-print-group span { display: block; }
     .live-print-group strong { font-size: 11px; }
     .live-print-group span { margin-top: 3px; overflow-wrap: anywhere; color: var(--muted); font-size: 10px; }
+    .live-print-group ul { display: grid; gap: 5px; margin: 6px 0 0; padding: 0; list-style: none; }
+    .live-print-group li { overflow-wrap: anywhere; color: var(--muted); font-size: 10px; line-height: 1.35; }
     .live-print-retry { min-height: 44px; justify-self: start; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; background: var(--bg); color: var(--ink); font: inherit; font-weight: 850; cursor: pointer; }
-    .live-audited { border-color: color-mix(in oklch, var(--ok) 58%, var(--line)); }
-    .live-audited .live-badge { color: var(--ok); font-size: 10px; font-weight: 900; }
+    .live-audited { position: relative; overflow: visible; border: 1px solid color-mix(in oklch, var(--ok) 58%, var(--line)); }
+    .live-audited img { border-radius: inherit; }
+    .live-audited .live-badge { position: absolute; z-index: 2; top: 5px; right: 5px; max-width: calc(100% - 10px); padding: 2px 5px; border-radius: 999px; background: var(--panel); color: var(--ok); font-size: 9px; font-weight: 900; line-height: 1.2; }
     .tools { display: grid; gap: 8px; padding-bottom: 10px; }
     .operations-bar { width: min(1540px, calc(100% - 28px)); height: 64px; max-height: 72px; margin: 10px auto 0; display: grid; grid-template-columns: minmax(250px, 1fr) auto auto; gap: 8px; align-items: center; overflow: hidden; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
     .operations-summary { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
@@ -1326,7 +1329,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         <div><h2 id="livePrintTitle">Prints de hoje</h2><p id="livePrintSummary" aria-live="polite">Consultando a rotina…</p></div>
         <time id="livePrintUpdatedAt">—</time>
       </div>
-      <div id="livePrintProgressBar" class="live-print-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+      <div id="livePrintProgressBar" class="live-print-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="livePrintTitle" aria-describedby="livePrintSummary"><i></i></div>
       <details><summary id="livePrintDetailsSummary">Ver campanhas e prints</summary><div id="livePrintItems" class="live-print-items"></div></details>
       <button id="livePrintRetry" class="live-print-retry" type="button" hidden>Tentar atualizar</button>
     </section>
@@ -1479,6 +1482,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     const liveDetailsSummary = document.getElementById('livePrintDetailsSummary');
     const liveRetry = document.getElementById('livePrintRetry');
     const liveInsertionById = new Map(Object.values(data).map((item) => [Number(item.id), item]));
+    const liveProofByInsertion = new Map();
     let liveTimer = null;
     let liveRequest = null;
     let liveScheduleOptions = null;
@@ -1499,11 +1503,29 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     }
 
     function scheduleLiveProgress(options) {
-      if (liveTimer) clearTimeout(liveTimer);
+      cancelLiveTimer();
       liveScheduleOptions = options;
       const delay = livePollingDelay(options);
       if (delay === null) return;
       liveTimer = setTimeout(refreshLiveProgress, document.hidden ? Math.max(delay, 60000) : delay);
+    }
+
+    function cancelLiveTimer() {
+      if (liveTimer !== null) clearTimeout(liveTimer);
+      liveTimer = null;
+    }
+
+    function liveItemText(id) {
+      const item = liveInsertionById.get(Number(id));
+      const identity = [
+        item?.campanhaName || 'Campanha não identificada',
+        item?.piCodigo || 'PI não informada',
+        item?.siteSigla || 'Portal não informado',
+        'Inserção #' + id,
+        liveTargetDate.split('-').reverse().join('/'),
+      ];
+      const cause = item?.publicationBlocker || item?.statusDetail || '';
+      return identity.concat(cause ? [cause] : []).join(' · ');
     }
 
     function renderLiveGroups(progress) {
@@ -1520,12 +1542,21 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
         const group = document.createElement('section');
         group.className = 'live-print-group';
         const title = document.createElement('strong');
-        const items = document.createElement('span');
         title.textContent = label + ' · ' + ids.length;
-        items.textContent = ids.length
-          ? ids.map((id) => liveInsertionById.get(Number(id))?.campanhaName || ('Inserção #' + id)).join(', ')
-          : 'Nenhuma';
-        group.append(title, items);
+        group.append(title);
+        if (ids.length) {
+          const list = document.createElement('ul');
+          ids.forEach((id) => {
+            const item = document.createElement('li');
+            item.textContent = liveItemText(id);
+            list.append(item);
+          });
+          group.append(list);
+        } else {
+          const empty = document.createElement('span');
+          empty.textContent = 'Nenhuma';
+          group.append(empty);
+        }
         liveItems.append(group);
       });
     }
@@ -1558,21 +1589,25 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       const thumbs = container?.querySelector('.thumbs');
       if (!thumbs) return;
       let cell = thumbs.querySelector('[data-live-insertion-id="' + insertionId + '"][data-live-date="' + liveTargetDate + '"]');
+      let needsModalListener = false;
       if (!cell) {
-        cell = document.createElement('a');
+        cell = document.createElement('button');
         thumbs.prepend(cell);
-      } else if (cell.tagName !== 'A') {
-        const replacement = document.createElement('a');
+        needsModalListener = true;
+      } else if (cell.tagName !== 'BUTTON') {
+        const replacement = document.createElement('button');
         cell.replaceWith(replacement);
         cell = replacement;
+        needsModalListener = true;
       }
       const href = liveHttpsUrl(status.arquivoUrl);
+      const snapshotItem = liveInsertionById.get(Number(insertionId));
       cell.className = 'thumb audited live-audited';
+      cell.type = 'button';
       cell.dataset.liveInsertionId = String(insertionId);
       cell.dataset.liveDate = liveTargetDate;
-      cell.href = href;
-      cell.target = '_blank';
-      cell.rel = 'noopener noreferrer';
+      cell.dataset.modalId = snapshotItem?.modalId || '';
+      cell.dataset.date = liveTargetDate;
       cell.setAttribute('aria-label', 'Abrir atualização ao vivo da inserção ' + insertionId + ' em ' + liveTargetDate);
       cell.replaceChildren();
       const image = document.createElement('img');
@@ -1586,6 +1621,14 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       badge.className = 'live-badge';
       badge.textContent = 'Atualização ao vivo';
       cell.append(image, date, badge);
+      liveProofByInsertion.set(Number(insertionId), {
+        date: liveTargetDate,
+        status: 'audited',
+        statusDetail: 'Atualização ao vivo aprovada pelo checklist final.',
+        url: href,
+        downloadUrl: liveHttpsUrl(status.downloadUrl) || href,
+      });
+      if (needsModalListener) cell.addEventListener('click', () => openEvidenceModal(cell));
     }
 
     async function verifyNewlyCompleted(progress) {
@@ -1599,7 +1642,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     }
 
     async function refreshLiveProgress() {
-      if (liveTimer) clearTimeout(liveTimer);
+      cancelLiveTimer();
       if (liveRequest) liveRequest.abort();
       liveRequest = new AbortController();
       try {
@@ -1652,10 +1695,15 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       refreshLiveProgress();
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && liveTimer && liveScheduleOptions) scheduleLiveProgress(liveScheduleOptions);
+      if (document.hidden) {
+        if (liveTimer !== null && liveScheduleOptions) scheduleLiveProgress(liveScheduleOptions);
+        return;
+      }
+      cancelLiveTimer();
+      refreshLiveProgress();
     });
     window.addEventListener('beforeunload', () => {
-      if (liveTimer) clearTimeout(liveTimer);
+      cancelLiveTimer();
       liveRequest?.abort();
     });
     refreshLiveProgress();
@@ -1716,14 +1764,30 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           iconLink('${adopsPanelBase}/insercoes/' + item.id, 'Abrir no AdOps')
         ].join('');
     };
-    document.querySelectorAll('.thumb, .day-card, .thumb-empty').forEach((button) => {
-      button.addEventListener('click', () => {
-        lastModalTrigger = button;
-        const item = data[button.dataset.modalId];
-        renderModal(item, button.dataset.date);
-        modal.showModal();
-      });
-    });
+    function openEvidenceModal(button) {
+      lastModalTrigger = button;
+      const item = data[button.dataset.modalId];
+      if (!item) return;
+      const liveDay = liveProofByInsertion.get(Number(item.id));
+      const hasLiveDay = liveDay?.date === button.dataset.date;
+      const liveEvidenceDays = hasLiveDay
+        ? [liveDay, ...(item.evidenceDays || []).filter((day) => day.date !== liveDay.date)]
+        : null;
+      const modalItem = liveEvidenceDays
+        ? {
+            ...item,
+            evidenceDays: liveEvidenceDays,
+            requiredDays: Array.from(new Set([...(item.requiredDays || []), liveDay.date])).sort(),
+            auditedDays: liveEvidenceDays.filter((day) => day.status?.startsWith('audited') && day.url).length,
+            missingDates: (item.missingDates || []).filter((date) => date !== liveDay.date),
+            invalidDates: (item.invalidDates || []).filter((date) => date !== liveDay.date),
+            statusDetail: liveDay.statusDetail,
+          }
+        : item;
+      renderModal(modalItem, button.dataset.date);
+      modal.showModal();
+    }
+    document.querySelectorAll('.thumb, .day-card, .thumb-empty').forEach((button) => button.addEventListener('click', () => openEvidenceModal(button)));
     previous.addEventListener('click', () => currentItem && currentDayIndex < currentEvidenceDays.length - 1 && renderModal(currentItem, currentEvidenceDays[currentDayIndex + 1].date));
     next.addEventListener('click', () => currentItem && currentDayIndex > 0 && renderModal(currentItem, currentEvidenceDays[currentDayIndex - 1].date));
     close.addEventListener('click', () => modal.close());
