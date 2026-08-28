@@ -25,6 +25,7 @@ assert.match(report, /group\.items\.every\(\(item\) => item\.completeCampaignDow
 assert.match(report, /buildPiSiteExportDownloadUrl\(apiBase, created\.jobId\)/);
 assert.match(report, /buildCampaignEvidenceExportDownloadUrl\(apiBase, created\.jobId\)/);
 assert.doesNotMatch(report, /buildPiSiteExportDownloadUrl\(deliveryApiBase, created\.jobId\)/);
+assert.match(report, /results\.set\(group\.key, publicJobDownloadUrl\(reusableUrl\)\)/);
 assert.match(report, /data\.json\?v=\$\{Date\.now\(\)\}/);
 const previousSnapshotIndex = report.indexOf("const previousPublicData = refreshMode === \"incremental\" ? await readPreviousPublicData() : null;");
 const reuseDownloadsIndex = report.indexOf("enriched = refreshMode === \"incremental\" ? reuseMonthlyDownloadUrls(enriched, previousPublicData) : enriched;");

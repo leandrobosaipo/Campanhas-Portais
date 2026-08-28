@@ -47,6 +47,11 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { operationsBase: apiBase, deliveryBase: deliveryApiBase } = resolveMonthlyReportApiBases();
+function publicJobDownloadUrl(url) {
+  return String(url || "").startsWith(`${deliveryApiBase}/api/`)
+    ? `${apiBase}${String(url).slice(deliveryApiBase.length)}`
+    : String(url || "");
+}
 const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops-campanhas-portais.pages.dev").replace(/\/$/, "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const opsEnvFile = process.env.OPS_ENV_FILE || path.join(repoRoot, ".env.adops-operator.local");
@@ -578,7 +583,7 @@ async function materializeCampaignExports(items, asOfDate) {
   await mapLimit(Array.from(groups.values()), 3, async (group) => {
     const reusableUrl = group.items[0]?.batchDownloadUrl || "";
     if (reusableUrl && group.items.every((item) => item.batchDownloadUrl === reusableUrl)) {
-      results.set(group.key, reusableUrl);
+      results.set(group.key, publicJobDownloadUrl(reusableUrl));
       return;
     }
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
@@ -644,7 +649,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   for (const group of groups.values()) {
     const reusableUrl = group.items[0]?.completeCampaignDownloadUrl || "";
     if (reusableUrl && group.items.every((item) => item.completeCampaignDownloadUrl === reusableUrl)) {
-      results.set(group.key, reusableUrl);
+      results.set(group.key, publicJobDownloadUrl(reusableUrl));
       continue;
     }
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
