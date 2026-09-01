@@ -48,6 +48,7 @@ test("cancela resposta antiga e carrega imagens somente quando necessário", () 
   assert.match(html, /AbortController/);
   assert.match(html, /loading="lazy"/);
   assert.match(html, /requestSequence/);
+  assert.match(html, /\[hidden\]\{display:none!important\}/);
 });
 
 test("JavaScript inline permanece sintaticamente valido", () => {
