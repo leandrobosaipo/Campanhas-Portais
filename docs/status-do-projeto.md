@@ -1,5 +1,12 @@
 # Estado confirmado do projeto AdOps
 
+## Relatório dinâmico de evidências — 2026-09-01
+
+- Página pública única com mês corrente automático e histórico por filtro.
+- Paridade visual com o relatório detalhado de agosto: cabeçalho, operação, portais, campanhas, inserções, miniaturas e modal.
+- Leitura mensal em lote, paginação por campanha e previews cacheáveis.
+- Worktree protegido: `/Users/leandrobosaipo/Projetos/AdOps-worktrees/codex-dynamic-report-production`.
+
 > Estado: vigente
 > Público: equipe operacional, mantenedores e agentes
 > Última validação operacional completa: 2026-08-24 (correção em release isolado em andamento)

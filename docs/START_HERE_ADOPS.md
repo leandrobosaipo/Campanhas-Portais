@@ -1,5 +1,7 @@
 # AdOps — Comece aqui
 
+Relatório dinâmico de evidências: [`docs/adops/relatorio-dinamico-evidencias.md`](adops/relatorio-dinamico-evidencias.md).
+
 > Estado: vigente
 > Público: equipe operacional e agentes
 > Última validação: 2026-08-26
