@@ -1638,7 +1638,7 @@ echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     const { stdout } = await execFileAsync(
       "ssh",
       ["-p", site.sshPort, `${site.sshUser}@${site.sshHost}`, remoteCommand],
-      { maxBuffer: 2 * 1024 * 1024 },
+      { maxBuffer: 2 * 1024 * 1024, timeout: 12_000 },
     );
     const parsed = JSON.parse(stdout.trim() || "[]") as Array<{
       id: number;
@@ -2004,7 +2004,6 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
   const formatMapping = getSiteFormatMapping(siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
   const groupId = getAdRotateGroupId(siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
   const planned = siteSigla ? await buildAdrotatePlanned(siteSigla, insertion.competencia ?? undefined) : [];
-  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
   const mediaBasename = insertion.mediaUrl ? insertion.mediaUrl.split("/").pop() ?? null : null;
   const adminBaseUrl = siteConfig?.adminBaseUrl ?? null;
   const pageLabel = formatMapping?.page === "article" ? "Página interna" : formatMapping?.page === "home" ? "Home" : null;
@@ -2015,9 +2014,6 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
   });
 
   const plannedSelf = planned.find((item) => item.insertionId === insertion.id) ?? null;
-  const exactLiveMatches = mediaBasename
-    ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
-    : [];
   const historicalAdminMatches = await fetchHistoricalAdminMatches({
     siteId: insertion.siteId,
     siteSigla,
@@ -2026,6 +2022,14 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     mediaBasename,
     adminBaseUrl,
   });
+  if (req.query.fast === "1") {
+    res.json({ insertionId: insertion.id, exactLiveMatches: [], historicalAdminMatches });
+    return;
+  }
+  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
+  const exactLiveMatches = mediaBasename
+    ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
+    : [];
   const publicationReadback = await getSuccessfulPublicationReadback(insertion.id);
   const publicationJobConfirmed = publicationReadbackConfirms({
     insertionId: insertion.id,
