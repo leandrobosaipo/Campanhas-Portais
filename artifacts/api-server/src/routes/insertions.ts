@@ -1746,13 +1746,17 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
       : [];
     const enriched = await enrichMonthlyReportInsertions(rawInsertions, monthlyCampaigns);
-    const monthly = enriched.filter((item) => {
+    const monthlyCandidates = enriched.filter((item) => {
       return String(item.periodoFim || "") >= bounds.start
         && String(item.periodoInicio || "") <= bounds.end
         && item.archivedAt == null
         && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
+    const monthly = Array.from(new Map(monthlyCandidates.map((item) => [
+      item.canonicalIdentityKey || [item.campanhaId, item.siteId, item.localFormatoNormalizado ?? item.localFormato, item.periodoInicio, item.periodoFim].join(":"),
+      item,
+    ])).values());
 
     const normalizedSearch = normalizeTextKey(query.search);
     const baseItems = monthly.map((item) => ({
@@ -1786,11 +1790,20 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     const pageEvidenceRows = pageInsertionIds.length
       ? await db.select().from(evidencesTable).where(inArray(evidencesTable.insercaoId, pageInsertionIds))
       : [];
+    const pageProofRows = pageInsertionIds.length
+      ? await db.select().from(captureProofLogsTable).where(inArray(captureProofLogsTable.insertionId, pageInsertionIds))
+      : [];
     const evidenceRowsByInsertion = new Map<number, Array<typeof evidencesTable.$inferSelect>>();
     for (const row of pageEvidenceRows) {
       const rows = evidenceRowsByInsertion.get(row.insercaoId) ?? [];
       rows.push(row);
       evidenceRowsByInsertion.set(row.insercaoId, rows);
+    }
+    const proofByInsertionDate = new Map<string, typeof captureProofLogsTable.$inferSelect>();
+    for (const row of pageProofRows) {
+      const key = `${row.insertionId}:${row.targetDate}`;
+      const previous = proofByInsertionDate.get(key);
+      if (!previous || previous.updatedAt < row.updatedAt) proofByInsertionDate.set(key, row);
     }
     const evaluated: Array<Record<string, unknown>> = [];
     for (let offset = 0; offset < pageSource.length; offset += 4) {
@@ -1803,16 +1816,29 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
             ? eachIsoDay(periodStart, periodEnd).filter((date) => date >= bounds.start && date <= bounds.evidenceEnd)
             : [];
         const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
-        const evidenceDays = await Promise.all(evidenceDates.map(async (date) => {
-          const status = await resolveEvidenceAuditStatus(item, date, evidenceRows, { checkReachability: false });
+        const evidenceDays = evidenceDates.map((date) => {
+          const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === date) ?? null;
+          const proof = proofByInsertionDate.get(`${item.id}:${date}`) ?? null;
+          const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
+          const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
+          const status = !evidence
+            ? "missing"
+            : !validUrl
+              ? "invalid_url"
+              : proofFailed
+                ? "invalid_audit"
+                : proof
+                  ? "audited"
+                  : "audited_best_effort";
           return {
             date,
-            status: status.status === "ok" ? "audited" : status.status === "ok_best_effort" ? "audited_best_effort" : status.status,
-            url: status.arquivoUrl,
-            checklistApproved: status.checklistValidation.approved === true,
-            issues: status.audit?.issues ?? [],
+            status,
+            url: evidence?.arquivoUrl ?? null,
+            checklistApproved: status === "audited",
+            verifiedAt: proof?.updatedAt?.toISOString() ?? evidence?.criadoEm?.toISOString() ?? null,
+            issues: proofFailed ? [proof?.probableCause || proof?.status || "capture_proof_failed"] : [],
           };
-        }));
+        });
         const states = classifyMonthlyInsertion({
           published: item.bannerPublicadoNoSite === true,
           periodStart: item.periodoInicio || bounds.start,
