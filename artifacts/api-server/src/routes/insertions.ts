@@ -84,6 +84,12 @@ import {
   selectCampaignEvidenceInsertions,
   validateCampaignEvidenceReadiness,
 } from "../lib/campaign-evidence-export";
+import {
+  buildMonthlyReportQuery,
+  classifyMonthlyInsertion,
+  monthBounds,
+  publicMonthlyInsertion,
+} from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
 
@@ -1663,6 +1669,149 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
 
   return { siteSigla, homeUrl, articleUrl, warnings, items };
 }
+
+router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
+  let query: ReturnType<typeof buildMonthlyReportQuery>;
+  try {
+    query = buildMonthlyReportQuery(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(400).json({ error: "bad_request", details: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const bounds = monthBounds(query.month, today);
+
+  try {
+    const [year, monthNumber] = query.month.split("-");
+    const monthNames = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+    const expectedCompetencias = new Set([
+      `${monthNumber} ${year}`,
+      `${monthNames[Number(monthNumber) - 1]} ${year}`,
+    ]);
+    const monthlyCampaigns = (await db.select({ id: campaignsTable.id, competencia: campaignsTable.competencia }).from(campaignsTable))
+      .filter((campaign) => expectedCompetencias.has(normalizeTextKey(campaign.competencia)));
+    const rawInsertions = monthlyCampaigns.length
+      ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
+      : [];
+    const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
+    const monthly = enriched.filter((item) => {
+      return String(item.periodoFim || "") >= bounds.start
+        && String(item.periodoInicio || "") <= bounds.end
+        && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
+    });
+
+    const evaluated: Array<Record<string, unknown>> = [];
+    for (let offset = 0; offset < monthly.length; offset += 4) {
+      const batch = await Promise.all(monthly.slice(offset, offset + 4).map(async (item) => {
+        const periodStart = parseDateOnly(item.periodoInicio);
+        const periodEnd = parseDateOnly(item.periodoFim);
+        const evidenceDates = bounds.start > today
+          ? []
+          : periodStart && periodEnd
+            ? eachIsoDay(periodStart, periodEnd).filter((date) => date >= bounds.start && date <= bounds.evidenceEnd)
+            : [];
+        const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, item.id));
+        const evidenceDays = await Promise.all(evidenceDates.map(async (date) => {
+          const status = await resolveEvidenceAuditStatus(item, date, evidenceRows);
+          return {
+            date,
+            status: status.status === "ok" ? "audited" : status.status === "ok_best_effort" ? "audited_best_effort" : status.status,
+            url: status.arquivoUrl,
+            checklistApproved: status.checklistValidation.approved === true,
+            issues: status.audit?.issues ?? [],
+          };
+        }));
+        const states = classifyMonthlyInsertion({
+          published: item.bannerPublicadoNoSite === true,
+          periodStart: item.periodoInicio || bounds.start,
+          periodEnd: item.periodoFim || bounds.end,
+          today,
+          evidenceDays,
+        });
+        const siteIntegration = getSiteIntegration(item.siteSigla);
+        const adrotateGroupId = getAdRotateGroupId(item.siteSigla, item.localFormatoNormalizado ?? item.localFormato);
+        return {
+          ...publicMonthlyInsertion({
+            ...item,
+            portalUrl: siteIntegration?.homeUrl ?? null,
+            adrotateGroupId,
+            adrotateGroupUrl: siteIntegration?.adminBaseUrl && adrotateGroupId
+              ? `${siteIntegration.adminBaseUrl}/admin.php?page=adrotate-groups&view=edit&group=${adrotateGroupId}`
+              : null,
+          }),
+          ...states,
+          evidenceDays,
+        };
+      }));
+      evaluated.push(...batch);
+    }
+
+    const campaignGroups = new Map<number | string, Array<Record<string, unknown>>>();
+    for (const item of evaluated) {
+      const key = Number(item.campanhaId) || `insertion-${item.id}`;
+      const group = campaignGroups.get(key) ?? [];
+      group.push(item);
+      campaignGroups.set(key, group);
+    }
+    const normalizedSearch = normalizeTextKey(query.search);
+    const filteredCampaigns = Array.from(campaignGroups.values()).filter((group) => {
+      const publicationStates = new Set(group.flatMap((item) => item.publicationStates as string[]));
+      const evidenceStates = new Set(group.flatMap((item) => item.evidenceStates as string[]));
+      const searchText = normalizeTextKey(group.flatMap((item) => [
+        item.campanhaName,
+        item.clienteNome,
+        item.agenciaNome,
+        item.piCodigo,
+        item.siteSigla,
+        item.localFormatoNormalizado,
+        item.localFormato,
+      ]).join(" "));
+      return (!query.portal || group.some((item) => item.siteSigla === query.portal))
+        && (query.publication === "all" || publicationStates.has(query.publication))
+        && (query.evidence === "all" || evidenceStates.has(query.evidence))
+        && (!normalizedSearch || searchText.includes(normalizedSearch));
+    });
+    const campaignPage = filteredCampaigns.slice(query.offset, query.offset + query.limit);
+    const items = campaignPage.flat();
+    const nextOffset = query.offset + campaignPage.length;
+    const portals = Array.from(new Set(evaluated.map((item) => String(item.siteSigla || "")).filter(Boolean))).sort();
+    const summary = {
+      campaigns: new Set(evaluated.map((item) => item.campanhaId)).size,
+      insertions: evaluated.length,
+      active: evaluated.filter((item) => (item.publicationStates as string[]).includes("active")).length,
+      notPublished: evaluated.filter((item) => (item.publicationStates as string[]).includes("not_published")).length,
+      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => state === "missing" || state === "retroactive_missing")).length,
+      invalid: evaluated.filter((item) => (item.evidenceStates as string[]).includes("invalid")).length,
+    };
+
+    res.setHeader("cache-control", "public, max-age=30, stale-while-revalidate=120");
+    res.json({
+      version: "monthly-evidence-report-v1",
+      generatedAt: new Date().toISOString(),
+      month: query.month,
+      today,
+      summary,
+      portals,
+      pagination: {
+        total: filteredCampaigns.length,
+        limit: query.limit,
+        nextCursor: nextOffset < filteredCampaigns.length ? String(nextOffset) : null,
+      },
+      items,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "monthly_evidence_report_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
 
 router.get("/insertions", async (req, res): Promise<void> => {
   const params = ListInsertionsQueryParams.safeParse(req.query);

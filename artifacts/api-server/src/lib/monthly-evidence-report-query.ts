@@ -1,0 +1,89 @@
+const VALID_PORTALS = new Set(["OMT", "ROO", "PERRENGUE", "AFL", "PNMT", "PPMT"]);
+const VALID_PUBLICATION_FILTERS = new Set(["all", "active", "not_published", "scheduled", "ending", "ended"]);
+const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "invalid"]);
+const PUBLIC_INSERTION_FIELDS = [
+  "id", "campanhaId", "campanhaName", "clienteNome", "agenciaNome", "piCodigo", "competencia",
+  "siteSigla", "siteNome", "siteLogoUrl", "localFormato", "localFormatoNormalizado", "periodoInicio",
+  "periodoFim", "statusNormalizado", "bannerPublicadoNoSite", "mediaUrl", "portalUrl", "adrotateGroupId", "adrotateGroupUrl",
+] as const;
+
+export function normalizeMonthlyReportMonth(value: unknown) {
+  if (typeof value !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
+  return value;
+}
+
+export function currentMonthInTimeZone(date = new Date(), timeZone = "America/Cuiaba") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  return `${year}-${month}`;
+}
+
+export function monthBounds(month: string, today: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const start = `${month}-01`;
+  const end = `${month}-${String(lastDay).padStart(2, "0")}`;
+  return { start, end, evidenceEnd: today >= start && today <= end ? today : today < start ? start : end };
+}
+
+export function classifyMonthlyInsertion(options: {
+  published: boolean;
+  periodStart: string;
+  periodEnd: string;
+  today: string;
+  evidenceDays: Array<{ date: string; status: string }>;
+}) {
+  const publicationStates: string[] = [];
+  if (options.periodStart > options.today) publicationStates.push("scheduled");
+  else if (options.periodEnd < options.today) publicationStates.push("ended");
+  else if (options.published) publicationStates.push("active");
+  else publicationStates.push("not_published");
+  const endingLimit = new Date(`${options.today}T12:00:00.000Z`);
+  endingLimit.setUTCDate(endingLimit.getUTCDate() + 7);
+  if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
+
+  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
+  const missing = options.evidenceDays.some((day) => day.status === "missing");
+  const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);
+  const evidenceStates = invalid
+    ? ["invalid"]
+    : missing
+      ? ["missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
+      : ["complete"];
+  return { publicationStates, evidenceStates };
+}
+
+export function publicMonthlyInsertion(item: Record<string, unknown>) {
+  return Object.fromEntries(PUBLIC_INSERTION_FIELDS.flatMap((field) => field in item ? [[field, item[field]]] : []));
+}
+
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
+}
+
+export function buildMonthlyReportQuery(query: Record<string, unknown>) {
+  const month = normalizeMonthlyReportMonth(query.month);
+  if (!month) throw new Error("month deve estar no formato YYYY-MM.");
+  const requestedPortal = typeof query.portal === "string" ? query.portal.trim().toUpperCase() : "";
+  const publication = typeof query.publication === "string" && VALID_PUBLICATION_FILTERS.has(query.publication)
+    ? query.publication
+    : "all";
+  const evidence = typeof query.evidence === "string" && VALID_EVIDENCE_FILTERS.has(query.evidence)
+    ? query.evidence
+    : "all";
+  return {
+    month,
+    portal: VALID_PORTALS.has(requestedPortal) ? requestedPortal : null,
+    publication,
+    evidence,
+    search: typeof query.search === "string" ? query.search.trim().slice(0, 160) : "",
+    offset: boundedInteger(query.cursor, 0, 0, Number.MAX_SAFE_INTEGER),
+    limit: boundedInteger(query.limit, 24, 1, 100),
+  };
+}
