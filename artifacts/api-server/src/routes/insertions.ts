@@ -1323,10 +1323,10 @@ async function listPiSiteInsertions(piCodigo: string, siteSigla: string) {
 
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
-  return enriched
+  return selectCanonicalMonthlyInsertions(excludeSupersededMonthlyInsertions(enriched)
     .filter((item) => normalizePiDigitsKey(item.piCodigo) === requestedPi)
     .filter((item) => normalizeTextKey(item.siteSigla) === requestedSite)
-    .filter((item) => item.statusNormalizado !== "cancelado")
+    .filter((item) => item.statusNormalizado !== "cancelado"))
     .sort((a, b) => {
       const aDate = a.periodoInicio ?? "";
       const bDate = b.periodoInicio ?? "";
