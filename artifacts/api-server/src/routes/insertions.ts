@@ -994,6 +994,7 @@ async function resolveEvidenceAuditStatus(
   insertion: Awaited<ReturnType<typeof enrichInsertion>>,
   targetDate: string,
   evidences?: Array<typeof evidencesTable.$inferSelect>,
+  options: { checkReachability?: boolean } = {},
 ) {
   const evidenceRows = evidences ?? await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
   const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
@@ -1008,7 +1009,7 @@ async function resolveEvidenceAuditStatus(
   let urlStatus: number | null = null;
   let isReachable = false;
 
-  if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
+  if (arquivoUrl && isValidHttpUrl(arquivoUrl) && options.checkReachability !== false) {
     try {
       const response = await fetch(arquivoUrl, { method: "HEAD", signal: AbortSignal.timeout(10_000) });
       urlStatus = response.status;
@@ -1016,6 +1017,8 @@ async function resolveEvidenceAuditStatus(
     } catch {
       isReachable = false;
     }
+  } else if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
+    isReachable = true;
   }
 
   const downgraded = audit?.visualAudit?.frameSelectionDowngraded === true;
@@ -1247,6 +1250,48 @@ async function enrichInsertion(ins: typeof insertionsTable.$inferSelect) {
     competencia: campaign?.competencia ?? null,
     totalEvidencias: Number(countResult?.count ?? 0),
   };
+}
+
+async function enrichMonthlyReportInsertions(
+  insertions: Array<typeof insertionsTable.$inferSelect>,
+  campaigns: Array<typeof campaignsTable.$inferSelect>,
+) {
+  const [sites, clients, agencies] = await Promise.all([
+    db.select().from(sitesTable),
+    db.select().from(clientsTable),
+    db.select().from(agenciesTable),
+  ]);
+  const campaignById = new Map(campaigns.map((item) => [item.id, item]));
+  const siteById = new Map(sites.map((item) => [item.id, item]));
+  const clientById = new Map(clients.map((item) => [item.id, item]));
+  const agencyById = new Map(agencies.map((item) => [item.id, item]));
+
+  return insertions.map((ins) => {
+    const campaign = campaignById.get(ins.campanhaId);
+    if (!campaign) throw new Error(`Campanha ${ins.campanhaId} não encontrada para a inserção ${ins.id}.`);
+    const site = ins.siteId ? siteById.get(ins.siteId) : null;
+    const client = campaign?.clienteId ? clientById.get(campaign.clienteId) : null;
+    const agency = campaign?.agenciaId ? agencyById.get(campaign.agenciaId) : null;
+    return {
+      ...ins,
+      atrasado: computeAtrasado(ins),
+      mediaUrl: ins.mediaUrl ?? null,
+      campanhaName: campaign.nome,
+      clienteId: campaign.clienteId ?? null,
+      agenciaId: campaign.agenciaId ?? null,
+      piCodigo: campaign.piCodigo ?? null,
+      valorLiquido: campaign.valorLiquido ? parseFloat(campaign.valorLiquido) : null,
+      origemCampanha: campaign.origem ?? null,
+      siteNome: site?.nome ?? null,
+      siteSigla: site?.sigla ?? null,
+      siteLogoUrl: site?.logoUrl ?? null,
+      clienteNome: client?.nome ?? null,
+      clienteCnpj: (client as { cnpj?: string | null } | null)?.cnpj ?? null,
+      agenciaNome: agency?.nome ?? null,
+      competencia: campaign.competencia ?? null,
+      totalEvidencias: 0,
+    };
+  });
 }
 
 function normalizeTextKey(value: string | null | undefined) {
@@ -1695,15 +1740,17 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       `${monthNumber} ${year}`,
       `${monthNames[Number(monthNumber) - 1]} ${year}`,
     ]);
-    const monthlyCampaigns = (await db.select({ id: campaignsTable.id, competencia: campaignsTable.competencia }).from(campaignsTable))
+    const monthlyCampaigns = (await db.select().from(campaignsTable))
       .filter((campaign) => expectedCompetencias.has(normalizeTextKey(campaign.competencia)));
     const rawInsertions = monthlyCampaigns.length
       ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
       : [];
-    const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
+    const enriched = await enrichMonthlyReportInsertions(rawInsertions, monthlyCampaigns);
     const monthly = enriched.filter((item) => {
       return String(item.periodoFim || "") >= bounds.start
         && String(item.periodoInicio || "") <= bounds.end
+        && item.archivedAt == null
+        && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
 
@@ -1732,7 +1779,19 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && (query.publication === "all" || states.publicationStates.includes(query.publication))
         && (!normalizedSearch || searchText.includes(normalizedSearch));
     });
-    const pageSource = pageMonthlyInsertions(baseFiltered, query.offset, query.limit);
+    const campaignIds = Array.from(new Set(baseFiltered.map(({ item }) => item.campanhaId)));
+    const pageCampaignIds = new Set(pageMonthlyInsertions(campaignIds, query.offset, query.limit));
+    const pageSource = baseFiltered.filter(({ item }) => pageCampaignIds.has(item.campanhaId));
+    const pageInsertionIds = pageSource.map(({ item }) => item.id);
+    const pageEvidenceRows = pageInsertionIds.length
+      ? await db.select().from(evidencesTable).where(inArray(evidencesTable.insercaoId, pageInsertionIds))
+      : [];
+    const evidenceRowsByInsertion = new Map<number, Array<typeof evidencesTable.$inferSelect>>();
+    for (const row of pageEvidenceRows) {
+      const rows = evidenceRowsByInsertion.get(row.insercaoId) ?? [];
+      rows.push(row);
+      evidenceRowsByInsertion.set(row.insercaoId, rows);
+    }
     const evaluated: Array<Record<string, unknown>> = [];
     for (let offset = 0; offset < pageSource.length; offset += 4) {
       const batch = await Promise.all(pageSource.slice(offset, offset + 4).map(async ({ item }) => {
@@ -1743,9 +1802,9 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           : periodStart && periodEnd
             ? eachIsoDay(periodStart, periodEnd).filter((date) => date >= bounds.start && date <= bounds.evidenceEnd)
             : [];
-        const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, item.id));
+        const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
         const evidenceDays = await Promise.all(evidenceDates.map(async (date) => {
-          const status = await resolveEvidenceAuditStatus(item, date, evidenceRows);
+          const status = await resolveEvidenceAuditStatus(item, date, evidenceRows, { checkReachability: false });
           return {
             date,
             status: status.status === "ok" ? "audited" : status.status === "ok_best_effort" ? "audited_best_effort" : status.status,
@@ -1780,7 +1839,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     }
 
     const items = evaluated.filter((item) => query.evidence === "all" || (item.evidenceStates as string[]).includes(query.evidence));
-    const nextOffset = query.offset + pageSource.length;
+    const nextOffset = query.offset + pageCampaignIds.size;
     const portals = Array.from(new Set(monthly.map((item) => String(item.siteSigla || "")).filter(Boolean))).sort();
     const summary = {
       campaigns: new Set(baseFiltered.map(({ item }) => item.campanhaId)).size,
@@ -1801,9 +1860,9 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       summary,
       portals,
       pagination: {
-        total: new Set(baseFiltered.map(({ item }) => item.campanhaId)).size,
+        total: campaignIds.length,
         limit: query.limit,
-        nextCursor: nextOffset < baseFiltered.length ? String(nextOffset) : null,
+        nextCursor: nextOffset < campaignIds.length ? String(nextOffset) : null,
       },
       items,
     });
@@ -2960,10 +3019,17 @@ router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise
       quality: cod5_options.imageQuality,
     });
     const cod5_output = await readFile(cod5_outputPath);
-    res.setHeader("cache-control", "private, max-age=300");
+    const cod5_preview = req.query.preview === "1";
+    const cod5_etag = `"${crypto.createHash("sha256").update(cod5_output).digest("hex")}"`;
+    res.setHeader("cache-control", cod5_preview ? "public, max-age=86400, s-maxage=604800, immutable" : "private, max-age=300");
     res.setHeader("content-type", "image/jpeg");
-    res.setHeader("content-disposition", `attachment; filename="${cod5_fileName}"`);
+    res.setHeader("content-disposition", `${cod5_preview ? "inline" : "attachment"}; filename="${cod5_fileName}"`);
+    res.setHeader("etag", cod5_etag);
     res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
+    if (req.headers["if-none-match"] === cod5_etag) {
+      res.status(304).end();
+      return;
+    }
     res.send(cod5_output);
   } catch (error) {
     if (!res.headersSent) {

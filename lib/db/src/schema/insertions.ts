@@ -33,6 +33,7 @@ export const insertionsTable = pgTable("insertions", {
     .on(table.canonicalIdentityKey)
     .where(sql`${table.canonicalIdentityKey} IS NOT NULL AND ${table.supersededByInsertionId} IS NULL AND ${table.archivedAt} IS NULL`),
   index("insertions_superseded_by_idx").on(table.supersededByInsertionId),
+  index("insertions_campaign_period_idx").on(table.campanhaId, table.periodoInicio, table.periodoFim),
 ]);
 
 export const insertInsertionSchema = createInsertSchema(insertionsTable).omit({ id: true, createdAt: true, updatedAt: true });
