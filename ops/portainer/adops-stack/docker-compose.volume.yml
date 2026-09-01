@@ -157,7 +157,7 @@ services:
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
       ADOPS_SCHEDULER_INTERVAL_MS: ${ADOPS_SCHEDULER_INTERVAL_MS:-60000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,analytics-report,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,analytics-report,pi-site-export,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
