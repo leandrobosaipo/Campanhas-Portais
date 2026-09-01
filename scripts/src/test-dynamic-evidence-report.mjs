@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs";
@@ -94,4 +95,10 @@ test("JavaScript inline permanece sintaticamente valido", () => {
   const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script);
   assert.doesNotThrow(() => new vm.Script(script));
+});
+
+test("reutiliza o JPEG preparado das miniaturas no servidor", async () => {
+  const source = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
+  assert.match(source, /adops-evidence-preview-cache/);
+  assert.match(source, /cod5_cachedOutput/);
 });

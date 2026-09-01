@@ -3028,8 +3028,43 @@ router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise
     return;
   }
 
-  const cod5_tempDir = await mkdtemp(join(tmpdir(), `adops-evidence-download-${cod5_insertionId}-`));
+  const cod5_preview = req.query.preview === "1";
   const cod5_fileName = buildIndividualEvidenceDownloadName(cod5_insertion, cod5_targetDate);
+  const cod5_sendOutput = (cod5_output: Buffer) => {
+    const cod5_etag = `"${crypto.createHash("sha256").update(cod5_output).digest("hex")}"`;
+    res.setHeader("cache-control", cod5_preview ? "public, max-age=86400, s-maxage=604800, immutable" : "private, max-age=300");
+    res.setHeader("content-type", "image/jpeg");
+    res.setHeader("content-disposition", `${cod5_preview ? "inline" : "attachment"}; filename="${cod5_fileName}"`);
+    res.setHeader("etag", cod5_etag);
+    res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
+    if (req.headers["if-none-match"] === cod5_etag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(cod5_output);
+  };
+  const cod5_previewCachePath = join(
+    tmpdir(),
+    "adops-evidence-preview-cache",
+    `${crypto.createHash("sha256").update(JSON.stringify([
+      cod5_evidence.id,
+      cod5_evidence.arquivoUrl,
+      cod5_options.variant,
+      cod5_options.imageMaxWidth,
+      cod5_options.imageQuality,
+    ])).digest("hex")}.jpg`,
+  );
+  if (cod5_preview) {
+    try {
+      const cod5_cachedOutput = await readFile(cod5_previewCachePath);
+      cod5_sendOutput(cod5_cachedOutput);
+      return;
+    } catch {
+      // Cache frio: prepara a imagem uma vez abaixo.
+    }
+  }
+
+  const cod5_tempDir = await mkdtemp(join(tmpdir(), `adops-evidence-download-${cod5_insertionId}-`));
   const cod5_outputPath = join(cod5_tempDir, cod5_fileName);
   try {
     const cod5_sourceResponse = await fetch(cod5_evidence.arquivoUrl, { redirect: "follow" });
@@ -3045,18 +3080,11 @@ router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise
       quality: cod5_options.imageQuality,
     });
     const cod5_output = await readFile(cod5_outputPath);
-    const cod5_preview = req.query.preview === "1";
-    const cod5_etag = `"${crypto.createHash("sha256").update(cod5_output).digest("hex")}"`;
-    res.setHeader("cache-control", cod5_preview ? "public, max-age=86400, s-maxage=604800, immutable" : "private, max-age=300");
-    res.setHeader("content-type", "image/jpeg");
-    res.setHeader("content-disposition", `${cod5_preview ? "inline" : "attachment"}; filename="${cod5_fileName}"`);
-    res.setHeader("etag", cod5_etag);
-    res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
-    if (req.headers["if-none-match"] === cod5_etag) {
-      res.status(304).end();
-      return;
+    if (cod5_preview) {
+      await mkdir(join(tmpdir(), "adops-evidence-preview-cache"), { recursive: true });
+      await writeFile(cod5_previewCachePath, cod5_output);
     }
-    res.send(cod5_output);
+    cod5_sendOutput(cod5_output);
   } catch (error) {
     if (!res.headersSent) {
       res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
