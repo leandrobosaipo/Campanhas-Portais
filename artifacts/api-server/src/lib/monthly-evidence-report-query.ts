@@ -66,6 +66,10 @@ export function pageMonthlyInsertions<T>(items: T[], offset: number, limit: numb
   return items.slice(offset, offset + limit);
 }
 
+export function excludeSupersededMonthlyInsertions<T extends { archivedAt?: unknown; supersededByInsertionId?: unknown }>(items: T[]) {
+  return items.filter((item) => item.archivedAt == null && item.supersededByInsertionId == null);
+}
+
 type MonthlyCanonicalCandidate = {
   id: number;
   piCodigo?: string | null;

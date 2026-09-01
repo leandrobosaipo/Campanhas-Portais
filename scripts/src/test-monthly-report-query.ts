@@ -9,7 +9,16 @@ import {
   pageMonthlyInsertions,
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
+  excludeSupersededMonthlyInsertions,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
+
+test("remove insercoes arquivadas ou substituidas antes do enriquecimento", () => {
+  assert.deepEqual(excludeSupersededMonthlyInsertions([
+    { id: 1, archivedAt: null, supersededByInsertionId: null },
+    { id: 2, archivedAt: new Date(), supersededByInsertionId: null },
+    { id: 3, archivedAt: null, supersededByInsertionId: 1 },
+  ]).map((item) => item.id), [1]);
+});
 
 test("usa o mes corrente de Cuiaba quando a URL nao informa mes", () => {
   assert.equal(currentMonthInTimeZone(new Date("2026-09-01T03:30:00.000Z"), "America/Cuiaba"), "2026-08");

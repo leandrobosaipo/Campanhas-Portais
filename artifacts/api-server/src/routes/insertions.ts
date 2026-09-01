@@ -91,6 +91,7 @@ import {
   pageMonthlyInsertions,
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
+  excludeSupersededMonthlyInsertions,
 } from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
@@ -1746,7 +1747,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     const rawInsertions = monthlyCampaigns.length
       ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
       : [];
-    const enriched = await enrichMonthlyReportInsertions(rawInsertions, monthlyCampaigns);
+    const enriched = await enrichMonthlyReportInsertions(excludeSupersededMonthlyInsertions(rawInsertions), monthlyCampaigns);
     const monthlyCandidates = enriched.filter((item) => {
       return String(item.periodoFim || "") >= bounds.start
         && String(item.periodoInicio || "") <= bounds.end
