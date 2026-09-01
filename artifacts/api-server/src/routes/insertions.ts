@@ -88,6 +88,7 @@ import {
   buildMonthlyReportQuery,
   classifyMonthlyInsertion,
   monthBounds,
+  pageMonthlyInsertions,
   publicMonthlyInsertion,
 } from "../lib/monthly-evidence-report-query";
 
@@ -1706,9 +1707,35 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
 
+    const normalizedSearch = normalizeTextKey(query.search);
+    const baseItems = monthly.map((item) => ({
+      item,
+      states: classifyMonthlyInsertion({
+        published: item.bannerPublicadoNoSite === true,
+        periodStart: item.periodoInicio || bounds.start,
+        periodEnd: item.periodoFim || bounds.end,
+        today,
+        evidenceDays: [],
+      }),
+    }));
+    const baseFiltered = baseItems.filter(({ item, states }) => {
+      const searchText = normalizeTextKey([
+        item.campanhaName,
+        item.clienteNome,
+        item.agenciaNome,
+        item.piCodigo,
+        item.siteSigla,
+        item.localFormatoNormalizado,
+        item.localFormato,
+      ].join(" "));
+      return (!query.portal || item.siteSigla === query.portal)
+        && (query.publication === "all" || states.publicationStates.includes(query.publication))
+        && (!normalizedSearch || searchText.includes(normalizedSearch));
+    });
+    const pageSource = pageMonthlyInsertions(baseFiltered, query.offset, query.limit);
     const evaluated: Array<Record<string, unknown>> = [];
-    for (let offset = 0; offset < monthly.length; offset += 4) {
-      const batch = await Promise.all(monthly.slice(offset, offset + 4).map(async (item) => {
+    for (let offset = 0; offset < pageSource.length; offset += 4) {
+      const batch = await Promise.all(pageSource.slice(offset, offset + 4).map(async ({ item }) => {
         const periodStart = parseDateOnly(item.periodoInicio);
         const periodEnd = parseDateOnly(item.periodoFim);
         const evidenceDates = bounds.start > today
@@ -1752,42 +1779,17 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       evaluated.push(...batch);
     }
 
-    const campaignGroups = new Map<number | string, Array<Record<string, unknown>>>();
-    for (const item of evaluated) {
-      const key = Number(item.campanhaId) || `insertion-${item.id}`;
-      const group = campaignGroups.get(key) ?? [];
-      group.push(item);
-      campaignGroups.set(key, group);
-    }
-    const normalizedSearch = normalizeTextKey(query.search);
-    const filteredCampaigns = Array.from(campaignGroups.values()).filter((group) => {
-      const publicationStates = new Set(group.flatMap((item) => item.publicationStates as string[]));
-      const evidenceStates = new Set(group.flatMap((item) => item.evidenceStates as string[]));
-      const searchText = normalizeTextKey(group.flatMap((item) => [
-        item.campanhaName,
-        item.clienteNome,
-        item.agenciaNome,
-        item.piCodigo,
-        item.siteSigla,
-        item.localFormatoNormalizado,
-        item.localFormato,
-      ]).join(" "));
-      return (!query.portal || group.some((item) => item.siteSigla === query.portal))
-        && (query.publication === "all" || publicationStates.has(query.publication))
-        && (query.evidence === "all" || evidenceStates.has(query.evidence))
-        && (!normalizedSearch || searchText.includes(normalizedSearch));
-    });
-    const campaignPage = filteredCampaigns.slice(query.offset, query.offset + query.limit);
-    const items = campaignPage.flat();
-    const nextOffset = query.offset + campaignPage.length;
-    const portals = Array.from(new Set(evaluated.map((item) => String(item.siteSigla || "")).filter(Boolean))).sort();
+    const items = evaluated.filter((item) => query.evidence === "all" || (item.evidenceStates as string[]).includes(query.evidence));
+    const nextOffset = query.offset + pageSource.length;
+    const portals = Array.from(new Set(monthly.map((item) => String(item.siteSigla || "")).filter(Boolean))).sort();
     const summary = {
-      campaigns: new Set(evaluated.map((item) => item.campanhaId)).size,
-      insertions: evaluated.length,
-      active: evaluated.filter((item) => (item.publicationStates as string[]).includes("active")).length,
-      notPublished: evaluated.filter((item) => (item.publicationStates as string[]).includes("not_published")).length,
+      campaigns: new Set(baseFiltered.map(({ item }) => item.campanhaId)).size,
+      insertions: baseFiltered.length,
+      active: baseFiltered.filter(({ states }) => states.publicationStates.includes("active")).length,
+      notPublished: baseFiltered.filter(({ states }) => states.publicationStates.includes("not_published")).length,
       pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => state === "missing" || state === "retroactive_missing")).length,
       invalid: evaluated.filter((item) => (item.evidenceStates as string[]).includes("invalid")).length,
+      evidenceScope: "page",
     };
 
     res.setHeader("cache-control", "public, max-age=30, stale-while-revalidate=120");
@@ -1799,9 +1801,9 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       summary,
       portals,
       pagination: {
-        total: filteredCampaigns.length,
+        total: new Set(baseFiltered.map(({ item }) => item.campanhaId)).size,
         limit: query.limit,
-        nextCursor: nextOffset < filteredCampaigns.length ? String(nextOffset) : null,
+        nextCursor: nextOffset < baseFiltered.length ? String(nextOffset) : null,
       },
       items,
     });

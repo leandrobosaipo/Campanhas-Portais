@@ -62,6 +62,10 @@ export function publicMonthlyInsertion(item: Record<string, unknown>) {
   return Object.fromEntries(PUBLIC_INSERTION_FIELDS.flatMap((field) => field in item ? [[field, item[field]]] : []));
 }
 
+export function pageMonthlyInsertions<T>(items: T[], offset: number, limit: number) {
+  return items.slice(offset, offset + limit);
+}
+
 function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
@@ -84,6 +88,6 @@ export function buildMonthlyReportQuery(query: Record<string, unknown>) {
     evidence,
     search: typeof query.search === "string" ? query.search.trim().slice(0, 160) : "",
     offset: boundedInteger(query.cursor, 0, 0, Number.MAX_SAFE_INTEGER),
-    limit: boundedInteger(query.limit, 24, 1, 100),
+    limit: boundedInteger(query.limit, 12, 1, 12),
   };
 }

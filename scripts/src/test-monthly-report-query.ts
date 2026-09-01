@@ -6,6 +6,7 @@ import {
   currentMonthInTimeZone,
   monthBounds,
   normalizeMonthlyReportMonth,
+  pageMonthlyInsertions,
   publicMonthlyInsertion,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query";
 
@@ -36,7 +37,7 @@ test("gera consulta paginada e limitada sem enviar filtros vazios", () => {
     evidence: "missing",
     search: "cliente x",
     offset: 20,
-    limit: 100,
+    limit: 12,
   });
 });
 
@@ -54,7 +55,7 @@ test("recusa filtros desconhecidos e cursor negativo", () => {
     evidence: "all",
     search: "",
     offset: 0,
-    limit: 24,
+    limit: 12,
   });
 });
 
@@ -89,4 +90,10 @@ test("resposta publica remove campos comerciais e observacoes internas", () => {
     observacoes: "interno",
   });
   assert.deepEqual(result, { id: 1, campanhaId: 2, campanhaName: "Campanha" });
+});
+
+test("pagina insercoes antes da auditoria pesada, mesmo quando uma campanha tem muitos banners", () => {
+  const rows = Array.from({ length: 80 }, (_, index) => ({ id: index + 1, campanhaId: index < 60 ? 10 : 20 }));
+  assert.deepEqual(pageMonthlyInsertions(rows, 0, 12).map((row) => row.id), Array.from({ length: 12 }, (_, index) => index + 1));
+  assert.deepEqual(pageMonthlyInsertions(rows, 12, 12).map((row) => row.id), Array.from({ length: 12 }, (_, index) => index + 13));
 });
