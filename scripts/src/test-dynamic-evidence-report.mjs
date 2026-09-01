@@ -44,6 +44,25 @@ test("preserva filtros, URL, modais, acessibilidade e paginação", () => {
   ]) assert.match(html, new RegExp(marker));
 });
 
+test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => {
+  for (const marker of [
+    "desktop-report-filters",
+    "mobile-toolbar",
+    "class=\"brand\"",
+    "siteLogoUrl",
+    "campaign-downloads",
+    "Baixar ZIP desta campanha",
+    "evidence-section",
+    "thumbs evidence-track",
+    "latest-label",
+    "evidenceDownloadUrl",
+    "imageMaxWidth=1600",
+  ]) assert.match(html, new RegExp(marker));
+  assert.match(html, /\.thumb img\s*\{/);
+  assert.match(html, /\.brand img/);
+  assert.match(html, /min-height:\s*44px/);
+});
+
 test("cancela resposta antiga e carrega imagens somente quando necessário", () => {
   assert.match(html, /AbortController/);
   assert.match(html, /loading="lazy"/);
