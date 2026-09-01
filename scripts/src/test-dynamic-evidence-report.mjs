@@ -91,6 +91,7 @@ test("cancela resposta antiga e carrega imagens somente quando necessário", () 
   assert.match(html, /\[hidden\]\{display:none!important\}/);
   assert.match(html, /day\.evidenceId\?evidenceDownloadUrl\(item,day\):''/);
   assert.match(html, /missing-evidence/);
+  assert.match(html, /\.portal-head\{grid-template-columns:1fr;align-items:start\}/);
 });
 
 test("consulta dados protegidos pela sessao Google sem guardar token no HTML", () => {
