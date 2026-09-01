@@ -17,6 +17,11 @@ test("abre no mes corrente de Cuiaba e nao persiste mes antigo", () => {
   assert.doesNotMatch(html, /localStorage|sessionStorage/);
 });
 
+test("usa validacao de mes compativel com o publicador do sites-index", () => {
+  assert.match(html, /\[0-9\]\{4\}/);
+  assert.doesNotMatch(html, /\\d\{4\}/);
+});
+
 test("preserva filtros, URL, modais, acessibilidade e paginação", () => {
   for (const marker of [
     'id="campaignSearch"',
