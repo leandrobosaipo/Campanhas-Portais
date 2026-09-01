@@ -114,6 +114,14 @@ test("oferece captura e exclusao assincronas com progresso e contagem regressiva
   ]) assert.match(html, new RegExp(marker));
 });
 
+test("usa a API autenticada para ZIP e preserva links de anuncio e grupo AdRotate", () => {
+  assert.match(html, /Abrir anúncio no AdRotate/);
+  assert.match(html, /Abrir grupo no AdRotate/);
+  assert.match(html, /adrotate-ad-open/);
+  assert.ok(html.includes("REPORT_API_BASE+'/api/pi-site-exports/jobs'"));
+  assert.match(html, /crypto\.randomUUID\(\)/);
+});
+
 test("JavaScript inline permanece sintaticamente valido", () => {
   const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script);

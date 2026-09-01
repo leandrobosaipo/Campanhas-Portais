@@ -25,7 +25,8 @@ function internalApiGuard(req: Request, res: Response, next: NextFunction) {
     return;
   }
   if (res.locals.reportUser && (
-    (req.method === "POST" && /^\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
+    (req.method === "POST" && req.path === "/pi-site-exports/jobs")
+    || (req.method === "POST" && /^\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
     || (req.method === "DELETE" && /^\/evidences\/\d+$/.test(req.path))
   )) {
     next();
@@ -106,6 +107,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   const reportProtected = req.path === "/api/reports/evidences/monthly"
+    || (req.method === "POST" && req.path === "/api/pi-site-exports/jobs")
     || (req.method === "POST" && /^\/api\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
     || (req.method === "DELETE" && /^\/api\/evidences\/\d+$/.test(req.path));
   if (!reportProtected) {
