@@ -12,6 +12,9 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Miniaturas usam o endpoint de evidência com `preview=1`, disposição inline, ETag e cache público.
 - O download explícito de JPEG continua como anexo.
 - O ZIP da campanha continua no fluxo assíncrono `/api/pi-site-exports/jobs`.
+- O conteúdo mensal exige login Google OAuth pela API AdOps.
+- Usuários permitidos: `leandro@codigo5.com.br` e `marianacardozof@gmail.com`.
+- A sessão é um cookie HTTP-only assinado; nenhum token operacional fica no HTML ou no navegador.
 
 ## Leitura e auditoria
 
@@ -20,6 +23,10 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - A listagem não faz `HEAD` no storage para cada evidência.
 - A validação rigorosa continua na captura, auditoria explícita e exportação final.
 - Inserções arquivadas ou substituídas não entram no relatório.
+- Inserções lógicas equivalentes são consolidadas por PI, portal, posição e sobreposição do período; vence a publicada com mídia.
+- O modal permite enfileirar uma captura por data e acompanha etapa e percentual.
+- A exclusão de evidência remove o registro ativo; a data volta a aparecer como pendente para o backfill noturno.
+- Às 23h, depois do lote diário e do relatório das 22h15, o scheduler procura retroativos faltantes da competência sem competir com a rotina das 18h.
 
 ## Interface preservada
 

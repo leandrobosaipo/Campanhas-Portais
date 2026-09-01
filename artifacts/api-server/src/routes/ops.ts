@@ -995,6 +995,7 @@ router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
       date: input.targetDate,
       ...(input.routineKind === "daily-print-morning-recovery" ? { recoveryMode: "late_publication_recovery" } : {}),
       ...(input.jobKind === "evidence-monthly-report" ? { competencia: competenciaForDate(input.targetDate) } : {}),
+      ...(input.jobKind === "print-backfill" ? { competencia: competenciaForDate(input.targetDate), toDate: input.targetDate, reconstructionReason: "late_publication_recovery" } : {}),
       source: "macmini-canonical-scheduler",
     }, req.body?.shadow === true ? "cloudflare-shadow" : "macmini-scheduler", input.idempotencyKey);
     return { jobId: created.jobId, created: !created.duplicate };

@@ -1,8 +1,10 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { getReportAuthConfig, reportSessionFromRequest } from "./routes/report-auth";
 
 
 const app: Express = express();
@@ -19,6 +21,13 @@ function internalApiGuard(req: Request, res: Response, next: NextFunction) {
     req.path === "/campaign-evidence-exports/jobs"
   );
   if (publicAsyncCampaignExportPost) {
+    next();
+    return;
+  }
+  if (res.locals.reportUser && (
+    (req.method === "POST" && /^\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
+    || (req.method === "DELETE" && /^\/evidences\/\d+$/.test(req.path))
+  )) {
     next();
     return;
   }
@@ -84,9 +93,37 @@ app.use(
     },
   }),
 );
-app.use(cors());
+const browserOrigins = new Set(["https://sites.codigo5.com.br", "https://adops.codigo5.com.br"]);
+app.use(cors({
+  credentials: true,
+  origin(origin, callback) {
+    callback(null, !origin || browserOrigins.has(origin));
+  },
+}));
+app.use(cookieParser());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const reportProtected = req.path === "/api/reports/evidences/monthly"
+    || (req.method === "POST" && /^\/api\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
+    || (req.method === "DELETE" && /^\/api\/evidences\/\d+$/.test(req.path));
+  if (!reportProtected) {
+    next();
+    return;
+  }
+  if (!getReportAuthConfig()) {
+    res.status(503).json({ error: "google_oauth_not_configured" });
+    return;
+  }
+  const session = reportSessionFromRequest(req);
+  if (!session) {
+    res.status(401).json({ error: "authentication_required", loginUrl: "/api/auth/google/login" });
+    return;
+  }
+  res.locals.reportUser = session;
+  next();
+});
 
 app.get(
   [...Array.from(fastApiDocsPaths), `${fastApiDocsAssetPrefix}:asset`],

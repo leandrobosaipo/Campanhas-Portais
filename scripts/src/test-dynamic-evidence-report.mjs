@@ -91,6 +91,26 @@ test("cancela resposta antiga e carrega imagens somente quando necessário", () 
   assert.match(html, /\[hidden\]\{display:none!important\}/);
 });
 
+test("consulta dados protegidos pela sessao Google sem guardar token no HTML", () => {
+  assert.match(html, /https:\/\/adops-api\.codigo5\.com\.br/);
+  assert.match(html, /credentials:\s*['"]include['"]/);
+  assert.match(html, /\/api\/auth\/google\/login\?next=/);
+  assert.doesNotMatch(html, /OPS_API_TOKEN|GOOGLE_CLIENT_SECRET|localStorage/);
+});
+
+test("oferece captura e exclusao assincronas com progresso e contagem regressiva", () => {
+  for (const marker of [
+    "Gerar print desta data",
+    "Excluir evidência",
+    "evidenceJobProgress",
+    "percentTotal",
+    "/capture-proof/jobs",
+    "/api/evidences/",
+    "Contagem regressiva",
+    "nextRunAt",
+  ]) assert.match(html, new RegExp(marker));
+});
+
 test("JavaScript inline permanece sintaticamente valido", () => {
   const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script);

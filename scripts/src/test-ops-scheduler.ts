@@ -53,6 +53,16 @@ test("resolve a recuperacao das 08h para o dia anterior em Cuiaba", () => {
   assert.equal(recovery?.due, true);
 });
 
+test("agenda backfill retroativo depois da rotina diaria e do relatorio", () => {
+  const decisions = resolveCanonicalSchedule(new Date("2026-08-27T03:05:00.000Z"));
+  const backfill = decisions.find((decision) => decision.routineKind === "nightly-retroactive-backfill");
+
+  assert.equal(backfill?.jobKind, "print-backfill");
+  assert.equal(backfill?.dispatchWindow, "23:00");
+  assert.equal(backfill?.targetDate, "2026-08-26");
+  assert.equal(backfill?.due, true);
+});
+
 test("nao considera uma janela futura como devida", () => {
   const decisions = resolveCanonicalSchedule(new Date("2026-08-26T21:59:00.000Z"));
   const dailyPrint = decisions.find((decision) => decision.routineKind === "daily-print");

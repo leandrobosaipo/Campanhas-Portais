@@ -1831,6 +1831,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           return {
             date,
             status,
+            evidenceId: evidence?.id ?? null,
             url: evidence?.arquivoUrl ?? null,
             checklistApproved: status === "audited",
             verifiedAt: proof?.updatedAt?.toISOString() ?? evidence?.criadoEm?.toISOString() ?? null,

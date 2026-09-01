@@ -13,10 +13,12 @@ import auditChecklistsRouter from "./audit-checklists";
 import campaignOperationsRouter from "./campaign-operations";
 import campaignFulfillmentsRouter from "./campaign-fulfillments";
 import opsRouter from "./ops";
+import reportAuthRouter from "./report-auth";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(reportAuthRouter);
 router.use(sitesRouter);
 router.use(clientsRouter);
 router.use(agenciesRouter);
