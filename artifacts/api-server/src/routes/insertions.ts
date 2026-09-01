@@ -1615,12 +1615,15 @@ $rows = $wpdb->get_results($wpdb->prepare(
        (a.adops_external_key <> '' AND a.adops_external_key = %s)
        OR
        (a.adops_media_basename <> '' AND a.adops_media_basename = %s)
+       OR
+       (a.bannercode LIKE %s)
      )
    ORDER BY a.id DESC
    LIMIT 20",
   ${options.groupId},
   ${JSON.stringify(options.externalKey ?? "")},
-  ${JSON.stringify(options.mediaBasename ?? "")}
+  ${JSON.stringify(options.mediaBasename ?? "")},
+  ${JSON.stringify(options.mediaBasename ? `%${options.mediaBasename}%` : "")}
 ), ARRAY_A);
 echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 `.trim();
