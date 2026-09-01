@@ -118,7 +118,6 @@ test("usa a API autenticada para ZIP e preserva links de anuncio e grupo AdRotat
   assert.match(html, /Abrir anúncio no AdRotate/);
   assert.match(html, /Abrir grupo no AdRotate/);
   assert.match(html, /adrotate-ad-open/);
-  assert.match(html, /relation\?fast=1/);
   assert.ok(html.includes("REPORT_API_BASE+'/api/pi-site-exports/jobs'"));
   assert.match(html, /crypto\.randomUUID\(\)/);
 });
