@@ -57,10 +57,30 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "latest-label",
     "evidenceDownloadUrl",
     "imageMaxWidth=1600",
+    "preview=1",
   ]) assert.match(html, new RegExp(marker));
   assert.match(html, /\.thumb img\s*\{/);
   assert.match(html, /\.brand img/);
   assert.match(html, /min-height:\s*44px/);
+});
+
+test("preserva conteúdo completo do cabeçalho, operação e modal de evidência", () => {
+  for (const marker of [
+    "Evidências AdOps",
+    "Mais números",
+    "metricAttention",
+    "metricPrints",
+    "Campanhas publicadas conferidas",
+    "Planilha — aba do mês",
+    "Próximas a entrar no ar",
+    "Próximas a vencer",
+    "Dia anterior",
+    "Dia seguinte",
+    "Detalhes da evidência",
+    "Baixar JPEG",
+    "Ver grupo do anúncio",
+    "aria-current=\"date\"",
+  ]) assert.match(html, new RegExp(marker));
 });
 
 test("cancela resposta antiga e carrega imagens somente quando necessário", () => {
