@@ -66,6 +66,64 @@ export function pageMonthlyInsertions<T>(items: T[], offset: number, limit: numb
   return items.slice(offset, offset + limit);
 }
 
+type MonthlyCanonicalCandidate = {
+  id: number;
+  piCodigo?: string | null;
+  siteId?: number | null;
+  siteSigla?: string | null;
+  localFormato?: string | null;
+  localFormatoNormalizado?: string | null;
+  periodoInicio?: string | null;
+  periodoFim?: string | null;
+  mediaUrl?: string | null;
+  bannerPublicadoNoSite?: boolean | null;
+  statusNormalizado?: string | null;
+  canonicalIdentityKey?: string | null;
+};
+
+function canonicalFormatKey(value: unknown) {
+  const key = String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  if (key === "TOPO" || key.startsWith("MEGABANNER TOPO") || key.startsWith("MEGA BANNER TOPO")) return "MEGABANNER TOPO";
+  if (key.startsWith("LATERAL 02") || key === "BANNER LATERAL SEGUNDA DOBRA") return "BANNER LATERAL SEGUNDA DOBRA";
+  if (key.startsWith("VIDEO")) return "VIDEO";
+  return key;
+}
+
+function monthlyLogicalKey(item: MonthlyCanonicalCandidate) {
+  const pi = String(item.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const site = item.siteId != null ? String(item.siteId) : String(item.siteSigla ?? "").toUpperCase();
+  const format = canonicalFormatKey(item.localFormatoNormalizado ?? item.localFormato);
+  return pi && site && format ? `${pi}:${site}:${format}` : null;
+}
+
+function periodsOverlap(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
+  return Boolean(left.periodoInicio && left.periodoFim && right.periodoInicio && right.periodoFim
+    && left.periodoInicio <= right.periodoFim && left.periodoFim >= right.periodoInicio);
+}
+
+function monthlyCanonicalScore(item: MonthlyCanonicalCandidate) {
+  const status = String(item.statusNormalizado ?? "").toUpperCase();
+  return (item.bannerPublicadoNoSite === true ? 100 : 0)
+    + (item.mediaUrl ? 50 : 0)
+    + (["PUBLICADO", "EM_VEICULACAO", "PUBLICADO_NO_SITE"].includes(status) ? 10 : 0)
+    + (item.canonicalIdentityKey ? 1 : 0);
+}
+
+export function selectCanonicalMonthlyInsertions<T extends MonthlyCanonicalCandidate>(items: T[]) {
+  const groups: T[][] = [];
+  for (const item of items) {
+    const logicalKey = monthlyLogicalKey(item);
+    const group = logicalKey ? groups.find((candidate) => (
+      monthlyLogicalKey(candidate[0]!) === logicalKey && candidate.some((member) => periodsOverlap(member, item))
+    )) : null;
+    if (group) group.push(item);
+    else groups.push([item]);
+  }
+  return groups.map((group) => [...group].sort((left, right) => (
+    monthlyCanonicalScore(right) - monthlyCanonicalScore(left) || right.id - left.id
+  ))[0]!);
+}
+
 function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;

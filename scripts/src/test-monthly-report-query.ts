@@ -8,7 +8,8 @@ import {
   normalizeMonthlyReportMonth,
   pageMonthlyInsertions,
   publicMonthlyInsertion,
-} from "../../artifacts/api-server/src/lib/monthly-evidence-report-query";
+  selectCanonicalMonthlyInsertions,
+} from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
 
 test("usa o mes corrente de Cuiaba quando a URL nao informa mes", () => {
   assert.equal(currentMonthInTimeZone(new Date("2026-09-01T03:30:00.000Z"), "America/Cuiaba"), "2026-08");
@@ -96,4 +97,33 @@ test("pagina insercoes antes da auditoria pesada, mesmo quando uma campanha tem 
   const rows = Array.from({ length: 80 }, (_, index) => ({ id: index + 1, campanhaId: index < 60 ? 10 : 20 }));
   assert.deepEqual(pageMonthlyInsertions(rows, 0, 12).map((row) => row.id), Array.from({ length: 12 }, (_, index) => index + 1));
   assert.deepEqual(pageMonthlyInsertions(rows, 12, 12).map((row) => row.id), Array.from({ length: 12 }, (_, index) => index + 13));
+});
+
+test("remove duplicata logica mesmo quando a chave canonica ou a campanha divergem", () => {
+  const rows = [
+    { id: 1830, campanhaId: 973, piCodigo: "PI 25207030 - GOV", siteId: 5, localFormatoNormalizado: "HOME 1", localFormato: "HOME 1", periodoInicio: "2026-08-01", periodoFim: "2026-08-13", mediaUrl: null, bannerPublicadoNoSite: false, statusNormalizado: "rascunho" },
+    { id: 1839, campanhaId: 973, piCodigo: "25207030", siteId: 5, localFormatoNormalizado: "HOME 1", localFormato: "HOME 1", periodoInicio: "2026-08-03", periodoFim: "2026-08-17", mediaUrl: "https://cdn.example/banner.gif", bannerPublicadoNoSite: true, statusNormalizado: "publicado" },
+    { id: 1852, campanhaId: 979, piCodigo: "PI 742 - PREF VG", siteId: 1, localFormatoNormalizado: "MEGABANNER TOPO", localFormato: "MEGABANNER TOPO", periodoInicio: "2026-07-31", periodoFim: "2026-08-09", mediaUrl: null, bannerPublicadoNoSite: false, statusNormalizado: "print_gerado" },
+    { id: 1840, campanhaId: 976, piCodigo: "742", siteId: 1, localFormatoNormalizado: "TOPO", localFormato: "TOPO", periodoInicio: "2026-07-31", periodoFim: "2026-08-09", mediaUrl: "https://cdn.example/acelera.gif", bannerPublicadoNoSite: true, statusNormalizado: "publicado" },
+  ];
+
+  assert.deepEqual(selectCanonicalMonthlyInsertions(rows).map((row) => row.id), [1839, 1840]);
+});
+
+test("mantem voos separados quando os periodos da mesma PI nao se sobrepoem", () => {
+  const base = { campanhaId: 1, piCodigo: "PI 10", siteId: 1, localFormatoNormalizado: "TOPO", localFormato: "TOPO", mediaUrl: "x", bannerPublicadoNoSite: true, statusNormalizado: "publicado" };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 1, periodoInicio: "2026-08-01", periodoFim: "2026-08-05" },
+    { ...base, id: 2, periodoInicio: "2026-08-10", periodoFim: "2026-08-15" },
+  ]).map((row) => row.id), [1, 2]);
+});
+
+test("normaliza os nomes detalhados usados nos cards duplicados", () => {
+  const base = { campanhaId: 1, piCodigo: "PI 90892", siteId: 3, periodoInicio: "2026-08-01", periodoFim: "2026-08-12", statusNormalizado: "print_gerado" };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 2188, localFormato: "Megabanner Topo — Header — 825x120", mediaUrl: null, bannerPublicadoNoSite: false },
+    { ...base, id: 1843, localFormato: "MEGABANNER TOPO", mediaUrl: "x", bannerPublicadoNoSite: true },
+    { ...base, id: 2190, localFormato: "Video — Lateral 01 — Sidebar — 300x250", mediaUrl: null, bannerPublicadoNoSite: false },
+    { ...base, id: 1844, localFormato: "Video", mediaUrl: "y", bannerPublicadoNoSite: true },
+  ]).map((row) => row.id), [1843, 1844]);
 });

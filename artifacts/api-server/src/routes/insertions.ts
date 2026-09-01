@@ -90,6 +90,7 @@ import {
   monthBounds,
   pageMonthlyInsertions,
   publicMonthlyInsertion,
+  selectCanonicalMonthlyInsertions,
 } from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
@@ -1753,10 +1754,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
-    const monthly = Array.from(new Map(monthlyCandidates.map((item) => [
-      item.canonicalIdentityKey || [item.campanhaId, item.siteId, item.localFormatoNormalizado ?? item.localFormato, item.periodoInicio, item.periodoFim].join(":"),
-      item,
-    ])).values());
+    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates);
 
     const normalizedSearch = normalizeTextKey(query.search);
     const baseItems = monthly.map((item) => ({
