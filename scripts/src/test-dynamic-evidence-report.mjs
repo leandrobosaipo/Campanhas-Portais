@@ -82,6 +82,7 @@ test("preserva conteúdo completo do cabeçalho, operação e modal de evidênci
     "Ver grupo do anúncio",
     "aria-current=\"date\"",
   ]) assert.match(html, new RegExp(marker));
+  assert.match(html, /\.modal-side h2\{[^}]*margin:0 90px 8px 0/);
 });
 
 test("cancela resposta antiga e carrega imagens somente quando necessário", () => {
