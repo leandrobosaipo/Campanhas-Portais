@@ -114,6 +114,12 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     next();
     return;
   }
+  const providedInternal = req.header("x-adops-api-token")?.trim() ?? "";
+  if (internalApiToken && providedInternal === internalApiToken) {
+    res.locals.adopsInternalAuth = true;
+    next();
+    return;
+  }
   if (!getReportAuthConfig()) {
     res.status(503).json({ error: "google_oauth_not_configured" });
     return;

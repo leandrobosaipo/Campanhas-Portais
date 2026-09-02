@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   buildGoogleAuthorizationUrl,
@@ -41,4 +42,14 @@ test("gera URL OAuth Google com state e escopos minimos", () => {
   assert.equal(url.searchParams.get("scope"), "openid email profile");
   assert.equal(url.searchParams.get("state"), "state-1");
   assert.equal(url.searchParams.get("client_id"), "client-123");
+});
+
+test("preserva acesso interno aos jobs protegidos antes do OAuth", async () => {
+  const source = await readFile(new URL("../../artifacts/api-server/src/app.ts", import.meta.url), "utf8");
+  const internalBypass = source.indexOf("providedInternal === internalApiToken");
+  const googleSessionGate = source.indexOf("const session = reportSessionFromRequest(req)");
+  const internalGuard = source.indexOf('app.use("/api", internalApiGuard, router)');
+  assert.ok(internalBypass > 0);
+  assert.ok(internalBypass < googleSessionGate);
+  assert.ok(googleSessionGate < internalGuard);
 });

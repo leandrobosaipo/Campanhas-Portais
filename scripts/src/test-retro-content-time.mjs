@@ -40,9 +40,21 @@ const rejected = evaluateRetroCaptureGate({
   contentDateSamples: ["15/07/2026 16:12"],
   contentRelativeTimeSamples: ["há 6 dias"],
   requireAbsoluteEditorialDates: true,
+  requireNoRelativeEditorialDates: true,
 });
 assert.equal(rejected.ok, false);
 assert.ok(rejected.codes.includes("relative_content_time_unresolved"));
+
+const liveWithAbsoluteDates = evaluateRetroCaptureGate({
+  requestedCaptureAt: "2026-09-01T21:21",
+  systemDateTime: "terça-feira, 01/09/2026, 21:21",
+  pageDateObserved: "2026-09-01T21:21:00-04:00",
+  contentDateSamples: ["01/09/2026 14:42"],
+  contentRelativeTimeSamples: ["há 6 horas"],
+  requireAbsoluteEditorialDates: true,
+  requireNoRelativeEditorialDates: false,
+});
+assert.equal(liveWithAbsoluteDates.ok, true);
 
 const missingAbsolute = evaluateRetroCaptureGate({
   requestedCaptureAt: "2026-07-15T19:06",
@@ -98,7 +110,8 @@ assert.equal(compact.contentDateSamples.length, 25);
 assert.equal(compact.contentRelativeTimeSamples.length, 10);
 assert.equal(compact.contentDateSamples[0], "15/07/2026 0:00");
 assert.equal(compact.contentRelativeTimeSamples[0], "há 1 dias");
-assert.match(source, /contentRelativeTimeSamples = Array\.isArray\(retroContentEvidence\.contentRelativeTimeSamples\)/);
+assert.match(source, /shouldCollectEditorialEvidence = isHistoricalCapture/);
+assert.match(source, /contentRelativeTimeSamples = isHistoricalCapture && Array\.isArray\(retroContentEvidence\.contentRelativeTimeSamples\)/);
 assert.match(source, /requireAbsoluteEditorialDates: mapping\.auditConfig\?\.requireAbsoluteEditorialDates === true/);
 assert.match(source, /contentRelativeTimeSamples,/);
 

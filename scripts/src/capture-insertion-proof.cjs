@@ -3392,7 +3392,7 @@ function evaluateRetroCaptureGate(payload) {
   contentTimeline.targetDateMatches = targetDateMatches;
   const relativeContentTimeline = evaluateRelativeContentTimeline(
     payload.contentRelativeTimeSamples,
-    payload.requireAbsoluteEditorialDates,
+    payload.requireNoRelativeEditorialDates,
   );
   if (!contentTimeline.ok && (payload.requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
@@ -7714,7 +7714,9 @@ async function main() {
       captureClass,
       reconstructionReason: args.reconstructionReason,
     });
-    const retroContentEvidence = isHistoricalCapture
+    const shouldCollectEditorialEvidence = isHistoricalCapture
+      || mapping.auditConfig?.requireAbsoluteEditorialDates === true;
+    const retroContentEvidence = shouldCollectEditorialEvidence
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
           editorialSamples: [],
@@ -7724,7 +7726,7 @@ async function main() {
         };
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
-    contentRelativeTimeSamples = Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
+    contentRelativeTimeSamples = isHistoricalCapture && Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
       ? retroContentEvidence.contentRelativeTimeSamples.slice(0, 10)
       : [];
     retroContentManifest = retroContentEvidence.manifest;
@@ -7750,6 +7752,7 @@ async function main() {
       contentDateSamples,
       contentRelativeTimeSamples,
       requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+      requireNoRelativeEditorialDates: isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       retroContentProof,
       requireRetroContentProof: isHistoricalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
