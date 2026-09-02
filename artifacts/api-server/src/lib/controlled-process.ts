@@ -6,6 +6,7 @@ export type ControlledProcessOptions = {
   timeoutMs: number;
   killGraceMs: number;
   maxBuffer: number;
+  onStderrLine?: (line: string) => void;
 };
 
 export class ControlledProcessError extends Error {
@@ -61,6 +62,7 @@ export async function runControlledProcess(
     let bufferExceeded = false;
     let settled = false;
     let killTimer: NodeJS.Timeout | null = null;
+    let stderrLineBuffer = "";
 
     const stop = (reason: "timeout" | "buffer") => {
       if (reason === "timeout") timedOut = true;
@@ -85,6 +87,12 @@ export async function runControlledProcess(
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = append(stderr, chunk);
+      if (options.onStderrLine) {
+        stderrLineBuffer += chunk.toString("utf8");
+        const lines = stderrLineBuffer.split(/\r?\n/);
+        stderrLineBuffer = lines.pop() ?? "";
+        for (const line of lines) options.onStderrLine(line);
+      }
     });
 
     const timeout = setTimeout(() => stop("timeout"), options.timeoutMs);
@@ -114,6 +122,7 @@ export async function runControlledProcess(
       }
       const stdoutText = stdout.toString("utf8");
       const stderrText = stderr.toString("utf8");
+      if (options.onStderrLine && stderrLineBuffer) options.onStderrLine(stderrLineBuffer);
       if (timedOut) {
         reject(new ControlledProcessError(`capture_timeout_after_${options.timeoutMs}ms`, {
           code: "ADOPS_CAPTURE_TIMEOUT",

@@ -54,6 +54,7 @@ import { loadLocalCaptureMetadata, saveLocalCaptureMetadata } from "../lib/local
 import { generateOperationalDocument, listOperationalDocuments, type OperationalDocumentKind } from "../lib/operational-documents";
 import { getPrintRunner } from "../lib/print-runner";
 import type { PrintRunnerJobPayload, PrintRunnerJobResultItem } from "../lib/print-runner-contract";
+import { toPublicCaptureJob } from "../lib/capture-job-progress";
 import {
   buildDeliveryPackageName,
   buildDeliveryPrintFileName,
@@ -4785,7 +4786,7 @@ router.get("/insertions/:id/capture-proof/jobs/:jobId", async (req, res): Promis
     return;
   }
   res.setHeader("Cache-Control", "no-store");
-  res.json(job);
+  res.json(toPublicCaptureJob(job));
 });
 
 router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => {

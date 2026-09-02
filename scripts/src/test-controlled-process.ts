@@ -10,14 +10,17 @@ function isAlive(pid: number) {
   }
 }
 
-const success = await runControlledProcess(process.execPath, ["-e", "process.stdout.write('ok')"], {
+const progressLines: string[] = [];
+const success = await runControlledProcess(process.execPath, ["-e", "process.stderr.write('one\\ntwo\\n');process.stdout.write('ok')"], {
   cwd: process.cwd(),
   env: process.env,
   timeoutMs: 5_000,
   killGraceMs: 250,
   maxBuffer: 1024,
+  onStderrLine: (line) => progressLines.push(line),
 });
 if (success.stdout !== "ok") throw new Error("controlled_process_success_failed");
+if (progressLines.join(",") !== "one,two") throw new Error(`controlled_process_stderr_lines_failed:${progressLines.join(",")}`);
 
 let grandchildPid = 0;
 try {

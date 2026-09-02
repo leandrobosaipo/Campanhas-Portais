@@ -25,6 +25,8 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Inserções arquivadas ou substituídas não entram no relatório.
 - Inserções lógicas equivalentes são consolidadas por PI, portal, posição e sobreposição do período; vence a publicada com mídia.
 - O modal permite enfileirar uma captura por data e acompanha o mesmo job pelo endpoint da inserção (`GET /api/insertions/:id/capture-proof/jobs/:jobId`). Jobs de captura não devem ser consultados em `/api/ops/jobs/:jobId/progress`, que pertence à fila operacional separada.
+- O modal mostra o progresso persistido do capturador, retoma o mesmo `jobId` após recarregar a aba e para o polling em `completed` ou `failed`. Um `404` imediatamente após o `POST` recebe até quatro consultas; depois disso a interface falha com orientação segura.
+- Erros públicos não incluem stack trace, caminho ou mensagem técnica. A interface exibe a orientação e o código `CAPTURE-XXXXXXXX` retornado em `support`; o diagnóstico completo permanece no job e nos logs internos.
 - A exclusão de evidência remove o registro ativo; a data volta a aparecer como pendente para o backfill noturno.
 - Às 23h, depois do lote diário e do relatório das 22h15, o scheduler procura retroativos faltantes da competência sem competir com a rotina das 18h.
 
@@ -36,6 +38,7 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Resumo, ZIP e inserções por campanha.
 - Mídia, estados, progresso, ações e trilha de evidências por inserção.
 - Modal de evidência com navegação por data, detalhes e ações.
+- Barra de geração acessível com `role=progressbar`, valor de 0 a 100 e texto da etapa; sucesso e falha não dependem apenas de cor.
 - Filtro móvel e controles com altura mínima de 44 px.
 
 ## Publicação

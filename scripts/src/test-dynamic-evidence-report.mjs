@@ -15,7 +15,7 @@ test("gera uma casca pequena sem registros incorporados", () => {
 test("abre no mes corrente de Cuiaba e nao persiste mes antigo", () => {
   assert.match(html, /timeZone:\s*['"]America\/Cuiaba['"]/);
   assert.match(html, /id="monthFilter"[^>]*type="month"/);
-  assert.doesNotMatch(html, /localStorage|sessionStorage/);
+  assert.doesNotMatch(html, /localStorage/);
 });
 
 test("usa validacao de mes compativel com o publicador do sites-index", () => {
@@ -106,7 +106,13 @@ test("oferece captura e exclusao assincronas com progresso e contagem regressiva
     "Gerar print desta data",
     "Excluir evidência",
     "evidenceJobProgress",
-    "percentTotal",
+    "role=\"progressbar\"",
+    "aria-valuenow",
+    "progress\.percent",
+    "progress\.stage",
+    "sessionStorage",
+    "response\.status===404",
+    "Tentar novamente",
     "/capture-proof/jobs",
     "/api/evidences/",
     "Contagem regressiva",

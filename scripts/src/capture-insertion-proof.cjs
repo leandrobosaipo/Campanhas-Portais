@@ -1883,7 +1883,7 @@ async function validateCaptureChecklist(apiBase, insertionId, targetDate, metada
   return payload;
 }
 
-function createStageRecorder() {
+function createStageRecorder(onProgress = null) {
   const stages = [];
   return {
     stages,
@@ -1899,6 +1899,7 @@ function createStageRecorder() {
         errorDetail: null,
       };
       stages.push(entry);
+      onProgress?.({ stage: name, status: "running", updatedAt: entry.startedAt });
       return entry;
     },
     finish(entry, status, summary = {}, errorCode = null, errorDetail = null) {
@@ -1908,6 +1909,7 @@ function createStageRecorder() {
       entry.summary = summary;
       entry.errorCode = errorCode;
       entry.errorDetail = errorDetail;
+      onProgress?.({ stage: entry.stage, status, updatedAt: entry.finishedAt });
       return entry;
     },
   };
@@ -7108,7 +7110,9 @@ async function main() {
   for (const artifactPath of [slotPng, contextPng, viewportPng, finalPng, metaJson]) {
     rmSync(artifactPath, { force: true });
   }
-  const trace = createStageRecorder();
+  const trace = createStageRecorder((event) => {
+    if (args.runnerJobId) process.stderr.write(`ADOPS_CAPTURE_PROGRESS ${JSON.stringify(event)}\n`);
+  });
   const artifactRecords = {};
   let logId = null;
   let finalProofStyle = null;

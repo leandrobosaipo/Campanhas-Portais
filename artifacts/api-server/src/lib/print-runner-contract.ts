@@ -69,6 +69,12 @@ export type PrintRunnerJobResult = {
   completedTargets: number;
   failedTargets: number;
   items: PrintRunnerJobResultItem[];
+  progress?: {
+    percent: number;
+    stage: string;
+    message: string;
+    updatedAt: string;
+  } | null;
 };
 
 export type PrintRunnerPort = {
