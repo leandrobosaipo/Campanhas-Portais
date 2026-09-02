@@ -112,6 +112,8 @@ test("oferece captura e exclusao assincronas com progresso e contagem regressiva
     "Contagem regressiva",
     "nextRunAt",
   ]) assert.match(html, new RegExp(marker));
+  assert.match(html, /\/api\/insertions\/'\+item\.id\+'\/capture-proof\/jobs\/'\+encodeURIComponent\(jobId\)/);
+  assert.doesNotMatch(html, /\/api\/ops\/jobs\/'\+encodeURIComponent\(jobId\)+'\/progress/);
 });
 
 test("reaproveita o ZIP da campanha e mostra o andamento real", () => {

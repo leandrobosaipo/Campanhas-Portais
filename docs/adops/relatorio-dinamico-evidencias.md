@@ -24,7 +24,7 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - A validação rigorosa continua na captura, auditoria explícita e exportação final.
 - Inserções arquivadas ou substituídas não entram no relatório.
 - Inserções lógicas equivalentes são consolidadas por PI, portal, posição e sobreposição do período; vence a publicada com mídia.
-- O modal permite enfileirar uma captura por data e acompanha etapa e percentual.
+- O modal permite enfileirar uma captura por data e acompanha o mesmo job pelo endpoint da inserção (`GET /api/insertions/:id/capture-proof/jobs/:jobId`). Jobs de captura não devem ser consultados em `/api/ops/jobs/:jobId/progress`, que pertence à fila operacional separada.
 - A exclusão de evidência remove o registro ativo; a data volta a aparecer como pendente para o backfill noturno.
 - Às 23h, depois do lote diário e do relatório das 22h15, o scheduler procura retroativos faltantes da competência sem competir com a rotina das 18h.
 

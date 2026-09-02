@@ -28,6 +28,9 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
       response.end(renderDynamicEvidenceReport().replace(
         "const API_BASE = 'https://adops-api-public.leandro471.workers.dev'",
         `const API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "const REPORT_API_BASE = 'https://adops-api.codigo5.com.br'",
+        `const REPORT_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
       ));
       return;
     }
