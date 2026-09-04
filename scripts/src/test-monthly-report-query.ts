@@ -127,6 +127,14 @@ test("mantem voos separados quando os periodos da mesma PI nao se sobrepoem", ()
   ]).map((row) => row.id), [1, 2]);
 });
 
+test("remove rascunho sem PI quando a campanha publicada equivalente existe", () => {
+  const base = { campanhaName: "DENGUE", siteId: 2, localFormatoNormalizado: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-15" };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 3014, piCodigo: null, mediaUrl: null, bannerPublicadoNoSite: false, statusNormalizado: "rascunho" },
+    { ...base, id: 2988, piCodigo: "PI 42059 - GOV", mediaUrl: "https://cdn.example/dengue.gif", bannerPublicadoNoSite: true, statusNormalizado: "publicado" },
+  ]).map((row) => row.id), [2988]);
+});
+
 test("normaliza os nomes detalhados usados nos cards duplicados", () => {
   const base = { campanhaId: 1, piCodigo: "PI 90892", siteId: 3, periodoInicio: "2026-08-01", periodoFim: "2026-08-12", statusNormalizado: "print_gerado" };
   assert.deepEqual(selectCanonicalMonthlyInsertions([

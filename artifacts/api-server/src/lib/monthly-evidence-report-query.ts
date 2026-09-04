@@ -72,6 +72,7 @@ export function excludeSupersededMonthlyInsertions<T extends { archivedAt?: unkn
 
 type MonthlyCanonicalCandidate = {
   id: number;
+  campanhaName?: string | null;
   piCodigo?: string | null;
   siteId?: number | null;
   siteSigla?: string | null;
@@ -95,9 +96,21 @@ function canonicalFormatKey(value: unknown) {
 
 function monthlyLogicalKey(item: MonthlyCanonicalCandidate) {
   const pi = String(item.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const campaign = String(item.campanhaName ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
   const site = item.siteId != null ? String(item.siteId) : String(item.siteSigla ?? "").toUpperCase();
   const format = canonicalFormatKey(item.localFormatoNormalizado ?? item.localFormato);
-  return pi && site && format ? `${pi}:${site}:${format}` : null;
+  const identity = pi || campaign;
+  return identity && site && format ? `${identity}:${site}:${format}` : null;
+}
+
+function sameMonthlyIdentity(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
+  const leftPi = String(left.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const rightPi = String(right.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const campaignKey = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  const sameCampaign = campaignKey(left.campanhaName) && campaignKey(left.campanhaName) === campaignKey(right.campanhaName);
+  const sameSite = (left.siteId ?? left.siteSigla) === (right.siteId ?? right.siteSigla);
+  const sameFormat = canonicalFormatKey(left.localFormatoNormalizado ?? left.localFormato) === canonicalFormatKey(right.localFormatoNormalizado ?? right.localFormato);
+  return sameSite && sameFormat && ((leftPi && rightPi && leftPi === rightPi) || ((!leftPi || !rightPi) && sameCampaign));
 }
 
 function periodsOverlap(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
@@ -118,7 +131,7 @@ export function selectCanonicalMonthlyInsertions<T extends MonthlyCanonicalCandi
   for (const item of items) {
     const logicalKey = monthlyLogicalKey(item);
     const group = logicalKey ? groups.find((candidate) => (
-      monthlyLogicalKey(candidate[0]!) === logicalKey && candidate.some((member) => periodsOverlap(member, item))
+      sameMonthlyIdentity(candidate[0]!, item) && candidate.some((member) => periodsOverlap(member, item))
     )) : null;
     if (group) group.push(item);
     else groups.push([item]);

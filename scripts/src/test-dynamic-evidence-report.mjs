@@ -90,6 +90,7 @@ test("modal operacional dinâmico mostra agenda agrupada, fontes oficiais e atua
     "Agenda das próximas campanhas",
     "agenda-date-group",
     "agenda-favicon",
+    "cropped-favicon_sublogo_perrengue-120x120.png",
     "daysUntil",
     "America/Cuiaba",
     "Última consulta da planilha",
