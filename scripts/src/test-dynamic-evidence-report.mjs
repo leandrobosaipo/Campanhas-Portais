@@ -85,6 +85,26 @@ test("preserva conteúdo completo do cabeçalho, operação e modal de evidênci
   assert.match(html, /\.modal-side h2\{[^}]*margin:0 90px 8px 0/);
 });
 
+test("modal operacional dinâmico mostra agenda agrupada, fontes oficiais e atualização assíncrona", () => {
+  for (const marker of [
+    "Agenda das próximas campanhas",
+    "agenda-date-group",
+    "agenda-favicon",
+    "daysUntil",
+    "America/Cuiaba",
+    "Última consulta da planilha",
+    "Último inventário de mídias",
+    "campaignRefreshButton",
+    "campaignRefreshStatus",
+    "refreshDrive=true",
+    "stageLabel",
+    "Google Sheets",
+    "Google Drive",
+  ]) assert.match(html, new RegExp(marker));
+  assert.match(html, /role="status" aria-live="polite"/);
+  assert.match(html, /Map\.groupBy/);
+});
+
 test("cancela resposta antiga e carrega imagens somente quando necessário", () => {
   assert.match(html, /AbortController/);
   assert.match(html, /loading="lazy"/);

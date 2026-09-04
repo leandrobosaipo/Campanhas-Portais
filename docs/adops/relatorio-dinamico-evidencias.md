@@ -2,6 +2,8 @@
 
 URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 
+> **Regra canônica:** esta é a única página de acompanhamento operacional dinâmico. URLs com competência no slug, como `adops-evidencias-setembro-2026`, são snapshots/entregas mensais e não devem receber melhorias solicitadas para o relatório de acompanhamento.
+
 ## Funcionamento
 
 - O HTML é uma casca pequena; campanhas e evidências vêm da API AdOps.

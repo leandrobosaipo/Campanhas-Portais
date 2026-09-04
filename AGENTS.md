@@ -25,6 +25,14 @@ O repositório anterior do OpenClaw é apenas registro de migração. Ele não �
 
 ## Mapa rápido
 
+### Relatório canônico de acompanhamento
+
+- O relatório operacional dinâmico e permanente é exclusivamente `https://sites.codigo5.com.br/reports/adops-evidencias/`.
+- Seu gerador é `scripts/src/build-dynamic-evidence-report.mjs` e o comando é `pnpm --dir scripts run report:evidences-dynamic`.
+- Pedidos de melhoria do “relatório de acompanhamento”, “relatório dinâmico” ou da URL acima devem alterar esse gerador e validar essa mesma URL.
+- Relatórios mensais versionados, como `/reports/adops-evidencias-setembro-2026/`, são artefatos de entrega/snapshot e nunca substituem o relatório de acompanhamento.
+- Antes de implementar ou publicar interface de relatório, confirme a URL-alvo no briefing e neste bloco; não reaproveite outro gerador apenas por semelhança visual.
+
 - Visão inicial: `docs/START_HERE_ADOPS.md`
 - Mapa técnico: `docs/PROJECT_MAP_ADOPS.md`
 - Credenciais e `.env`: `docs/CREDENTIALS_AND_ENV_ADOPS.md`

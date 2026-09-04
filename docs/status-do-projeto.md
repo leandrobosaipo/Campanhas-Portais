@@ -2,6 +2,9 @@
 
 ## Relatório dinâmico de evidências — 2026-09-01
 
+- URL canônica de acompanhamento: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
+- Gerador canônico: `scripts/src/build-dynamic-evidence-report.mjs` (`report:evidences-dynamic`).
+- Relatórios com mês/ano no slug são snapshots de entrega e não são o painel dinâmico.
 - Página pública única com mês corrente automático e histórico por filtro.
 - Paridade visual com o relatório detalhado de agosto: cabeçalho, operação, portais, campanhas, inserções, miniaturas e modal.
 - Leitura mensal em lote, paginação por campanha e previews cacheáveis.
