@@ -114,8 +114,17 @@ function html() {
     portals: [portal],
     audits: {},
     summary: { total: 1, active: 1, scheduled: 0, ok: 1, pending: 0, invalid: 0, notPublished: 0, auditedDays: 2 },
-    forecast: { starting: [], ending: [] },
-    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+    forecast: {
+      starting: [{ ...insertion, periodoInicio: "2026-09-08" }],
+      ending: [
+        { ...insertion, periodoFim: "2026-09-12" },
+        { ...insertion, id: 1945, campanhaName: "DENGUE", siteSigla: "OMT", periodoFim: "2026-09-12" },
+      ],
+    },
+    sources: {
+      sheet: { downloadedAt: "2026-09-04T12:30:00.000Z" },
+      driveInventory: { snapshotStatus: "fresh", snapshotAt: "2026-09-04T12:35:00.000Z", itemCount: 457 },
+    },
     dailyPrintStatus: {
       timeZone: "America/Cuiaba", schedule: "18:00", nextRunAt: "2026-08-18T22:00:00.000Z",
       lastAttempt: { jobId: "job-1", targetDate: "2026-08-17", status: "partial", startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z", expected: 16, approved: 14, missing: 2, invalid: 0, summary: "14 de 16 campanhas tiveram o print aprovado; duas precisam de nova tentativa." },
@@ -249,6 +258,21 @@ test("explica bloqueio e retroativos no card da campanha não publicada", () => 
   assert.match(output, /Enviar o PDF autoritativo e executar novo preflight/);
 });
 
+test("não cobra evidência de cadastro incompleto sem mídia nem publicação", () => {
+  const output = renderHtml({
+    insertions: [{ ...nonPublishedInsertion, id: 3014, modalId: "ins-3014", mediaUrl: "", publicationBlocker: "Mídia ausente." }],
+    portals: [{ ...portal, campaigns: [{ ...portal.campaigns[0], items: [{ ...nonPublishedInsertion, id: 3014, modalId: "ins-3014", mediaUrl: "", publicationBlocker: "Mídia ausente." }] }] }],
+    audits: {},
+    summary: { total: 1, active: 1, scheduled: 0, ok: 0, pending: 0, invalid: 0, notPublished: 1, auditedDays: 0 },
+    forecast: { starting: [], ending: [] },
+    sources: { driveInventory: { snapshotStatus: "fresh", itemCount: 457 } },
+  });
+  assert.match(output, /Cadastro incompleto — sem mídia e não publicada/);
+  assert.match(output, /Evidência não exigida até a publicação/);
+  assert.doesNotMatch(output, /0 de 2 prints aprovados/);
+  assert.doesNotMatch(output, /Print pendente/);
+});
+
 test("visualizador móvel navega por data sem IDs duplicados", () => {
   const output = html();
   const ids = [...output.matchAll(/(?:^|\s)id="([^"]+)"/g)].map((match) => match[1]);
@@ -296,15 +320,53 @@ test("mostra a rotina diária, contador acessível e fontes operacionais", () =>
   assert.match(output, /id="dailyCountdown"/);
   assert.match(output, /data-next-run="2026-08-18T22:00:00\.000Z"/);
   assert.match(output, /setInterval\([^,]+,\s*60000\)/s);
-  assert.match(output, /Planilha — aba AGOSTO 2026/);
-  assert.match(output, /docs\.google\.com\/spreadsheets\/d\/1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu\/edit#gid=971687922/);
+  assert.match(output, /Planilha — aba SETEMBRO 2026/);
+  assert.match(output, /docs\.google\.com\/spreadsheets\/d\/1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu\/edit/);
   assert.match(output, /Pasta de mídias no Google Drive/);
   assert.match(output, /drive\.google\.com\/drive\/folders\/18kyuQLL-sbTc0qgP2Z8SCldDthKqKZV6/);
   assert.match(output, /class="source-link sheet-source"/);
   assert.match(output, /class="source-link drive-source"/);
   assert.match(output, /<svg[^>]+aria-hidden="true"/);
-  assert.match(output, /Abrir aba AGOSTO 2026/);
+  assert.match(output, /Abrir aba SETEMBRO 2026/);
   assert.match(output, /Abrir pasta compartilhada/);
+});
+
+test("organiza a agenda por data e portal com favicon e prazo em Cuiabá", () => {
+  const output = html();
+  assert.match(output, /agenda-date-group/);
+  assert.match(output, /12 de setembro de 2026/);
+  assert.match(output, /agenda-portal-group/);
+  assert.match(output, /class="agenda-favicon"/);
+  assert.match(output, /alt=""/);
+  assert.match(output, /Perrengue Mato Grosso/);
+  assert.match(output, /O Matogrossense/);
+  assert.match(output, /encerra em 8 dias/);
+  assert.match(output, /America\/Cuiaba/);
+});
+
+test("explica a rotina e consulta novas campanhas assincronamente sem segredo no cliente", () => {
+  const output = html();
+  assert.match(output, /Horários e prazos calculados no fuso de Cuiabá/);
+  assert.match(output, /Última consulta da planilha/);
+  assert.match(output, /04\/09, 08:30/);
+  assert.match(output, /Último inventário de mídias/);
+  assert.match(output, /id="campaignRefreshButton"/);
+  assert.match(output, /Atualizar campanhas agora/);
+  assert.match(output, /id="campaignRefreshStatus"[^>]+aria-live="polite"/);
+  assert.match(output, /campaign-operations\/active\?date=/);
+  assert.match(output, /refreshDrive=true/);
+  assert.match(output, /\/api\/ops\/jobs\/.*\/progress/);
+  assert.match(output, /próxima verificação em até 5 minutos/i);
+  assert.doesNotMatch(output, /Authorization:\s*Bearer/);
+});
+
+test("usa marcas oficiais reconhecíveis nas fontes Google", () => {
+  const output = html();
+  assert.match(output, /aria-label="Google Sheets"/);
+  assert.match(output, /fill="#0F9D58"/);
+  assert.match(output, /aria-label="Google Drive"/);
+  assert.match(output, /fill="#4285F4"/);
+  assert.match(output, /fill="#FBBC04"/);
 });
 
 test("mostra primeiro o print mais recente sem alterar a ordem canônica dos dados", () => {

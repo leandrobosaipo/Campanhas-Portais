@@ -177,6 +177,19 @@ function fullDatePt(value) {
   return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone }).format(new Date(Date.UTC(year, month - 1, day, 12)));
 }
 
+function longDatePt(value) {
+  if (!value) return "-";
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return String(value);
+  return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "long", year: "numeric", timeZone }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function calendarDaysBetween(from, to) {
+  const fromMs = Date.parse(`${String(from).slice(0, 10)}T12:00:00.000Z`);
+  const toMs = Date.parse(`${String(to).slice(0, 10)}T12:00:00.000Z`);
+  return Number.isFinite(fromMs) && Number.isFinite(toMs) ? Math.max(0, Math.round((toMs - fromMs) / 86_400_000)) : 0;
+}
+
 function dateTimePt(value) {
   const parsed = value ? new Date(value) : null;
   return parsed && !Number.isNaN(parsed.getTime())
@@ -436,6 +449,11 @@ function icon(name) {
     calendar: '<svg viewBox="0 0 20 20"><path d="M5 2h2v2h6V2h2v2h2v14H3V4h2V2Zm10 7H5v7h10V9ZM5 6v1h10V6H5Z"/></svg>',
   };
   return (icons[name] || icons.link).replace("<svg ", '<svg aria-hidden="true" focusable="false" ');
+}
+
+function googleBrandIcon(name) {
+  if (name === "sheet") return '<svg viewBox="0 0 24 24" role="img" aria-label="Google Sheets"><path fill="#0F9D58" d="M5 2h10l4 4v16H5z"/><path fill="#fff" d="M15 2v5h5zM8 10h8v8H8zm1.5 1.5v1.3h5v-1.3zm0 2.7v1.3h5v-1.3z"/></svg>';
+  return '<svg viewBox="0 0 24 24" role="img" aria-label="Google Drive"><path fill="#4285F4" d="m15.5 3 5.5 9.5-2.8 4.8-5.5-9.5z"/><path fill="#0F9D58" d="M8.5 3h7l-5.5 9.5H3z"/><path fill="#FBBC04" d="M3 12.5h11l-2.8 4.8H5.8z"/></svg>';
 }
 
 function linkButton(href, label, iconName) {
@@ -812,6 +830,9 @@ function publicationGuidance(operation, publicationHealth) {
 }
 
 function renderThumbs(item) {
+  if (item.state === "not_published" && !safePublicMediaUrl(item.mediaUrl)) {
+    return `<p class="thumbs-unavailable" role="status">Aguardando mídia e publicação antes de exigir evidências.</p>`;
+  }
   if (!item.evidenceDays.length) {
     return `<button class="thumb-empty" type="button" data-modal-id="${escapeHtml(item.modalId)}" title="${escapeHtml(evidenceDetails(item))}">${icon(item.state === "scheduled" ? "clock" : "warn")}<span>${escapeHtml(evidenceLabel(item.state))}</span></button>`;
   }
@@ -828,6 +849,7 @@ function renderThumbs(item) {
 }
 
 function renderInsertion(item) {
+  const incompleteWithoutMedia = item.state === "not_published" && !safePublicMediaUrl(item.mediaUrl);
   const progress = item.requiredDays.length ? Math.round((item.auditedDays / item.requiredDays.length) * 100) : 100;
   const stateForBadge = item.state === "ok" ? "ok" : item.state === "scheduled" ? "scheduled" : item.state === "not_published" ? "not_published" : "warn";
   const retroactiveLabel = item.retroactiveMissingDates?.length === 1
@@ -835,8 +857,8 @@ function renderInsertion(item) {
     : `${item.retroactiveMissingDates?.length || 0} retroativos pendentes`;
   const publicationPending = ["not_published", "blocked_upstream"].includes(item.state)
     ? `<div class="publication-pending" role="note">
-        <strong>${item.state === "blocked_upstream" ? "Publicação bloqueada" : "Banner não publicado"}</strong>
-        <span>${escapeHtml(retroactiveLabel)}</span>
+        <strong>${item.state === "blocked_upstream" ? "Publicação bloqueada" : incompleteWithoutMedia ? "Cadastro incompleto — sem mídia e não publicada" : "Banner não publicado"}</strong>
+        <span>${escapeHtml(incompleteWithoutMedia ? "Evidência não exigida até a publicação" : retroactiveLabel)}</span>
         ${item.retroactiveMissingDates?.length ? `<small>Datas: ${escapeHtml(item.retroactiveMissingDates.map(fullDatePt).join(", "))}</small>` : ""}
         ${item.publicationBlocker ? `<small><b>Motivo:</b> ${escapeHtml(item.publicationBlocker)}</small>` : ""}
         ${item.publicationAction ? `<small><b>Próxima ação:</b> ${escapeHtml(item.publicationAction)}</small>` : ""}
@@ -846,7 +868,9 @@ function renderInsertion(item) {
     ? statusBadge("scheduled", `Encerrada em ${fullDatePt(item.periodoFim)}`)
     : "";
   const stateLabel = item.state === "ok" ? "Em dia" : item.state === "scheduled" ? "Agendada" : item.state === "not_published" ? "Banner não publicado" : item.state === "blocked_upstream" ? "Publicação bloqueada" : item.state === "invalid" ? "Evidência com erro" : "Print pendente";
-  const evidenceSummary = item.requiredDays.length
+  const evidenceSummary = incompleteWithoutMedia
+    ? "Evidência não exigida até a publicação"
+    : item.requiredDays.length
     ? `${item.auditedDays} de ${item.requiredDays.length} ${item.requiredDays.length === 1 ? "print aprovado" : "prints aprovados"}`
     : "Nenhum print exigido até esta data";
   const mediaAction = safePublicMediaUrl(item.mediaUrl)
@@ -890,7 +914,8 @@ function renderCampaign(campaign, portalKey) {
   const notPublished = campaign.items.filter((item) => item.state === "not_published").length;
   const blockedUpstream = campaign.items.filter((item) => item.state === "blocked_upstream").length;
   const campaignAudited = campaign.items.reduce((sum, item) => sum + item.auditedDays, 0);
-  const campaignRequired = campaign.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
+  const evidenceEligibleItems = campaign.items.filter((item) => item.state !== "not_published" || safePublicMediaUrl(item.mediaUrl));
+  const campaignRequired = evidenceEligibleItems.reduce((sum, item) => sum + item.requiredDays.length, 0);
   const endingWindow = new Date(`${targetDate}T00:00:00.000Z`);
   endingWindow.setUTCDate(endingWindow.getUTCDate() + 7);
   const endingWindowDate = endingWindow.toISOString().slice(0, 10);
@@ -912,7 +937,9 @@ function renderCampaign(campaign, portalKey) {
   const completeCampaignDownloadUrl = campaign.items.find((item) => item.completeCampaignDownloadUrl)?.completeCampaignDownloadUrl || "";
   const commercialExportBlocker = campaign.items.find((item) => item.commercialExportBlocker)?.commercialExportBlocker || "";
   const insertionSummary = `${campaign.items.length} ${campaign.items.length === 1 ? "inserção" : "inserções"}`;
-  const printSummary = `${campaignAudited} de ${campaignRequired} ${campaignRequired === 1 ? "print aprovado" : "prints aprovados"}`;
+  const printSummary = campaignRequired
+    ? `${campaignAudited} de ${campaignRequired} ${campaignRequired === 1 ? "print aprovado" : "prints aprovados"}`
+    : "Evidências aguardam publicação";
   const attentionSummary = invalid
     ? `${invalid} ${invalid === 1 ? "inserção com evidência inválida" : "inserções com evidência inválida"}`
     : pending
@@ -964,9 +991,20 @@ function renderPortal(portal) {
   </section>`;
 }
 
-function renderForecast(items, dateField, emptyText) {
+function renderForecast(items, dateField, emptyText, action) {
   if (!items.length) return `<p>${escapeHtml(emptyText)}</p>`;
-  return `<ul>${items.map((item) => `<li><b>${escapeHtml(item.campanhaName || item.campaignName || `Inserção #${item.id}`)}</b><span>${escapeHtml(item.siteSigla || "-")} · ${escapeHtml(item.piCodigo || "sem PI")} · ${fullDatePt(item[dateField])}</span></li>`).join("")}</ul>`;
+  const byDate = Map.groupBy(items, (item) => item[dateField]);
+  return `<div class="agenda-date-list">${[...byDate.entries()].map(([date, dateItems]) => {
+    const byPortal = Map.groupBy(dateItems, (item) => item.siteSigla || "-");
+    const days = calendarDaysBetween(targetDate, date);
+    const deadline = `${action} ${days === 0 ? "hoje" : `em ${days} ${days === 1 ? "dia" : "dias"}`}`;
+    return `<section class="agenda-date-group"><header><time datetime="${escapeHtml(date)}">${escapeHtml(longDatePt(date))}</time><span>${escapeHtml(deadline)}</span></header>${[...byPortal.entries()].map(([siteSigla, portalItems]) => {
+      const site = sitesConfig[siteSigla] || {};
+      const portalName = site.browserTitle || site.label || siteSigla;
+      const favicon = site.homeUrl ? `${String(site.homeUrl).replace(/\/$/, "")}/favicon.ico` : "";
+      return `<section class="agenda-portal-group"><div class="agenda-portal-title">${favicon ? `<img class="agenda-favicon" src="${escapeHtml(favicon)}" alt="" loading="lazy">` : ""}<strong>${escapeHtml(portalName)}</strong></div><ul>${portalItems.map((item) => `<li><b>${escapeHtml(item.campanhaName || item.campaignName || `Inserção #${item.id}`)}</b><span>${escapeHtml(item.piCodigo || "sem PI")}</span></li>`).join("")}</ul></section>`;
+    }).join("")}</section>`;
+  }).join("")}</div>`;
 }
 
 function renderHtml({ insertions, portals, audits, summary, forecast, sources, dailyPrintStatus = null, refreshMode = "full", refreshRevision = 0 }) {
@@ -980,6 +1018,8 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     ? `${historicalAttemptIssues} prints precisaram de nova tentativa na rotina de ${datePt(dailyPrintStatus.lastAttempt.targetDate)}; as campanhas publicadas estão em dia agora.`
     : dailyPrintStatus?.lastAttempt?.summary || "A rotina diária ainda não possui uma tentativa registrada.";
   const generationIncident = currentEvidenceIssues > 0 && dailyPrintStatus?.lastAttempt?.status !== "completed";
+  const sheetConsultedAt = sources?.sheet?.downloadedAt || sources?.sheet?.source?.downloadedAt || sources?.campaignOperationsGeneratedAt;
+  const driveConsultedAt = sources?.driveInventory?.snapshotAt;
   const attentionActions = [
     Number(summary.pending || 0) > 0
       ? `<button type="button" class="attention-action warn" data-quick-evidence="missing">${icon("warn")}<span>Ver ${summary.pending} ${summary.pending === 1 ? "campanha com print pendente" : "campanhas com prints pendentes"}</span></button>`
@@ -1099,12 +1139,18 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .operations-section { display: grid; gap: 10px; }
     .operations-section h3 { font-size: 17px; }
     .operations-section > p { margin: 0; max-width: 70ch; color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .routine-facts { display: grid; grid-template-columns: minmax(130px, auto) minmax(0, 1fr); gap: 7px 12px; margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; font-size: 12px; }
+    .routine-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .routine-step { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+    .routine-step strong, .routine-step span { display: block; }
+    .routine-step strong { font-size: 12px; }
+    .routine-step span { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .routine-facts { display: grid; grid-template-columns: minmax(150px, auto) minmax(0, 1fr); gap: 7px 12px; margin: 0; padding: 12px; background: var(--bg); border-radius: 6px; font-size: 12px; }
     .routine-facts dt { color: var(--muted); }
     .routine-facts dd { margin: 0; overflow-wrap: anywhere; }
     .source-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
     .source-link { min-height: 58px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 9px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--steel); background: var(--bg); }
     .source-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; background: var(--panel); }
+    .source-icon svg { width: 24px; height: 24px; }
     .sheet-source .source-icon { color: oklch(0.43 0.13 150); }
     .drive-source .source-icon { color: oklch(0.46 0.13 240); }
     .source-copy { min-width: 0; }
@@ -1114,10 +1160,23 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     .agenda-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .agenda-block { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
     .agenda-block h4 { margin: 0; font-size: 14px; }
-    .agenda-block p, .agenda-block ul { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
-    .agenda-block ul { padding-left: 18px; }
-    .agenda-block li { margin: 7px 0; overflow-wrap: anywhere; }
+    .agenda-block p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .agenda-date-list { display: grid; gap: 8px; margin-top: 8px; }
+    .agenda-date-group { overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+    .agenda-date-group > header { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); background: color-mix(in oklch, var(--steel) 7%, var(--panel)); }
+    .agenda-date-group time { font-size: 11px; font-weight: 900; text-transform: capitalize; }
+    .agenda-date-group header span { color: var(--steel); font-size: 10px; font-weight: 850; }
+    .agenda-portal-group { display: grid; grid-template-columns: minmax(130px, .6fr) minmax(0, 1fr); gap: 8px; padding: 9px 10px; }
+    .agenda-portal-group + .agenda-portal-group { border-top: 1px solid var(--line); }
+    .agenda-portal-title { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 11px; }
+    .agenda-favicon { width: 20px; height: 20px; object-fit: contain; border-radius: 4px; background: var(--bg); }
+    .agenda-portal-group ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+    .agenda-portal-group li { overflow-wrap: anywhere; font-size: 11px; }
     .agenda-block li span { display: block; }
+    .campaign-refresh { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+    .campaign-refresh button { min-height: 44px; justify-self: start; border: 1px solid var(--steel); border-radius: 6px; padding: 8px 12px; background: var(--steel); color: var(--panel); font: inherit; font-size: 12px; font-weight: 850; cursor: pointer; }
+    .campaign-refresh button:disabled { opacity: .65; cursor: wait; }
+    .campaign-refresh p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
     .mobile-toolbar { display: none; }
     .filter-panel { border: 0; padding: 0; background: var(--panel); color: var(--ink); }
     .filter-panel-inner { display: grid; gap: 12px; padding: 16px; }
@@ -1270,7 +1329,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       .operations-panel { width: 100%; max-width: none; max-height: 88dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; }
       .operations-panel-inner { max-height: 88dvh; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
       .operations-panel-content { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
-      .routine-facts, .source-links, .agenda-grid { grid-template-columns: 1fr; }
+      .routine-overview, .routine-facts, .source-links, .agenda-grid, .agenda-portal-group { grid-template-columns: 1fr; }
       .source-links { grid-template-columns: 1fr; }
       .filter-panel { width: 100%; max-width: none; max-height: 85dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; }
       .filter-panel::backdrop { background: rgba(8, 14, 15, .58); }
@@ -1397,9 +1456,16 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       </nav>
       <div class="operations-panel-content">
         <section class="operations-section" data-operations-content="routine">
-          <h3>Rotina diária</h3><p>${escapeHtml(routineSummary)}</p>
+          <h3>Rotina diária</h3><p>${escapeHtml(routineSummary)} Horários e prazos calculados no fuso de Cuiabá (America/Cuiaba).</p>
+          <div class="routine-overview" aria-label="Etapas da rotina diária">
+            <div class="routine-step"><strong>1 · Consultar fontes</strong><span>Confere a planilha operacional e o inventário de mídias do Google Drive.</span></div>
+            <div class="routine-step"><strong>2 · Cadastrar e publicar</strong><span>Identifica o portal, evita duplicidade e acompanha cadastro, mídia, AdRotate e publicação.</span></div>
+            <div class="routine-step"><strong>3 · Gerar evidências</strong><span>Após publicação confirmada, captura e audita os prints programados.</span></div>
+          </div>
           <div class="attention-actions" aria-label="Campanhas que precisam de atenção">${attentionActions}</div>
           <dl class="routine-facts">
+            <dt>Última consulta da planilha</dt><dd>${escapeHtml(dateTimePt(sheetConsultedAt))}</dd>
+            <dt>Último inventário de mídias</dt><dd>${escapeHtml(dateTimePt(driveConsultedAt))}</dd>
             <dt>Situação registrada</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.status === "completed" ? "Concluída" : dailyPrintStatus?.lastAttempt?.status === "partial" ? "Parcial" : dailyPrintStatus?.lastAttempt?.status === "running" ? "Em execução" : dailyPrintStatus?.lastAttempt?.status === "queued" ? "Na fila" : dailyPrintStatus?.lastAttempt ? "Falhou" : "Sem histórico")}</dd>
             <dt>Início e fim</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dateTimePt(dailyPrintStatus.lastAttempt.startedAt)} → ${dateTimePt(dailyPrintStatus.lastAttempt.finishedAt)}` : "—")}</dd>
             <dt>Resultado original</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt ? `${dailyPrintStatus.lastAttempt.approved} de ${dailyPrintStatus.lastAttempt.expected} campanhas aprovadas · ${dailyPrintStatus.lastAttempt.missing} ausentes · ${dailyPrintStatus.lastAttempt.invalid} inválidas` : "—")}</dd>
@@ -1408,19 +1474,23 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
             <dt>Inserções afetadas</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.failedInsertionIds?.length ? dailyPrintStatus.lastAttempt.failedInsertionIds.join(", ") : "—")}</dd>
             <dt>Causa resumida</dt><dd>${escapeHtml(dailyPrintStatus?.lastAttempt?.errorCode || "—")}</dd>
           </dl>
+          <div class="campaign-refresh">
+            <button id="campaignRefreshButton" type="button">Atualizar campanhas agora</button>
+            <p id="campaignRefreshStatus" role="status" aria-live="polite">A consulta roda em segundo plano. Se não houver job ativo, a próxima verificação automática ocorre em até 5 minutos.</p>
+          </div>
         </section>
         <section class="operations-section" data-operations-content="sources" hidden>
           <h3>Fontes operacionais</h3><p>Abra diretamente a planilha do mês ou a pasta usada para validar as mídias.</p>
           <div class="source-links">
-            <a class="source-link sheet-source" href="${escapeHtml(currentSheetUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Planilha — aba ${escapeHtml(currentSheetName)} em nova guia"><span class="source-icon">${icon("sheet")}</span><span class="source-copy"><strong>Planilha — aba ${escapeHtml(currentSheetName)}</strong><span>Abrir aba ${escapeHtml(currentSheetName)}</span></span></a>
-            <a class="source-link drive-source" href="${escapeHtml(driveMediaUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Pasta de mídias no Google Drive em nova guia"><span class="source-icon">${icon("drive")}</span><span class="source-copy"><strong>Pasta de mídias no Google Drive</strong><span>Abrir pasta compartilhada</span></span></a>
+            <a class="source-link sheet-source" href="${escapeHtml(currentSheetUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Planilha — aba ${escapeHtml(currentSheetName)} em nova guia"><span class="source-icon">${googleBrandIcon("sheet")}</span><span class="source-copy"><strong>Planilha — aba ${escapeHtml(currentSheetName)}</strong><span>Abrir aba ${escapeHtml(currentSheetName)}</span></span></a>
+            <a class="source-link drive-source" href="${escapeHtml(driveMediaUrl)}" target="_blank" rel="noreferrer" aria-label="Abrir Pasta de mídias no Google Drive em nova guia"><span class="source-icon">${googleBrandIcon("drive")}</span><span class="source-copy"><strong>Pasta de mídias no Google Drive</strong><span>Abrir pasta compartilhada</span></span></a>
           </div>
         </section>
         <section class="operations-section" data-operations-content="agenda" hidden>
           <h3>Agenda dos próximos sete dias</h3>
           <div class="agenda-grid">
-            <article class="agenda-block"><h4>Próximas a entrar no ar</h4>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.")}</article>
-            <article class="agenda-block"><h4>Próximas a vencer</h4>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.")}</article>
+            <article class="agenda-block"><h4>Próximas a entrar no ar</h4>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.", "entra no ar")}</article>
+            <article class="agenda-block"><h4>Próximas a vencer</h4>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.", "encerra")}</article>
           </div>
         </section>
       </div>
@@ -1880,6 +1950,56 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     operationsPanel.addEventListener('close', () => {
       operationsTriggers.forEach((trigger) => trigger.setAttribute('aria-expanded', 'false'));
       lastOperationsTrigger?.focus();
+    });
+    const campaignRefreshButton = document.getElementById('campaignRefreshButton');
+    const campaignRefreshStatus = document.getElementById('campaignRefreshStatus');
+    const snapshotInsertionIds = new Set(Object.values(data).map((item) => Number(item.id)).filter(Number.isFinite));
+    const describeCampaignRefresh = (payload) => {
+      const currentItems = Array.isArray(payload?.items) ? payload.items : [];
+      const newItems = currentItems.filter((item) => {
+        const id = Number(item?.adops?.insertionId ?? item?.insertionId);
+        return !Number.isFinite(id) || !snapshotInsertionIds.has(id);
+      });
+      if (!newItems.length) return 'Atualizado agora: nenhuma campanha nova foi identificada.';
+      return newItems.map((item) => {
+        const name = item.campaignName || item.piCodigo || 'Nova campanha';
+        const portal = item.siteSigla || 'portal ainda não identificado';
+        const stage = item.status || item.publicationHealth?.status || 'em conferência';
+        return name + ' · ' + portal + ' · etapa: ' + String(stage).replaceAll('_', ' ');
+      }).join(' | ');
+    };
+    const waitForCampaignRefresh = async (jobId) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const progress = await liveGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress');
+        const eta = Number(progress?.etaSeconds);
+        const stage = String(progress?.stage || progress?.status || 'aguardando runner').replaceAll('_', ' ');
+        campaignRefreshStatus.textContent = 'Consulta em andamento · etapa: ' + stage
+          + (Number.isFinite(eta) && eta > 0 ? ' · previsão em ' + Math.ceil(eta / 60) + ' min' : ' · próxima verificação em até 5 minutos');
+        const status = String(progress?.status || '').toLowerCase();
+        if (['completed', 'failed', 'cancelled', 'canceled'].includes(status)) {
+          if (status !== 'completed') throw new Error('A consulta terminou com status ' + status + '.');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      throw new Error('A consulta continua em execução; acompanhe novamente em até 5 minutos.');
+    };
+    campaignRefreshButton.addEventListener('click', async () => {
+      campaignRefreshButton.disabled = true;
+      campaignRefreshStatus.textContent = 'Consultando planilha e inventário de mídias…';
+      try {
+        const requested = await liveGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=true');
+        const refreshJobId = requested?.refreshJobId || requested?.driveInventory?.refreshJobId;
+        if (refreshJobId) await waitForCampaignRefresh(refreshJobId);
+        const updated = refreshJobId
+          ? await liveGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=false')
+          : requested;
+        campaignRefreshStatus.textContent = describeCampaignRefresh(updated);
+      } catch (error) {
+        campaignRefreshStatus.textContent = error instanceof Error ? error.message : 'Não foi possível atualizar agora. Tente novamente.';
+      } finally {
+        campaignRefreshButton.disabled = false;
+      }
     });
     const params = new URLSearchParams(window.location.search);
     const validPublications = new Set(['all', 'active', 'not_published', 'blocked_upstream', 'scheduled', 'ending', 'ended']);
