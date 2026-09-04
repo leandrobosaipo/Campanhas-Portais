@@ -1953,6 +1953,11 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     });
     const campaignRefreshButton = document.getElementById('campaignRefreshButton');
     const campaignRefreshStatus = document.getElementById('campaignRefreshStatus');
+    const campaignRefreshGet = async (path) => {
+      const response = await fetch(liveApiBase + path, { method: 'GET', headers: { accept: 'application/json' } });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return response.json();
+    };
     const snapshotInsertionIds = new Set(Object.values(data).map((item) => Number(item.id)).filter(Number.isFinite));
     const describeCampaignRefresh = (payload) => {
       const currentItems = Array.isArray(payload?.items) ? payload.items : [];
@@ -1970,7 +1975,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
     };
     const waitForCampaignRefresh = async (jobId) => {
       for (let attempt = 0; attempt < 60; attempt += 1) {
-        const progress = await liveGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress');
+        const progress = await campaignRefreshGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress');
         const eta = Number(progress?.etaSeconds);
         const stage = String(progress?.stage || progress?.status || 'aguardando runner').replaceAll('_', ' ');
         campaignRefreshStatus.textContent = 'Consulta em andamento · etapa: ' + stage
@@ -1988,11 +1993,11 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       campaignRefreshButton.disabled = true;
       campaignRefreshStatus.textContent = 'Consultando planilha e inventário de mídias…';
       try {
-        const requested = await liveGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=true');
+        const requested = await campaignRefreshGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=true');
         const refreshJobId = requested?.refreshJobId || requested?.driveInventory?.refreshJobId;
         if (refreshJobId) await waitForCampaignRefresh(refreshJobId);
         const updated = refreshJobId
-          ? await liveGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=false')
+          ? await campaignRefreshGet('/api/campaign-operations/active?date=' + encodeURIComponent(liveTargetDate) + '&includeEvidence=false&refreshDrive=false')
           : requested;
         campaignRefreshStatus.textContent = describeCampaignRefresh(updated);
       } catch (error) {

@@ -352,6 +352,8 @@ test("explica a rotina e consulta novas campanhas assincronamente sem segredo no
   assert.match(output, /Último inventário de mídias/);
   assert.match(output, /id="campaignRefreshButton"/);
   assert.match(output, /Atualizar campanhas agora/);
+  assert.match(output, /const campaignRefreshGet = async/);
+  assert.match(output, /campaignRefreshGet\('\/api\/ops\/jobs\//);
   assert.match(output, /id="campaignRefreshStatus"[^>]+aria-live="polite"/);
   assert.match(output, /campaign-operations\/active\?date=/);
   assert.match(output, /refreshDrive=true/);
