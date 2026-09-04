@@ -17,7 +17,7 @@ import {
   buildMonthlyPublicationGate,
   buildPiSiteExportDownloadUrl,
   buildMonthlyReportManifest,
-  buildSevenDayForecast,
+  buildUpcomingForecast,
   classifyEvidenceStatus,
   findHistoricalAuditRegressions,
   findReportsMountSource,
@@ -1487,7 +1487,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
           </div>
         </section>
         <section class="operations-section" data-operations-content="agenda" hidden>
-          <h3>Agenda dos próximos sete dias</h3>
+          <h3>Agenda das próximas campanhas</h3>
           <div class="agenda-grid">
             <article class="agenda-block"><h4>Próximas a entrar no ar</h4>${renderForecast(forecast.starting, "periodoInicio", "Nenhuma entrada prevista na janela.", "entra no ar")}</article>
             <article class="agenda-block"><h4>Próximas a vencer</h4>${renderForecast(forecast.ending, "periodoFim", "Nenhum vencimento previsto na janela.", "encerra")}</article>
@@ -2280,7 +2280,7 @@ async function main() {
     value: enriched.reduce((sum, item) => sum + Number(item.valorLiquido || 0), 0),
   };
   summary.publicationGate = buildMonthlyPublicationGate(enriched);
-  const forecast = buildSevenDayForecast(enriched, targetDate);
+  const forecast = buildUpcomingForecast(enriched, targetDate);
   const portals = buildPortalGroups(enriched);
   const audits = {};
   const sources = {

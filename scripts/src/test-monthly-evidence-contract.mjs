@@ -89,17 +89,18 @@ test("bloqueia regressao de evidencia historica ja auditada", () => {
   }), []);
 });
 
-test("calcula entradas e vencimentos nos sete dias seguintes", () => {
+test("calcula todas as próximas entradas e vencimentos sem esvaziar a agenda", () => {
   const items = [
     { id: 1, periodoInicio: "2026-08-12", periodoFim: "2026-08-20" },
     { id: 2, periodoInicio: "2026-08-18", periodoFim: "2026-08-13" },
     { id: 3, periodoInicio: "2026-08-19", periodoFim: "2026-08-19" },
+    { id: 4, periodoInicio: "2026-08-11", periodoFim: "2026-08-11" },
   ];
-  const forecast = contract.buildSevenDayForecast(items, "2026-08-11");
+  const forecast = contract.buildUpcomingForecast(items, "2026-08-11");
 
-  assert.deepEqual(forecast.starting.map((item) => item.id), [1, 2]);
-  assert.deepEqual(forecast.ending.map((item) => item.id), [2]);
-  assert.equal(forecast.windowEnd, "2026-08-18");
+  assert.deepEqual(forecast.starting.map((item) => item.id), [1, 2, 3]);
+  assert.deepEqual(forecast.ending.map((item) => item.id), [2, 3, 1]);
+  assert.equal(forecast.windowStart, "2026-08-12");
 });
 
 test("gera opcoes unicas de portal e combina portal com busca e estado", () => {

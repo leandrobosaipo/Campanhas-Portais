@@ -339,16 +339,14 @@ export function canonicalRequiredDates(item) {
   return Array.isArray(item?.evidenceDays) ? item.evidenceDays.map((day) => day?.date).filter(Boolean) : [];
 }
 
-export function buildSevenDayForecast(insertions, targetDate) {
+export function buildUpcomingForecast(insertions, targetDate) {
   const windowStart = addIsoDays(targetDate, 1);
-  const windowEnd = addIsoDays(targetDate, 7);
-  const inWindow = (value) => typeof value === "string" && value >= windowStart && value <= windowEnd;
+  const isUpcoming = (value) => typeof value === "string" && value >= windowStart;
   const sortByDate = (field) => (left, right) => String(left[field]).localeCompare(String(right[field])) || Number(left.id) - Number(right.id);
   return {
     windowStart,
-    windowEnd,
-    starting: (insertions || []).filter((item) => inWindow(item.periodoInicio)).sort(sortByDate("periodoInicio")),
-    ending: (insertions || []).filter((item) => inWindow(item.periodoFim)).sort(sortByDate("periodoFim")),
+    starting: (insertions || []).filter((item) => isUpcoming(item.periodoInicio)).sort(sortByDate("periodoInicio")),
+    ending: (insertions || []).filter((item) => isUpcoming(item.periodoFim)).sort(sortByDate("periodoFim")),
   };
 }
 
