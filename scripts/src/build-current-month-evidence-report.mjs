@@ -1977,7 +1977,7 @@ function renderHtml({ insertions, portals, audits, summary, forecast, sources, d
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const progress = await campaignRefreshGet('/api/ops/jobs/' + encodeURIComponent(jobId) + '/progress');
         const eta = Number(progress?.etaSeconds);
-        const stage = String(progress?.stage || progress?.status || 'aguardando runner').replaceAll('_', ' ');
+        const stage = String(progress?.stageLabel || progress?.stageKey || progress?.stage || progress?.status || 'aguardando runner').replaceAll('_', ' ');
         campaignRefreshStatus.textContent = 'Consulta em andamento · etapa: ' + stage
           + (Number.isFinite(eta) && eta > 0 ? ' · previsão em ' + Math.ceil(eta / 60) + ' min' : ' · próxima verificação em até 5 minutos');
         const status = String(progress?.status || '').toLowerCase();
