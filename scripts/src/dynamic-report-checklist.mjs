@@ -147,6 +147,7 @@ export function installCampaignChecklist({ apiBase, escapeHtml, todayInCuiaba })
     document.getElementById("campaignChecklistCopy").hidden = false;
   });
   document.getElementById("campaignChecklistCopy").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
     const text = document.getElementById("campaignChecklistOutput").textContent;
     try {
       await navigator.clipboard.writeText(text);
@@ -161,7 +162,7 @@ export function installCampaignChecklist({ apiBase, escapeHtml, todayInCuiaba })
       document.execCommand("copy");
       textarea.remove();
     }
-    event.currentTarget.textContent = "Orientação copiada";
+    button.textContent = "Orientação copiada";
   });
   const refreshButton = document.getElementById("campaignRefreshButton");
   const refreshStatus = document.getElementById("campaignRefreshStatus");
