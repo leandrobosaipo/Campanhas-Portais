@@ -2,6 +2,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { campaignChecklistRuntime } from "./dynamic-report-checklist.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const outputDir = path.join(repoRoot, "docs/reports/adops-evidencias");
@@ -103,6 +104,8 @@ export function renderDynamicEvidenceReport() {
     const filterPanel=byId('filterPanel');const openFilters=()=>{byId('mobileFilters').innerHTML='';for(const original of [controls.search,controls.portal,controls.publication,controls.evidence]){const clone=original.cloneNode(true);clone.id='mobile-'+original.id;const field=document.createElement('label');field.className='field';field.textContent=original.previousElementSibling?.textContent||original.getAttribute('aria-label')||'Filtro';field.append(clone);byId('mobileFilters').append(field)}filterPanel.showModal()};byId('filterToggle').addEventListener('click',openFilters);byId('mobileFilterToggle').addEventListener('click',openFilters);byId('filterClose').addEventListener('click',()=>filterPanel.close());byId('clearFilters').addEventListener('click',()=>{for(const id of ['mobile-campaignSearch','mobile-portalFilter'])byId(id).value='';for(const id of ['mobile-publicationFilter','mobile-evidenceFilter'])byId(id).value='all'});byId('applyMobileFilters').addEventListener('click',()=>{controls.search.value=byId('mobile-campaignSearch').value;controls.portal.value=byId('mobile-portalFilter').value;controls.publication.value=byId('mobile-publicationFilter').value;controls.evidence.value=byId('mobile-evidenceFilter').value;filterPanel.close();load()});
     const operationsPanel=byId('operationsPanel');const selectOperation=(section)=>{document.querySelectorAll('[data-operation-content]').forEach(content=>{content.hidden=content.dataset.operationContent!==section})};document.querySelectorAll('[data-operations-section]').forEach(button=>button.addEventListener('click',()=>{selectOperation(button.dataset.operationsSection);operationsPanel.showModal()}));document.querySelectorAll('[data-operation-tab]').forEach(button=>button.addEventListener('click',()=>selectOperation(button.dataset.operationTab)));byId('operationsClose').addEventListener('click',()=>operationsPanel.close());
     byId('evidenceClose').addEventListener('click',()=>byId('evidenceModal').close());byId('evidencePrevious').addEventListener('click',()=>{if(state.evidenceIndex<state.evidenceDays.length-1){state.evidenceIndex++;renderEvidenceModal()}});byId('evidenceNext').addEventListener('click',()=>{if(state.evidenceIndex>0){state.evidenceIndex--;renderEvidenceModal()}});byId('mediaClose').addEventListener('click',()=>byId('mediaModal').close());byId('mediaModal').addEventListener('close',()=>{byId('mediaVideo').pause();byId('mediaVideo').removeAttribute('src');byId('mediaImage').removeAttribute('src')});for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',(event)=>{if(event.target===dialog)dialog.close()});
+    ${campaignChecklistRuntime}
+    installCampaignChecklist({apiBase:API_BASE,escapeHtml,todayInCuiaba});
     load();loadOperationsEnhanced().catch(()=>{byId('operationSummary').textContent='Não foi possível consultar o resumo operacional agora.'});
   })();
   </script>

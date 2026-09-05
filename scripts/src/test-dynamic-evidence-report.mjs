@@ -7,7 +7,7 @@ import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs
 const html = renderDynamicEvidenceReport();
 
 test("gera uma casca pequena sem registros incorporados", () => {
-  assert.ok(html.length < 80_000, `HTML inicial inesperadamente grande: ${html.length}`);
+  assert.ok(html.length < 85_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);
   assert.match(html, /\/api\/reports\/evidences\/monthly/);
 });
@@ -104,6 +104,21 @@ test("modal operacional dinâmico mostra agenda agrupada, fontes oficiais e atua
   ]) assert.match(html, new RegExp(marker));
   assert.match(html, /role="status" aria-live="polite"/);
   assert.match(html, /Map\.groupBy/);
+});
+
+test("rotina oferece checklist local e acessivel sem requisicoes de escrita", () => {
+  for (const marker of [
+    "Pendências para conferência",
+    "campaignChecklistDialog",
+    "Conferir pendências",
+    "Gerar orientação",
+    "Copiar orientação",
+    'aria-live=\\"polite\\"',
+    "navigator.clipboard.writeText",
+    "document.execCommand",
+    "Respostas temporárias",
+  ]) assert.match(html, new RegExp(marker));
+  assert.doesNotMatch(html, /campaign-operations\/active[^\n]{0,300}method:\s*['\"](?:POST|PUT|PATCH|DELETE)/);
 });
 
 test("cancela resposta antiga e carrega imagens somente quando necessário", () => {

@@ -21,7 +21,9 @@ const monthlyPayload = {
 };
 
 test("Chrome real renderiza a resposta dinâmica da API", async () => {
+  const requestMethods = [];
   const server = createServer((request, response) => {
+    requestMethods.push(request.method);
     response.setHeader("access-control-allow-origin", "*");
     if (request.url === "/") {
       response.setHeader("content-type", "text/html; charset=utf-8");
@@ -37,7 +39,18 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     response.setHeader("content-type", "application/json");
     if (request.url.startsWith("/api/reports/evidences/monthly")) response.end(JSON.stringify(monthlyPayload));
     else if (request.url === "/api/ops/daily-print-status") response.end(JSON.stringify({ lastAttempt: { status: "completed", approved: 1, expected: 1, targetDate: "2026-09-01", summary: "Rotina concluída." } }));
-    else response.end(JSON.stringify({ sheet: { name: "SETEMBRO 2026" }, items: [], upcomingItems: [], driveInventory: { snapshotStatus: "fresh", itemCount: 8 } }));
+    else response.end(JSON.stringify({
+      sheet: { name: "SETEMBRO 2026" }, driveInventory: { snapshotStatus: "fresh", itemCount: 8 }, upcomingItems: [],
+      items: [{
+        status: "needs_media", campaignName: "Campanha pendente", piCodigo: "PI 999", siteSigla: "OMT",
+        period: { start: "2026-09-01", end: "2026-09-30" }, format: { normalized: "MEGABANNER TOPO" },
+        sheetSource: { sheetName: "SETEMBRO 2026", rowNumber: 12 }, sourceIdentity: { decision: "confirmed" },
+        canonicalSelection: { decision: "confirmed" }, drive: { status: "not_found", mediaFiles: [], mediaMatchesFormat: false },
+        adops: { status: "matched", mediaUrl: null, publicConfirmation: "not_published" },
+        publicationHealth: { status: "blocked_upstream", reason: "media_missing", expectedGroupId: 1 },
+        evidenceHealth: { status: "blocked_upstream" }, requiredActions: ["locate_or_upload_media"], blockingIssues: [],
+      }],
+    }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -50,6 +63,9 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.match(stdout, /Campanha dinâmica/);
     assert.match(stdout, /id="metricCampaigns">1</);
     assert.match(stdout, /Dados consultados diretamente da API AdOps/);
+    assert.match(stdout, /Campanha pendente/);
+    assert.match(stdout, /Conferir pendências/);
+    assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
