@@ -7950,7 +7950,7 @@ async function main() {
         requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
         requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
         requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
-        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true,
+        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true && visiblePageDateAudit?.skipped !== true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,
