@@ -154,6 +154,20 @@ try {
     "29/07/2026 15:29",
   );
 
+  await page.setContent("<main>Portal ao vivo sem datestamp visível</main>");
+  const today = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const liveDateAudit = await stabilizeVisibleRetroDatesBeforeCapture(page, {
+    domain: "afolhalivre.com",
+    pageDateSelectors: ["time.js-topbar-datetime"],
+    auditConfig: { requireVisiblePageDate: true },
+  }, `${today}T12:00:00-04:00`);
+  assert.deepEqual(liveDateAudit, { ok: true, skipped: true, reason: "live_same_day" });
+
   await page.setContent(`
     <main><article>
       <a href="https://afolhalivre.com/atual/"><img src="https://example.test/atual.jpg"></a>

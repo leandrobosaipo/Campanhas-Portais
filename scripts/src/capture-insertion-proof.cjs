@@ -2125,7 +2125,10 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
   if (!captureAt || !requireVisiblePageDate) {
     return { ok: true, skipped: true };
   }
-  const [targetDate] = String(captureAt).split("T");
+  const targetDate = dateInCuiaba(captureAt) || String(captureAt).split("T")[0];
+  if (targetDate === getDateLabel().isoDate) {
+    return { ok: true, skipped: true, reason: "live_same_day" };
+  }
   const [year, month, day] = targetDate.split("-");
   const expectedDate = `${day}/${month}/${year}`;
   const labels = buildFrozenPageDateLabels(captureAt);
