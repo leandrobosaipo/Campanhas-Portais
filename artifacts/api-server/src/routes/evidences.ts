@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, evidencesTable } from "@workspace/db";
+import { db, evidencesTable, insertionsTable } from "@workspace/db";
 import {
   CreateEvidenceParams,
   CreateEvidenceBody,
@@ -42,6 +42,11 @@ router.post("/insertions/:insertionId/evidences", async (req, res): Promise<void
     arquivoUrl: parsed.data.arquivoUrl ?? null,
     titulo: parsed.data.titulo ?? null,
   }).returning();
+  if (parsed.data.tipo === "print") {
+    await db.update(insertionsTable)
+      .set({ printGerado: true, updatedAt: new Date() })
+      .where(eq(insertionsTable.id, params.data.insertionId));
+  }
   res.status(201).json(evidence);
 });
 
