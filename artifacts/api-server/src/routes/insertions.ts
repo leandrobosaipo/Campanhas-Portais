@@ -1759,7 +1759,8 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
-    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates);
+    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates)
+      .filter((item) => isValidHttpUrl(item.mediaUrl));
 
     const normalizedSearch = normalizeTextKey(query.search);
     const baseItems = monthly.map((item) => ({

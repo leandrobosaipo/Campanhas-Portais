@@ -57,6 +57,7 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "thumbs evidence-track",
     "latest-label",
     "evidenceDownloadUrl",
+    "imageMaxWidth=800",
     "imageMaxWidth=1600",
     "preview=1",
   ]) assert.match(html, new RegExp(marker));

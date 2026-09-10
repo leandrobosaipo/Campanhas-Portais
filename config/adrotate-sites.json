@@ -564,6 +564,7 @@
     "previewSecret": "adops-preview-afl-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
+      ".cod5-adops-frozen-datestamp",
       ".header-datestamp-full",
       ".header-datestamp-short"
     ],
