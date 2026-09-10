@@ -610,7 +610,7 @@
           "MEGABANNER",
           "MEGABANNER TPO"
         ],
-        "inputAliases": ["TOPO"],
+        "inputAliases": ["TOPO", "MEGA BANNER TOPO - 825 X 120"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".g.g-1",

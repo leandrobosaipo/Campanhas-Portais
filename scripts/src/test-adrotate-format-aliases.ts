@@ -20,6 +20,10 @@ test("INTERNO resolves to the canonical internal-news group", () => {
   assert.equal(getSiteFormatMapping("AFL", "BANNER INTERNO NOTICIA")?.page, "article");
 });
 
+test("AFL resolves the PI label with dimensions to the top group", () => {
+  assert.equal(getAdRotateGroupId("AFL", "MEGA BANNER TOPO - 825 X 120"), 1);
+});
+
 test("article fallback URLs stay on the configured portal domain", () => {
   for (const [siteSigla, site] of Object.entries(getSiteIntegrations())) {
     if (!site.articleFallbackUrl) continue;
