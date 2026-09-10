@@ -2528,6 +2528,7 @@ async function callPiAgentOpenAI(packageContext) {
       "Extraia dados de PI para AdOps.",
       "Responda apenas JSON no schema solicitado.",
       "Nao invente campos; use null quando nao houver evidencia.",
+      "Agencia ausente deve ser registrada em missingFields, mas nao transforma sozinha o status em needs_review: e pendencia comercial, nao bloqueio operacional.",
       "Use citacao curta da PI, nome de arquivo ou caminho para cada campo critico.",
       "Quando houver periodoInicio e periodoFim no mesmo mes, preencha competencia como MM/YYYY a partir do periodoInicio.",
       "A IA nao aplica mudancas; scripts deterministas validam e executam depois.",
@@ -2842,11 +2843,12 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
 
 function validateDrivePiApplyFields(fields) {
   const missing = [];
+  const commercialWarnings = [];
   if (!fields.piCodigo) missing.push("piCodigo");
   if (!fields.campaignName) missing.push("campanhaNome");
   if (!fields.competencia) missing.push("competencia");
   if (!fields.clienteId) missing.push("clienteId");
-  if (!fields.agenciaId) missing.push("agenciaId");
+  if (!fields.agenciaId) commercialWarnings.push("missing_agenciaId");
   if (!fields.insertions.length) missing.push("insertions");
   if (fields.agentQuality && !fields.agentQuality.ok) missing.push("agentQuality");
 
@@ -2864,6 +2866,7 @@ function validateDrivePiApplyFields(fields) {
   return {
     ok: missing.length === 0 && invalidInsertions.length === 0,
     missing,
+    commercialWarnings,
     invalidInsertions,
     agentQuality: fields.agentQuality || null,
   };
@@ -3041,6 +3044,7 @@ function buildDrivePiReviewReasons({
   if (packageMissing.includes("media") && packageReadiness?.issues?.includes("missing_media")) reasons.push("missing_media");
   for (const item of packageReadiness?.issues || []) reasons.push(item);
   for (const item of validation?.missing || []) reasons.push(`missing_${item}`);
+  for (const item of validation?.commercialWarnings || []) reasons.push(item);
   if (validation?.invalidInsertions?.length) reasons.push("invalid_insertions");
   if (validation?.agentQuality && !validation.agentQuality.ok) reasons.push("agent_quality");
   if (rollout && !rollout.ok) reasons.push("rollout_blocked");
@@ -8664,6 +8668,7 @@ export {
   validateOptionalDrivePiDestination,
   validateExpectedDrivePiCommercialContext,
   validateExpectedDrivePiIdentity,
+  validateDrivePiApplyFields,
   extractExplicitPiFromPdfText,
   extractExplicitPisFromPdfText,
   validateCompositePdfEvidence,

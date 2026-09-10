@@ -8,6 +8,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"));
 
+const agencyPending = runner.validateDrivePiApplyFields({
+  piCodigo: "PI 17464",
+  campaignName: "CAMARA FAZ, CUIABA RECONHECE",
+  competencia: "09/2026",
+  clienteId: 158,
+  agenciaId: null,
+  insertions: [{ siteId: 33, localFormato: "LATERAL 02", periodoInicio: "2026-09-04", periodoFim: "2026-09-22" }],
+});
+assert.equal(agencyPending.ok, true, "agencia ausente nao deve bloquear publicacao operacional segura");
+assert.deepEqual(agencyPending.missing, []);
+assert.deepEqual(agencyPending.commercialWarnings, ["missing_agenciaId"]);
+
 const scoped = runner.filterSiteInsertions([
   { siteId: 33, localFormato: "MEGABANNER TOPO", periodoInicio: "2026-07-09", periodoFim: "2026-07-29" },
   { siteId: 33, localFormato: "INSTAGRAM STORIES", periodoInicio: "2026-07-09", periodoFim: "2026-07-14" },

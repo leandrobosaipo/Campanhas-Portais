@@ -10,6 +10,8 @@ O resultado alimenta `parsedPi`; os scripts deterministas continuam responsaveis
 - Cada campo precisa de confianca e citacao.
 - Conflitos devem ser listados explicitamente.
 - Campo critico sem citacao ou abaixo de `ADOPS_PI_AGENT_MIN_CONFIDENCE` entra em `needs_review`.
+- Agência ausente ou sem correspondência mestre deve ficar em `missingFields` como pendência comercial. Sozinha, não muda o status para `needs_review` nem bloqueia cadastro, AdRotate ou evidência.
+- O agente nunca cria ou escolhe agência por aproximação. O vínculo pode ser enriquecido depois, antes do faturamento ou envio comercial.
 
 ## Prompt estruturado
 
@@ -21,6 +23,7 @@ Nao invente campos. Se nao encontrar, use null.
 Marque cada campo com confianca entre 0 e 1.
 Inclua citacao curta da fonte para cada campo.
 Liste conflitos e campos faltantes.
+Agencia ausente e pendencia comercial: mantenha null, liste em missingFields e nao use isso sozinho para marcar needs_review.
 Nunca recomende mutacao direta; descreva somente os dados observados.
 Quando houver periodo de veiculacao com inicio e fim no mesmo mes, preencha `competencia` como `MM/YYYY` usando a data inicial.
 
