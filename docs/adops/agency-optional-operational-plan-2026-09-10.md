@@ -15,3 +15,7 @@
 ## Rollback
 
 Reverter o commit desta mudança e redeployar a release anterior. Nenhuma migração de banco é necessária.
+
+## Correção derivada da validação viva
+
+O primeiro publish resolveu a mídia, mas o checklist bloqueou `Segunda Dobra Lateral` com `group_not_resolved`. A planilha e a inserção canônica `3019` confirmam essa posição; foi adicionado o alias exato ao grupo 7 já existente, sem criar regra ou slot novo.
