@@ -130,8 +130,8 @@ export function parseIndividualEvidenceDownloadOptions(query: Record<string, unk
   const cod5_imageMaxWidth = Number.parseInt(String(query.imageMaxWidth ?? "1600"), 10);
   const cod5_imageQuality = Number.parseInt(String(query.imageQuality ?? "72"), 10);
   if (cod5_variant !== "web") throw new EvidenceExportInputError("O download individual exige variant=web.");
-  if (cod5_imageMaxWidth !== 1600 || cod5_imageQuality !== 72) {
-    throw new EvidenceExportInputError("O portal fixa imageMaxWidth=1600 e imageQuality=72.");
+  if (![[800, 60], [1600, 72]].some(([width, quality]) => cod5_imageMaxWidth === width && cod5_imageQuality === quality)) {
+    throw new EvidenceExportInputError("Use o preset de miniatura 800x60 ou de download 1600x72.");
   }
   return { variant: "web", imageMaxWidth: cod5_imageMaxWidth, imageQuality: cod5_imageQuality };
 }
