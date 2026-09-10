@@ -2140,7 +2140,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       const style = window.getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) return false;
       const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+      return rect.width > 0 && rect.height > 0;
     };
     const values = [];
     for (const selector of rawSelectors) {

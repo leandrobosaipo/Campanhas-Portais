@@ -154,6 +154,14 @@ try {
     "29/07/2026 15:29",
   );
 
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const belowFoldDateAudit = await stabilizeVisibleRetroDatesBeforeCapture(page, {
+    domain: "afolhalivre.com",
+    pageDateSelectors: ["time.js-topbar-datetime"],
+    auditConfig: { requireVisiblePageDate: true },
+  }, "2026-07-29T20:00:00-04:00");
+  assert.equal(belowFoldDateAudit.ok, true);
+
   await page.setContent("<main>Portal ao vivo sem datestamp visível</main>");
   const today = new Intl.DateTimeFormat("sv-SE", {
     timeZone: "America/Cuiaba",
