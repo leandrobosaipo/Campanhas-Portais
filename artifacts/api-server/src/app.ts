@@ -94,7 +94,11 @@ app.use(
     },
   }),
 );
-const browserOrigins = new Set(["https://sites.codigo5.com.br", "https://adops.codigo5.com.br"]);
+const browserOrigins = new Set([
+  "https://sites.codigo5.com.br",
+  "https://adops.codigo5.com.br",
+  "https://adops-campanhas-portais.pages.dev",
+]);
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
@@ -117,6 +121,11 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const providedInternal = req.header("x-adops-api-token")?.trim() ?? "";
   if (internalApiToken && providedInternal === internalApiToken) {
     res.locals.adopsInternalAuth = true;
+    next();
+    return;
+  }
+  const cod5_bearerOperador = req.header("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";
+  if (operatorApiToken && cod5_bearerOperador === operatorApiToken) {
     next();
     return;
   }

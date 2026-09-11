@@ -77,6 +77,8 @@ import { getDriveInventoryStatus } from "../lib/drive-inventory";
 import { toPublicDriveInventoryStatus } from "../lib/drive-inventory-public";
 import { getActiveCampaignOperations, getSuccessfulPublicationReadback, publicationReadbackConfirms } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
+import { cod5_criarJobOperacional } from "../lib/ops-job-store";
+import { cod5_listarRelatoriosAnalyticsConcluidos, type AnalyticsReportSummary } from "./analytics";
 import {
   buildMonthlyEvidenceSource,
   CampaignEvidenceExportConflict,
@@ -465,39 +467,6 @@ function buildEvidenceExportFileName(
   };
 }
 
-const ANALYTICS_PUBLIC_API_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
-
-async function proxyCampaignEvidenceWorkerRequest(req: any, res: any) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-  try {
-    const upstream = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}${req.originalUrl}`, {
-      method: req.method,
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        accept: req.header("accept") || "application/json",
-        ...(req.method === "POST" ? { "content-type": "application/json" } : {}),
-        ...(req.header("authorization") ? { authorization: req.header("authorization") } : {}),
-        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key") } : {}),
-      },
-      ...(req.method === "POST" ? { body: JSON.stringify(req.body ?? {}) } : {}),
-    });
-    for (const header of ["content-type", "cache-control", "location"]) {
-      const value = upstream.headers.get(header);
-      if (value) res.setHeader(header, value);
-    }
-    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
-  } catch (error) {
-    res.status(503).json({
-      error: "campaign_evidence_worker_unavailable",
-      details: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
   if (!captureAt) return false;
   if (isCaptureAtInRetroWindow(captureAt)) return false;
@@ -507,30 +476,6 @@ function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
     allowedWindow: { start: "18:00", endExclusive: "22:00", timezone: "America/Cuiaba" },
   });
   return true;
-}
-
-type AnalyticsReportSummary = {
-  id: string;
-  status: string;
-  downloadUrl: string | null;
-  periodStart: string | null;
-  periodEnd: string | null;
-  periodMode?: string | null;
-  propertyKey: string | null;
-  createdAt?: string | null;
-  fileName?: string | null;
-};
-
-async function fetchCompletedAnalyticsReports(insertionId: number): Promise<AnalyticsReportSummary[]> {
-  const response = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}/api/analytics/insertions/${insertionId}/reports`, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-  if (!response.ok) return [];
-  const payload = await response.json().catch(() => null) as { reports?: AnalyticsReportSummary[] } | null;
-  const reports = Array.isArray(payload?.reports) ? payload.reports : [];
-  return reports.filter((item) => item.status === "completed" && isValidHttpUrl(item.downloadUrl));
 }
 
 async function listVisibleOperationalDocuments(insertion: Awaited<ReturnType<typeof enrichInsertion>>) {
@@ -652,45 +597,14 @@ async function createLocalPiSiteExportJob(options: {
   requestedBy: string;
   idempotencyKey: string;
 }) {
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status
-       FROM ops_jobs
-      WHERE kind = 'pi-site-export'
-        AND payload_json::jsonb ->> 'idempotencyKey' = $1
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [options.idempotencyKey],
-  );
-  if (existing.rows[0]) {
-    if (existing.rows[0].status === "failed") {
-      const now = new Date().toISOString();
-      const retried = await pool.query(
-        `UPDATE ops_jobs
-            SET status = 'ready_for_runner', payload_json = $1, result_json = $2,
-                error_text = NULL, runner_id = NULL, updated_at = $3
-          WHERE id = $4 AND status = 'failed'`,
-        [
-          JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }),
-          JSON.stringify({ stage: "ready_for_runner", retryOf: existing.rows[0].id, retriedAt: now }),
-          now,
-          existing.rows[0].id,
-        ],
-      );
-      if ((retried.rowCount ?? 0) > 0) {
-        return { jobId: existing.rows[0].id, status: "ready_for_runner", duplicate: false };
-      }
-    }
-    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
-  }
-
-  const jobId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  await pool.query(
-    `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
-     VALUES ($1, 'pi-site-export', 'ready_for_runner', $2, NULL, NULL, $3, NULL, $4, $5)`,
-    [jobId, JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }), options.requestedBy, now, now],
-  );
-  return { jobId, status: "ready_for_runner", duplicate: false };
+  const created = await cod5_criarJobOperacional({
+    kind: "pi-site-export",
+    payload: options.payload,
+    requestedBy: options.requestedBy,
+    idempotencyKey: options.idempotencyKey,
+    retryFailed: true,
+  });
+  return { jobId: created.job.id, status: created.job.status, duplicate: created.duplicate };
 }
 
 async function getLocalPiSiteExportJob(jobId: string) {
@@ -714,12 +628,26 @@ async function getLocalPiSiteExportJob(jobId: string) {
     stage: typeof artifactResult?.stage === "string" ? artifactResult.stage : row.status,
     piCodigo: payload?.piCodigo ?? null,
     siteSigla: payload?.siteSigla ?? null,
-    mode: payload?.mode ?? null,
-    variant: payload?.variant ?? null,
+    mode: artifactResult?.mode ?? payload?.mode ?? "full",
+    variant: artifactResult?.variant ?? payload?.variant ?? "original",
+    pdfMaxWidth: typeof artifactResult?.pdfMaxWidth === "number" ? artifactResult.pdfMaxWidth : payload?.pdfMaxWidth ?? null,
+    pdfQuality: typeof artifactResult?.pdfQuality === "number" ? artifactResult.pdfQuality : payload?.pdfQuality ?? null,
+    pdfResolution: typeof artifactResult?.pdfResolution === "number" ? artifactResult.pdfResolution : payload?.pdfResolution ?? null,
+    insertionIds: Array.isArray(artifactResult?.insertionIds)
+      ? artifactResult.insertionIds
+      : Array.isArray(payload?.insertionIds) ? payload.insertionIds : [],
+    invalidatedEvidenceIds: Array.isArray(artifactResult?.invalidatedEvidenceIds) ? artifactResult.invalidatedEvidenceIds : [],
+    regeneratedDates: Array.isArray(artifactResult?.regeneratedDates) ? artifactResult.regeneratedDates : [],
+    analyticsPiStatus: artifactResult?.analyticsPiStatus ?? null,
+    analyticsFullMonthStatus: artifactResult?.analyticsFullMonthStatus ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
+    pdfUrl: typeof artifactResult?.pdfUrl === "string" ? artifactResult.pdfUrl : null,
+    pdfUrls: Array.isArray(artifactResult?.pdfUrls) ? artifactResult.pdfUrls : [],
+    artifacts: artifactResult?.artifacts && typeof artifactResult.artifacts === "object" ? artifactResult.artifacts : null,
     artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
     artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
     artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
+    artifactSha256: typeof artifactResult?.artifactSha256 === "string" ? artifactResult.artifactSha256 : null,
     error: row.error_text,
     runnerId: row.runner_id,
     createdAt: row.created_at,
@@ -733,7 +661,7 @@ async function attachAnalyticsPdfsToExport(tempDir: string, insertionId: number,
 }
 
 async function attachAnalyticsPdfsToExportAtPath(tempDir: string, insertionId: number, lines: string[], relativeDir: string) {
-  const reports = await fetchCompletedAnalyticsReports(insertionId);
+  const reports = await cod5_listarRelatoriosAnalyticsConcluidos(insertionId);
   if (!reports.length) {
     lines.push("Relatório de Analytics: nenhum PDF concluído encontrado para anexar.");
     lines.push("");
@@ -1342,7 +1270,7 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
   const descriptors = await Promise.all(insertions.map(async (item) => {
     const [evidences, analyticsReports, visibleDocs] = await Promise.all([
       db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, item.id)),
-      fetchCompletedAnalyticsReports(item.id),
+      cod5_listarRelatoriosAnalyticsConcluidos(item.id),
       listVisibleOperationalDocuments(item),
     ]);
 
@@ -1433,7 +1361,7 @@ function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, 
   return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
 }
 
-async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
+export async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
   const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia, true, asOfDate);
   if (!operations.length) return null;
   const evidenceDescriptors = [];
@@ -3422,11 +3350,6 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
   }
 });
 
-router.post("/campaign-evidence-exports/jobs", proxyCampaignEvidenceWorkerRequest);
-router.post("/campaign-evidence-exports/jobs/batch", proxyCampaignEvidenceWorkerRequest);
-router.get("/campaign-evidence-exports/jobs/:jobId", proxyCampaignEvidenceWorkerRequest);
-router.get("/campaign-evidence-exports/jobs/:jobId/download", proxyCampaignEvidenceWorkerRequest);
-
 router.get("/campaign-operations/evidence-monthly-source", async (req, res): Promise<void> => {
   const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
     ? req.query.date
@@ -3768,6 +3691,31 @@ router.get("/pi-site-exports/jobs/:jobId/download", async (req, res): Promise<vo
     res.status(500).json({
       error: "Falha ao redirecionar o download do pacote PI/site.",
       details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> => {
+  try {
+    const cod5_job = await getLocalPiSiteExportJob(req.params.jobId);
+    if (!cod5_job) {
+      res.status(404).json({ error: "Job PI/site não encontrado." });
+      return;
+    }
+    if (cod5_job.status !== "completed" || !cod5_job.pdfUrl) {
+      res.status(409).json({
+        error: "PDF ainda não está pronto para download.",
+        jobId: cod5_job.jobId,
+        status: cod5_job.status,
+        stage: cod5_job.stage,
+      });
+      return;
+    }
+    res.redirect(cod5_job.pdfUrl);
+  } catch (cod5_erro) {
+    res.status(500).json({
+      error: "Falha ao redirecionar o PDF do pacote PI/site.",
+      details: cod5_erro instanceof Error ? cod5_erro.message : String(cod5_erro),
     });
   }
 });
@@ -4245,7 +4193,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     await writeFile(reportPath, lines.join("\n"), "utf8");
 
     const allReports = (
-      await Promise.all(exportableInsertions.map((item) => fetchCompletedAnalyticsReports(item.id)))
+      await Promise.all(exportableInsertions.map((item) => cod5_listarRelatoriosAnalyticsConcluidos(item.id)))
     ).flat();
     const archiveBase = buildPiSiteExportArchiveBaseName(descriptor, exportableInsertions, allReports);
     const zipPath = join(tmpdir(), `${archiveBase}.zip`);

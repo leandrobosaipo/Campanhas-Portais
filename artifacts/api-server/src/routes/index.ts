@@ -14,6 +14,7 @@ import campaignOperationsRouter from "./campaign-operations";
 import campaignFulfillmentsRouter from "./campaign-fulfillments";
 import opsRouter from "./ops";
 import reportAuthRouter from "./report-auth";
+import analyticsRouter from "./analytics";
 
 const router: IRouter = Router();
 
@@ -23,6 +24,7 @@ router.use(sitesRouter);
 router.use(clientsRouter);
 router.use(agenciesRouter);
 router.use(campaignsRouter);
+router.use(analyticsRouter);
 router.use(insertionsRouter);
 router.use(evidencesRouter);
 router.use(dashboardRouter);

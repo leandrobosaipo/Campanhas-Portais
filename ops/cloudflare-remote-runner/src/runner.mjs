@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
+import { cod5_coordenar_reservas } from "./runner-polling.mjs";
 import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
@@ -8496,8 +8497,8 @@ async function runSchedulerIfDue(force = false) {
   return runSchedulerTrigger(CONTROL_PLANE_PROVIDER);
 }
 
-async function runOnce(poolKinds = kinds) {
-  const job = await claimNext(poolKinds);
+async function runOnce(poolKinds = kinds, cod5_reservar = () => claimNext(poolKinds)) {
+  const job = await cod5_reservar();
   if (!job) {
     console.log(`[runner] nenhum job pronto para ${RUNNER_ID}`);
     return false;
@@ -8531,7 +8532,7 @@ async function runOnce(poolKinds = kinds) {
   return true;
 }
 
-async function runPool(pool, workerIndex) {
+async function runPool(pool, workerIndex, cod5_reservar) {
   const poolLabel = `${pool.kinds.join("+")}:${workerIndex + 1}/${pool.concurrency}`;
   for (;;) {
     try {
@@ -8539,7 +8540,7 @@ async function runPool(pool, workerIndex) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
       }
-      const handled = await runOnce(pool.kinds);
+      const handled = await runOnce(pool.kinds, cod5_reservar);
       runnerLastCycleError = null;
       runnerLastSuccessAt = new Date().toISOString();
       if (!handled) await sleep(POLL_INTERVAL_MS);
@@ -8595,9 +8596,10 @@ async function main() {
   startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  const workers = pools.flatMap((pool) => (
-    Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex))
-  ));
+  const workers = pools.flatMap((pool) => {
+    const cod5_reservar = cod5_coordenar_reservas(() => claimNext(pool.kinds), { cod5_intervalo: POLL_INTERVAL_MS });
+    return Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex, cod5_reservar));
+  });
   if (CONTROL_PLANE_PROVIDER === "macmini") workers.push(runSchedulerLoop());
   if (DRIVE_PI_MONITOR_ENABLED) workers.push(runDrivePiMonitorLoop());
   await Promise.all(workers);
