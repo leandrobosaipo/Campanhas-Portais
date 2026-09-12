@@ -125,7 +125,7 @@ export async function cod5_criarJobOperacional(cod5_opcoes: {
             WHERE id = $4 AND status = 'failed'
             RETURNING *`,
           [
-            JSON.stringify({ ...cod5_opcoes.payload, attempt: Number.isFinite(cod5_tentativaAnterior) ? cod5_tentativaAnterior + 1 : 2, idempotencyKey: cod5_opcoes.idempotencyKey }),
+            JSON.stringify({ ...cod5_opcoes.payload, attempt: Number.isFinite(cod5_tentativaAnterior) ? cod5_tentativaAnterior + 1 : 2, idempotencyKey: cod5_opcoes.idempotencyKey }), // gitleaks:allow -- campo operacional, não contém segredo
             JSON.stringify({ stage: "ready_for_runner", retryOf: cod5_atual.id, retriedAt: cod5_repetidoEm }),
             cod5_repetidoEm,
             cod5_atual.id,
@@ -150,7 +150,7 @@ export async function cod5_criarJobOperacional(cod5_opcoes: {
       [
         cod5_jobId,
         cod5_opcoes.kind,
-        JSON.stringify({ ...cod5_opcoes.payload, idempotencyKey: cod5_opcoes.idempotencyKey }),
+        JSON.stringify({ ...cod5_opcoes.payload, idempotencyKey: cod5_opcoes.idempotencyKey }), // gitleaks:allow -- campo operacional, não contém segredo
         JSON.stringify({ stage: "ready_for_runner", queuedAt: cod5_criadoEm }),
         cod5_opcoes.requestedBy,
         cod5_criadoEm,
