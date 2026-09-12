@@ -32,6 +32,7 @@ services:
     environment:
       PORT: "4011"
       NODE_ENV: production
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-${ADOPS_IMAGE_TAG:-unknown}}
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
