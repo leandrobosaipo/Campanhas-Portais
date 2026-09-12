@@ -189,7 +189,7 @@ assert(adrotatePlugin.includes("function adrotate_adops_safe_maintenance_call"),
 assert(adrotatePlugin.includes("catch (\\Throwable $error)"), "RedisException não pode invalidar uma publicação AdRotate já gravada");
 const maintenanceHarness = String.raw`
 class WP_CLI { public static $warnings = array(); public static function add_command($name, $callable) {} public static function warning($message) { self::$warnings[] = $message; } }
-class RedisException extends Exception {}
+if (!class_exists('RedisException')) { class RedisException extends Exception {} }
 function esc_url_raw($value) { return preg_match('/^https:\/\//', (string) $value) ? (string) $value : ''; }
 function esc_attr($value) { return htmlspecialchars((string) $value, ENT_QUOTES); }
 function wp_cache_flush() { throw new RedisException('redis unavailable'); }
