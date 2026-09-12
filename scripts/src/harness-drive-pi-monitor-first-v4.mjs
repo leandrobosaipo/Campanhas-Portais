@@ -57,7 +57,7 @@ await check("runner-cria-lock-antes-do-packaging", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
   const flowStart = source.indexOf("async function executeDrivePiIngest(payload)");
   const flowEnd = source.indexOf("async function executePrintBatch(job)", flowStart);
-  const flowSource = flowStart >= 0 && flowEnd > flowStart ? source.slice(flowStart, flowEnd) : "";
+  const flowSource = flowStart >= 0 ? source.slice(flowStart, flowEnd > flowStart ? flowEnd : undefined) : "";
   const intakeIndex = flowSource.indexOf('"intake_locked"');
   const packagingIndex = flowSource.indexOf('"packaging"');
   if (intakeIndex === -1 || packagingIndex === -1 || intakeIndex > packagingIndex) {
@@ -91,7 +91,7 @@ await check("runner-bloqueia-auto-apply-incompleto-e-dedupe-conflitante", async 
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
   return requireIncludes(source, [
     "validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing",
-    "validateDrivePiDedupeSafety(fields)",
+    "validateDrivePiDedupeSafety(fields, dedupeTarget)",
     "dedupe_conflict",
     "missing_pi_pdf",
     "missing_media",
