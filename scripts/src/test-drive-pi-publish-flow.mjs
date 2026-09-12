@@ -132,8 +132,8 @@ assert.equal(
     { media: [{ driveFileId: "top", mimeType: "image/gif", name: "PI-14609-TOPO.gif" }, { driveFileId: "home", mimeType: "image/gif", name: "HOME.gif" }] },
     { localFormato: "TOPO" },
     { piCodigo: "PI 14609" },
-  ).ambiguous,
-  true,
+  ).mediaItem.driveFileId,
+  "top",
 );
 const clickResolved = runner.resolveDrivePiClickUrl(
   { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
