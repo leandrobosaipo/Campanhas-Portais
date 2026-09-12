@@ -3227,7 +3227,8 @@ function parseIsoLikeDate(value) {
     return null;
   }
 
-  const parsed = new Date(raw);
+  const cod5IsoLocal = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)$/);
+  const parsed = new Date(cod5IsoLocal ? `${cod5IsoLocal[1]}-04:00` : raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
   const ptLong = raw.match(/\b(\d{1,2})\s+de\s+([a-zA-ZçÇãõáéíóúâêô]+)(?:\s+de)?\s+(\d{4})(?:.*?\b(\d{2}):(\d{2})(?::(\d{2}))?)?/i);
