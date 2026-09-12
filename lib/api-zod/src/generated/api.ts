@@ -103,7 +103,7 @@ export const CreateCampaignPublicationReconcileJobResponse = zod.object({
 });
 
 /**
- * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+ * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job. Terminal item results preserve the child capture job, capture log, checklist blockers and required next action.
  * @summary Create or retrieve an idempotent retroactive evidence backfill
  */
 
@@ -296,10 +296,17 @@ export const GetOpsJobProgressParams = zod.object({
   id: zod.coerce.string(),
 });
 
-export const GetOpsJobProgressResponse = zod.record(
-  zod.string(),
-  zod.unknown(),
-);
+export const GetOpsJobProgressResponse = zod.object({
+  liveProgress: zod
+    .object({
+      completedInsertionIds: zod.array(zod.number()),
+      runningInsertionId: zod.number().nullable(),
+      pendingInsertionIds: zod.array(zod.number()),
+      failedInsertionIds: zod.array(zod.number()),
+      blockedInsertionIds: zod.array(zod.number()),
+    })
+    .nullish(),
+});
 
 /**
  * @summary Compare active sheet rows with exact Drive folders, AdOps and evidence
@@ -1356,6 +1363,33 @@ export const ValidateCaptureProofResponse = zod
     "A blocked response always contains at least one structured blockingIssues entry.",
   );
 
+/**
+ * @summary Consulta paginada do relatório mensal de evidências
+ */
+export const getMonthlyEvidenceReportQueryMonthRegExp = new RegExp(
+  "^\\\\d{4}-(0[1-9]|1[0-2])$",
+);
+export const getMonthlyEvidenceReportQueryLimitMax = 100;
+
+export const GetMonthlyEvidenceReportQueryParams = zod.object({
+  month: zod.coerce.string().regex(getMonthlyEvidenceReportQueryMonthRegExp),
+  portal: zod.coerce.string().optional(),
+  publication: zod.coerce.string().optional(),
+  evidence: zod.coerce.string().optional(),
+  search: zod.coerce.string().optional(),
+  cursor: zod.coerce.string().optional(),
+  limit: zod.coerce
+    .number()
+    .min(1)
+    .max(getMonthlyEvidenceReportQueryLimitMax)
+    .optional(),
+});
+
+export const GetMonthlyEvidenceReportResponse = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
 export const ListEvidencesParams = zod.object({
   insertionId: zod.coerce.number(),
 });
@@ -1390,6 +1424,9 @@ export const ExportInsertionEvidencesParams = zod.object({
 
 export const exportInsertionEvidencesQueryModeDefault = `full`;
 export const exportInsertionEvidencesQueryVariantDefault = `original`;
+export const exportInsertionEvidencesQueryInsertionIdsRegExp = new RegExp(
+  "^\\d+(,\\d+)\*$",
+);
 
 export const ExportInsertionEvidencesQueryParams = zod.object({
   mode: zod
@@ -1398,6 +1435,13 @@ export const ExportInsertionEvidencesQueryParams = zod.object({
   variant: zod
     .enum(["original", "web"])
     .default(exportInsertionEvidencesQueryVariantDefault),
+  insertionIds: zod.coerce
+    .string()
+    .regex(exportInsertionEvidencesQueryInsertionIdsRegExp)
+    .optional()
+    .describe(
+      "IDs de inserção separados por vírgula. Quando informado, o ZIP contém somente esse recorte da PI\/site.",
+    ),
   source: zod.coerce.string().nullish(),
 });
 
@@ -1444,6 +1488,16 @@ export const CreatePiSiteExportJobBody = zod.object({
     .min(createPiSiteExportJobBodyImageQualityMin)
     .max(createPiSiteExportJobBodyImageQualityMax)
     .default(createPiSiteExportJobBodyImageQualityDefault),
+  asOfDate: zod.coerce
+    .date()
+    .optional()
+    .describe("Data de corte auditada usada pelo relatório mensal."),
+  requiredDatesByInsertion: zod
+    .record(zod.string(), zod.array(zod.coerce.date()))
+    .optional()
+    .describe(
+      "Datas exatas já exigidas pelo relatório, indexadas pelo ID da inserção.",
+    ),
 });
 
 export const CreatePiSiteExportJobResponse = zod.record(

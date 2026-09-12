@@ -195,6 +195,13 @@ export interface RetroactiveBackfillItem {
   /** @nullable */
   error: string | null;
   /** @nullable */
+  captureJobId: string | null;
+  /** @nullable */
+  captureLogId: string | null;
+  blockingIssues: string[];
+  /** @nullable */
+  nextAction: string | null;
+  /** @nullable */
   checklistStatus: string | null;
 }
 
@@ -369,6 +376,14 @@ export interface DailyPrintAttempt {
   failedInsertionIds?: number[];
   /** @nullable */
   nextRecoveryAt?: string | null;
+}
+
+export interface DailyPrintLiveProgress {
+  completedInsertionIds: number[];
+  runningInsertionId: number | null;
+  pendingInsertionIds: number[];
+  failedInsertionIds: number[];
+  blockedInsertionIds: number[];
 }
 
 export type DailyPrintStatusLastFullyApproved = {
@@ -1507,7 +1522,10 @@ export type ListOpsIncidents200 = {
 
 export type GetOpsJob200 = { [key: string]: unknown };
 
-export type GetOpsJobProgress200 = { [key: string]: unknown };
+export type GetOpsJobProgress200 = {
+  liveProgress?: DailyPrintLiveProgress | null;
+  [key: string]: unknown;
+};
 
 export type GetActiveCampaignOperationsParams = {
   date?: string;
@@ -1689,9 +1707,33 @@ export type GetCaptureProofStatusParams = {
   date: string;
 };
 
+export type GetMonthlyEvidenceReportParams = {
+  /**
+   * @pattern ^\\d{4}-(0[1-9]|1[0-2])$
+   */
+  month: string;
+  portal?: string;
+  publication?: string;
+  evidence?: string;
+  search?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type GetMonthlyEvidenceReport200 = { [key: string]: unknown };
+
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;
   variant?: ExportInsertionEvidencesVariant;
+  /**
+   * IDs de inserção separados por vírgula. Quando informado, o ZIP contém somente esse recorte da PI/site.
+   * @pattern ^\d+(,\d+)*$
+   */
+  insertionIds?: string;
   /**
    * @nullable
    */
@@ -1730,6 +1772,13 @@ export const CreatePiSiteExportJobBodyVariant = {
   web: "web",
 } as const;
 
+/**
+ * Datas exatas já exigidas pelo relatório, indexadas pelo ID da inserção.
+ */
+export type CreatePiSiteExportJobBodyRequiredDatesByInsertion = {
+  [key: string]: string[];
+};
+
 export type CreatePiSiteExportJobBody = {
   piCodigo: string;
   siteSigla: string;
@@ -1745,6 +1794,10 @@ export type CreatePiSiteExportJobBody = {
    * @maximum 90
    */
   imageQuality?: number;
+  /** Data de corte auditada usada pelo relatório mensal. */
+  asOfDate?: string;
+  /** Datas exatas já exigidas pelo relatório, indexadas pelo ID da inserção. */
+  requiredDatesByInsertion?: CreatePiSiteExportJobBodyRequiredDatesByInsertion;
 };
 
 export type CreatePiSiteExportJob200 = { [key: string]: unknown };

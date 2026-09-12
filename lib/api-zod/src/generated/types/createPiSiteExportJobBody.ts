@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CreatePiSiteExportJobBodyMode } from "./createPiSiteExportJobBodyMode";
+import type { CreatePiSiteExportJobBodyRequiredDatesByInsertion } from "./createPiSiteExportJobBodyRequiredDatesByInsertion";
 import type { CreatePiSiteExportJobBodyVariant } from "./createPiSiteExportJobBodyVariant";
 
 export type CreatePiSiteExportJobBody = {
@@ -23,4 +24,8 @@ export type CreatePiSiteExportJobBody = {
    * @maximum 90
    */
   imageQuality?: number;
+  /** Data de corte auditada usada pelo relatório mensal. */
+  asOfDate?: Date;
+  /** Datas exatas já exigidas pelo relatório, indexadas pelo ID da inserção. */
+  requiredDatesByInsertion?: CreatePiSiteExportJobBodyRequiredDatesByInsertion;
 };

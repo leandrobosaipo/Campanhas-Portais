@@ -5,5 +5,9 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { DailyPrintLiveProgress } from "./dailyPrintLiveProgress";
 
-export type GetOpsJobProgress200 = { [key: string]: unknown };
+export type GetOpsJobProgress200 = {
+  liveProgress?: DailyPrintLiveProgress | null;
+  [key: string]: unknown;
+};
