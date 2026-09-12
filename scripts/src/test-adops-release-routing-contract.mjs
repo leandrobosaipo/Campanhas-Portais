@@ -14,6 +14,7 @@ assert.match(cod5_healthSource, /process\.env\.ADOPS_RELEASE_SHA \|\| process\.e
 for (const cod5_composeFile of cod5_composeFiles) {
   const cod5_compose = await readFile(cod5_composeFile, "utf8");
   assert.match(cod5_compose, /adops-api:[\s\S]*?ADOPS_RELEASE_SHA: \$\{ADOPS_RELEASE_SHA:-\$\{ADOPS_IMAGE_TAG:-unknown\}\}/);
+  assert.match(cod5_compose, /adops-api:[\s\S]*?OPS_API_TOKEN: \$\{OPS_API_TOKEN:\?OPS_API_TOKEN is required\}/);
   assert.doesNotMatch(cod5_compose, /OPS_API_BASE_URL:\s*https:\/\/adops-api-public\.leandro471\.workers\.dev/);
 }
 

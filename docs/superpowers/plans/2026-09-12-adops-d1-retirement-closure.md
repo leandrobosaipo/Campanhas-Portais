@@ -84,6 +84,7 @@
 - [ ] Se houver valor divergente, alterá-lo para `http://adops-api:4011`; se não houver, registrar a paridade e não criar diff artificial.
 - [ ] Rodar `docker compose -f ops/portainer/adops-stack/docker-compose.yml config` sem carregar nem imprimir `.env`; a configuração deve ser sintaticamente válida.
 - [ ] Rodar novamente a verificação de URLs e confirmar que todos os runners usam a rede interna ou estão explicitamente desabilitados.
+- [ ] Confirmar que os dois compose files entregam `OPS_API_TOKEN` ao serviço `adops-api`; essa variável mantém as mutações e leituras operacionais protegidas.
 - [ ] Capturar uma tabela sanitizada, gerada a partir do compose, com serviço → URL base, sem outras variáveis de ambiente.
 - [ ] Fazer commit: `fix(adops): keep runner API routing internal`.
 
