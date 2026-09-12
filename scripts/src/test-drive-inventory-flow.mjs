@@ -49,8 +49,8 @@ for (const marker of [
 assert(campaigns.includes("refreshJobId"));
 assert(campaigns.includes("snapshotAgeSeconds"));
 assert(media.includes('source = "snapshot"'));
-assert(media.includes('DRIVE_INTEGRATION_MODE === "monitor"'));
-assert(compose.includes("DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-legacy}"));
+assert(media.includes("inventoryStatus.stale"));
+assert(compose.includes("DRIVE_INTEGRATION_MODE: ${DRIVE_INTEGRATION_MODE:-monitor}"));
 assert(!compose.match(/adops-api:[\s\S]*?GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE:[\s\S]*?adops-runner:/), "API não pode receber credencial do Drive");
 assert(compose.includes("container_name: adops-drive-pi-monitor-stack"));
 assert(worker.includes('path === "/api/ops/jobs/drive-inventory-refresh"'));
