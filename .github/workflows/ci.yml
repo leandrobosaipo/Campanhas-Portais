@@ -74,8 +74,11 @@ jobs:
           ADOPS_POSTGRES_PASSWORD: ci-only
           ADOPS_INTERNAL_API_TOKEN: ci-only
           ADOPS_GOOGLE_ALLOWED_EMAILS: ci@example.invalid
+          ADOPS_SESSION_SECRET: ci-only
           DO_SPACES_ACCESS_KEY_ID: ci-only
           DO_SPACES_SECRET_ACCESS_KEY: ci-only
+          GOOGLE_CLIENT_ID: ci-only
+          GOOGLE_CLIENT_SECRET: ci-only
           OPS_API_TOKEN: ci-only
         run: |
           docker compose -f ops/portainer/adops-stack/docker-compose.yml config >/dev/null
