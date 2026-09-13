@@ -49,6 +49,7 @@ services:
     environment:
       PORT: "4011"
       NODE_ENV: production
+      ADOPS_RELEASE_SHA: ${ADOPS_RELEASE_SHA:-${ADOPS_IMAGE_TAG:-unknown}}
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
       ADOPS_PROJECT_ROOT: /app
@@ -65,6 +66,11 @@ services:
       ADOPS_PRINT_TARGET_COOLDOWN_MS: ${ADOPS_PRINT_TARGET_COOLDOWN_MS:-12000}
       ADOPS_INTERNAL_API_TOKEN: ${ADOPS_INTERNAL_API_TOKEN:?ADOPS_INTERNAL_API_TOKEN is required}
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?GOOGLE_CLIENT_ID is required}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?GOOGLE_CLIENT_SECRET is required}
+      ADOPS_GOOGLE_REDIRECT_URI: ${ADOPS_GOOGLE_REDIRECT_URI:-https://adops-api.codigo5.com.br/api/auth/google/callback}
+      ADOPS_GOOGLE_ALLOWED_EMAILS: ${ADOPS_GOOGLE_ALLOWED_EMAILS:?ADOPS_GOOGLE_ALLOWED_EMAILS is required}
+      ADOPS_SESSION_SECRET: ${ADOPS_SESSION_SECRET:?ADOPS_SESSION_SECRET is required}
       DO_SPACES_ACCESS_KEY_ID: ${DO_SPACES_ACCESS_KEY_ID:?DO_SPACES_ACCESS_KEY_ID is required}
       DO_SPACES_SECRET_ACCESS_KEY: ${DO_SPACES_SECRET_ACCESS_KEY:?DO_SPACES_SECRET_ACCESS_KEY is required}
       DO_SPACES_ENDPOINT: ${DO_SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}
@@ -152,7 +158,7 @@ services:
       ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS: ${ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS:-60000}
       ADOPS_CONTROL_PLANE_PROVIDER: ${ADOPS_CONTROL_PLANE_PROVIDER:-macmini}
       ADOPS_SCHEDULER_INTERVAL_MS: ${ADOPS_SCHEDULER_INTERVAL_MS:-60000}
-      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,analytics-report,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
+      OPS_JOB_KINDS: sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,evidence-monthly-report,operational-documents,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe
       DRIVE_PI_ARCHIVE_DIR: /var/lib/adops/drive-pi-archive
       COD5_VIDEO_COMPRESSOR_API_BASE: ${COD5_VIDEO_COMPRESSOR_API_BASE:-https://video-compress.codigo5.com.br}
       COD5_VIDEO_COMPRESSOR_API_TOKEN: ${COD5_VIDEO_COMPRESSOR_API_TOKEN:-}
@@ -235,7 +241,7 @@ services:
       DRIVE_PI_MONITOR_INTERVAL_MS: ${DRIVE_PI_MONITOR_INTERVAL_MS:-300000}
       DRIVE_PI_MONITOR_STATE_FILE: /data/drive-pi-monitor-state.json
       DRIVE_PI_MONITOR_MAX_ITEMS: ${DRIVE_PI_MONITOR_MAX_ITEMS:-2000}
-      ADOPS_DRIVE_REQUEST_TIMEOUT_MS: ${ADOPS_DRIVE_REQUEST_TIMEOUT_MS:-30000}
+      ADOPS_DRIVE_REQUEST_TIMEOUT_MS: ${ADOPS_DRIVE_REQUEST_TIMEOUT_MS:-300000}
       ADOPS_DRIVE_RETRY_MAX_ATTEMPTS: ${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS:-7}
       ADOPS_DRIVE_RETRY_BASE_MS: ${ADOPS_DRIVE_RETRY_BASE_MS:-2000}
       ADOPS_DRIVE_RETRY_MAX_MS: ${ADOPS_DRIVE_RETRY_MAX_MS:-30000}
@@ -320,7 +326,7 @@ services:
     environment:
       TZ: America/Cuiaba
       DATABASE_URL: postgresql://${ADOPS_POSTGRES_USER:-adops}:${ADOPS_POSTGRES_PASSWORD:?ADOPS_POSTGRES_PASSWORD is required}@adops-postgres:5432/${ADOPS_POSTGRES_DB:-adops}
-      OPS_API_BASE_URL: https://adops-api-public.leandro471.workers.dev
+      OPS_API_BASE_URL: http://adops-api:4011
       ADOPS_CONTROL_PLANE_PROVIDER: disabled
       OPS_API_TOKEN: ${OPS_API_TOKEN:?OPS_API_TOKEN is required}
       PRIVATE_ADOPS_API_BASE_URL: http://adops-api:4011

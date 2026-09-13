@@ -1,7 +1,13 @@
 import { db, printJobsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { runLocalCaptureProof } from "./local-capture-runtime";
 import { buildFailedCaptureStage } from "../../../../ops/shared/capture-stage-timings.mjs";
+import {
+  advanceCaptureProgress,
+  initialCaptureProgress,
+  type CaptureProgress,
+  type CaptureProgressStage,
+} from "./capture-job-progress";
 import type {
   PrintRunnerJobPayload,
   PrintRunnerJobResult,
@@ -28,6 +34,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const job = this.createJob(payload, jobId);
     await this.save(job, payload);
+    await this.updateMeta(jobId, { progress: initialCaptureProgress(job.createdAt) });
 
     setTimeout(() => {
       void this.execute(job, payload)
@@ -45,7 +52,7 @@ class LocalPrintRunner implements PrintRunnerPort {
           });
           current.failedTargets = current.items.filter((item) => item.status === "error").length;
           current.completedTargets = current.items.filter((item) => item.status !== "skipped").length;
-          void this.save(current, payload);
+          void this.save(current, payload).then(() => this.updateProgress(job.id, "failed"));
         });
     }, 0);
 
@@ -68,6 +75,9 @@ class LocalPrintRunner implements PrintRunnerPort {
       completedTargets: row.completedTargets,
       failedTargets: row.failedTargets,
       items: Array.isArray(row.items) ? (row.items as PrintRunnerJobResultItem[]) : [],
+      progress: row.meta && typeof row.meta.progress === "object"
+        ? row.meta.progress as CaptureProgress
+        : null,
     };
   }
 
@@ -90,6 +100,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     job.status = "running";
     job.startedAt = new Date().toISOString();
     await this.save(job, payload);
+    await this.updateProgress(job.id, "running");
 
     for (const [index, target] of payload.targets.entries()) {
       const item = await this.executeTarget(job.id, target, payload.kind);
@@ -105,6 +116,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     job.status = job.failedTargets > 0 ? "failed" : "completed";
     job.finishedAt = new Date().toISOString();
     await this.save(job, payload);
+    await this.updateProgress(job.id, job.status);
     return job;
   }
 
@@ -115,6 +127,7 @@ class LocalPrintRunner implements PrintRunnerPort {
   ): Promise<PrintRunnerJobResultItem> {
     const targetStartedAt = new Date().toISOString();
     let lastError = "Falha desconhecida na captura.";
+    let progressWrites = Promise.resolve();
     for (let attempt = 1; attempt <= PRINT_TARGET_MAX_ATTEMPTS; attempt += 1) {
       try {
         const capture = await runLocalCaptureProof(target.insertionId, {
@@ -125,7 +138,12 @@ class LocalPrintRunner implements PrintRunnerPort {
           promoteCandidate: target.promoteCandidate === true,
           reconstructionReason: target.reconstructionReason
             ?? (kind === "capture-proof-backfill" ? "late_publication_recovery" : null),
+          onProgress: (event) => {
+            if (event.status !== "running") return;
+            progressWrites = progressWrites.then(() => this.updateProgress(jobId, event.stage as CaptureProgressStage));
+          },
         });
+        await progressWrites;
         return {
           insertionId: target.insertionId,
           targetDate: target.targetDate,
@@ -172,10 +190,18 @@ class LocalPrintRunner implements PrintRunnerPort {
     await db
       .update(printJobsTable)
       .set({
-        meta,
+        meta: sql`coalesce(${printJobsTable.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb`,
         updatedAt: new Date(),
       })
       .where(eq(printJobsTable.id, jobId));
+  }
+
+  private async updateProgress(jobId: string, stage: CaptureProgressStage): Promise<void> {
+    const row = await db.query.printJobsTable.findFirst({ where: eq(printJobsTable.id, jobId) });
+    const current = row?.meta && typeof row.meta.progress === "object"
+      ? row.meta.progress as CaptureProgress
+      : null;
+    await this.updateMeta(jobId, { progress: advanceCaptureProgress(current, stage) });
   }
 
   private async save(job: PrintRunnerJobResult, payload: PrintRunnerJobPayload): Promise<void> {

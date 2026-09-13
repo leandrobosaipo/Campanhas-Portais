@@ -54,6 +54,7 @@ import { loadLocalCaptureMetadata, saveLocalCaptureMetadata } from "../lib/local
 import { generateOperationalDocument, listOperationalDocuments, type OperationalDocumentKind } from "../lib/operational-documents";
 import { getPrintRunner } from "../lib/print-runner";
 import type { PrintRunnerJobPayload, PrintRunnerJobResultItem } from "../lib/print-runner-contract";
+import { toPublicCaptureJob } from "../lib/capture-job-progress";
 import {
   buildDeliveryPackageName,
   buildDeliveryPrintFileName,
@@ -76,6 +77,8 @@ import { getDriveInventoryStatus } from "../lib/drive-inventory";
 import { toPublicDriveInventoryStatus } from "../lib/drive-inventory-public";
 import { getActiveCampaignOperations, getSuccessfulPublicationReadback, publicationReadbackConfirms } from "../lib/campaign-operations";
 import { mediaNamesCompatible } from "../lib/media-consistency";
+import { cod5_criarJobOperacional } from "../lib/ops-job-store";
+import { cod5_listarRelatoriosAnalyticsConcluidos, type AnalyticsReportSummary } from "./analytics";
 import {
   buildMonthlyEvidenceSource,
   CampaignEvidenceExportConflict,
@@ -84,6 +87,15 @@ import {
   selectCampaignEvidenceInsertions,
   validateCampaignEvidenceReadiness,
 } from "../lib/campaign-evidence-export";
+import {
+  buildMonthlyReportQuery,
+  classifyMonthlyInsertion,
+  monthBounds,
+  pageMonthlyInsertions,
+  publicMonthlyInsertion,
+  selectCanonicalMonthlyInsertions,
+  excludeSupersededMonthlyInsertions,
+} from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
 
@@ -455,39 +467,6 @@ function buildEvidenceExportFileName(
   };
 }
 
-const ANALYTICS_PUBLIC_API_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
-
-async function proxyCampaignEvidenceWorkerRequest(req: any, res: any) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-  try {
-    const upstream = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}${req.originalUrl}`, {
-      method: req.method,
-      redirect: "manual",
-      signal: controller.signal,
-      headers: {
-        accept: req.header("accept") || "application/json",
-        ...(req.method === "POST" ? { "content-type": "application/json" } : {}),
-        ...(req.header("authorization") ? { authorization: req.header("authorization") } : {}),
-        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key") } : {}),
-      },
-      ...(req.method === "POST" ? { body: JSON.stringify(req.body ?? {}) } : {}),
-    });
-    for (const header of ["content-type", "cache-control", "location"]) {
-      const value = upstream.headers.get(header);
-      if (value) res.setHeader(header, value);
-    }
-    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
-  } catch (error) {
-    res.status(503).json({
-      error: "campaign_evidence_worker_unavailable",
-      details: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
   if (!captureAt) return false;
   if (isCaptureAtInRetroWindow(captureAt)) return false;
@@ -497,30 +476,6 @@ function rejectCaptureAtOutsideWindow(captureAt: string | null, res: any) {
     allowedWindow: { start: "18:00", endExclusive: "22:00", timezone: "America/Cuiaba" },
   });
   return true;
-}
-
-type AnalyticsReportSummary = {
-  id: string;
-  status: string;
-  downloadUrl: string | null;
-  periodStart: string | null;
-  periodEnd: string | null;
-  periodMode?: string | null;
-  propertyKey: string | null;
-  createdAt?: string | null;
-  fileName?: string | null;
-};
-
-async function fetchCompletedAnalyticsReports(insertionId: number): Promise<AnalyticsReportSummary[]> {
-  const response = await fetch(`${ANALYTICS_PUBLIC_API_BASE_URL}/api/analytics/insertions/${insertionId}/reports`, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-  if (!response.ok) return [];
-  const payload = await response.json().catch(() => null) as { reports?: AnalyticsReportSummary[] } | null;
-  const reports = Array.isArray(payload?.reports) ? payload.reports : [];
-  return reports.filter((item) => item.status === "completed" && isValidHttpUrl(item.downloadUrl));
 }
 
 async function listVisibleOperationalDocuments(insertion: Awaited<ReturnType<typeof enrichInsertion>>) {
@@ -642,45 +597,14 @@ async function createLocalPiSiteExportJob(options: {
   requestedBy: string;
   idempotencyKey: string;
 }) {
-  const existing = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status
-       FROM ops_jobs
-      WHERE kind = 'pi-site-export'
-        AND payload_json::jsonb ->> 'idempotencyKey' = $1
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [options.idempotencyKey],
-  );
-  if (existing.rows[0]) {
-    if (existing.rows[0].status === "failed") {
-      const now = new Date().toISOString();
-      const retried = await pool.query(
-        `UPDATE ops_jobs
-            SET status = 'ready_for_runner', payload_json = $1, result_json = $2,
-                error_text = NULL, runner_id = NULL, updated_at = $3
-          WHERE id = $4 AND status = 'failed'`,
-        [
-          JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }),
-          JSON.stringify({ stage: "ready_for_runner", retryOf: existing.rows[0].id, retriedAt: now }),
-          now,
-          existing.rows[0].id,
-        ],
-      );
-      if ((retried.rowCount ?? 0) > 0) {
-        return { jobId: existing.rows[0].id, status: "ready_for_runner", duplicate: false };
-      }
-    }
-    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
-  }
-
-  const jobId = crypto.randomUUID();
-  const now = new Date().toISOString();
-  await pool.query(
-    `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
-     VALUES ($1, 'pi-site-export', 'ready_for_runner', $2, NULL, NULL, $3, NULL, $4, $5)`,
-    [jobId, JSON.stringify({ ...options.payload, idempotencyKey: options.idempotencyKey }), options.requestedBy, now, now],
-  );
-  return { jobId, status: "ready_for_runner", duplicate: false };
+  const created = await cod5_criarJobOperacional({
+    kind: "pi-site-export",
+    payload: options.payload,
+    requestedBy: options.requestedBy,
+    idempotencyKey: options.idempotencyKey,
+    retryFailed: true,
+  });
+  return { jobId: created.job.id, status: created.job.status, duplicate: created.duplicate };
 }
 
 async function getLocalPiSiteExportJob(jobId: string) {
@@ -704,12 +628,26 @@ async function getLocalPiSiteExportJob(jobId: string) {
     stage: typeof artifactResult?.stage === "string" ? artifactResult.stage : row.status,
     piCodigo: payload?.piCodigo ?? null,
     siteSigla: payload?.siteSigla ?? null,
-    mode: payload?.mode ?? null,
-    variant: payload?.variant ?? null,
+    mode: artifactResult?.mode ?? payload?.mode ?? "full",
+    variant: artifactResult?.variant ?? payload?.variant ?? "original",
+    pdfMaxWidth: typeof artifactResult?.pdfMaxWidth === "number" ? artifactResult.pdfMaxWidth : payload?.pdfMaxWidth ?? null,
+    pdfQuality: typeof artifactResult?.pdfQuality === "number" ? artifactResult.pdfQuality : payload?.pdfQuality ?? null,
+    pdfResolution: typeof artifactResult?.pdfResolution === "number" ? artifactResult.pdfResolution : payload?.pdfResolution ?? null,
+    insertionIds: Array.isArray(artifactResult?.insertionIds)
+      ? artifactResult.insertionIds
+      : Array.isArray(payload?.insertionIds) ? payload.insertionIds : [],
+    invalidatedEvidenceIds: Array.isArray(artifactResult?.invalidatedEvidenceIds) ? artifactResult.invalidatedEvidenceIds : [],
+    regeneratedDates: Array.isArray(artifactResult?.regeneratedDates) ? artifactResult.regeneratedDates : [],
+    analyticsPiStatus: artifactResult?.analyticsPiStatus ?? null,
+    analyticsFullMonthStatus: artifactResult?.analyticsFullMonthStatus ?? null,
     downloadUrl: typeof artifactResult?.downloadUrl === "string" ? artifactResult.downloadUrl : null,
+    pdfUrl: typeof artifactResult?.pdfUrl === "string" ? artifactResult.pdfUrl : null,
+    pdfUrls: Array.isArray(artifactResult?.pdfUrls) ? artifactResult.pdfUrls : [],
+    artifacts: artifactResult?.artifacts && typeof artifactResult.artifacts === "object" ? artifactResult.artifacts : null,
     artifactBytes: typeof artifactResult?.artifactBytes === "number" ? artifactResult.artifactBytes : null,
     artifactContentType: typeof artifactResult?.artifactContentType === "string" ? artifactResult.artifactContentType : null,
     artifactFileName: typeof artifactResult?.artifactFileName === "string" ? artifactResult.artifactFileName : null,
+    artifactSha256: typeof artifactResult?.artifactSha256 === "string" ? artifactResult.artifactSha256 : null,
     error: row.error_text,
     runnerId: row.runner_id,
     createdAt: row.created_at,
@@ -723,7 +661,7 @@ async function attachAnalyticsPdfsToExport(tempDir: string, insertionId: number,
 }
 
 async function attachAnalyticsPdfsToExportAtPath(tempDir: string, insertionId: number, lines: string[], relativeDir: string) {
-  const reports = await fetchCompletedAnalyticsReports(insertionId);
+  const reports = await cod5_listarRelatoriosAnalyticsConcluidos(insertionId);
   if (!reports.length) {
     lines.push("Relatório de Analytics: nenhum PDF concluído encontrado para anexar.");
     lines.push("");
@@ -987,6 +925,7 @@ async function resolveEvidenceAuditStatus(
   insertion: Awaited<ReturnType<typeof enrichInsertion>>,
   targetDate: string,
   evidences?: Array<typeof evidencesTable.$inferSelect>,
+  options: { checkReachability?: boolean } = {},
 ) {
   const evidenceRows = evidences ?? await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
   const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
@@ -1001,7 +940,7 @@ async function resolveEvidenceAuditStatus(
   let urlStatus: number | null = null;
   let isReachable = false;
 
-  if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
+  if (arquivoUrl && isValidHttpUrl(arquivoUrl) && options.checkReachability !== false) {
     try {
       const response = await fetch(arquivoUrl, { method: "HEAD", signal: AbortSignal.timeout(10_000) });
       urlStatus = response.status;
@@ -1009,6 +948,8 @@ async function resolveEvidenceAuditStatus(
     } catch {
       isReachable = false;
     }
+  } else if (arquivoUrl && isValidHttpUrl(arquivoUrl)) {
+    isReachable = true;
   }
 
   const downgraded = audit?.visualAudit?.frameSelectionDowngraded === true;
@@ -1242,6 +1183,48 @@ async function enrichInsertion(ins: typeof insertionsTable.$inferSelect) {
   };
 }
 
+async function enrichMonthlyReportInsertions(
+  insertions: Array<typeof insertionsTable.$inferSelect>,
+  campaigns: Array<typeof campaignsTable.$inferSelect>,
+) {
+  const [sites, clients, agencies] = await Promise.all([
+    db.select().from(sitesTable),
+    db.select().from(clientsTable),
+    db.select().from(agenciesTable),
+  ]);
+  const campaignById = new Map(campaigns.map((item) => [item.id, item]));
+  const siteById = new Map(sites.map((item) => [item.id, item]));
+  const clientById = new Map(clients.map((item) => [item.id, item]));
+  const agencyById = new Map(agencies.map((item) => [item.id, item]));
+
+  return insertions.map((ins) => {
+    const campaign = campaignById.get(ins.campanhaId);
+    if (!campaign) throw new Error(`Campanha ${ins.campanhaId} não encontrada para a inserção ${ins.id}.`);
+    const site = ins.siteId ? siteById.get(ins.siteId) : null;
+    const client = campaign?.clienteId ? clientById.get(campaign.clienteId) : null;
+    const agency = campaign?.agenciaId ? agencyById.get(campaign.agenciaId) : null;
+    return {
+      ...ins,
+      atrasado: computeAtrasado(ins),
+      mediaUrl: ins.mediaUrl ?? null,
+      campanhaName: campaign.nome,
+      clienteId: campaign.clienteId ?? null,
+      agenciaId: campaign.agenciaId ?? null,
+      piCodigo: campaign.piCodigo ?? null,
+      valorLiquido: campaign.valorLiquido ? parseFloat(campaign.valorLiquido) : null,
+      origemCampanha: campaign.origem ?? null,
+      siteNome: site?.nome ?? null,
+      siteSigla: site?.sigla ?? null,
+      siteLogoUrl: site?.logoUrl ?? null,
+      clienteNome: client?.nome ?? null,
+      clienteCnpj: (client as { cnpj?: string | null } | null)?.cnpj ?? null,
+      agenciaNome: agency?.nome ?? null,
+      competencia: campaign.competencia ?? null,
+      totalEvidencias: 0,
+    };
+  });
+}
+
 function normalizeTextKey(value: string | null | undefined) {
   return String(value ?? "")
     .normalize("NFD")
@@ -1269,10 +1252,10 @@ async function listPiSiteInsertions(piCodigo: string, siteSigla: string) {
 
   const rawInsertions = await db.select().from(insertionsTable).orderBy(insertionsTable.periodoInicio, insertionsTable.id);
   const enriched = await Promise.all(rawInsertions.map(enrichInsertion));
-  return enriched
+  return selectCanonicalMonthlyInsertions(excludeSupersededMonthlyInsertions(enriched)
     .filter((item) => normalizePiDigitsKey(item.piCodigo) === requestedPi)
     .filter((item) => normalizeTextKey(item.siteSigla) === requestedSite)
-    .filter((item) => item.statusNormalizado !== "cancelado")
+    .filter((item) => item.statusNormalizado !== "cancelado"))
     .sort((a, b) => {
       const aDate = a.periodoInicio ?? "";
       const bDate = b.periodoInicio ?? "";
@@ -1287,7 +1270,7 @@ async function describePiSiteExport(piCodigo: string, siteSigla: string) {
   const descriptors = await Promise.all(insertions.map(async (item) => {
     const [evidences, analyticsReports, visibleDocs] = await Promise.all([
       db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, item.id)),
-      fetchCompletedAnalyticsReports(item.id),
+      cod5_listarRelatoriosAnalyticsConcluidos(item.id),
       listVisibleOperationalDocuments(item),
     ]);
 
@@ -1378,7 +1361,7 @@ function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, 
   return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
 }
 
-async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
+export async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
   const { identity, insertions, operations, requiredDatesByInsertion } = await listCampaignEvidenceInsertions(piCodigo, competencia, true, asOfDate);
   if (!operations.length) return null;
   const evidenceDescriptors = [];
@@ -1561,12 +1544,15 @@ $rows = $wpdb->get_results($wpdb->prepare(
        (a.adops_external_key <> '' AND a.adops_external_key = %s)
        OR
        (a.adops_media_basename <> '' AND a.adops_media_basename = %s)
+       OR
+       (a.bannercode LIKE %s)
      )
    ORDER BY a.id DESC
    LIMIT 20",
   ${options.groupId},
   ${JSON.stringify(options.externalKey ?? "")},
-  ${JSON.stringify(options.mediaBasename ?? "")}
+  ${JSON.stringify(options.mediaBasename ?? "")},
+  ${JSON.stringify(options.mediaBasename ? `%${options.mediaBasename}%` : "")}
 ), ARRAY_A);
 echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 `.trim();
@@ -1584,7 +1570,7 @@ echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     const { stdout } = await execFileAsync(
       "ssh",
       ["-p", site.sshPort, `${site.sshUser}@${site.sshHost}`, remoteCommand],
-      { maxBuffer: 2 * 1024 * 1024 },
+      { maxBuffer: 2 * 1024 * 1024, timeout: 12_000 },
     );
     const parsed = JSON.parse(stdout.trim() || "[]") as Array<{
       id: number;
@@ -1663,6 +1649,189 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
 
   return { siteSigla, homeUrl, articleUrl, warnings, items };
 }
+
+router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
+  let query: ReturnType<typeof buildMonthlyReportQuery>;
+  try {
+    query = buildMonthlyReportQuery(req.query as Record<string, unknown>);
+  } catch (error) {
+    res.status(400).json({ error: "bad_request", details: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const bounds = monthBounds(query.month, today);
+
+  try {
+    const [year, monthNumber] = query.month.split("-");
+    const monthNames = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+    const expectedCompetencias = new Set([
+      `${monthNumber} ${year}`,
+      `${monthNames[Number(monthNumber) - 1]} ${year}`,
+    ]);
+    const monthlyCampaigns = (await db.select().from(campaignsTable))
+      .filter((campaign) => expectedCompetencias.has(normalizeTextKey(campaign.competencia)));
+    const rawInsertions = monthlyCampaigns.length
+      ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
+      : [];
+    const enriched = await enrichMonthlyReportInsertions(excludeSupersededMonthlyInsertions(rawInsertions), monthlyCampaigns);
+    const monthlyCandidates = enriched.filter((item) => {
+      return String(item.periodoFim || "") >= bounds.start
+        && String(item.periodoInicio || "") <= bounds.end
+        && item.archivedAt == null
+        && item.supersededByInsertionId == null
+        && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
+    });
+    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates)
+      .filter((item) => isValidHttpUrl(item.mediaUrl));
+
+    const normalizedSearch = normalizeTextKey(query.search);
+    const baseItems = monthly.map((item) => ({
+      item,
+      states: classifyMonthlyInsertion({
+        published: item.bannerPublicadoNoSite === true,
+        periodStart: item.periodoInicio || bounds.start,
+        periodEnd: item.periodoFim || bounds.end,
+        today,
+        evidenceDays: [],
+      }),
+    }));
+    const baseFiltered = baseItems.filter(({ item, states }) => {
+      const searchText = normalizeTextKey([
+        item.campanhaName,
+        item.clienteNome,
+        item.agenciaNome,
+        item.piCodigo,
+        item.siteSigla,
+        item.localFormatoNormalizado,
+        item.localFormato,
+      ].join(" "));
+      return (!query.portal || item.siteSigla === query.portal)
+        && (query.publication === "all" || states.publicationStates.includes(query.publication))
+        && (!normalizedSearch || searchText.includes(normalizedSearch));
+    });
+    const campaignIds = Array.from(new Set(baseFiltered.map(({ item }) => item.campanhaId)));
+    const pageCampaignIds = new Set(pageMonthlyInsertions(campaignIds, query.offset, query.limit));
+    const pageSource = baseFiltered.filter(({ item }) => pageCampaignIds.has(item.campanhaId));
+    const pageInsertionIds = pageSource.map(({ item }) => item.id);
+    const pageEvidenceRows = pageInsertionIds.length
+      ? await db.select().from(evidencesTable).where(inArray(evidencesTable.insercaoId, pageInsertionIds))
+      : [];
+    const pageProofRows = pageInsertionIds.length
+      ? await db.select().from(captureProofLogsTable).where(inArray(captureProofLogsTable.insertionId, pageInsertionIds))
+      : [];
+    const evidenceRowsByInsertion = new Map<number, Array<typeof evidencesTable.$inferSelect>>();
+    for (const row of pageEvidenceRows) {
+      const rows = evidenceRowsByInsertion.get(row.insercaoId) ?? [];
+      rows.push(row);
+      evidenceRowsByInsertion.set(row.insercaoId, rows);
+    }
+    const proofByInsertionDate = new Map<string, typeof captureProofLogsTable.$inferSelect>();
+    for (const row of pageProofRows) {
+      const key = `${row.insertionId}:${row.targetDate}`;
+      const previous = proofByInsertionDate.get(key);
+      if (!previous || previous.updatedAt < row.updatedAt) proofByInsertionDate.set(key, row);
+    }
+    const evaluated: Array<Record<string, unknown>> = [];
+    for (let offset = 0; offset < pageSource.length; offset += 4) {
+      const batch = await Promise.all(pageSource.slice(offset, offset + 4).map(async ({ item }) => {
+        const periodStart = parseDateOnly(item.periodoInicio);
+        const periodEnd = parseDateOnly(item.periodoFim);
+        const evidenceDates = bounds.start > today
+          ? []
+          : periodStart && periodEnd
+            ? eachIsoDay(periodStart, periodEnd).filter((date) => date >= bounds.start && date <= bounds.evidenceEnd)
+            : [];
+        const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
+        const evidenceDays = evidenceDates.map((date) => {
+          const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === date) ?? null;
+          const proof = proofByInsertionDate.get(`${item.id}:${date}`) ?? null;
+          const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
+          const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
+          const status = !evidence
+            ? "missing"
+            : !validUrl
+              ? "invalid_url"
+              : proofFailed
+                ? "invalid_audit"
+                : proof
+                  ? "audited"
+                  : "audited_best_effort";
+          return {
+            date,
+            status,
+            evidenceId: evidence?.id ?? null,
+            url: evidence?.arquivoUrl ?? null,
+            checklistApproved: status === "audited",
+            verifiedAt: proof?.updatedAt?.toISOString() ?? evidence?.criadoEm?.toISOString() ?? null,
+            issues: proofFailed ? [proof?.probableCause || proof?.status || "capture_proof_failed"] : [],
+          };
+        });
+        const states = classifyMonthlyInsertion({
+          published: item.bannerPublicadoNoSite === true,
+          periodStart: item.periodoInicio || bounds.start,
+          periodEnd: item.periodoFim || bounds.end,
+          today,
+          evidenceDays,
+        });
+        const siteIntegration = getSiteIntegration(item.siteSigla);
+        const adrotateGroupId = getAdRotateGroupId(item.siteSigla, item.localFormatoNormalizado ?? item.localFormato);
+        return {
+          ...publicMonthlyInsertion({
+            ...item,
+            portalUrl: siteIntegration?.homeUrl ?? null,
+            adrotateGroupId,
+            adrotateGroupUrl: siteIntegration?.adminBaseUrl && adrotateGroupId
+              ? `${siteIntegration.adminBaseUrl}/admin.php?page=adrotate-groups&view=edit&group=${adrotateGroupId}`
+              : null,
+          }),
+          ...states,
+          evidenceDays,
+        };
+      }));
+      evaluated.push(...batch);
+    }
+
+    const items = evaluated.filter((item) => query.evidence === "all" || (item.evidenceStates as string[]).includes(query.evidence));
+    const nextOffset = query.offset + pageCampaignIds.size;
+    const portals = Array.from(new Set(monthly.map((item) => String(item.siteSigla || "")).filter(Boolean))).sort();
+    const summary = {
+      campaigns: new Set(baseFiltered.map(({ item }) => item.campanhaId)).size,
+      insertions: baseFiltered.length,
+      active: baseFiltered.filter(({ states }) => states.publicationStates.includes("active")).length,
+      notPublished: baseFiltered.filter(({ states }) => states.publicationStates.includes("not_published")).length,
+      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => state === "missing" || state === "retroactive_missing")).length,
+      invalid: evaluated.filter((item) => (item.evidenceStates as string[]).includes("invalid")).length,
+      evidenceScope: "page",
+    };
+
+    res.setHeader("cache-control", "public, max-age=30, stale-while-revalidate=120");
+    res.json({
+      version: "monthly-evidence-report-v1",
+      generatedAt: new Date().toISOString(),
+      month: query.month,
+      today,
+      summary,
+      portals,
+      pagination: {
+        total: campaignIds.length,
+        limit: query.limit,
+        nextCursor: nextOffset < campaignIds.length ? String(nextOffset) : null,
+      },
+      items,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: "monthly_evidence_report_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
 
 router.get("/insertions", async (req, res): Promise<void> => {
   const params = ListInsertionsQueryParams.safeParse(req.query);
@@ -1768,7 +1937,6 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
   const formatMapping = getSiteFormatMapping(siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
   const groupId = getAdRotateGroupId(siteSigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
   const planned = siteSigla ? await buildAdrotatePlanned(siteSigla, insertion.competencia ?? undefined) : [];
-  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
   const mediaBasename = insertion.mediaUrl ? insertion.mediaUrl.split("/").pop() ?? null : null;
   const adminBaseUrl = siteConfig?.adminBaseUrl ?? null;
   const pageLabel = formatMapping?.page === "article" ? "Página interna" : formatMapping?.page === "home" ? "Home" : null;
@@ -1779,9 +1947,6 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
   });
 
   const plannedSelf = planned.find((item) => item.insertionId === insertion.id) ?? null;
-  const exactLiveMatches = mediaBasename
-    ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
-    : [];
   const historicalAdminMatches = await fetchHistoricalAdminMatches({
     siteId: insertion.siteId,
     siteSigla,
@@ -1790,6 +1955,14 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     mediaBasename,
     adminBaseUrl,
   });
+  if (req.query.fast === "1") {
+    res.json({ insertionId: insertion.id, exactLiveMatches: [], historicalAdminMatches });
+    return;
+  }
+  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
+  const exactLiveMatches = mediaBasename
+    ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
+    : [];
   const publicationReadback = await getSuccessfulPublicationReadback(insertion.id);
   const publicationJobConfirmed = publicationReadbackConfirms({
     insertionId: insertion.id,
@@ -2792,8 +2965,43 @@ router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise
     return;
   }
 
-  const cod5_tempDir = await mkdtemp(join(tmpdir(), `adops-evidence-download-${cod5_insertionId}-`));
+  const cod5_preview = req.query.preview === "1";
   const cod5_fileName = buildIndividualEvidenceDownloadName(cod5_insertion, cod5_targetDate);
+  const cod5_sendOutput = (cod5_output: Buffer) => {
+    const cod5_etag = `"${crypto.createHash("sha256").update(cod5_output).digest("hex")}"`;
+    res.setHeader("cache-control", cod5_preview ? "public, max-age=86400, s-maxage=604800, immutable" : "private, max-age=300");
+    res.setHeader("content-type", "image/jpeg");
+    res.setHeader("content-disposition", `${cod5_preview ? "inline" : "attachment"}; filename="${cod5_fileName}"`);
+    res.setHeader("etag", cod5_etag);
+    res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
+    if (req.headers["if-none-match"] === cod5_etag) {
+      res.status(304).end();
+      return;
+    }
+    res.send(cod5_output);
+  };
+  const cod5_previewCachePath = join(
+    tmpdir(),
+    "adops-evidence-preview-cache",
+    `${crypto.createHash("sha256").update(JSON.stringify([
+      cod5_evidence.id,
+      cod5_evidence.arquivoUrl,
+      cod5_options.variant,
+      cod5_options.imageMaxWidth,
+      cod5_options.imageQuality,
+    ])).digest("hex")}.jpg`,
+  );
+  if (cod5_preview) {
+    try {
+      const cod5_cachedOutput = await readFile(cod5_previewCachePath);
+      cod5_sendOutput(cod5_cachedOutput);
+      return;
+    } catch {
+      // Cache frio: prepara a imagem uma vez abaixo.
+    }
+  }
+
+  const cod5_tempDir = await mkdtemp(join(tmpdir(), `adops-evidence-download-${cod5_insertionId}-`));
   const cod5_outputPath = join(cod5_tempDir, cod5_fileName);
   try {
     const cod5_sourceResponse = await fetch(cod5_evidence.arquivoUrl, { redirect: "follow" });
@@ -2809,11 +3017,11 @@ router.get("/insertions/:id/evidences/:date/download", async (req, res): Promise
       quality: cod5_options.imageQuality,
     });
     const cod5_output = await readFile(cod5_outputPath);
-    res.setHeader("cache-control", "private, max-age=300");
-    res.setHeader("content-type", "image/jpeg");
-    res.setHeader("content-disposition", `attachment; filename="${cod5_fileName}"`);
-    res.setHeader("x-adops-evidence-id", String(cod5_evidence.id));
-    res.send(cod5_output);
+    if (cod5_preview) {
+      await mkdir(join(tmpdir(), "adops-evidence-preview-cache"), { recursive: true });
+      await writeFile(cod5_previewCachePath, cod5_output);
+    }
+    cod5_sendOutput(cod5_output);
   } catch (error) {
     if (!res.headersSent) {
       res.status(error instanceof EvidenceExportInputError ? error.statusCode : 500).json({
@@ -3141,11 +3349,6 @@ router.get("/insertions/:id/evidences/export.zip", async (req, res): Promise<voi
     });
   }
 });
-
-router.post("/campaign-evidence-exports/jobs", proxyCampaignEvidenceWorkerRequest);
-router.post("/campaign-evidence-exports/jobs/batch", proxyCampaignEvidenceWorkerRequest);
-router.get("/campaign-evidence-exports/jobs/:jobId", proxyCampaignEvidenceWorkerRequest);
-router.get("/campaign-evidence-exports/jobs/:jobId/download", proxyCampaignEvidenceWorkerRequest);
 
 router.get("/campaign-operations/evidence-monthly-source", async (req, res): Promise<void> => {
   const targetDate = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
@@ -3488,6 +3691,31 @@ router.get("/pi-site-exports/jobs/:jobId/download", async (req, res): Promise<vo
     res.status(500).json({
       error: "Falha ao redirecionar o download do pacote PI/site.",
       details: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+router.get("/pi-site-exports/jobs/:jobId/pdf", async (req, res): Promise<void> => {
+  try {
+    const cod5_job = await getLocalPiSiteExportJob(req.params.jobId);
+    if (!cod5_job) {
+      res.status(404).json({ error: "Job PI/site não encontrado." });
+      return;
+    }
+    if (cod5_job.status !== "completed" || !cod5_job.pdfUrl) {
+      res.status(409).json({
+        error: "PDF ainda não está pronto para download.",
+        jobId: cod5_job.jobId,
+        status: cod5_job.status,
+        stage: cod5_job.stage,
+      });
+      return;
+    }
+    res.redirect(cod5_job.pdfUrl);
+  } catch (cod5_erro) {
+    res.status(500).json({
+      error: "Falha ao redirecionar o PDF do pacote PI/site.",
+      details: cod5_erro instanceof Error ? cod5_erro.message : String(cod5_erro),
     });
   }
 });
@@ -3965,7 +4193,7 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
     await writeFile(reportPath, lines.join("\n"), "utf8");
 
     const allReports = (
-      await Promise.all(exportableInsertions.map((item) => fetchCompletedAnalyticsReports(item.id)))
+      await Promise.all(exportableInsertions.map((item) => cod5_listarRelatoriosAnalyticsConcluidos(item.id)))
     ).flat();
     const archiveBase = buildPiSiteExportArchiveBaseName(descriptor, exportableInsertions, allReports);
     const zipPath = join(tmpdir(), `${archiveBase}.zip`);
@@ -4507,7 +4735,7 @@ router.get("/insertions/:id/capture-proof/jobs/:jobId", async (req, res): Promis
     return;
   }
   res.setHeader("Cache-Control", "no-store");
-  res.json(job);
+  res.json(toPublicCaptureJob(job));
 });
 
 router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => {

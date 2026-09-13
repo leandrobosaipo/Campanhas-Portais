@@ -8,6 +8,18 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"));
 
+const agencyPending = runner.validateDrivePiApplyFields({
+  piCodigo: "PI 17464",
+  campaignName: "CAMARA FAZ, CUIABA RECONHECE",
+  competencia: "09/2026",
+  clienteId: 158,
+  agenciaId: null,
+  insertions: [{ siteId: 33, localFormato: "LATERAL 02", periodoInicio: "2026-09-04", periodoFim: "2026-09-22" }],
+});
+assert.equal(agencyPending.ok, true, "agencia ausente nao deve bloquear publicacao operacional segura");
+assert.deepEqual(agencyPending.missing, []);
+assert.deepEqual(agencyPending.commercialWarnings, ["missing_agenciaId"]);
+
 const scoped = runner.filterSiteInsertions([
   { siteId: 33, localFormato: "MEGABANNER TOPO", periodoInicio: "2026-07-09", periodoFim: "2026-07-29" },
   { siteId: 33, localFormato: "INSTAGRAM STORIES", periodoInicio: "2026-07-09", periodoFim: "2026-07-14" },
@@ -120,8 +132,8 @@ assert.equal(
     { media: [{ driveFileId: "top", mimeType: "image/gif", name: "PI-14609-TOPO.gif" }, { driveFileId: "home", mimeType: "image/gif", name: "HOME.gif" }] },
     { localFormato: "TOPO" },
     { piCodigo: "PI 14609" },
-  ).ambiguous,
-  true,
+  ).mediaItem.driveFileId,
+  "top",
 );
 const clickResolved = runner.resolveDrivePiClickUrl(
   { insertions: [{ siteId: 33, localFormato: "TOPO" }], raw: {} },
@@ -177,7 +189,7 @@ assert(adrotatePlugin.includes("function adrotate_adops_safe_maintenance_call"),
 assert(adrotatePlugin.includes("catch (\\Throwable $error)"), "RedisException não pode invalidar uma publicação AdRotate já gravada");
 const maintenanceHarness = String.raw`
 class WP_CLI { public static $warnings = array(); public static function add_command($name, $callable) {} public static function warning($message) { self::$warnings[] = $message; } }
-class RedisException extends Exception {}
+if (!class_exists('RedisException')) { class RedisException extends Exception {} }
 function esc_url_raw($value) { return preg_match('/^https:\/\//', (string) $value) ? (string) $value : ''; }
 function esc_attr($value) { return htmlspecialchars((string) $value, ENT_QUOTES); }
 function wp_cache_flush() { throw new RedisException('redis unavailable'); }

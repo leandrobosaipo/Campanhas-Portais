@@ -101,17 +101,20 @@ portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"T
 EXIT_CODE="$(wait_portainer_exec "$EXEC_ID" || true)"
 [[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
 
-ALERT_MIGRATION="$STACK_DIR/migrations/2026-08-26-daily-print-alerts.sql"
-[[ -f "$ALERT_MIGRATION" ]] || { printf 'Migration ausente: %s\n' "$ALERT_MIGRATION" >&2; exit 1; }
-ALERT_MIGRATION_B64="$(base64 < "$ALERT_MIGRATION" | tr -d '\n')"
-MIGRATION_PAYLOAD="$(jq -n --arg sql "$ALERT_MIGRATION_B64" '{
-  AttachStdout:true, AttachStderr:true, Tty:false,
-  Cmd:["sh","-lc",("printf %s " + ($sql|@sh) + " | base64 -d | psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" \"$POSTGRES_DB\"")]
-}')"
-MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null
-MIGRATION_EXIT_CODE="$(wait_portainer_exec "$MIGRATION_EXEC_ID" || true)"
-[[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'PostgreSQL migration failed.\n' >&2; exit 1; }
+for MIGRATION_FILE in \
+  "$STACK_DIR/migrations/2026-08-26-daily-print-alerts.sql" \
+  "$STACK_DIR/migrations/2026-09-01-evidence-report-read-indexes.sql"; do
+  [[ -f "$MIGRATION_FILE" ]] || { printf 'Migration ausente: %s\n' "$MIGRATION_FILE" >&2; exit 1; }
+  MIGRATION_B64="$(base64 < "$MIGRATION_FILE" | tr -d '\n')"
+  MIGRATION_PAYLOAD="$(jq -n --arg sql "$MIGRATION_B64" '{
+    AttachStdout:true, AttachStderr:true, Tty:false,
+    Cmd:["sh","-lc",("printf %s " + ($sql|@sh) + " | base64 -d | psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" \"$POSTGRES_DB\"")]
+  }')"
+  MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
+  portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null
+  MIGRATION_EXIT_CODE="$(wait_portainer_exec "$MIGRATION_EXEC_ID" || true)"
+  [[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'PostgreSQL migration failed: %s\n' "$MIGRATION_FILE" >&2; exit 1; }
+done
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"

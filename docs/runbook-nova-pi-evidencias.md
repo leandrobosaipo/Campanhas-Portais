@@ -47,6 +47,7 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 |---|---|
 | Linha oficial e nenhuma campanha compatível | Criar campanha e inserção |
 | Campanha já existe | Atualizar a entidade canônica |
+| Agência ausente ou sem correspondência mestre | Cadastrar/publicar com `agenciaId=null` se todos os gates operacionais forem únicos; registrar `missing_agenciaId` e completar antes do faturamento/envio comercial |
 | Inserção equivalente existe | Corrigir/vincular; não duplicar |
 | Anúncio correto existe no grupo | Reutilizar e vincular |
 | Mesma campanha sem PI confirmada | Bloquear agrupamento/publicação |
@@ -54,7 +55,7 @@ A fila pendente mostra somente campanhas que precisam de publicação ou evidên
 | PDF presente, mas os campos comerciais estão divididos entre planilha e pasta | Usar `identityMode=sheet_drive_composite` somente quando PI, linha, campanha, inserção, portal, período, formato e pasta forem únicos; exigir um PDF e uma mídia compatível. O redirect é opcional |
 | PI/PDF ausente e fonte ambígua | Manter `failed_retryable`; mídia candidata não vira “mídia ausente” e nenhuma entidade é criada |
 
-Identidade da campanha não é apenas o nome. Use PI canônica, cliente, agência e competência. Inserção corresponde a campanha + portal + formato + período.
+Identidade da campanha não é apenas o nome. Para publicação operacional, use PI canônica, cliente e competência; agência enriquece a identidade comercial, mas sua ausência isolada não bloqueia veiculação. Inserção corresponde a campanha + portal + formato + período.
 
 ### Retomada automática sem duplicação
 

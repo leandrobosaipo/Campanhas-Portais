@@ -68,6 +68,8 @@ import type {
   GetDashboardBySiteParams,
   GetDashboardCriticalParams,
   GetDashboardSummaryParams,
+  GetMonthlyEvidenceReport200,
+  GetMonthlyEvidenceReportParams,
   GetMonthlyEvidenceSource200,
   GetMonthlyEvidenceSourceParams,
   GetOpsJob200,
@@ -443,7 +445,7 @@ export const useCreateCampaignPublicationReconcileJob = <
 };
 
 /**
- * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job.
+ * The only retroactive capture path. New jobs use `late_publication_recovery`, attempt 1 and a maximum of 3 attempts; an idempotent replay returns the same job. Terminal item results preserve the child capture job, capture log, checklist blockers and required next action.
  * @summary Create or retrieve an idempotent retroactive evidence backfill
  */
 export const getCreatePrintBackfillJobUrl = () => {
@@ -3523,6 +3525,112 @@ export const useValidateCaptureProof = <
 > => {
   return useMutation(getValidateCaptureProofMutationOptions(options));
 };
+
+/**
+ * @summary Consulta paginada do relatório mensal de evidências
+ */
+export const getGetMonthlyEvidenceReportUrl = (
+  params: GetMonthlyEvidenceReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/reports/evidences/monthly?${stringifiedParams}`
+    : `/api/reports/evidences/monthly`;
+};
+
+export const getMonthlyEvidenceReport = async (
+  params: GetMonthlyEvidenceReportParams,
+  options?: RequestInit,
+): Promise<GetMonthlyEvidenceReport200> => {
+  return customFetch<GetMonthlyEvidenceReport200>(
+    getGetMonthlyEvidenceReportUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetMonthlyEvidenceReportQueryKey = (
+  params?: GetMonthlyEvidenceReportParams,
+) => {
+  return [
+    `/api/reports/evidences/monthly`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetMonthlyEvidenceReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetMonthlyEvidenceReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetMonthlyEvidenceReportQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMonthlyEvidenceReport>>
+  > = ({ signal }) =>
+    getMonthlyEvidenceReport(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMonthlyEvidenceReport>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetMonthlyEvidenceReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMonthlyEvidenceReport>>
+>;
+export type GetMonthlyEvidenceReportQueryError = ErrorType<void>;
+
+/**
+ * @summary Consulta paginada do relatório mensal de evidências
+ */
+
+export function useGetMonthlyEvidenceReport<
+  TData = Awaited<ReturnType<typeof getMonthlyEvidenceReport>>,
+  TError = ErrorType<void>,
+>(
+  params: GetMonthlyEvidenceReportParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getMonthlyEvidenceReport>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetMonthlyEvidenceReportQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 export const getListEvidencesUrl = (insertionId: number) => {
   return `/api/insertions/${insertionId}/evidences`;

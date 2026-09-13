@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const workerSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/index.ts");
+const bridgeSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/bridge.ts");
 const apiOpsRoutePath = path.join(repoRoot, "artifacts/api-server/src/routes/ops.ts");
 const wranglerConfigPath = path.join(repoRoot, "ops/cloudflare-public-api/wrangler.jsonc");
 const portainerVolumeComposePath = path.join(repoRoot, "ops/portainer/adops-stack/docker-compose.volume.yml");
@@ -107,88 +107,34 @@ async function fetchJson(url, init = {}) {
   return { response, payload };
 }
 
-await check("worker-main-usa-typescript", async () => {
+await check("ponte-publica-usa-typescript", async () => {
   const config = read(wranglerConfigPath);
-  assert(config.includes('"main": "src/index.ts"'), "wrangler precisa publicar src/index.ts, nao arquivo compilado antigo");
-  return { main: "src/index.ts" };
+  assert(config.includes('"main": "src/bridge.ts"'), "wrangler precisa publicar a ponte TypeScript sem o Worker D1 antigo");
+  return { main: "src/bridge.ts" };
 });
 
-await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
-  const source = read(workerSourcePath);
+await check("ponte-publica-encaminha-para-o-mac-mini", async () => {
+  const source = read(bridgeSourcePath);
   assertIncludes(source, [
-    "drive-pi-ingest",
-    "reconcile-adrotate",
-    "adrotate-link",
-    "telegram-send-evidence",
-    "runtime-readiness-probe",
-    "const OPS_JOB_KINDS",
-    "OPS_JOB_KINDS.includes",
-    'if (path === "/api/ops/drive-pi-events")',
-  ], "Worker Drive PI");
+    "PRIVATE_ADOPS_API_BASE_URL",
+    "https://adops-api.codigo5.com.br",
+    "x-cod5-control-plane",
+    "macmini-postgresql",
+    "idempotency-key",
+  ], "Ponte pública do Mac Mini");
+  assert(!/\bD1\b|createOpsJob|getOpsJob|adops_ops/.test(source), "ponte pública não pode manter banco ou fila D1");
   return { ok: true };
 });
 
-await check("worker-mantem-fila-de-prints-no-d1-consumido-pelos-runners", async () => {
-  const source = read(workerSourcePath);
-  for (const route of ["print-batch", "print-backfill", "print-single"]) {
-    const marker = `if (path === "/api/ops/jobs/${route}")`;
-    const start = source.indexOf(marker);
-    assert(start >= 0, `Worker sem rota ${route}`);
-    const nextRoute = source.indexOf('\n      if (path === "/api/ops/jobs/', start + marker.length);
-    const block = source.slice(start, nextRoute >= 0 ? nextRoute : start + 1800);
-    assertIncludes(block, [
-      "requireOpsAuth(request, env)",
-      "createOpsJob(env",
-    ], `Fila D1 ${route}`);
-    assert(!block.includes("proxyToPrivateApi"), `${route} não pode gravar no PostgreSQL quando o runner consulta D1`);
-    if (route === "print-batch") {
-      assertIncludes(block, [
-        "Informe siteId ou competencia para limitar o lote.",
-        "date deve estar no formato YYYY-MM-DD.",
-      ], "Validação do print-batch");
-    }
-  }
+await check("api-cria-jobs-drive-no-postgresql", async () => {
+  const source = read(apiOpsRoutePath);
   assertIncludes(source, [
-    'if (path === "/api/ops/jobs")',
-    'if (path === "/api/ops/queue/overview")',
-    "const opsJobProgressMatch",
-    "const opsJobMatch",
-    'request.headers.get("authorization")',
-    'headers.set("authorization", authorization)',
-  ], "Consultas da fila canônica");
-
-  for (const [marker, endMarker] of [
-    ['if (path === "/api/ops/jobs")', 'if (path === "/api/ops/queue/overview")'],
-    ['if (path === "/api/ops/queue/overview")', "const opsJobProgressMatch"],
-  ]) {
-    const start = source.indexOf(marker);
-    const nextBlock = source.indexOf(endMarker, start + marker.length);
-    const block = source.slice(start, nextBlock >= 0 ? nextBlock : start + 1200);
-    assert(!block.includes("proxyToPrivateApi"), `${marker} deve listar a fila D1 consumida pelos runners`);
-  }
-
-  for (const marker of ["const opsJobProgressMatch", "const opsJobMatch"]) {
-    const start = source.indexOf(marker);
-    const nextBlock = source.indexOf("\n    const ", start + marker.length);
-    const block = source.slice(start, nextBlock >= 0 ? nextBlock : start + 900);
-    assert(block.indexOf("getOpsJob(env") < block.indexOf("proxyToPrivateApi"), `${marker} deve consultar D1 antes do fallback privado`);
-  }
-  return { ok: true };
-});
-
-await check("worker-grava-reconcile-drive-diretamente-no-D1", async () => {
-  const source = read(workerSourcePath);
-  assertIncludes(source, [
-    'if (path === "/api/ops/jobs/drive-pi-reconcile")',
-    'path === "/api/ops/runtime-readiness"',
-    'path === "/api/ops/runtime-topology"',
-    '"drive-pi-reconcile"',
-  ], "Proxy público dos contratos de conflito");
-
-  const reconcileStart = source.indexOf('if (path === "/api/ops/jobs/drive-pi-reconcile")');
-  const reconcileBlock = source.slice(reconcileStart, reconcileStart + 3600);
-  assertIncludes(reconcileBlock, ["createIdempotentOpsJob(env, \"drive-pi-reconcile\"", "insertionId", "idempotencyKey"], "Reconcile D1");
-  assert(!reconcileBlock.includes("proxyToPrivateApi"), "drive-pi-reconcile não pode voltar à API canônica e entrar em loop");
+    'router.post("/ops/drive-pi-events"',
+    'router.post("/ops/jobs/drive-pi-reconcile"',
+    'createIdempotentOpsJob("drive-pi-reconcile"',
+    "insertionId",
+    "idempotencyKey",
+  ], "API operacional PostgreSQL");
   return { ok: true };
 });
 

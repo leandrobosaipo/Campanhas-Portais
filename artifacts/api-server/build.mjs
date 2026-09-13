@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { rm, readFile, writeFile } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
@@ -118,6 +118,12 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+  // O plugin Pino grava outdir absoluto; o banner já resolve o diretório no destino.
+  const cod5_arquivo = path.join(distDir, "index.mjs");
+  const cod5_bundle = await readFile(cod5_arquivo, "utf8");
+  const cod5_caminho = `const outputDir = ${JSON.stringify(distDir)};`;
+  if (!cod5_bundle.includes(cod5_caminho)) throw new Error("Formato do plugin Pino mudou; revisar portabilidade.");
+  await writeFile(cod5_arquivo, cod5_bundle.replaceAll(cod5_caminho, "const outputDir = globalThis.__dirname;"));
 }
 
 buildAll().catch((err) => {

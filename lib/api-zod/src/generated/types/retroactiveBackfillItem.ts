@@ -24,5 +24,12 @@ export interface RetroactiveBackfillItem {
   /** @nullable */
   error: string | null;
   /** @nullable */
+  captureJobId: string | null;
+  /** @nullable */
+  captureLogId: string | null;
+  blockingIssues: string[];
+  /** @nullable */
+  nextAction: string | null;
+  /** @nullable */
   checklistStatus: string | null;
 }

@@ -12,6 +12,11 @@ export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;
   variant?: ExportInsertionEvidencesVariant;
   /**
+   * IDs de inserção separados por vírgula. Quando informado, o ZIP contém somente esse recorte da PI/site.
+   * @pattern ^\d+(,\d+)*$
+   */
+  insertionIds?: string;
+  /**
    * @nullable
    */
   source?: string | null;

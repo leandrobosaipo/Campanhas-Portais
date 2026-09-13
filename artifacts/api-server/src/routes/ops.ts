@@ -32,7 +32,7 @@ type JobKind =
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
-type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed";
+type JobStatus = "queued" | "ready_for_runner" | "running" | "completed" | "failed" | "awaiting_human_review";
 
 type OpsJobRecord = {
   id: string;
@@ -46,6 +46,35 @@ type OpsJobRecord = {
   created_at: string;
   updated_at: string;
 };
+
+type OpsIncidentRecord = {
+  id: string;
+  fingerprint: string;
+  status: string;
+  layer: string;
+  job_id: string;
+  job_kind: string;
+  summary: string;
+  error_text: string | null;
+  evidence_json: string;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type MonthlyReportRefreshRecord = {
+  competencia: string;
+  target_date: string;
+  dirty_revision: number;
+  published_revision: number;
+  active_job_id: string | null;
+  debounce_until: string | null;
+  retry_count: number;
+  last_error: string | null;
+  updated_at: string;
+};
+
+type Cod5DbClient = Pick<typeof pool, "query">;
 
 type DrivePiEventType = "created" | "updated" | "folder_created" | "folder_updated";
 
@@ -95,10 +124,25 @@ const OPS_JOB_KINDS: JobKind[] = [
   "runtime-readiness-probe",
 ];
 
-const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed"];
-const OPS_PUBLIC_WORKER_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api-public.leandro471.workers.dev").replace(/\/$/, "");
-const ADOPS_CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "cloudflare").trim();
+const OPS_JOB_STATUSES: JobStatus[] = ["queued", "ready_for_runner", "running", "completed", "failed", "awaiting_human_review"];
+const OPS_JOB_STATUS_LABELS: Record<JobStatus, string> = {
+  queued: "Na fila",
+  ready_for_runner: "Aguardando runner",
+  running: "Em execução",
+  completed: "Concluído",
+  failed: "Falhou",
+  awaiting_human_review: "Aguardando revisão humana",
+};
+const ADOPS_CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "macmini").trim();
 const recoveryAuditGateByScheduleId = new Map<string, { complete: boolean; checkedAt: number }>();
+const cod5_FUSO_PRINT_DIARIO = "America/Cuiaba";
+const cod5_FONTE_PRINT_DIARIO = "cloudflare-cron-daily-print";
+const cod5_JANELA_PRINT_DIARIO = {
+  start: "18:00",
+  endExclusive: "22:00",
+  strategy: "deterministic_by_insertion_and_date",
+};
+const cod5_ATRASOS_RECUPERACAO_MINUTOS = [5, 10, 15] as const;
 
 async function readDailyPrintCandidateAudit(targetDate: string) {
   const operations = await getActiveCampaignOperations({ date: targetDate, includeEvidence: true });
@@ -111,84 +155,6 @@ async function readDailyPrintCandidateAudit(targetDate: string) {
     expectedTotal: candidates.length,
   };
 }
-
-async function proxyPublicWorkerJob(req: Request, res: Response, targetPath = req.originalUrl): Promise<void> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const method = req.method.toUpperCase();
-    const upstream = await fetch(`${OPS_PUBLIC_WORKER_BASE_URL}${targetPath}`, {
-      method: req.method,
-      signal: controller.signal,
-      headers: {
-        accept: req.header("accept") || "application/json",
-        "content-type": "application/json",
-        ...(req.header("authorization") ? { authorization: req.header("authorization")! } : {}),
-        ...(req.header("idempotency-key") ? { "idempotency-key": req.header("idempotency-key")! } : {}),
-      },
-      ...(method === "GET" || method === "HEAD" ? {} : { body: JSON.stringify(req.body ?? {}) }),
-    });
-    const contentType = upstream.headers.get("content-type");
-    if (contentType) res.setHeader("content-type", contentType);
-    res.setHeader("cache-control", "no-store");
-    res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
-  } catch (error) {
-    res.status(503).json({
-      error: "ops_worker_unavailable",
-      details: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-const D1_JOB_POST_PATHS = new Set([
-  "/ops/jobs/print-batch",
-  "/ops/jobs/print-backfill",
-  "/ops/jobs/print-single",
-  "/ops/jobs/evidence-monthly-report",
-  "/ops/monthly-report-refreshes",
-  "/ops/jobs/campaign-publication-reconcile",
-  "/ops/jobs/drive-pi-preflight",
-  "/ops/jobs/drive-pi-folder",
-  "/ops/jobs/drive-pi-publish",
-  "/ops/jobs/reconcile-adrotate",
-  "/ops/jobs/adrotate-link",
-  "/ops/jobs/adrotate-publish",
-  "/ops/jobs/watchdog",
-  "/ops/jobs/sync-planilha",
-  "/ops/jobs/drive-inventory-refresh",
-  "/ops/jobs/drive-pi-reconcile",
-  "/ops/jobs/telegram-send-evidence",
-  "/ops/jobs/runtime-readiness-probe",
-]);
-
-router.use((req, res, next) => {
-  if (ADOPS_CONTROL_PLANE_PROVIDER === "macmini") {
-    next();
-    return;
-  }
-  const method = req.method.toUpperCase();
-  if (method === "POST" && req.path === "/ops/jobs/pi-site-export") {
-    void proxyPublicWorkerJob(req, res, "/api/pi-site-exports/jobs");
-    return;
-  }
-  if (method === "POST" && (req.path === "/ops/drive-pi-events" || req.path === "/ops/drive-pi-events/status")) {
-    void proxyPublicWorkerJob(req, res);
-    return;
-  }
-  const d1Read = method === "GET" && (
-    req.path === "/ops/jobs"
-    || req.path === "/ops/daily-print-status"
-    || req.path === "/ops/queue/overview"
-    || /^\/ops\/jobs\/[^/]+(?:\/progress)?$/.test(req.path)
-  );
-  if (d1Read || (method === "POST" && D1_JOB_POST_PATHS.has(req.path))) {
-    void proxyPublicWorkerJob(req, res);
-    return;
-  }
-  next();
-});
 
 type RuntimeEnvCheck = {
   name: string;
@@ -774,6 +740,7 @@ function describeJob(record: OpsJobRecord) {
     jobId: record.id,
     kind: record.kind,
     status: record.status,
+    statusLabel: OPS_JOB_STATUS_LABELS[record.status],
     payload: sanitizeJobValue(parseJson(record.payload_json)),
     result: sanitizeJobValue(parseJson(record.result_json)),
     error: sanitizeJobText(record.error_text),
@@ -974,6 +941,243 @@ function competenciaForDate(date: string) {
   return `${months[Number(match[2])]}\/${match[1]}`;
 }
 
+async function cod5_criarAtualizacaoMensalNaTransacao(
+  cod5_cliente: Cod5DbClient,
+  cod5_estado: MonthlyReportRefreshRecord,
+  cod5_solicitante: string,
+  cod5_naoAntesDe?: string | null,
+) {
+  const cod5_revisao = Number(cod5_estado.dirty_revision || 0);
+  if (!cod5_revisao) throw new Error("Atualização incremental sem revisão pendente.");
+  const cod5_agendamento = cod5_naoAntesDe ?? cod5_estado.debounce_until ?? nowIso();
+  const cod5_id = randomUUID();
+  const cod5_agora = nowIso();
+  const cod5_idempotencia = `evidence-monthly-report:${cod5_estado.competencia}:incremental:${cod5_revisao}:attempt:${Number(cod5_estado.retry_count || 0)}`;
+  await cod5_cliente.query(
+    `INSERT INTO ops_jobs
+      (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+     VALUES ($1, 'evidence-monthly-report', 'ready_for_runner', $2, NULL, NULL, $3, NULL, $4, $5)`,
+    [cod5_id, JSON.stringify({
+      targetDate: cod5_estado.target_date,
+      competencia: cod5_estado.competencia,
+      incremental: true,
+      refreshRevision: cod5_revisao,
+      notBefore: cod5_agendamento,
+      source: "evidence-approved-refresh",
+      idempotencyKey: cod5_idempotencia,
+    }), cod5_solicitante, cod5_agora, cod5_agora],
+  );
+  await cod5_cliente.query(
+    "UPDATE monthly_report_refreshes SET active_job_id = $1, updated_at = $2 WHERE competencia = $3",
+    [cod5_id, cod5_agora, cod5_estado.competencia],
+  );
+  return { jobId: cod5_id, status: "ready_for_runner" as const, refreshRevision: cod5_revisao, notBefore: cod5_agendamento };
+}
+
+async function cod5_marcarRelatorioMensalPendente(input: { competencia: string; targetDate: string; requestedBy: string }) {
+  const cod5_cliente = await pool.connect();
+  try {
+    await cod5_cliente.query("BEGIN");
+    await cod5_cliente.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`monthly-report-refresh:${input.competencia}`]);
+    const cod5_agora = nowIso();
+    const cod5_debounceAte = new Date(Date.now() + 60_000).toISOString();
+    const cod5_estadoResult = await cod5_cliente.query<MonthlyReportRefreshRecord>(
+      `INSERT INTO monthly_report_refreshes
+        (competencia, target_date, dirty_revision, published_revision, active_job_id, debounce_until, retry_count, last_error, updated_at)
+       VALUES ($1, $2, 1, 0, NULL, $3, 0, NULL, $4)
+       ON CONFLICT (competencia) DO UPDATE SET
+         target_date = EXCLUDED.target_date,
+         dirty_revision = monthly_report_refreshes.dirty_revision + 1,
+         debounce_until = EXCLUDED.debounce_until,
+         last_error = NULL,
+         updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [input.competencia, input.targetDate, cod5_debounceAte, cod5_agora],
+    );
+    const cod5_estado = cod5_estadoResult.rows[0]!;
+    const cod5_ativo = cod5_estado.active_job_id
+      ? (await cod5_cliente.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1", [cod5_estado.active_job_id])).rows[0]
+      : null;
+    if (cod5_ativo?.status === "queued" || cod5_ativo?.status === "ready_for_runner") {
+      const cod5_payload = asRecord(parseJson(cod5_ativo.payload_json)) ?? {};
+      await cod5_cliente.query(
+        "UPDATE ops_jobs SET payload_json = $1, updated_at = $2 WHERE id = $3 AND status IN ('queued','ready_for_runner')",
+        [JSON.stringify({ ...cod5_payload, targetDate: cod5_estado.target_date, refreshRevision: Number(cod5_estado.dirty_revision), notBefore: cod5_debounceAte }), cod5_agora, cod5_ativo.id],
+      );
+      await cod5_cliente.query("COMMIT");
+      return { status: "debouncing" as const, jobId: cod5_ativo.id, refreshRevision: Number(cod5_estado.dirty_revision), debounceUntil: cod5_debounceAte };
+    }
+    if (cod5_ativo?.status === "running") {
+      await cod5_cliente.query("COMMIT");
+      return { status: "queued_after_running" as const, jobId: cod5_ativo.id, refreshRevision: Number(cod5_estado.dirty_revision), debounceUntil: cod5_debounceAte };
+    }
+    const cod5_criado = await cod5_criarAtualizacaoMensalNaTransacao(cod5_cliente, cod5_estado, input.requestedBy, cod5_debounceAte);
+    await cod5_cliente.query("COMMIT");
+    return { ...cod5_criado, debounceUntil: cod5_debounceAte };
+  } catch (error) {
+    await cod5_cliente.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    cod5_cliente.release();
+  }
+}
+
+async function cod5_finalizarEstadoRelatorioMensal(job: OpsJobRecord, outcome: "completed" | "failed", error: string | null) {
+  const cod5_payload = asRecord(parseJson(job.payload_json));
+  if (job.kind !== "evidence-monthly-report" || cod5_payload?.incremental !== true) return;
+  const cod5_competencia = String(cod5_payload.competencia || "").trim().toUpperCase();
+  const cod5_revisaoProcessada = Number(cod5_payload.refreshRevision || 0);
+  if (!cod5_competencia || !cod5_revisaoProcessada) return;
+  const cod5_cliente = await pool.connect();
+  try {
+    await cod5_cliente.query("BEGIN");
+    await cod5_cliente.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`monthly-report-refresh:${cod5_competencia}`]);
+    const cod5_estado = (await cod5_cliente.query<MonthlyReportRefreshRecord>(
+      "SELECT * FROM monthly_report_refreshes WHERE competencia = $1 FOR UPDATE",
+      [cod5_competencia],
+    )).rows[0];
+    if (!cod5_estado || cod5_estado.active_job_id !== job.id) {
+      await cod5_cliente.query("COMMIT");
+      return;
+    }
+    const cod5_agora = nowIso();
+    if (outcome === "completed" && Number(cod5_estado.dirty_revision) <= cod5_revisaoProcessada) {
+      await cod5_cliente.query(
+        "UPDATE monthly_report_refreshes SET published_revision = $1, active_job_id = NULL, retry_count = 0, last_error = NULL, updated_at = $2 WHERE competencia = $3",
+        [cod5_revisaoProcessada, cod5_agora, cod5_competencia],
+      );
+      await cod5_cliente.query("COMMIT");
+      return;
+    }
+    const cod5_tentativas = outcome === "failed" ? Number(cod5_estado.retry_count || 0) + 1 : 0;
+    await cod5_cliente.query(
+      "UPDATE monthly_report_refreshes SET active_job_id = NULL, retry_count = $1, last_error = $2, updated_at = $3 WHERE competencia = $4",
+      [cod5_tentativas, outcome === "failed" ? String(error || "Falha incremental sem detalhe.").slice(0, 1000) : null, cod5_agora, cod5_competencia],
+    );
+    const cod5_atualizado = { ...cod5_estado, active_job_id: null, retry_count: cod5_tentativas, last_error: error, updated_at: cod5_agora };
+    const cod5_atraso = outcome === "failed" ? Math.min(900, 60 * (2 ** Math.min(cod5_tentativas, 4))) : 0;
+    await cod5_criarAtualizacaoMensalNaTransacao(
+      cod5_cliente,
+      cod5_atualizado,
+      "evidence-approved-refresh",
+      cod5_atraso ? new Date(Date.now() + cod5_atraso * 1000).toISOString() : null,
+    );
+    await cod5_cliente.query("COMMIT");
+  } catch (cod5_erro) {
+    await cod5_cliente.query("ROLLBACK").catch(() => undefined);
+    throw cod5_erro;
+  } finally {
+    cod5_cliente.release();
+  }
+}
+
+async function cod5_agendarTentativaRecuperacao(input: {
+  targetDate: string;
+  insertionId: number;
+  sourceBatchJobId: string;
+  attempt: number;
+  cause: string;
+}) {
+  if (input.attempt > cod5_ATRASOS_RECUPERACAO_MINUTOS.length) return null;
+  const cod5_naoAntesDe = new Date(Date.now() + cod5_ATRASOS_RECUPERACAO_MINUTOS[input.attempt - 1]! * 60_000).toISOString();
+  const cod5_idempotencia = `daily-print-recovery:${input.targetDate}:${input.insertionId}:attempt:${input.attempt}`;
+  const cod5_criado = await createIdempotentOpsJob("print-single", {
+    insertionId: input.insertionId,
+    date: input.targetDate,
+    replace: false,
+    force: false,
+    source: "daily-print-recovery",
+    notBefore: cod5_naoAntesDe,
+    captureClass: "historical_recovery",
+    recovery: { ...input, maxAttempts: 3 },
+  }, "daily-print-recovery", cod5_idempotencia);
+  await pool.query(
+    `INSERT INTO daily_print_recoveries
+      (target_date, insertion_id, source_batch_job_id, status, attempt, active_job_id, next_attempt_at, human_cause, technical_cause, updated_at)
+     VALUES ($1, $2, $3, 'retry_scheduled', $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (target_date, insertion_id) DO UPDATE SET
+       status = 'retry_scheduled', attempt = EXCLUDED.attempt, active_job_id = EXCLUDED.active_job_id,
+       next_attempt_at = EXCLUDED.next_attempt_at, human_cause = EXCLUDED.human_cause,
+       technical_cause = EXCLUDED.technical_cause, updated_at = EXCLUDED.updated_at`,
+    [input.targetDate, input.insertionId, input.sourceBatchJobId, input.attempt, cod5_criado.jobId, cod5_naoAntesDe,
+      "O print não foi aprovado; a API programou uma nova tentativa.", input.cause.slice(0, 1000), nowIso()],
+  );
+  return cod5_criado;
+}
+
+async function cod5_reconciliarRecuperacaoPrintDiario(job: OpsJobRecord) {
+  const cod5_payload = asRecord(parseJson(job.payload_json)) ?? {};
+  if (job.kind === "print-batch" && cod5_payload.source === cod5_FONTE_PRINT_DIARIO) {
+    const cod5_data = String(cod5_payload.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cod5_data)) return;
+    try {
+      const cod5_auditoria = await getCaptureProofAuditForDate(cod5_data);
+      for (const cod5_item of cod5_auditoria.items) {
+        if (!["missing", "invalid_audit", "invalid_url"].includes(cod5_item.status)) continue;
+        const cod5_causa = cod5_item.audit?.issues?.map((cod5_problema) => cod5_problema.code || cod5_problema.detail).filter(Boolean).join(",") || cod5_item.status;
+        try {
+          await cod5_agendarTentativaRecuperacao({ targetDate: cod5_data, insertionId: cod5_item.insertionId, sourceBatchJobId: job.id, attempt: 1, cause: cod5_causa });
+        } catch (cod5_erro) {
+          const cod5_tecnico = cod5_erro instanceof Error ? cod5_erro.message : String(cod5_erro);
+          await pool.query(
+            `INSERT INTO daily_print_recoveries
+              (target_date, insertion_id, source_batch_job_id, status, attempt, human_cause, technical_cause, updated_at)
+             VALUES ($1, $2, $3, 'blocked', 0, $4, $5, $6)
+             ON CONFLICT (target_date, insertion_id) DO UPDATE SET
+               status = 'blocked', human_cause = EXCLUDED.human_cause,
+               technical_cause = EXCLUDED.technical_cause, updated_at = EXCLUDED.updated_at`,
+            [cod5_data, cod5_item.insertionId, job.id, "A tentativa não pôde ser agendada; as demais campanhas continuaram.", cod5_tecnico.slice(0, 1000), nowIso()],
+          );
+        }
+      }
+    } catch (cod5_erro) {
+      const cod5_tecnico = cod5_erro instanceof Error ? cod5_erro.message : String(cod5_erro);
+      await pool.query(
+        `INSERT INTO daily_print_recoveries
+          (target_date, insertion_id, source_batch_job_id, status, attempt, human_cause, technical_cause, updated_at)
+         VALUES ($1, 0, $2, 'blocked', 0, $3, $4, $5)
+         ON CONFLICT (target_date, insertion_id) DO UPDATE SET
+           status = 'blocked', human_cause = EXCLUDED.human_cause,
+           technical_cause = EXCLUDED.technical_cause, updated_at = EXCLUDED.updated_at`,
+        [cod5_data, job.id, "A API de auditoria não respondeu; nenhuma campanha foi considerada concluída.", cod5_tecnico.slice(0, 1000), nowIso()],
+      );
+    }
+    return;
+  }
+  const cod5_recuperacao = asRecord(cod5_payload.recovery);
+  if (job.kind !== "print-single" || !cod5_recuperacao) return;
+  const cod5_data = String(cod5_recuperacao.targetDate || "");
+  const cod5_insercao = Number(cod5_recuperacao.insertionId);
+  const cod5_tentativa = Number(cod5_recuperacao.attempt || 0);
+  const cod5_jobOrigem = String(cod5_recuperacao.sourceBatchJobId || "");
+  const cod5_auditoria = await getCaptureProofAuditForDate(cod5_data, { insertionIds: new Set([cod5_insercao]) }).catch(() => null);
+  const cod5_item = cod5_auditoria?.items?.[0];
+  if (cod5_item && ["ok", "ok_best_effort"].includes(cod5_item.status)) {
+    await pool.query(
+      "UPDATE daily_print_recoveries SET status = 'completed', active_job_id = NULL, next_attempt_at = NULL, human_cause = $1, technical_cause = NULL, updated_at = $2 WHERE target_date = $3 AND insertion_id = $4",
+      ["Print aprovado; nenhuma nova tentativa será feita.", nowIso(), cod5_data, cod5_insercao],
+    );
+    return;
+  }
+  const cod5_causa = cod5_item?.audit?.issues?.map((cod5_problema) => cod5_problema.code || cod5_problema.detail).filter(Boolean).join(",") || job.error_text || cod5_item?.status || "audit_unavailable";
+  if (cod5_tentativa >= 3) {
+    await pool.query(
+      "UPDATE daily_print_recoveries SET status = 'blocked', active_job_id = NULL, next_attempt_at = NULL, human_cause = $1, technical_cause = $2, updated_at = $3 WHERE target_date = $4 AND insertion_id = $5",
+      ["Três tentativas falharam; é necessária análise humana.", String(cod5_causa).slice(0, 1000), nowIso(), cod5_data, cod5_insercao],
+    );
+    return;
+  }
+  try {
+    await cod5_agendarTentativaRecuperacao({ targetDate: cod5_data, insertionId: cod5_insercao, sourceBatchJobId: cod5_jobOrigem, attempt: cod5_tentativa + 1, cause: String(cod5_causa) });
+  } catch (cod5_erro) {
+    const cod5_tecnico = cod5_erro instanceof Error ? cod5_erro.message : String(cod5_erro);
+    await pool.query(
+      "UPDATE daily_print_recoveries SET status = 'blocked', active_job_id = NULL, next_attempt_at = NULL, human_cause = $1, technical_cause = $2, updated_at = $3 WHERE target_date = $4 AND insertion_id = $5",
+      ["A próxima tentativa não pôde ser agendada; é necessária análise humana.", cod5_tecnico.slice(0, 1000), nowIso(), cod5_data, cod5_insercao],
+    );
+  }
+}
+
 router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
   const dryRun = req.body?.dryRun === true || req.body?.shadow === true;
   const requestedNow = validateDryRunNow(dryRun, req.body?.now);
@@ -995,6 +1199,7 @@ router.post("/ops/schedules/reconcile", async (req, res): Promise<void> => {
       date: input.targetDate,
       ...(input.routineKind === "daily-print-morning-recovery" ? { recoveryMode: "late_publication_recovery" } : {}),
       ...(input.jobKind === "evidence-monthly-report" ? { competencia: competenciaForDate(input.targetDate) } : {}),
+      ...(input.jobKind === "print-backfill" ? { competencia: competenciaForDate(input.targetDate), toDate: input.targetDate, reconstructionReason: "late_publication_recovery" } : {}),
       source: "macmini-canonical-scheduler",
     }, req.body?.shadow === true ? "cloudflare-shadow" : "macmini-scheduler", input.idempotencyKey);
     return { jobId: created.jobId, created: !created.duplicate };
@@ -1041,6 +1246,104 @@ async function updateOpsJob(id: string, patch: {
     [status, resultJson, errorText, runnerId, updatedAt, id, patch.expectedStatus ?? null, patch.expectedRunnerId ?? null, patch.expectedUpdatedAt ?? null],
   );
   return updated.rows[0] ?? null;
+}
+
+function cod5_classificarCamadaIncidente(job: OpsJobRecord, error: string) {
+  const cod5_normalizado = error.toLowerCase();
+  if (cod5_normalizado.includes('"incidentlayer":"api_or_runner_transport"')) return "api_or_runner_transport";
+  if (cod5_normalizado.includes('"incidentlayer":"audit"')) return "audit";
+  if (cod5_normalizado.includes("fetch failed") || cod5_normalizado.includes("timeout") || cod5_normalizado.includes("private api")) return "api_or_runner_transport";
+  if (cod5_normalizado.includes("audit") || cod5_normalizado.includes("eviden")) return "audit";
+  if (cod5_normalizado.includes("adrotate") || cod5_normalizado.includes("html público")) return "portal";
+  if (cod5_normalizado.includes("queue") || cod5_normalizado.includes("runner") || cod5_normalizado.includes("watchdog") || cod5_normalizado.includes("expired")) return "queue_or_runner";
+  return "job_execution";
+}
+
+function cod5_identificarIncidente(job: OpsJobRecord, error: string) {
+  const cod5_payload = asRecord(parseJson(job.payload_json));
+  const cod5_data = typeof cod5_payload?.date === "string" ? cod5_payload.date : typeof cod5_payload?.targetDate === "string" ? cod5_payload.targetDate : "";
+  const cod5_competencia = typeof cod5_payload?.competencia === "string" ? cod5_payload.competencia : "";
+  const cod5_portal = typeof cod5_payload?.siteSigla === "string" ? cod5_payload.siteSigla : typeof cod5_payload?.siteId === "number" ? `site-${cod5_payload.siteId}` : "";
+  const cod5_insercao = typeof cod5_payload?.insertionId === "number" || typeof cod5_payload?.insertionId === "string" ? String(cod5_payload.insertionId) : "";
+  const cod5_causa = String(sanitizeJobText(error, 180) ?? "").toLowerCase().replace(/\d{3,}/g, "#").replace(/\s+/g, " ").trim();
+  return [job.kind, job.id, cod5_data || "no-date", cod5_competencia || "no-competencia", cod5_portal || "all-portals", cod5_insercao || "all-insertions", cod5_causa].join(":");
+}
+
+function cod5_descreverIncidente(record: OpsIncidentRecord) {
+  const cod5_evidencia = asRecord(parseJson(record.evidence_json)) ?? { unavailable: true };
+  return {
+    id: record.id,
+    fingerprint: record.fingerprint,
+    status: record.status,
+    layer: record.layer,
+    jobId: record.job_id,
+    jobKind: record.job_kind,
+    summary: record.summary,
+    error: sanitizeJobText(record.error_text),
+    evidence: sanitizeJobValue(cod5_evidencia),
+    attempts: Number(record.attempts),
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+async function cod5_falharJobComIncidente(job: OpsJobRecord, input: {
+  error: string;
+  result: unknown;
+  runnerId: string | null;
+  expectedStatus: JobStatus;
+  expectedUpdatedAt?: string;
+  forcedLayer?: string;
+}) {
+  const cod5_cliente = await pool.connect();
+  try {
+    await cod5_cliente.query("BEGIN");
+    const cod5_atual = await cod5_cliente.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 FOR UPDATE", [job.id]);
+    const cod5_job = cod5_atual.rows[0];
+    if (!cod5_job || cod5_job.status !== input.expectedStatus || cod5_job.runner_id !== input.runnerId || (input.expectedUpdatedAt && cod5_job.updated_at !== input.expectedUpdatedAt)) {
+      await cod5_cliente.query("ROLLBACK");
+      return null;
+    }
+    const cod5_agora = nowIso();
+    const cod5_erro = String(sanitizeJobText(input.error) ?? "Falha operacional sem detalhe.");
+    const cod5_camada = input.forcedLayer ?? cod5_classificarCamadaIncidente(cod5_job, cod5_erro);
+    const cod5_fingerprint = cod5_identificarIncidente(cod5_job, cod5_erro);
+    const cod5_resumo = `Falha em ${cod5_job.kind}; revisar ${cod5_camada} antes de repetir mutações.`;
+    const cod5_evidencia = JSON.stringify({
+      jobId: cod5_job.id,
+      jobKind: cod5_job.kind,
+      runnerId: input.runnerId,
+      requestedBy: cod5_job.requested_by,
+      payload: sanitizeJobValue(parseJson(cod5_job.payload_json)),
+      result: sanitizeJobValue(input.result),
+      detectedAt: cod5_agora,
+    });
+    const cod5_atualizado = await cod5_cliente.query<OpsJobRecord>(
+      `UPDATE ops_jobs
+          SET status = 'failed', result_json = $1, error_text = $2, runner_id = $3, updated_at = $4
+        WHERE id = $5
+        RETURNING *`,
+      [JSON.stringify(input.result ?? null), cod5_erro, input.runnerId, cod5_agora, cod5_job.id],
+    );
+    const cod5_incidente = await cod5_cliente.query<OpsIncidentRecord>(
+      `INSERT INTO ops_incidents
+        (id, fingerprint, status, layer, job_id, job_kind, summary, error_text, evidence_json, attempts, created_at, updated_at)
+       VALUES ($1, $2, 'open', $3, $4, $5, $6, $7, $8, 1, $9, $10)
+       ON CONFLICT (fingerprint) DO UPDATE SET
+         status = 'open', layer = EXCLUDED.layer, job_id = EXCLUDED.job_id, job_kind = EXCLUDED.job_kind,
+         summary = EXCLUDED.summary, error_text = EXCLUDED.error_text, evidence_json = EXCLUDED.evidence_json,
+         attempts = ops_incidents.attempts + 1, updated_at = EXCLUDED.updated_at
+       RETURNING *`,
+      [randomUUID(), cod5_fingerprint, cod5_camada, cod5_job.id, cod5_job.kind, cod5_resumo, cod5_erro, cod5_evidencia, cod5_agora, cod5_agora],
+    );
+    await cod5_cliente.query("COMMIT");
+    return { job: cod5_atualizado.rows[0]!, incident: cod5_descreverIncidente(cod5_incidente.rows[0]!) };
+  } catch (error) {
+    await cod5_cliente.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    cod5_cliente.release();
+  }
 }
 
 async function createDrivePiEventJob(event: DrivePiEventPayload, requestedBy: string | null) {
@@ -1249,7 +1552,7 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
   const values: unknown[] = [];
   let kindFilter = "";
   values.push(requestedKinds);
-  kindFilter = `AND kind = ANY($${values.length}::text[])`;
+  kindFilter = `AND cod5_candidato.kind = ANY($${values.length}::text[])`;
   const claimedAt = nowIso();
   const result = await pool.query<OpsJobRecord>(
     `UPDATE ops_jobs
@@ -1259,10 +1562,19 @@ router.post("/ops/runner/claim-next", async (req, res): Promise<void> => {
            payload_json = (payload_json::jsonb || jsonb_build_object('claimedAt', $${values.length + 2}::text, 'heartbeatAt', $${values.length + 2}::text))::text,
            updated_at = $${values.length + 2}
      WHERE id = (
-       SELECT id FROM ops_jobs
-       WHERE status = 'ready_for_runner' ${kindFilter}
-         AND (payload_json::jsonb ->> 'notBefore' IS NULL OR payload_json::jsonb ->> 'notBefore' <= $${values.length + 2})
-       ORDER BY created_at ASC
+       SELECT cod5_candidato.id FROM ops_jobs AS cod5_candidato
+       WHERE cod5_candidato.status = 'ready_for_runner' ${kindFilter}
+         AND (cod5_candidato.payload_json::jsonb ->> 'notBefore' IS NULL OR cod5_candidato.payload_json::jsonb ->> 'notBefore' <= $${values.length + 2})
+         AND (
+           NULLIF(cod5_candidato.payload_json::jsonb ->> 'dependsOnJobId', '') IS NULL
+           OR EXISTS (
+             SELECT 1
+               FROM ops_jobs dependency
+              WHERE dependency.id = cod5_candidato.payload_json::jsonb ->> 'dependsOnJobId'
+                AND dependency.status = 'completed'
+           )
+         )
+       ORDER BY cod5_candidato.created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED
      )
@@ -1301,6 +1613,10 @@ router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => 
     expectedStatus: "running",
     expectedRunnerId: runnerId,
   });
+  if (updated) {
+    await cod5_finalizarEstadoRelatorioMensal(updated, "completed", null);
+    await cod5_reconciliarRecuperacaoPrintDiario(updated);
+  }
   res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
@@ -1310,15 +1626,25 @@ router.post("/ops/runner/jobs/:id/fail", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "runnerId é obrigatório." });
     return;
   }
-  const updated = await updateOpsJob(req.params.id, {
-    status: "failed",
+  const cod5_atual = (await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [req.params.id])).rows[0];
+  if (!cod5_atual) {
+    res.status(409).json({ error: "lease_lost", details: "Job não está running para este runner." });
+    return;
+  }
+  const cod5_erro = readOptionalString(req.body?.error) ?? "Runner reportou falha sem detalhe.";
+  const cod5_falha = await cod5_falharJobComIncidente(cod5_atual, {
+    error: cod5_erro,
     result: req.body?.result ?? null,
-    error: readOptionalString(req.body?.error) ?? "Runner reportou falha sem detalhe.",
-    runnerId: runnerId ?? undefined,
+    runnerId,
     expectedStatus: "running",
-    expectedRunnerId: runnerId,
   });
-  res.status(updated ? 200 : 409).json(updated ? { ok: true, job: describeJob(updated) } : { error: "lease_lost", details: "Job não está running para este runner." });
+  if (cod5_falha) {
+    await cod5_finalizarEstadoRelatorioMensal(cod5_falha.job, "failed", cod5_erro);
+    await cod5_reconciliarRecuperacaoPrintDiario(cod5_falha.job);
+  }
+  res.status(cod5_falha ? 200 : 409).json(cod5_falha
+    ? { ok: true, job: describeJob(cod5_falha.job), incident: cod5_falha.incident }
+    : { error: "lease_lost", details: "Job não está running para este runner." });
 });
 
 router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
@@ -1328,13 +1654,48 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     "SELECT * FROM ops_jobs WHERE status IN ('queued','ready_for_runner','running') ORDER BY created_at ASC LIMIT $1",
     [limit],
   );
-  const stale: OpsJobRecord[] = active.rows.filter((record: OpsJobRecord) => getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status));
+  const dependencyIds = Array.from(new Set(active.rows.map((record) => {
+    const payload = parseJson(record.payload_json) as Record<string, unknown> | null;
+    return typeof payload?.dependsOnJobId === "string" ? payload.dependsOnJobId : null;
+  }).filter((value): value is string => Boolean(value))));
+  const dependencyStatuses = new Map<string, JobStatus>();
+  if (dependencyIds.length) {
+    const dependencies = await pool.query<{ id: string; status: JobStatus }>(
+      "SELECT id, status FROM ops_jobs WHERE id = ANY($1::text[])",
+      [dependencyIds],
+    );
+    for (const dependency of dependencies.rows) dependencyStatuses.set(dependency.id, dependency.status);
+  }
+  const dependencyFor = (record: OpsJobRecord) => {
+    const payload = parseJson(record.payload_json) as Record<string, unknown> | null;
+    return typeof payload?.dependsOnJobId === "string" ? payload.dependsOnJobId : null;
+  };
+  const failedDependencies = active.rows.map((record) => ({ record, dependencyId: dependencyFor(record) }))
+    .filter((item): item is { record: OpsJobRecord; dependencyId: string } => Boolean(item.dependencyId && dependencyStatuses.get(item.dependencyId) === "failed"));
+  const waitingForDependency = (record: OpsJobRecord) => {
+    const dependencyId = dependencyFor(record);
+    const status = dependencyId ? dependencyStatuses.get(dependencyId) : null;
+    return status === "queued" || status === "ready_for_runner" || status === "running" || status === "awaiting_human_review";
+  };
+  const stale: OpsJobRecord[] = active.rows.filter((record: OpsJobRecord) => (
+    !waitingForDependency(record)
+    && !failedDependencies.some((item) => item.record.id === record.id)
+    && getJobAgeMs(record) >= getJobTimeoutMs(record.kind, record.status)
+  ));
   const recoveries: Array<{ parentJobId: string; jobId: string; attempt: number }> = [];
   if (!dryRun) {
+    for (const { record, dependencyId } of failedDependencies) {
+      await cod5_falharJobComIncidente(record, {
+        error: `Dependência ${dependencyId} falhou; reconciliação não executada.`,
+        result: { stage: "dependency_failed", dependencyId, failedAt: nowIso() },
+        runnerId: record.runner_id,
+        expectedStatus: record.status,
+        expectedUpdatedAt: record.updated_at,
+      });
+    }
     for (const record of stale) {
       const failure = buildWatchdogFailure(record, nowIso());
-      const failed = await updateOpsJob(record.id, {
-        status: "failed",
+      const failed = await cod5_falharJobComIncidente(record, {
         error: failure.error,
         result: failure.result,
         runnerId: record.runner_id,
@@ -1370,7 +1731,7 @@ router.post("/ops/jobs/watchdog", async (req, res): Promise<void> => {
     dryRun,
     checked: active.rows.length,
     staleCount: stale.length,
-    failedCount: dryRun ? 0 : stale.length,
+    failedCount: dryRun ? 0 : stale.length + failedDependencies.length,
     recoveries,
     stale: stale.map((record: OpsJobRecord) => ({
       id: record.id,
@@ -2520,24 +2881,17 @@ router.post("/ops/monthly-report-refreshes", async (req, res): Promise<void> => 
     res.status(400).json({ error: "bad_request", details: "Informe targetDate e competência correspondente." });
     return;
   }
-  const now = new Date();
-  const notBefore = new Date(now.getTime() + 60_000).toISOString();
-  const idempotencyKey = `evidence-monthly-report:${competencia}:incremental`;
-  const created = await createIdempotentOpsJob("evidence-monthly-report", {
+  const cod5_atualizacao = await cod5_marcarRelatorioMensalPendente({
     targetDate,
     competencia,
-    incremental: true,
-    notBefore,
-    source: readOptionalString(req.body?.source) ?? "evidence-approved-refresh",
-  }, "evidence-approved-refresh", idempotencyKey, true);
-  const { existingNotBefore, ...createdResponse } = created;
-  res.status(created.duplicate ? 200 : 202).json({
+    requestedBy: readOptionalString(req.body?.source) ?? "evidence-approved-refresh",
+  });
+  res.status(202).json({
     ok: true,
     competencia,
     targetDate,
     debounceSeconds: 60,
-    ...createdResponse,
-    notBefore: created.duplicate ? existingNotBefore : notBefore,
+    ...cod5_atualizacao,
   });
 });
 
@@ -2547,24 +2901,22 @@ router.get("/ops/daily-print-recoveries", async (req, res): Promise<void> => {
     res.status(400).json({ error: "bad_request", details: "Informe date em YYYY-MM-DD." });
     return;
   }
-  const jobs = await pool.query<OpsJobRecord>(
-    `SELECT * FROM ops_jobs
-      WHERE kind = 'print-batch' AND payload_json::jsonb ->> 'targetDate' = $1
-      ORDER BY created_at DESC LIMIT 20`,
+  const cod5_resultado = await pool.query<Record<string, unknown>>(
+    "SELECT * FROM daily_print_recoveries WHERE target_date = $1 ORDER BY insertion_id",
     [date],
   );
-  const latest = jobs.rows[0] ? describeJob(jobs.rows[0]) : null;
-  const items = latest ? [latest] : [];
-  const active = latest && ["queued", "ready_for_runner", "running"].includes(latest.status) ? 1 : 0;
-  const failed = latest?.status === "failed" ? 1 : 0;
+  const cod5_itens = cod5_resultado.rows;
+  const cod5_bloqueados = cod5_itens.filter((cod5_item) => cod5_item.status === "blocked").length;
+  const cod5_pendentes = cod5_itens.filter((cod5_item) => cod5_item.status === "retry_scheduled").length;
+  const cod5_vazio = cod5_itens.length === 0;
   res.json({
     date,
-    items,
+    items: cod5_itens,
     evaluator: {
-      status: active ? "retryable" : failed ? "blocked" : items.length ? "complete" : "blocked",
-      pending: active,
-      blocked: failed,
-      reason: items.length ? null : "recovery_not_initialized",
+      status: cod5_bloqueados || cod5_vazio ? "blocked" : cod5_pendentes ? "retryable" : "complete",
+      pending: cod5_pendentes,
+      blocked: cod5_bloqueados,
+      reason: cod5_vazio ? "recovery_not_initialized" : null,
     },
   });
 });
@@ -2577,34 +2929,11 @@ router.get("/ops/incidents", async (req, res): Promise<void> => {
     return;
   }
   const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const result = await pool.query<OpsJobRecord>(
-    "SELECT * FROM ops_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT $1",
+  const cod5_resultado = await pool.query<OpsIncidentRecord>(
+    "SELECT * FROM ops_incidents ORDER BY updated_at DESC LIMIT $1",
     [limit],
   );
-  const incidentLayer = (record: OpsJobRecord) => {
-    const persisted = (parseJson(record.result_json) as Record<string, unknown> | null)?.incidentLayer;
-    if (["scheduling", "queue_or_runner", "api_or_runner_transport", "audit", "portal", "job_execution"].includes(String(persisted))) return persisted;
-    const error = String(record.error_text ?? "").toLowerCase();
-    if (error.includes("watchdog") || error.includes("expired")) return "queue_or_runner";
-    if (error.includes("checklist") || error.includes("audit")) return "audit";
-    if (error.includes("transport") || error.includes("timeout") || error.includes("network")) return "api_or_runner_transport";
-    if (error.includes("portal") || error.includes("adrotate")) return "portal";
-    return "job_execution";
-  };
-  res.json({ items: result.rows.map((record) => ({
-    id: `job-incident:${record.id}`,
-    fingerprint: createHash("sha256").update(`${record.id}:${record.error_text ?? "failed"}`).digest("hex"),
-    status: "open",
-    layer: incidentLayer(record),
-    jobId: record.id,
-    jobKind: record.kind,
-    summary: sanitizeJobText(record.error_text, 500),
-    error: sanitizeJobText(record.error_text, 1000),
-    evidence: describeJob(record).result,
-    attempts: Number((parseJson(record.payload_json) as Record<string, unknown> | null)?.attempt ?? 1),
-    createdAt: record.created_at,
-    updatedAt: record.updated_at,
-  })) });
+  res.json({ items: cod5_resultado.rows.map(cod5_descreverIncidente) });
 });
 
 router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
@@ -2622,6 +2951,88 @@ router.post("/ops/jobs/print-single", async (req, res): Promise<void> => {
     source: "macmini-api",
   }, "ops-api");
   res.status(202).json({ ok: true, jobId, kind: "print-single", status: "ready_for_runner" });
+});
+
+router.post("/ops/jobs/daily-print-batch", async (req, res): Promise<void> => {
+  const cod5_agora = new Date();
+  const cod5_data = new Intl.DateTimeFormat("en-CA", { timeZone: cod5_FUSO_PRINT_DIARIO }).format(cod5_agora);
+  const cod5_payload = {
+    competencia: competenciaForDate(cod5_data),
+    siteId: null,
+    date: cod5_data,
+    captureAt: null,
+    captureWindow: cod5_JANELA_PRINT_DIARIO,
+    source: cod5_FONTE_PRINT_DIARIO,
+    scheduledAt: cod5_agora.toISOString(),
+    timeZone: cod5_FUSO_PRINT_DIARIO,
+  };
+  if (req.body?.dryRun === true) {
+    res.json({
+      ok: true,
+      skipped: false,
+      dryRun: true,
+      date: cod5_data,
+      captureAt: null,
+      captureWindow: cod5_JANELA_PRINT_DIARIO,
+      source: cod5_FONTE_PRINT_DIARIO,
+      payload: cod5_payload,
+    });
+    return;
+  }
+  const cod5_cliente = await pool.connect();
+  try {
+    await cod5_cliente.query("BEGIN");
+    await cod5_cliente.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`daily-print-batch:${cod5_data}`]);
+    const cod5_existente = (await cod5_cliente.query<OpsJobRecord>(
+      `SELECT * FROM ops_jobs
+        WHERE kind = 'print-batch'
+          AND payload_json::jsonb ->> 'source' = $1
+          AND payload_json::jsonb ->> 'date' = $2
+          AND status IN ('queued','ready_for_runner','running','completed')
+        ORDER BY created_at DESC LIMIT 1`,
+      [cod5_FONTE_PRINT_DIARIO, cod5_data],
+    )).rows[0];
+    if (cod5_existente) {
+      await cod5_cliente.query("COMMIT");
+      res.json({
+        ok: true,
+        skipped: true,
+        reason: "existing_daily_print_batch",
+        date: cod5_data,
+        captureAt: null,
+        captureWindow: cod5_JANELA_PRINT_DIARIO,
+        source: cod5_FONTE_PRINT_DIARIO,
+        existingJobId: cod5_existente.id,
+        existingStatus: cod5_existente.status,
+      });
+      return;
+    }
+    const cod5_jobId = randomUUID();
+    const cod5_criadoEm = nowIso();
+    await cod5_cliente.query(
+      `INSERT INTO ops_jobs
+        (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+       VALUES ($1, 'print-batch', 'ready_for_runner', $2, NULL, NULL, 'ops-api', NULL, $3, $4)`,
+      [cod5_jobId, JSON.stringify(cod5_payload), cod5_criadoEm, cod5_criadoEm],
+    );
+    await cod5_cliente.query("COMMIT");
+    res.status(202).json({
+      ok: true,
+      skipped: false,
+      jobId: cod5_jobId,
+      kind: "print-batch",
+      status: "ready_for_runner",
+      date: cod5_data,
+      captureAt: null,
+      captureWindow: cod5_JANELA_PRINT_DIARIO,
+      source: cod5_FONTE_PRINT_DIARIO,
+    });
+  } catch (cod5_erro) {
+    await cod5_cliente.query("ROLLBACK").catch(() => undefined);
+    throw cod5_erro;
+  } finally {
+    cod5_cliente.release();
+  }
 });
 
 router.post("/ops/jobs/print-backfill", async (req, res): Promise<void> => {
@@ -2731,7 +3142,7 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
   const pdfResolution = Math.max(72, Math.min(180, Math.round(readOptionalNumber(req.body?.pdfResolution) ?? 120)));
   const imageMaxWidth = Math.max(800, Math.min(2560, Math.round(readOptionalNumber(req.body?.imageMaxWidth) ?? 1600)));
   const imageQuality = Math.max(45, Math.min(90, Math.round(readOptionalNumber(req.body?.imageQuality) ?? 72)));
-  const jobId = await createOpsJob("pi-site-export", {
+  const cod5_payload = {
     piCodigo,
     siteSigla,
     mode,
@@ -2742,12 +3153,18 @@ router.post("/ops/jobs/pi-site-export", async (req, res): Promise<void> => {
     imageMaxWidth,
     imageQuality,
     source: "macmini-api",
-  }, "ops-api");
-  res.status(202).json({
+  };
+  const cod5_chaveSolicitada = readOptionalString(req.headers["idempotency-key"]);
+  const cod5_idempotencia = cod5_chaveSolicitada ?? `pi-site-export:${createHash("sha256").update(JSON.stringify(cod5_payload)).digest("hex")}`;
+  if (!/^[A-Za-z0-9._:-]{8,160}$/.test(cod5_idempotencia)) {
+    res.status(400).json({ error: "bad_request", details: "Idempotency-Key inválida." });
+    return;
+  }
+  const cod5_criado = await createIdempotentOpsJob("pi-site-export", cod5_payload, "ops-api", cod5_idempotencia, false, true);
+  res.status(cod5_criado.duplicate ? 200 : 202).json({
     ok: true,
-    jobId,
+    ...cod5_criado,
     kind: "pi-site-export",
-    status: "ready_for_runner",
     mode,
     variant,
     pdfMaxWidth,

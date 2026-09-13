@@ -1883,7 +1883,7 @@ async function validateCaptureChecklist(apiBase, insertionId, targetDate, metada
   return payload;
 }
 
-function createStageRecorder() {
+function createStageRecorder(onProgress = null) {
   const stages = [];
   return {
     stages,
@@ -1899,6 +1899,7 @@ function createStageRecorder() {
         errorDetail: null,
       };
       stages.push(entry);
+      onProgress?.({ stage: name, status: "running", updatedAt: entry.startedAt });
       return entry;
     },
     finish(entry, status, summary = {}, errorCode = null, errorDetail = null) {
@@ -1908,6 +1909,7 @@ function createStageRecorder() {
       entry.summary = summary;
       entry.errorCode = errorCode;
       entry.errorDetail = errorDetail;
+      onProgress?.({ stage: entry.stage, status, updatedAt: entry.finishedAt });
       return entry;
     },
   };
@@ -2123,7 +2125,10 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
   if (!captureAt || !requireVisiblePageDate) {
     return { ok: true, skipped: true };
   }
-  const [targetDate] = String(captureAt).split("T");
+  const targetDate = dateInCuiaba(captureAt) || String(captureAt).split("T")[0];
+  if (targetDate === getDateLabel().isoDate) {
+    return { ok: true, skipped: true, reason: "live_same_day" };
+  }
   const [year, month, day] = targetDate.split("-");
   const expectedDate = `${day}/${month}/${year}`;
   const labels = buildFrozenPageDateLabels(captureAt);
@@ -2135,7 +2140,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       const style = window.getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) return false;
       const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+      return rect.width > 0 && rect.height > 0;
     };
     const values = [];
     for (const selector of rawSelectors) {
@@ -3222,7 +3227,8 @@ function parseIsoLikeDate(value) {
     return null;
   }
 
-  const parsed = new Date(raw);
+  const cod5IsoLocal = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)$/);
+  const parsed = new Date(cod5IsoLocal ? `${cod5IsoLocal[1]}-04:00` : raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
   const ptLong = raw.match(/\b(\d{1,2})\s+de\s+([a-zA-ZçÇãõáéíóúâêô]+)(?:\s+de)?\s+(\d{4})(?:.*?\b(\d{2}):(\d{2})(?::(\d{2}))?)?/i);
@@ -3392,7 +3398,7 @@ function evaluateRetroCaptureGate(payload) {
   contentTimeline.targetDateMatches = targetDateMatches;
   const relativeContentTimeline = evaluateRelativeContentTimeline(
     payload.contentRelativeTimeSamples,
-    payload.requireAbsoluteEditorialDates,
+    payload.requireNoRelativeEditorialDates,
   );
   if (!contentTimeline.ok && (payload.requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
@@ -7108,7 +7114,9 @@ async function main() {
   for (const artifactPath of [slotPng, contextPng, viewportPng, finalPng, metaJson]) {
     rmSync(artifactPath, { force: true });
   }
-  const trace = createStageRecorder();
+  const trace = createStageRecorder((event) => {
+    if (args.runnerJobId) process.stderr.write(`ADOPS_CAPTURE_PROGRESS ${JSON.stringify(event)}\n`);
+  });
   const artifactRecords = {};
   let logId = null;
   let finalProofStyle = null;
@@ -7714,7 +7722,9 @@ async function main() {
       captureClass,
       reconstructionReason: args.reconstructionReason,
     });
-    const retroContentEvidence = isHistoricalCapture
+    const shouldCollectEditorialEvidence = isHistoricalCapture
+      || mapping.auditConfig?.requireAbsoluteEditorialDates === true;
+    const retroContentEvidence = shouldCollectEditorialEvidence
       ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
       : {
           editorialSamples: [],
@@ -7724,7 +7734,7 @@ async function main() {
         };
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
-    contentRelativeTimeSamples = Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
+    contentRelativeTimeSamples = isHistoricalCapture && Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
       ? retroContentEvidence.contentRelativeTimeSamples.slice(0, 10)
       : [];
     retroContentManifest = retroContentEvidence.manifest;
@@ -7750,6 +7760,7 @@ async function main() {
       contentDateSamples,
       contentRelativeTimeSamples,
       requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+      requireNoRelativeEditorialDates: isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       retroContentProof,
       requireRetroContentProof: isHistoricalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
@@ -7940,7 +7951,7 @@ async function main() {
         requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
         requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
         requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
-        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true,
+        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true && visiblePageDateAudit?.skipped !== true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,

@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
 import { buildRunnerPools } from "./runner-concurrency.mjs";
+import { cod5_coordenar_reservas } from "./runner-polling.mjs";
 import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
 import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
 import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.mjs";
@@ -41,7 +42,7 @@ const DRIVE_PI_MONITOR_ROOT_FOLDER_ID = (process.env.DRIVE_PI_MONITOR_ROOT_FOLDE
 const DRIVE_PI_MONITOR_INTERVAL_MS = Number.parseInt(process.env.DRIVE_PI_MONITOR_INTERVAL_MS || "300000", 10);
 const DRIVE_PI_MONITOR_STATE_FILE = process.env.DRIVE_PI_MONITOR_STATE_FILE || "/var/lib/adops/drive-pi-monitor-state.json";
 const DRIVE_PI_MONITOR_MAX_ITEMS = Number.parseInt(process.env.DRIVE_PI_MONITOR_MAX_ITEMS || "2000", 10);
-const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "30000", 10);
+const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "300000", 10);
 const ADOPS_DRIVE_RETRY_MAX_ATTEMPTS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_ATTEMPTS || "7", 10);
 const ADOPS_DRIVE_RETRY_BASE_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_BASE_MS || "2000", 10);
 const ADOPS_DRIVE_RETRY_MAX_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_MS || "30000", 10);
@@ -2528,6 +2529,7 @@ async function callPiAgentOpenAI(packageContext) {
       "Extraia dados de PI para AdOps.",
       "Responda apenas JSON no schema solicitado.",
       "Nao invente campos; use null quando nao houver evidencia.",
+      "Agencia ausente deve ser registrada em missingFields, mas nao transforma sozinha o status em needs_review: e pendencia comercial, nao bloqueio operacional.",
       "Use citacao curta da PI, nome de arquivo ou caminho para cada campo critico.",
       "Quando houver periodoInicio e periodoFim no mesmo mes, preencha competencia como MM/YYYY a partir do periodoInicio.",
       "A IA nao aplica mudancas; scripts deterministas validam e executam depois.",
@@ -2842,11 +2844,12 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
 
 function validateDrivePiApplyFields(fields) {
   const missing = [];
+  const commercialWarnings = [];
   if (!fields.piCodigo) missing.push("piCodigo");
   if (!fields.campaignName) missing.push("campanhaNome");
   if (!fields.competencia) missing.push("competencia");
   if (!fields.clienteId) missing.push("clienteId");
-  if (!fields.agenciaId) missing.push("agenciaId");
+  if (!fields.agenciaId) commercialWarnings.push("missing_agenciaId");
   if (!fields.insertions.length) missing.push("insertions");
   if (fields.agentQuality && !fields.agentQuality.ok) missing.push("agentQuality");
 
@@ -2864,6 +2867,7 @@ function validateDrivePiApplyFields(fields) {
   return {
     ok: missing.length === 0 && invalidInsertions.length === 0,
     missing,
+    commercialWarnings,
     invalidInsertions,
     agentQuality: fields.agentQuality || null,
   };
@@ -3041,6 +3045,7 @@ function buildDrivePiReviewReasons({
   if (packageMissing.includes("media") && packageReadiness?.issues?.includes("missing_media")) reasons.push("missing_media");
   for (const item of packageReadiness?.issues || []) reasons.push(item);
   for (const item of validation?.missing || []) reasons.push(`missing_${item}`);
+  for (const item of validation?.commercialWarnings || []) reasons.push(item);
   if (validation?.invalidInsertions?.length) reasons.push("invalid_insertions");
   if (validation?.agentQuality && !validation.agentQuality.ok) reasons.push("agent_quality");
   if (rollout && !rollout.ok) reasons.push("rollout_blocked");
@@ -8492,8 +8497,8 @@ async function runSchedulerIfDue(force = false) {
   return runSchedulerTrigger(CONTROL_PLANE_PROVIDER);
 }
 
-async function runOnce(poolKinds = kinds) {
-  const job = await claimNext(poolKinds);
+async function runOnce(poolKinds = kinds, cod5_reservar = () => claimNext(poolKinds)) {
+  const job = await cod5_reservar();
   if (!job) {
     console.log(`[runner] nenhum job pronto para ${RUNNER_ID}`);
     return false;
@@ -8527,7 +8532,7 @@ async function runOnce(poolKinds = kinds) {
   return true;
 }
 
-async function runPool(pool, workerIndex) {
+async function runPool(pool, workerIndex, cod5_reservar) {
   const poolLabel = `${pool.kinds.join("+")}:${workerIndex + 1}/${pool.concurrency}`;
   for (;;) {
     try {
@@ -8535,7 +8540,7 @@ async function runPool(pool, workerIndex) {
         await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
         await runWatchdogIfDue(false);
       }
-      const handled = await runOnce(pool.kinds);
+      const handled = await runOnce(pool.kinds, cod5_reservar);
       runnerLastCycleError = null;
       runnerLastSuccessAt = new Date().toISOString();
       if (!handled) await sleep(POLL_INTERVAL_MS);
@@ -8591,9 +8596,10 @@ async function main() {
   startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  const workers = pools.flatMap((pool) => (
-    Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex))
-  ));
+  const workers = pools.flatMap((pool) => {
+    const cod5_reservar = cod5_coordenar_reservas(() => claimNext(pool.kinds), { cod5_intervalo: POLL_INTERVAL_MS });
+    return Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex, cod5_reservar));
+  });
   if (CONTROL_PLANE_PROVIDER === "macmini") workers.push(runSchedulerLoop());
   if (DRIVE_PI_MONITOR_ENABLED) workers.push(runDrivePiMonitorLoop());
   await Promise.all(workers);
@@ -8664,6 +8670,7 @@ export {
   validateOptionalDrivePiDestination,
   validateExpectedDrivePiCommercialContext,
   validateExpectedDrivePiIdentity,
+  validateDrivePiApplyFields,
   extractExplicitPiFromPdfText,
   extractExplicitPisFromPdfText,
   validateCompositePdfEvidence,

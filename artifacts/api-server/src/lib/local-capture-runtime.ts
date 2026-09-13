@@ -59,6 +59,7 @@ export type LocalCaptureOptions = {
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
   reconstructionReason?: "late_publication_recovery" | null;
+  onProgress?: (event: { stage: string; status: string; updatedAt: string }) => void;
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
@@ -119,6 +120,17 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
           timeoutMs,
           killGraceMs,
           maxBuffer: 10 * 1024 * 1024,
+          onStderrLine: (line) => {
+            if (!line.startsWith("ADOPS_CAPTURE_PROGRESS ")) return;
+            try {
+              const event = JSON.parse(line.slice("ADOPS_CAPTURE_PROGRESS ".length));
+              if (event && typeof event.stage === "string" && typeof event.status === "string" && typeof event.updatedAt === "string") {
+                options?.onProgress?.(event);
+              }
+            } catch {
+              // Saída de diagnóstico inválida não pode interromper a captura.
+            }
+          },
         }),
       );
       return JSON.parse(stdout);

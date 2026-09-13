@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,7 +9,7 @@ export const evidencesTable = pgTable("evidences", {
   arquivoUrl: text("arquivo_url"),
   titulo: text("titulo"),
   criadoEm: timestamp("criado_em", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [index("evidences_insertion_created_idx").on(table.insercaoId, table.criadoEm)]);
 
 export const insertEvidenceSchema = createInsertSchema(evidencesTable).omit({ id: true, criadoEm: true });
 export type InsertEvidence = z.infer<typeof insertEvidenceSchema>;

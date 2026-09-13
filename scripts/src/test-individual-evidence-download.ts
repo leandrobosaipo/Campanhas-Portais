@@ -6,6 +6,12 @@ test("fixa a variante web do download individual nos limites do portal", () => {
   assert.deepEqual(evidenceExport.parseIndividualEvidenceDownloadOptions({
     variant: "web", imageMaxWidth: "1600", imageQuality: "72",
   }), { variant: "web", imageMaxWidth: 1600, imageQuality: 72 });
+  assert.deepEqual(evidenceExport.parseIndividualEvidenceDownloadOptions({
+    variant: "web", imageMaxWidth: "800", imageQuality: "60",
+  }), { variant: "web", imageMaxWidth: 800, imageQuality: 60 });
+  assert.throws(() => evidenceExport.parseIndividualEvidenceDownloadOptions({
+    variant: "web", imageMaxWidth: "800", imageQuality: "72",
+  }), /preset de miniatura/);
   assert.throws(() => evidenceExport.parseIndividualEvidenceDownloadOptions({ variant: "original" }), /variant=web/);
 });
 

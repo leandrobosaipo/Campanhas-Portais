@@ -42,6 +42,8 @@ A IA/OpenAI ajuda a compatibilizar PI com layout ruim, nomes de pasta, nomes de 
 
 O auto-apply so pode continuar quando `packageReadiness`, validacao, rollout, sync da planilha e dedupe estiverem todos `ok=true`. Se faltar PDF, midia ou houver conflito de duplicidade, o job termina em `needs_review` com `reviewReasons` acionavel.
 
+Agência não é gate técnico. Quando `agenciaId` não puder ser resolvido com segurança, a API mantém `agenciaId=null`, inclui `missing_agenciaId` em `commercialWarnings`/`reviewReasons` e continua somente se PI, cliente, portal, formato, período, mídia, destino, deduplicação e rollout estiverem válidos. A pendência deve ser enriquecida antes de faturamento, pacote comercial ou envio à agência.
+
 ## Publicação automática por reconciliação
 
 Este fluxo não usa IA para decidir cadastro ou publicação. O monitor do Drive atualiza o snapshot; a API AdOps cruza esse snapshot com a planilha e o AdRotate. O cron das 17h30 e alterações do Drive criam `campaign-publication-reconcile` com `mode=apply`; o runner converte-o em preflight enquanto `ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED=false`.

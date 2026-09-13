@@ -6,6 +6,10 @@ function isPagesHost(hostname: string) {
   return hostname === "adops-campanhas-portais.pages.dev" || hostname.endsWith(".adops-campanhas-portais.pages.dev");
 }
 
+function cod5_usaApiPublica(hostname: string) {
+  return hostname === "adops.codigo5.com.br" || isPagesHost(hostname);
+}
+
 function parseStoredToken(raw: string) {
   try {
     const parsed = JSON.parse(raw);
@@ -33,7 +37,7 @@ export function getRuntimeApiBaseUrl() {
       : "";
   const configured = envBase.replace(/\/$/, "");
   if (configured) return configured;
-  if (typeof window !== "undefined" && isPagesHost(window.location.hostname)) {
+  if (typeof window !== "undefined" && cod5_usaApiPublica(window.location.hostname)) {
     return DEFAULT_PUBLIC_API_BASE_URL;
   }
   return "";
@@ -74,7 +78,7 @@ export function hasStoredOpsOperatorToken() {
 
 export function isPublicAdopsApiBaseUrl(url: string | null | undefined) {
   if (!url) return false;
-  return /https:\/\/adops-api-public\.leandro471\.workers\.dev/i.test(url);
+  return /^https:\/\/(adops-api\.codigo5\.com\.br|adops-api-public\.leandro471\.workers\.dev)(?:\/|$)/i.test(url);
 }
 
 export function getAdopsClientBuildId() {

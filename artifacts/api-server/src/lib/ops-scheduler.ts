@@ -1,8 +1,8 @@
 const COD5_SCHEDULER_TIMEZONE = "America/Cuiaba" as const;
 
 type SchedulerRoutine = {
-  routineKind: "campaign-publication-reconcile" | "daily-print" | "daily-print-recovery" | "daily-print-morning-recovery" | "daily-print-escalation" | "evidence-monthly-report";
-  jobKind: "campaign-publication-reconcile" | "print-batch" | "evidence-monthly-report" | null;
+  routineKind: "campaign-publication-reconcile" | "daily-print" | "daily-print-recovery" | "daily-print-morning-recovery" | "daily-print-escalation" | "evidence-monthly-report" | "nightly-retroactive-backfill";
+  jobKind: "campaign-publication-reconcile" | "print-batch" | "print-backfill" | "evidence-monthly-report" | null;
   dispatchWindow: string;
   targetDate: "today" | "yesterday";
   maxAttempts: number;
@@ -21,6 +21,7 @@ const COD5_SCHEDULER_ROUTINES: readonly SchedulerRoutine[] = [
     maxAttempts: 8,
   })),
   { routineKind: "evidence-monthly-report", jobKind: "evidence-monthly-report", dispatchWindow: "22:15", targetDate: "today", maxAttempts: 1 },
+  { routineKind: "nightly-retroactive-backfill", jobKind: "print-backfill", dispatchWindow: "23:00", targetDate: "today", maxAttempts: 3 },
 ];
 
 export type CanonicalScheduleDecision = {

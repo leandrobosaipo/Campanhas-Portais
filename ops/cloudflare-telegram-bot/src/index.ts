@@ -627,7 +627,7 @@ async function createPiSiteExportJob(env: Env, piCodigo: string, siteSigla: stri
       requestedBy: "telegram-bot",
       source: "telegram-bot",
     }),
-  }) as Promise<{ jobId: string }>;
+  }, true) as Promise<{ jobId: string }>;
 }
 
 async function fetchPiSiteExportJob(env: Env, jobId: string): Promise<PiSiteExportJob> {

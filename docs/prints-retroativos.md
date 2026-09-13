@@ -496,6 +496,29 @@ somente depois da prova editorial local ser aprovada. Em seguida, confirmar
 `GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD` com
 `status=audited` e `retroContentProof.status=approved`.
 
+O GET preserva os campos anteriores do job e acrescenta:
+
+```json
+{
+  "status": "running",
+  "progress": {
+    "percent": 60,
+    "stage": "slot_captured",
+    "message": "Captura realizada. Estamos montando a evidência.",
+    "updatedAt": "2026-09-02T12:01:00.000Z"
+  },
+  "support": null
+}
+```
+
+Etapas e percentuais: `queued` 0, `running` 5, `page_resolved` 15,
+`slot_found` 25, `creative_matched` 35, `frame_selected` 45,
+`slot_captured` 60, `critical_assets` 70, `final_composed` 80, `uploaded` 90,
+`audit_evaluated` 95 e `completed` 100. São eventos reais emitidos pelo
+capturador; o valor persistido nunca retrocede. Em `failed`, o percentual fica
+no último avanço e `support` contém apenas código correlacionável e orientação
+segura. A mensagem técnica permanece interna.
+
 Em página interna reconstruída, URL pública, título, data e corpo precisam
 pertencer ao mesmo post histórico. Cards relacionados atuais não substituem
 nem invalidam a data editorial do artigo principal verificado.

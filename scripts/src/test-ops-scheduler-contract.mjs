@@ -76,12 +76,11 @@ test("overview diferencia runners ativos de registros históricos", () => {
 });
 
 test("refresh incremental mensal mantém somente um job ativo por competência", () => {
-  assert.match(ops, /activeOnly = false/);
-  assert.match(ops, /NOT \$3::boolean OR status IN \('queued', 'ready_for_runner'\)/);
-  assert.doesNotMatch(ops, /NOT \$3::boolean OR status IN \('queued', 'ready_for_runner', 'running'\)/);
-  assert.match(ops, /`evidence-monthly-report:\$\{competencia\}:incremental`/);
-  assert.match(ops, /"evidence-approved-refresh", idempotencyKey, true\)/);
-  assert.match(ops, /existingNotBefore/);
+  assert.match(ops, /pg_advisory_xact_lock\(hashtext\(\$1\)\).*monthly-report-refresh/s);
+  assert.match(ops, /dirty_revision = monthly_report_refreshes\.dirty_revision \+ 1/);
+  assert.match(ops, /cod5_ativo\?\.status === "running"/);
+  assert.match(ops, /status: "queued_after_running"/);
+  assert.match(ops, /refreshRevision: cod5_revisao/);
   assert.doesNotMatch(ops, /incremental:\$\{minuteBucket\}/);
 });
 

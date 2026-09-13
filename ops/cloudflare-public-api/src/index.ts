@@ -1106,7 +1106,7 @@ async function proxyToPrivateApi(request: Request, env: Env, url: URL, options: 
   const responseHeaders = new Headers(response.headers);
   responseHeaders.set("access-control-allow-origin", "*");
   responseHeaders.set("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS");
-  responseHeaders.set("access-control-allow-headers", "content-type,authorization,x-adops-api-token,x-adops-client-build,x-adops-auth-state");
+  responseHeaders.set("access-control-allow-headers", "content-type,authorization,idempotency-key,x-adops-api-token,x-adops-client-build,x-adops-auth-state");
   if (options.noStore) {
     responseHeaders.set("cache-control", "no-store");
   }
@@ -2665,7 +2665,7 @@ export default {
         headers: {
           "access-control-allow-origin": "*",
           "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
-          "access-control-allow-headers": "content-type,authorization,x-adops-api-token,x-adops-client-build,x-adops-auth-state",
+          "access-control-allow-headers": "content-type,authorization,idempotency-key,x-adops-api-token,x-adops-client-build,x-adops-auth-state",
         },
       });
     }
