@@ -49,7 +49,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { operationsBase: apiBase, deliveryBase: deliveryApiBase } = resolveMonthlyReportApiBases();
 const publicJobDownloadUrl = (url) => routeJobDownloadThroughOperationsApi(url, apiBase);
-const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops-campanhas-portais.pages.dev").replace(/\/$/, "");
+const adopsPanelBase = (process.env.ADOPS_PANEL_BASE_URL || "https://adops.codigo5.com.br").replace(/\/$/, "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const opsEnvFile = process.env.OPS_ENV_FILE || path.join(repoRoot, ".env.adops-operator.local");
 const timeZone = "America/Cuiaba";
