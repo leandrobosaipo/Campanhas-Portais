@@ -47,7 +47,7 @@ upload_to_volume() {
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg name "$container_name" --arg image "$image" --arg volume "$volume" --arg target "$mount_path" '{
       Image: $image,
-      Cmd: ["sh", "-lc", "sleep 300"],
+      Cmd: ["sh", "-lc", "sleep 900"],
       HostConfig: {
         Binds: [($volume + ":" + $target)]
       }
@@ -82,22 +82,21 @@ upload_to_volume() {
   rm -f "$body"
 
   if [[ -n "$prepare_command" ]]; then
-    local exec_id exit_code
+    local exec_id
     exec_id="$(curl -fsS --max-time 30 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
       -d "$(jq -n --arg command "$prepare_command" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:"/app",Cmd:["sh","-lc",$command]}')" \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/exec" | jq -r '.Id')"
-    curl -fsS --max-time 300 \
+    curl -fsS --max-time 30 \
       -X POST \
       -H "X-API-Key: ${PORTAINER_API_KEY}" \
       -H "Content-Type: application/json" \
-      -d '{"Detach":false,"Tty":false}' \
+      -d '{"Detach":true,"Tty":false}' \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
-    exit_code="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json" | jq -r '.ExitCode')"
-    [[ "$exit_code" == "0" ]] || { printf 'Runtime dependency install failed for volume=%s.\n' "$volume" >&2; exit 1; }
+    portainer_wait_for_exec "$exec_id" "Runtime dependency install for volume=${volume}" \
+      "${PORTAINER_UPLOAD_EXEC_DEADLINE_SECONDS:-840}"
   fi
 
   curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \

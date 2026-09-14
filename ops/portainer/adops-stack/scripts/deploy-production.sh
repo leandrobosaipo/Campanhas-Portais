@@ -69,23 +69,45 @@ CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/c
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
 [[ -n "$POSTGRES_ID" ]] || { printf 'adops-postgres container not found.\n' >&2; exit 1; }
 
-BACKUP_NAME="adops-before-${ADOPS_IMAGE_TAG:0:12}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
+BACKUP_NAME="adops-before-${ADOPS_IMAGE_TAG:0:12}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+BACKUP_PATH="/var/lib/postgresql/data/adops-backups/${BACKUP_NAME}"
+VERIFY_DB="adops_backup_verify_${ADOPS_IMAGE_TAG:0:12}_$(date -u +%s)"
+
+start_postgres_exec() {
+  local payload="$1"
+  local description="$2"
+  local deadline_seconds="${3:-120}"
+  local exec_id
+
+  exec_id="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$payload" \
+    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id // empty')"
+  [[ -n "$exec_id" ]] || { printf '%s exec was not created.\n' "$description" >&2; return 1; }
+  portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"Tty":false}' \
+    "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
+  portainer_wait_for_exec "$exec_id" "$description" "$deadline_seconds"
+  printf '%s\n' "$exec_id"
+}
+
+BACKUP_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" '{
   AttachStdout:true, AttachStderr:true, Tty:false,
-  Cmd:["sh","-lc",("pg_dump -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" | gzip -c > " + $file)]
+  Env:["BACKUP_FILE=" + $file],
+  Cmd:["sh","-lc","set -eu; umask 077; mkdir -p \"$(dirname \"$BACKUP_FILE\")\"; log=\"$BACKUP_FILE.log\"; printf \"event=backup_started\\n\" > \"$log\"; pg_dump --format=custom --file \"$BACKUP_FILE\" -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" >/dev/null 2>&1 || { printf \"event=backup_failed\\n\" >> \"$log\"; exit 1; }; printf \"event=backup_completed\\n\" >> \"$log\""]
 }')"
-EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-[[ -n "$EXEC_ID" && "$EXEC_ID" != "null" ]] || { printf 'PostgreSQL backup exec was not created.\n' >&2; exit 1; }
-portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
-EXIT_CODE=""
-for backup_attempt in $(seq 1 60); do
-  EXEC_STATE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/json")"
-  EXEC_RUNNING="$(printf '%s' "$EXEC_STATE" | jq -r '.Running // false')"
-  EXIT_CODE="$(printf '%s' "$EXEC_STATE" | jq -r '.ExitCode // empty')"
-  [[ "$EXEC_RUNNING" != "true" && -n "$EXIT_CODE" ]] && break
-  sleep 2
-done
-[[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed or timed out.\n' >&2; exit 1; }
+BACKUP_EXEC_ID="$(start_postgres_exec "$BACKUP_PAYLOAD" 'PostgreSQL custom backup' 300)"
+
+VERIFY_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" --arg db "$VERIFY_DB" '{
+  AttachStdout:true, AttachStderr:true, Tty:false,
+  Env:["BACKUP_FILE=" + $file, "VERIFY_DB=" + $db],
+  Cmd:["sh","-lc","set -eu; cleanup() { psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d postgres -c \"DROP DATABASE IF EXISTS \\\"$VERIFY_DB\\\"\" >/dev/null 2>&1 || true; }; trap cleanup EXIT; psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d postgres -c \"CREATE DATABASE \\\"$VERIFY_DB\\\"\" >/dev/null; pg_restore --exit-on-error --no-owner --no-privileges -U \"$POSTGRES_USER\" --dbname \"$VERIFY_DB\" \"$BACKUP_FILE\" >/dev/null; psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d \"$VERIFY_DB\" -c \"SELECT 1\" >/dev/null"]
+}')"
+VERIFY_EXEC_ID="$(start_postgres_exec "$VERIFY_PAYLOAD" 'PostgreSQL backup restore verification' 300)"
+
+METADATA_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" --arg release "$ADOPS_IMAGE_TAG" --arg backup_exec "$BACKUP_EXEC_ID" --arg verify_exec "$VERIFY_EXEC_ID" --arg previous_image "$PREVIOUS_IMAGE_TAG" --arg previous_drive "$PREVIOUS_DRIVE_MODE" --arg previous_app "$PREVIOUS_APP_VOLUME" --arg previous_web "$PREVIOUS_WEB_VOLUME" '{
+  AttachStdout:true, AttachStderr:true, Tty:false,
+  Env:["BACKUP_FILE=" + $file, "BACKUP_RELEASE=" + $release, "BACKUP_EXEC_ID=" + $backup_exec, "VERIFY_EXEC_ID=" + $verify_exec, "PREVIOUS_IMAGE=" + $previous_image, "PREVIOUS_DRIVE=" + $previous_drive, "PREVIOUS_APP=" + $previous_app, "PREVIOUS_WEB=" + $previous_web],
+  Cmd:["sh","-lc","set -eu; umask 077; metadata=\"$BACKUP_FILE.metadata\"; { printf \"backup_file=%s\\n\" \"$BACKUP_FILE\"; printf \"backup_format=custom\\n\"; printf \"release=%s\\n\" \"$BACKUP_RELEASE\"; printf \"backup_exec_id=%s\\n\" \"$BACKUP_EXEC_ID\"; printf \"restore_verify_exec_id=%s\\n\" \"$VERIFY_EXEC_ID\"; printf \"restore_verified=true\\n\"; printf \"previous_image_tag=%s\\n\" \"$PREVIOUS_IMAGE\"; printf \"previous_drive_mode=%s\\n\" \"$PREVIOUS_DRIVE\"; printf \"previous_app_volume=%s\\n\" \"$PREVIOUS_APP\"; printf \"previous_web_volume=%s\\n\" \"$PREVIOUS_WEB\"; printf \"created_at=%s\\n\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; } > \"$metadata\""]
+}')"
+start_postgres_exec "$METADATA_PAYLOAD" 'PostgreSQL backup metadata' >/dev/null
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
@@ -111,7 +133,7 @@ fi
 DEPLOY_ENV="$(mktemp)"
 grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
 printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-legacy}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-$PREVIOUS_DRIVE_MODE}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
 chmod 600 "$DEPLOY_ENV"
 
 ROLLBACK_ENV="$(mktemp)"
