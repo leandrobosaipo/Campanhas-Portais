@@ -3,6 +3,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { enqueueDriveInventoryRefresh, getDriveInventoryStatus, syncDriveInventory, type DriveInventoryItemInput } from "../lib/drive-inventory";
 import { listRunnerHeartbeats, upsertRunnerHeartbeat } from "../lib/runner-heartbeats";
+import { loadCurrentSheetCampaigns, type CurrentSheetCampaignRow } from "../lib/current-sheet-campaigns";
 
 type JobKind =
   | "print-batch"
@@ -18,6 +19,7 @@ type JobKind =
   | "adrotate-link"
   | "adrotate-publish"
   | "drive-pi-reconcile"
+  | "sheet-correction"
   | "telegram-send-evidence"
   | "runtime-readiness-probe";
 
@@ -77,6 +79,7 @@ const OPS_JOB_KINDS: JobKind[] = [
   "adrotate-link",
   "adrotate-publish",
   "drive-pi-reconcile",
+  "sheet-correction",
   "telegram-send-evidence",
   "runtime-readiness-probe",
 ];
@@ -464,6 +467,13 @@ const JOB_STAGE_LABELS: Record<JobKind, Record<string, string>> = {
     completed: "Concluido",
     failed: "Falhou",
   },
+  "sheet-correction": {
+    queued: "Na fila",
+    ready_for_runner: "Aguardando runner",
+    running: "Corrigindo fonte da planilha",
+    completed: "Fonte da planilha corrigida",
+    failed: "Falha na correção da planilha",
+  },
   "runtime-readiness-probe": {
     queued: "Na fila",
     ready_for_runner: "Aguardando runner",
@@ -738,20 +748,149 @@ async function createOpsJob(kind: JobKind, payload: Record<string, unknown>, req
 }
 
 async function createIdempotentOpsJob(kind: JobKind, payload: Record<string, unknown>, requestedBy: string | null, idempotencyKey: string) {
-  const existing = await pool.query<{ id: string; status: JobStatus }>(
-    `SELECT id, status
+  const fingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${kind}:${idempotencyKey}`]);
+    const existing = await client.query<{ id: string; status: JobStatus; payload_json: string }>(
+      `SELECT id, status, payload_json
+         FROM ops_jobs
+        WHERE kind = $1
+          AND payload_json::jsonb ->> 'idempotencyKey' = $2
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [kind, idempotencyKey],
+    );
+    if (existing.rows[0]) {
+      const stored = parseJson(existing.rows[0].payload_json) as Record<string, unknown> | null;
+      if (!stored) throw new Error("IDEMPOTENCY_KEY_CORRUPTED");
+      delete stored.idempotencyKey;
+      const storedFingerprint = createHash("sha256").update(JSON.stringify(stored)).digest("hex");
+      if (storedFingerprint !== fingerprint) throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD");
+      await client.query("COMMIT");
+      return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+    }
+    const jobId = randomUUID();
+    const now = nowIso();
+    await client.query(
+      `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+       VALUES ($1, $2, 'ready_for_runner', $3, NULL, NULL, $4, NULL, $5, $6)`,
+      [jobId, kind, JSON.stringify({ ...payload, idempotencyKey }), requestedBy, now, now],
+    );
+    await client.query("COMMIT");
+    return { jobId, status: "ready_for_runner" as const, duplicate: false };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sheetCorrectionRequestFingerprint(request: Record<string, unknown>) {
+  return createHash("sha256").update(stableJson(request)).digest("hex");
+}
+
+async function findSheetCorrectionIdempotency(idempotencyKey: string, requestFingerprint: string) {
+  const existing = await pool.query<{ id: string; status: JobStatus; payload_json: string }>(
+    `SELECT id, status, payload_json
        FROM ops_jobs
-      WHERE kind = $1
-        AND payload_json::jsonb ->> 'idempotencyKey' = $2
+      WHERE kind = 'sheet-correction'
+        AND payload_json::jsonb ->> 'idempotencyKey' = $1
       ORDER BY created_at DESC
       LIMIT 1`,
-    [kind, idempotencyKey],
+    [idempotencyKey],
   );
-  if (existing.rows[0]) {
-    return { jobId: existing.rows[0].id, status: existing.rows[0].status, duplicate: true };
+  const record = existing.rows[0];
+  if (!record) return null;
+  const payload = parseJson(record.payload_json) as { requestFingerprint?: unknown } | null;
+  if (payload?.requestFingerprint !== requestFingerprint) throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD");
+  return { jobId: record.id, status: record.status, duplicate: true };
+}
+
+const SHEET_CORRECTION_FIELDS = ["piCodigo", "periodoOriginal", "campaignName", "localFormato"] as const;
+type SheetCorrectionField = typeof SHEET_CORRECTION_FIELDS[number];
+
+function isSheetCorrectionField(value: unknown): value is SheetCorrectionField {
+  return typeof value === "string" && (SHEET_CORRECTION_FIELDS as readonly string[]).includes(value);
+}
+
+function currentSheetFieldValue(row: CurrentSheetCampaignRow, field: SheetCorrectionField) {
+  return row[field];
+}
+
+async function resolveSheetCorrectionPayload(body: Record<string, unknown>) {
+  const sheetName = readOptionalString(body.sheetName);
+  const rowNumber = readOptionalNumber(body.rowNumber);
+  const sourceDate = readOptionalString(body.sourceDate);
+  const changes = Array.isArray(body.changes) ? body.changes : [];
+  if (!sheetName || !rowNumber || rowNumber < 1 || !changes.length || changes.length > SHEET_CORRECTION_FIELDS.length) {
+    throw new Error("Informe sheetName, rowNumber e de uma a quatro alterações.");
   }
-  const jobId = await createOpsJob(kind, { ...payload, idempotencyKey }, requestedBy);
-  return { jobId, status: "ready_for_runner" as const, duplicate: false };
+  const source = await loadCurrentSheetCampaigns({ date: sourceDate ?? undefined, includeUpcoming: true });
+  if (source.sheetName !== sheetName) throw new Error("A aba solicitada não corresponde à fonte corrente.");
+  const row = source.allRows.find((item) => item.rowNumber === rowNumber);
+  const cellMetadata = row?.cellMetadata;
+  if (!row || !cellMetadata) throw new Error("A linha não possui coordenadas de célula inequívocas para correção.");
+
+  const seen = new Set<SheetCorrectionField>();
+  const resolved = changes.map((change) => {
+    const entry = change && typeof change === "object" ? change as Record<string, unknown> : {};
+    const field = entry.field;
+    const expectedValue = readOptionalString(entry.expectedValue);
+    const value = readOptionalString(entry.value);
+    if (!isSheetCorrectionField(field) || seen.has(field) || expectedValue == null || !value) {
+      throw new Error("Cada alteração exige field, expectedValue e value válidos, sem repetição.");
+    }
+    seen.add(field);
+    const sourceValue = currentSheetFieldValue(row, field);
+    if (sourceValue !== expectedValue) throw new Error(`Conflito na fonte para ${field}; releia a planilha antes de aplicar.`);
+    return { field, cell: cellMetadata[field].a1, expectedValue, value };
+  });
+  return { sheetName, rowNumber, sourceDate: source.date, changes: resolved };
+}
+
+async function verifySheetCorrectionExport(record: OpsJobRecord, result: unknown) {
+  if (record.kind !== "sheet-correction") return;
+  const payload = parseJson(record.payload_json) as { sourceDate?: unknown; sheetName?: unknown; rowNumber?: unknown; changes?: unknown } | null;
+  const envelope = result && typeof result === "object" ? result as Record<string, unknown> : {};
+  const output = envelope.execution && typeof envelope.execution === "object"
+    ? envelope.execution as Record<string, unknown>
+    : envelope;
+  const sheetName = readOptionalString(payload?.sheetName);
+  const rowNumber = readOptionalNumber(payload?.rowNumber);
+  const expectedChanges = Array.isArray(payload?.changes) ? payload.changes : [];
+  const changes = Array.isArray(output.changes) ? output.changes : [];
+  if (!sheetName || !rowNumber || !expectedChanges.length || changes.length !== expectedChanges.length) {
+    throw new Error("Resultado de sheet-correction incompleto.");
+  }
+  for (let index = 0; index < expectedChanges.length; index += 1) {
+    const expected = expectedChanges[index] && typeof expectedChanges[index] === "object" ? expectedChanges[index] as Record<string, unknown> : {};
+    const actual = changes[index] && typeof changes[index] === "object" ? changes[index] as Record<string, unknown> : {};
+    if (expected.field !== actual.field || expected.cell !== actual.cell || expected.value !== actual.value) {
+      throw new Error("Resultado de sheet-correction diverge do payload aprovado.");
+    }
+  }
+  const source = await loadCurrentSheetCampaigns({ date: readOptionalString(payload?.sourceDate) ?? undefined, includeUpcoming: true });
+  if (source.sheetName !== sheetName) throw new Error("Readback XLSX retornou aba diferente da correção.");
+  const row = source.allRows.find((item) => item.rowNumber === rowNumber);
+  if (!row) throw new Error("Readback XLSX não localizou a linha corrigida.");
+  for (const change of changes) {
+    const entry = change && typeof change === "object" ? change as Record<string, unknown> : {};
+    if (!isSheetCorrectionField(entry.field) || currentSheetFieldValue(row, entry.field) !== readOptionalString(entry.value)) {
+      throw new Error(`Readback XLSX não confirmou ${String(entry.field ?? "campo")}.`);
+    }
+  }
 }
 
 async function getOpsJob(id: string) {
@@ -1008,6 +1147,21 @@ router.post("/ops/runner/jobs/:id/progress", async (req, res): Promise<void> => 
 });
 
 router.post("/ops/runner/jobs/:id/complete", async (req, res): Promise<void> => {
+  const current = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 LIMIT 1", [req.params.id]);
+  const record = current.rows[0];
+  if (!record) {
+    res.status(404).json({ error: "not_found", details: "Job not found" });
+    return;
+  }
+  try {
+    await verifySheetCorrectionExport(record, req.body?.result ?? { ok: true });
+  } catch (error) {
+    res.status(422).json({
+      error: "sheet_correction_export_readback_failed",
+      details: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
   const updated = await updateOpsJob(req.params.id, {
     status: "completed",
     result: req.body?.result ?? { ok: true },
@@ -1403,6 +1557,14 @@ function buildOpsApiCatalog() {
         purpose: "Gerar preview ou aplicar uma confirmação humana de PI/mediaUrl com idempotência e trilha de auditoria.",
         authRequired: true,
         curl: `curl -fsSL -X POST ${auth} -H "Idempotency-Key: reconcile-1800-preview-v1" ${base}/api/ops/jobs/drive-pi-reconcile -d '{"insertionId":1800,"apply":false}'`,
+      },
+      {
+        id: "sheet-correction",
+        method: "POST",
+        path: "/api/ops/jobs/sheet-correction",
+        purpose: "Corrigir uma célula da planilha por fila, com valor esperado, evidência, idempotência e readback.",
+        authRequired: true,
+        curl: `curl -fsSL -X POST ${auth} -H "Idempotency-Key: sheet-42059-pi-v1" ${base}/api/ops/jobs/sheet-correction -d '{"sheetName":"SETEMBRO 2026","rowNumber":42,"changes":[{"field":"piCodigo","expectedValue":"ativo","value":"PI 42059 - GOV"}],"reason":"Correção operacional confirmada","evidenceRef":"insertion:2988"}'`,
       },
       {
         id: "drive-pi-event",
@@ -2236,6 +2398,113 @@ router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
       ? ["review_job_result", "recheck_campaign_operations", "recheck_media_consistency"]
       : ["obtain_human_confirmation", "rerun_with_apply_true"],
   });
+});
+
+router.post("/ops/jobs/sheet-correction", async (req, res): Promise<void> => {
+  const reason = readOptionalString(req.body?.reason);
+  const evidenceRef = readOptionalString(req.body?.evidenceRef);
+  if (!reason || reason.length < 8 || !evidenceRef || evidenceRef.length < 8) {
+    res.status(400).json({ error: "bad_request", details: "reason e evidenceRef rastreáveis são obrigatórios." });
+    return;
+  }
+  const requestedKey = readOptionalString(req.headers["idempotency-key"]) ?? readOptionalString(req.body?.idempotencyKey);
+  if (!requestedKey || !/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) {
+    res.status(400).json({ error: "bad_request", details: "Idempotency-Key é obrigatória e inválida." });
+    return;
+  }
+  try {
+    const requestFingerprint = sheetCorrectionRequestFingerprint({
+      operation: "apply",
+      sheetName: req.body?.sheetName,
+      rowNumber: req.body?.rowNumber,
+      changes: req.body?.changes,
+      reason,
+      evidenceRef,
+    });
+    const existing = await findSheetCorrectionIdempotency(requestedKey, requestFingerprint);
+    if (existing) {
+      res.status(200).json({ ok: true, kind: "sheet-correction", apply: true, correctionId: existing.jobId, ...existing });
+      return;
+    }
+    const correction = await resolveSheetCorrectionPayload(req.body ?? {});
+    const result = await createIdempotentOpsJob("sheet-correction", {
+      ...correction,
+      reason,
+      evidenceRef,
+      operation: "apply",
+      requestFingerprint,
+      source: "macmini-api",
+    }, "ops-api", requestedKey);
+    res.status(result.duplicate ? 200 : 202).json({
+      ok: true,
+      kind: "sheet-correction",
+      apply: true,
+      correctionId: result.jobId,
+      ...result,
+      requiredFollowUp: ["review_job_result", "recheck_sheet_export", "recheck_campaign_operations"],
+    });
+  } catch (error) {
+    res.status(422).json({ error: "sheet_correction_rejected", details: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+router.post("/ops/jobs/sheet-correction/:correctionId/rollback", async (req, res): Promise<void> => {
+  const original = await pool.query<OpsJobRecord>("SELECT * FROM ops_jobs WHERE id = $1 AND kind = 'sheet-correction' LIMIT 1", [req.params.correctionId]);
+  const record = original.rows[0];
+  if (!record || !["completed", "failed"].includes(record.status)) {
+    res.status(409).json({ error: "rollback_unavailable", details: "A correção original não possui histórico para rollback." });
+    return;
+  }
+  const resultEnvelope = parseJson(record.result_json) as { execution?: unknown } | null;
+  const resultPayload = resultEnvelope?.execution && typeof resultEnvelope.execution === "object"
+    ? resultEnvelope.execution as { sheetName?: unknown; rowNumber?: unknown; changes?: unknown }
+    : resultEnvelope as { sheetName?: unknown; rowNumber?: unknown; changes?: unknown } | null;
+  const originalPayload = parseJson(record.payload_json) as { sourceDate?: unknown; reason?: unknown; evidenceRef?: unknown } | null;
+  const changes = Array.isArray(resultPayload?.changes) ? resultPayload.changes : [];
+  const requestedKey = readOptionalString(req.headers["idempotency-key"]) ?? readOptionalString(req.body?.idempotencyKey);
+  if (!requestedKey || !/^[A-Za-z0-9._:-]{8,160}$/.test(requestedKey)) {
+    res.status(400).json({ error: "bad_request", details: "Idempotency-Key é obrigatória e inválida." });
+    return;
+  }
+  const confirmationNote = readOptionalString(req.body?.confirmationNote);
+  if (!confirmationNote || confirmationNote.length < 8 || !resultPayload?.sheetName || !resultPayload?.rowNumber || !changes.length) {
+    res.status(400).json({ error: "bad_request", details: "confirmationNote e histórico completo da correção são obrigatórios." });
+    return;
+  }
+  const rollbackChanges = changes.map((change) => {
+    const entry = change && typeof change === "object" ? change as Record<string, unknown> : {};
+    return { field: entry.field, expectedValue: entry.value, value: entry.previousValue };
+  });
+  try {
+    const requestFingerprint = sheetCorrectionRequestFingerprint({
+      operation: "rollback",
+      rollbackOf: req.params.correctionId,
+      confirmationNote,
+    });
+    const existing = await findSheetCorrectionIdempotency(requestedKey, requestFingerprint);
+    if (existing) {
+      res.status(200).json({ ok: true, kind: "sheet-correction", rollbackOf: req.params.correctionId, correctionId: existing.jobId, ...existing });
+      return;
+    }
+    const correction = await resolveSheetCorrectionPayload({
+      sheetName: resultPayload.sheetName,
+      rowNumber: resultPayload.rowNumber,
+      sourceDate: originalPayload?.sourceDate,
+      changes: rollbackChanges,
+    });
+    const result = await createIdempotentOpsJob("sheet-correction", {
+      ...correction,
+      reason: `Rollback ${req.params.correctionId}: ${confirmationNote}`,
+      evidenceRef: typeof originalPayload?.evidenceRef === "string" ? originalPayload.evidenceRef : `rollback:${req.params.correctionId}`,
+      operation: "rollback",
+      rollbackOf: req.params.correctionId,
+      requestFingerprint,
+      source: "macmini-api",
+    }, "ops-api", requestedKey);
+    res.status(result.duplicate ? 200 : 202).json({ ok: true, kind: "sheet-correction", rollbackOf: req.params.correctionId, correctionId: result.jobId, ...result });
+  } catch (error) {
+    res.status(422).json({ error: "sheet_correction_rollback_rejected", details: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean; publishFlow: boolean }) {

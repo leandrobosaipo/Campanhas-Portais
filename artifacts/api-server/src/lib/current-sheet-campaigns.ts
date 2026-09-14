@@ -64,6 +64,20 @@ export type CurrentSheetCampaignRow = {
   processoRealizado: string;
   processoEnviado: string;
   dataEnvioAgencia: string;
+  cellMetadata: CurrentSheetCampaignRowCellMetadata | null;
+};
+
+export type CurrentSheetCampaignCellCoordinate = {
+  columnIndex: number;
+  column: string;
+  a1: string;
+};
+
+export type CurrentSheetCampaignRowCellMetadata = {
+  piCodigo: CurrentSheetCampaignCellCoordinate;
+  campaignName: CurrentSheetCampaignCellCoordinate;
+  periodoOriginal: CurrentSheetCampaignCellCoordinate;
+  localFormato: CurrentSheetCampaignCellCoordinate;
 };
 
 export type CurrentSheetCampaignResult = {
@@ -72,6 +86,7 @@ export type CurrentSheetCampaignResult = {
   sheetName: string;
   rows: CurrentSheetCampaignRow[];
   upcomingRows: CurrentSheetCampaignRow[];
+  allRows: CurrentSheetCampaignRow[];
   source: {
     exportUrl: string;
     downloadedAt: string;
@@ -268,6 +283,78 @@ function rowToStrings(row: unknown[]) {
   return row.map((cell) => normalizeCell(cell));
 }
 
+export function indexToColumnLabel(index: number) {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new Error(`Índice de coluna inválido: ${index}`);
+  }
+  let col = index + 1;
+  let label = "";
+  while (col > 0) {
+    const rem = (col - 1) % 26;
+    label = String.fromCharCode(65 + rem) + label;
+    col = Math.floor((col - 1) / 26);
+  }
+  return label;
+}
+
+export function resolveCellCoordinates({
+  rowNumber,
+  sheetColumnIndex,
+}: {
+  rowNumber: number;
+  sheetColumnIndex: number;
+}) {
+  const column = indexToColumnLabel(sheetColumnIndex);
+  return {
+    columnIndex: sheetColumnIndex,
+    column,
+    a1: `${column}${rowNumber}`,
+  };
+}
+
+function findFieldColumnOffsets(headers: string[], candidates: string[]) {
+  const matches = headers
+    .map((header, columnIndex) => ({ header, columnIndex }))
+    .filter(({ header }) => candidates.some((candidate) => normalizeForMatch(header).includes(candidate)));
+  if (matches.length === 0) {
+    throw new Error(`Campo obrigatório não encontrado no cabeçalho: ${candidates.join(" ou ")}`);
+  }
+  if (matches.length > 1) {
+    const cols = matches.map((item) => indexToColumnLabel(item.columnIndex)).join(", ");
+    throw new Error(`Campo ambíguo no cabeçalho: ${candidates.join(" ou ")} (colunas ${cols})`);
+  }
+  return matches[0]!.columnIndex;
+}
+
+export function resolveCurrentSheetCampaignRowMetadata(args: {
+  rowNumber: number;
+  blockStart: number;
+  headers: string[];
+}) {
+  const {
+    rowNumber,
+    blockStart,
+    headers,
+  } = args;
+  const piCodeOffset = findFieldColumnOffsets(headers, ["PECA"]);
+  const campaignOffset = findFieldColumnOffsets(headers, ["CAMPANHA"]);
+  const periodoOffset = findFieldColumnOffsets(headers, ["PERIODO"]);
+  const localOffset = findFieldColumnOffsets(headers, ["LOCAL"]);
+
+  return {
+    piCodigo: resolveCellCoordinates({ rowNumber, sheetColumnIndex: blockStart + piCodeOffset }),
+    campaignName: resolveCellCoordinates({
+      rowNumber,
+      sheetColumnIndex: blockStart + campaignOffset,
+    }),
+    periodoOriginal: resolveCellCoordinates({
+      rowNumber,
+      sheetColumnIndex: blockStart + periodoOffset,
+    }),
+    localFormato: resolveCellCoordinates({ rowNumber, sheetColumnIndex: blockStart + localOffset }),
+  };
+}
+
 export async function loadCurrentSheetCampaigns(options: {
   date?: string;
   exportUrl?: string;
@@ -292,6 +379,7 @@ export async function loadCurrentSheetCampaigns(options: {
 
   const parsedRows: CurrentSheetCampaignRow[] = [];
   const upcomingRows: CurrentSheetCampaignRow[] = [];
+  const allRows: CurrentSheetCampaignRow[] = [];
   let siteRowCells: string[] | null = null;
   let blockStarts: number[] = [];
   let blockSites: Array<string | null> = [];
@@ -345,6 +433,17 @@ export async function loadCurrentSheetCampaigns(options: {
       const parsedPeriod = parsePeriodo(periodoOriginal, sheetName);
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;
 
+      let cellMetadata: CurrentSheetCampaignRowCellMetadata | null = null;
+      try {
+        cellMetadata = resolveCurrentSheetCampaignRowMetadata({
+          rowNumber: rowIndex + 1,
+          blockStart: start,
+          headers,
+        });
+      } catch {
+        // Correções exigem coordenadas inequivocas; a leitura operacional continua disponível sem elas.
+      }
+
       const parsedRow: CurrentSheetCampaignRow = {
         version: CAMPAIGN_SHEET_VERSION,
         sheetName,
@@ -362,7 +461,9 @@ export async function loadCurrentSheetCampaigns(options: {
         processoRealizado,
         processoEnviado,
         dataEnvioAgencia,
+        cellMetadata,
       };
+      allRows.push(parsedRow);
 
       if (parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
         parsedRows.push(parsedRow);
@@ -378,6 +479,7 @@ export async function loadCurrentSheetCampaigns(options: {
     sheetName,
     rows: parsedRows,
     upcomingRows,
+    allRows,
     source: {
       exportUrl,
       downloadedAt: new Date().toISOString(),

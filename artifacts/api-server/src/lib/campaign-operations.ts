@@ -14,6 +14,7 @@ import {
   todayInCuiaba,
   type CurrentSheetCampaignRow,
 } from "./current-sheet-campaigns";
+import { resolveDisplayPi } from "./pi-display";
 import {
   driveMediaMatchesFormat,
   findDriveCampaignMedia,
@@ -85,6 +86,11 @@ export type CampaignOperationItem = {
   status: OperationStatus;
   siteSigla: string;
   piCodigo: string;
+  sourceIdentity: {
+    rawPiCodigo: string;
+    canonicalPiCodigo: string | null;
+    decision: "sheet" | "adops_fallback" | "pending";
+  };
   campaignName: string;
   period: {
     start: string | null;
@@ -129,6 +135,11 @@ export type CampaignOperationUpcomingItem = {
   version: typeof CAMPAIGN_OPERATIONS_VERSION;
   siteSigla: string;
   piCodigo: string;
+  sourceIdentity: {
+    rawPiCodigo: string;
+    canonicalPiCodigo: string | null;
+    decision: "sheet" | "adops_fallback" | "pending";
+  };
   campaignName: string;
   period: {
     start: string | null;
@@ -219,6 +230,10 @@ function isCampaignNameCompatible(sheetName: string, adopsName: string | null | 
 
 function unique<T>(values: T[]) {
   return Array.from(new Set(values));
+}
+
+function resolveOperationPi(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null) {
+  return resolveDisplayPi(row.piCodigo, insertion?.campaign?.piCodigo);
 }
 
 type LiveAdSlot = {
@@ -348,7 +363,13 @@ async function loadEnrichedInsertions(): Promise<MinimalEnrichedInsertion[]> {
 
 function findAdopsMatches(row: CurrentSheetCampaignRow, insertions: MinimalEnrichedInsertion[]) {
   const piDigits = extractPiDigits(row.piCodigo);
-  if (!piDigits) return [];
+  if (!piDigits) {
+    // A PI inválida na fonte só pode usar uma campanha canônica do mesmo portal.
+    return insertions.filter((insertion) => (
+      insertion.site?.sigla?.toUpperCase() === row.blockSite
+      && isCampaignNameCompatible(row.campaignName, insertion.campaign?.nome)
+    ));
+  }
   return insertions.filter((insertion) => {
     const siteSigla = insertion.site?.sigla?.toUpperCase();
     const insertionPi = extractPiDigits(insertion.campaign?.piCodigo);
@@ -497,9 +518,10 @@ export async function getActiveCampaignOperations(options: {
   for (const row of sheet.rows) {
     const matches = findAdopsMatches(row, insertions);
     const { insertion, compatible } = selectBestAdopsMatch(row, matches);
+    const sourceIdentity = resolveOperationPi(row, insertion);
     const drive = await findDriveCampaignMedia({
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: sourceIdentity.piCodigo,
       campaignName: row.campaignName,
       refreshDrive: options.refreshDrive === true,
     });
@@ -554,7 +576,12 @@ export async function getActiveCampaignOperations(options: {
       version: CAMPAIGN_OPERATIONS_VERSION,
       status: statuses[0] ?? "ok",
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: sourceIdentity.piCodigo,
+      sourceIdentity: {
+        rawPiCodigo: sourceIdentity.rawPiCodigo,
+        canonicalPiCodigo: sourceIdentity.canonicalPiCodigo,
+        decision: sourceIdentity.decision,
+      },
       campaignName: row.campaignName,
       period: {
         start: row.periodoInicio,
@@ -595,9 +622,10 @@ export async function getActiveCampaignOperations(options: {
   for (const row of sheet.upcomingRows) {
     const matches = findAdopsMatches(row, insertions);
     const { insertion, compatible } = selectBestAdopsMatch(row, matches);
+    const sourceIdentity = resolveOperationPi(row, insertion);
     const drive = await findDriveCampaignMedia({
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: sourceIdentity.piCodigo,
       campaignName: row.campaignName,
       refreshDrive: options.refreshDrive === true,
     });
@@ -634,7 +662,12 @@ export async function getActiveCampaignOperations(options: {
     upcomingItems.push({
       version: CAMPAIGN_OPERATIONS_VERSION,
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: sourceIdentity.piCodigo,
+      sourceIdentity: {
+        rawPiCodigo: sourceIdentity.rawPiCodigo,
+        canonicalPiCodigo: sourceIdentity.canonicalPiCodigo,
+        decision: sourceIdentity.decision,
+      },
       campaignName: row.campaignName,
       period: {
         start: row.periodoInicio,

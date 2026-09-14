@@ -6,6 +6,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import process from "node:process";
+import { executeSheetCorrection } from "./sheet-correction.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,6 +40,8 @@ const GOOGLE_DRIVE_CLIENT_SECRET = (process.env.GOOGLE_DRIVE_CLIENT_SECRET || ""
 const GOOGLE_DRIVE_ACCESS_TOKEN = (process.env.GOOGLE_DRIVE_ACCESS_TOKEN || "").trim();
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || "").trim();
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || "").trim();
+const GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE = (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE || "").trim();
+const GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON = (process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON || "").trim();
 const ADOPS_DRIVE_PI_ALLOW_MUTATION = process.env.ADOPS_DRIVE_PI_ALLOW_MUTATION === "true";
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const ADOPS_PI_AGENT_ENABLED = process.env.ADOPS_PI_AGENT_ENABLED === "true";
@@ -84,7 +87,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,sheet-correction,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -4447,6 +4450,7 @@ function namedChecks(items) {
 async function executeRuntimeReadinessProbe() {
   const driveOAuthReady = Boolean(GOOGLE_DRIVE_REFRESH_TOKEN && GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET);
   const googleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const googleSheetsWriteReady = Boolean(GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON || GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE);
   const telegramDirectReady = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_DEFAULT_GROUP_ID);
   const telegramBridgeConfigured = Boolean(ADOPS_TELEGRAM_BOT_URL);
   const perrengueSshEnvName = "ADOPS_PERRENGUE_SSH_KEY_PATH";
@@ -4461,6 +4465,7 @@ async function executeRuntimeReadinessProbe() {
       privateApiReady: Boolean(PRIVATE_ADOPS_API_BASE_URL && PRIVATE_ADOPS_API_TOKEN),
       opsApiReady: Boolean(OPS_API_BASE_URL && OPS_API_TOKEN),
       googleDriveReady,
+      googleSheetsWriteReady,
       telegramReady: telegramBridgeConfigured || telegramDirectReady,
       telegramBridgeConfigured,
       telegramDirectReady,
@@ -4472,6 +4477,7 @@ async function executeRuntimeReadinessProbe() {
       perrengueSshConfigured: envPresent(perrengueSshEnvName),
       perrengueSshAuthOk: perrengueSshAuth.authOk,
       jobKindAllowed: kinds.includes("runtime-readiness-probe"),
+      sheetCorrectionJobAllowed: kinds.includes("sheet-correction"),
     },
     categories: [
       {
@@ -4495,6 +4501,15 @@ async function executeRuntimeReadinessProbe() {
           { name: "GOOGLE_DRIVE_REFRESH_TOKEN", requiredFor: "Renovar OAuth do Google Drive." },
           { name: "GOOGLE_DRIVE_CLIENT_ID", requiredFor: "Renovar OAuth do Google Drive." },
           { name: "GOOGLE_DRIVE_CLIENT_SECRET", requiredFor: "Renovar OAuth do Google Drive." },
+        ]),
+      },
+      {
+        id: "google-sheets",
+        title: "Google Sheets para correção de fonte",
+        checks: namedChecks([
+          { name: "GOOGLE_SHEETS_SPREADSHEET_ID", requiredFor: "Identificar a planilha oficial a ser corrigida." },
+          { name: "GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON", requiredFor: "Aplicar correção de fonte via service account inline." },
+          { name: "GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE", requiredFor: "Aplicar correção de fonte via arquivo service account." },
         ]),
       },
       {
@@ -5148,6 +5163,9 @@ async function handleJob(job) {
   if (job.kind === "sync-planilha") {
     return executeSyncPlanilha(payload);
   }
+  if (job.kind === "sheet-correction") {
+    return executeSheetCorrection(payload);
+  }
   if (job.kind === "print-batch") {
     return executePrintBatch(payload);
   }
@@ -5259,13 +5277,14 @@ async function runOnce() {
     return false;
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
+  let execution = null;
   try {
-    const result = await handleJob(job);
+    execution = await handleJob(job);
     await completeJob(job.id, {
       ok: true,
       runnerId: RUNNER_ID,
       completedAt: new Date().toISOString(),
-      execution: result,
+      execution,
     });
     console.log(`[runner] job concluído`, job.id);
   } catch (error) {
@@ -5274,6 +5293,7 @@ async function runOnce() {
       ok: false,
       runnerId: RUNNER_ID,
       failedAt: new Date().toISOString(),
+      execution,
     });
     console.error(`[runner] job falhou`, job.id, message);
   }
