@@ -29,5 +29,5 @@ portainer_endpoint_id() {
 }
 
 portainer_curl() {
-  curl -sS -H "X-API-Key: ${PORTAINER_API_KEY}" "$@"
+  curl -sS --connect-timeout 10 --max-time 60 -H "X-API-Key: ${PORTAINER_API_KEY}" "$@"
 }
