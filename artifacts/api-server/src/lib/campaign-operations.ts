@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { resolveDisplayPi } from "./pi-display";
 import {
   campaignsTable,
   db,
@@ -669,6 +670,7 @@ export function classifyEvidenceHealth(evidence: Pick<Awaited<ReturnType<typeof 
 }
 
 function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedInsertion | null, evidenceStatus: Awaited<ReturnType<typeof resolveEvidence>>, drive: DriveCampaignMediaMatch, publicationHealth: PublicationHealth): SuggestedJob[] {
+  const pi = resolveDisplayPi(row.piCodigo, insertion?.campaign?.piCodigo);
   const jobs: SuggestedJob[] = [];
   if (drive.folderId) {
     jobs.push({
@@ -678,6 +680,7 @@ function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedI
       payload: { folderId: drive.folderId },
     });
   }
+  if (!pi.canonicalPiCodigo) return jobs;
   if (!insertion && drive.folderId) {
     jobs.push({
       type: "drive_pi_folder",
@@ -686,13 +689,13 @@ function suggestedJobs(row: CurrentSheetCampaignRow, insertion: MinimalEnrichedI
       payload: { folderId: drive.folderId },
     });
   }
-  if (insertion && publicationHealth.status === "ok" && evidenceStatus.requiredDates.length) {
+  if (insertion && pi.canonicalPiCodigo && publicationHealth.status === "ok" && evidenceStatus.requiredDates.length) {
     jobs.push({
       type: "print_backfill",
       method: "POST",
       endpoint: "/api/ops/jobs/print-backfill",
       payload: {
-        piCodigo: row.piCodigo,
+        piCodigo: pi.canonicalPiCodigo,
         siteSigla: row.blockSite,
         fromDate: row.periodoInicio,
         toDate: evidenceStatus.requiredDates.at(-1),
@@ -870,7 +873,7 @@ export async function getActiveCampaignOperations(options: {
       version: CAMPAIGN_OPERATIONS_VERSION,
       status: statuses[0] ?? "ok",
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: resolveDisplayPi(row.piCodigo, insertion?.campaign?.piCodigo).piCodigo,
       campaignName: row.campaignName,
       period: {
         start: row.periodoInicio,
@@ -983,7 +986,7 @@ export async function getActiveCampaignOperations(options: {
     upcomingItems.push({
       version: CAMPAIGN_OPERATIONS_VERSION,
       siteSigla: row.blockSite,
-      piCodigo: row.piCodigo,
+      piCodigo: resolveDisplayPi(row.piCodigo, insertion?.campaign?.piCodigo).piCodigo,
       campaignName: row.campaignName,
       period: {
         start: row.periodoInicio,

@@ -67,7 +67,17 @@ export type CurrentSheetCampaignRow = {
   processoRealizado: string;
   processoEnviado: string;
   dataEnvioAgencia: string;
+  cellMetadata: CurrentSheetCampaignRowCellMetadata | null;
 };
+export type CurrentSheetCampaignCellCoordinate = { columnIndex: number; column: string; a1: string; headerA1: string; headerValue: string };
+export type CurrentSheetCampaignRowCellMetadata = { piCodigo: CurrentSheetCampaignCellCoordinate; campaignName: CurrentSheetCampaignCellCoordinate; periodoOriginal: CurrentSheetCampaignCellCoordinate; localFormato: CurrentSheetCampaignCellCoordinate };
+export function indexToColumnLabel(index: number) { return XLSX.utils.encode_col(index); }
+export function resolveCurrentSheetCampaignRowMetadata(args: { rowNumber: number; headerRowNumber: number; blockStart: number; headers: string[] }) {
+  const find = (name: string) => args.headers.map((header, index) => ({ header, index })).filter((item) => normalizeForMatch(item.header).includes(name));
+  const coordinate = (offset: number) => { const columnIndex = args.blockStart + offset; const column = XLSX.utils.encode_col(columnIndex); return { columnIndex, column, a1: `${column}${args.rowNumber}`, headerA1: `${column}${args.headerRowNumber}`, headerValue: args.headers[offset] ?? "" }; };
+  const field = (name: string) => { const matches = find(name); if (matches.length !== 1) throw new Error(matches.length ? `Campo ambíguo no cabeçalho: ${name}` : `Campo obrigatório não encontrado no cabeçalho: ${name}`); return coordinate(matches[0]!.index); };
+  return { piCodigo: field("PECA"), campaignName: field("CAMPANHA"), periodoOriginal: field("PERIODO"), localFormato: field("LOCAL") };
+}
 
 export type CurrentSheetCampaignResult = {
   version: typeof CAMPAIGN_SHEET_VERSION;
@@ -75,6 +85,7 @@ export type CurrentSheetCampaignResult = {
   sheetName: string;
   rows: CurrentSheetCampaignRow[];
   upcomingRows: CurrentSheetCampaignRow[];
+  allRows: CurrentSheetCampaignRow[];
   source: {
     exportUrl: string;
     downloadedAt: string;
@@ -297,14 +308,18 @@ export async function loadCurrentSheetCampaigns(options: {
   if (!sheetName) throw new Error(`Aba corrente não encontrada: ${expectedSheet}`);
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) throw new Error(`Aba corrente vazia: ${sheetName}`);
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, blankrows: false, raw: false }).map(rowToStrings);
+  const physicalRange = XLSX.utils.decode_range(worksheet["!ref"] ?? "A1");
+  physicalRange.s = { r: 0, c: 0 };
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, range: physicalRange, blankrows: true, raw: false }).map(rowToStrings);
 
   const parsedRows: CurrentSheetCampaignRow[] = [];
   const upcomingRows: CurrentSheetCampaignRow[] = [];
+  const allRows: CurrentSheetCampaignRow[] = [];
   let siteRowCells: string[] | null = null;
   let blockStarts: number[] = [];
   let blockSites: Array<string | null> = [];
   let blockHeaders: string[][] = [];
+  let headerRowNumber = 0;
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const cells = rows[rowIndex] ?? [];
@@ -313,6 +328,7 @@ export async function loadCurrentSheetCampaigns(options: {
       blockStarts = headerStarts;
       blockSites = headerStarts.map((start, index) => readBlockSite(siteRowCells, start, headerStarts[index + 1] ?? cells.length));
       blockHeaders = headerStarts.map((start, index) => cells.slice(start, headerStarts[index + 1] ?? cells.length));
+      headerRowNumber = rowIndex + 1;
       continue;
     }
     if (rowHasSite(cells)) {
@@ -355,6 +371,8 @@ export async function loadCurrentSheetCampaigns(options: {
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;
 
       const formatResolution = resolveSiteFormat(site, localFormato);
+      let cellMetadata: CurrentSheetCampaignRowCellMetadata | null = null;
+      try { cellMetadata = resolveCurrentSheetCampaignRowMetadata({ rowNumber: rowIndex + 1, headerRowNumber, blockStart: start, headers }); } catch { /* correction requires unambiguous headers */ }
       const parsedRow: CurrentSheetCampaignRow = {
         version: CAMPAIGN_SHEET_VERSION,
         sheetName,
@@ -373,7 +391,9 @@ export async function loadCurrentSheetCampaigns(options: {
         processoRealizado,
         processoEnviado,
         dataEnvioAgencia,
+        cellMetadata,
       };
+      allRows.push(parsedRow);
 
       if (options.scope === "monthly" && parsedPeriod.inicio <= targetMonthEnd && parsedPeriod.fim >= targetMonthStart) {
         parsedRows.push(parsedRow);
@@ -391,6 +411,7 @@ export async function loadCurrentSheetCampaigns(options: {
     sheetName,
     rows: parsedRows,
     upcomingRows,
+    allRows,
     source: {
       exportUrl,
       downloadedAt: new Date().toISOString(),

@@ -227,10 +227,10 @@
           "BANNER LATERAL SEGUNDA DOBRA",
           "LATERAL 02",
           "LATERAL SEGUNDA DOBRA",
-          "SEGUNDA DOBRA LATERAL",
           "SEGUNDA DOBRA SIDEBAR",
           "LATERAL 02 — SIDEBAR — 300x250"
         ],
+        "inputAliases": ["SEGUNDA DOBRA LATERAL"],
         "page": "home",
         "slotSelector": ".g.g-7",
         "contextSelector": ".g.g-7",

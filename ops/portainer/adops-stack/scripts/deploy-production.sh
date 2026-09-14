@@ -29,10 +29,10 @@ LEGACY_MONITOR_STOPPED="false"
 DEPLOY_COMPLETE="false"
 STACK_SWITCHED="false"
 cleanup() {
+  local original_status="$?"
   if [[ "$STACK_SWITCHED" == "true" && "$DEPLOY_COMPLETE" != "true" && -n "$ROLLBACK_ENV" ]]; then
-    printf 'Deploy incompleto; restaurando volumes anteriores app=%s web=%s\n' "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >&2
-    COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
-      bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >/dev/null 2>&1 || true
+    printf 'Deploy incompleto; iniciando rollback para os volumes anteriores.\n' >&2
+    perform_verified_rollback || true
   fi
   if [[ "$LEGACY_MONITOR_STOPPED" == "true" && "$DEPLOY_COMPLETE" != "true" ]]; then
     NEW_MONITOR_HEALTH="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
@@ -44,6 +44,7 @@ cleanup() {
   [[ -z "$DISCOVERED_ENV" ]] || rm -f "$DISCOVERED_ENV"
   [[ -z "$DEPLOY_ENV" ]] || rm -f "$DEPLOY_ENV"
   [[ -z "$ROLLBACK_ENV" ]] || rm -f "$ROLLBACK_ENV"
+  return "$original_status"
 }
 trap cleanup EXIT
 
@@ -65,19 +66,6 @@ env_value() {
   awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$STACK_ENV_FILE"
 }
 
-wait_portainer_exec() {
-  local exec_id="$1" state exit_code
-  for _ in {1..600}; do
-    state="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json")"
-    if [[ "$(jq -r '.Running' <<<"$state")" == "false" ]]; then
-      exit_code="$(jq -r '.ExitCode' <<<"$state")"
-      [[ "$exit_code" =~ ^[0-9]+$ ]] && { printf '%s' "$exit_code"; return 0; }
-    fi
-    sleep 0.25
-  done
-  return 1
-}
-
 PREVIOUS_APP_VOLUME="$(env_value ADOPS_APP_SOURCE_VOLUME)"
 PREVIOUS_WEB_VOLUME="$(env_value ADOPS_WEB_PUBLIC_VOLUME)"
 PREVIOUS_DRIVE_MODE="$(env_value DRIVE_INTEGRATION_MODE)"
@@ -86,20 +74,115 @@ PREVIOUS_APP_VOLUME="${PREVIOUS_APP_VOLUME:-adops_app_source}"
 PREVIOUS_WEB_VOLUME="${PREVIOUS_WEB_VOLUME:-adops_web_public}"
 PREVIOUS_DRIVE_MODE="${PREVIOUS_DRIVE_MODE:-monitor}"
 PREVIOUS_IMAGE_TAG="${PREVIOUS_IMAGE_TAG:-legacy}"
+ROLLBACK_RELEASE_URL="https://adops.codigo5.com.br/cod5-release.json"
+if ! PREVIOUS_RELEASE_JSON="$(portainer_get_public_json "$ROLLBACK_RELEASE_URL")"; then
+  printf 'Current production release manifest is unavailable; refusing deploy without rollback identity.\n' >&2
+  exit 1
+fi
+PREVIOUS_RELEASE_SHA="$(jq -r '.sha // empty' <<<"$PREVIOUS_RELEASE_JSON")"
+if [[ -z "$PREVIOUS_RELEASE_SHA" ]] || ! jq -e \
+  --arg app "$PREVIOUS_APP_VOLUME" \
+  --arg web "$PREVIOUS_WEB_VOLUME" \
+  '.volumes.app == $app and .volumes.web == $web' <<<"$PREVIOUS_RELEASE_JSON" >/dev/null; then
+  printf 'Current production release manifest does not match the rollback volumes; refusing deploy.\n' >&2
+  exit 1
+fi
 
 CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 POSTGRES_ID="$(printf '%s' "$CONTAINERS" | jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' | head -n 1)"
 [[ -n "$POSTGRES_ID" ]] || { printf 'adops-postgres container not found.\n' >&2; exit 1; }
 
-BACKUP_NAME="adops-before-${ADOPS_IMAGE_TAG:0:12}-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
-EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
+BACKUP_NAME="adops-before-${ADOPS_IMAGE_TAG:0:12}-$(date -u +%Y%m%dT%H%M%SZ).dump"
+BACKUP_PATH="/var/lib/postgresql/data/adops-backups/${BACKUP_NAME}"
+VERIFY_DB="adops_backup_verify_${ADOPS_IMAGE_TAG:0:12}_$(date -u +%s)"
+
+start_postgres_exec() {
+  local payload="$1"
+  local description="$2"
+  local deadline_seconds="${3:-120}"
+  local exec_id
+
+  if ! exec_id="$(portainer_run_detached_exec "$POSTGRES_ID" "$payload" "$description" "$deadline_seconds")"; then
+    return 1
+  fi
+  printf '%s\n' "$exec_id"
+}
+
+BACKUP_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" '{
   AttachStdout:true, AttachStderr:true, Tty:false,
-  Cmd:["sh","-lc",("pg_dump -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" | gzip -c > " + $file)]
+  Env:["BACKUP_FILE=" + $file],
+  Cmd:["sh","-lc","set -eu; umask 077; mkdir -p \"$(dirname \"$BACKUP_FILE\")\"; log=\"$BACKUP_FILE.log\"; printf \"event=backup_started\\n\" > \"$log\"; if pg_dump --format=custom --file \"$BACKUP_FILE\" -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" >>\"$log\" 2>&1; then printf \"event=backup_completed\\n\" >> \"$log\"; else printf \"event=backup_failed\\n\" >> \"$log\"; exit 1; fi"]
 }')"
-EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
-EXIT_CODE="$(wait_portainer_exec "$EXEC_ID" || true)"
-[[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
+if ! BACKUP_EXEC_ID="$(start_postgres_exec "$BACKUP_PAYLOAD" 'PostgreSQL custom backup' 300)"; then
+  exit 1
+fi
+
+VERIFY_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" --arg db "$VERIFY_DB" '{
+  AttachStdout:true, AttachStderr:true, Tty:false,
+  Env:["BACKUP_FILE=" + $file, "VERIFY_DB=" + $db],
+  Cmd:["sh","-lc","set -eu; umask 077; log=\"$BACKUP_FILE.verify.log\"; printf \"event=restore_verify_started\\n\" > \"$log\"; cleanup() { psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d postgres -c \"DROP DATABASE IF EXISTS \\\"$VERIFY_DB\\\"\" >>\"$log\" 2>&1 || true; }; trap cleanup EXIT; if psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d postgres -c \"CREATE DATABASE \\\"$VERIFY_DB\\\"\" >>\"$log\" 2>&1 && pg_restore --exit-on-error --no-owner --no-privileges -U \"$POSTGRES_USER\" --dbname \"$VERIFY_DB\" \"$BACKUP_FILE\" >>\"$log\" 2>&1 && psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" -d \"$VERIFY_DB\" -c \"SELECT 1\" >>\"$log\" 2>&1; then printf \"event=restore_verify_completed\\n\" >> \"$log\"; else printf \"event=restore_verify_failed\\n\" >> \"$log\"; exit 1; fi"]
+}')"
+if ! VERIFY_EXEC_ID="$(start_postgres_exec "$VERIFY_PAYLOAD" 'PostgreSQL backup restore verification' 300)"; then
+  exit 1
+fi
+
+METADATA_PAYLOAD="$(jq -n --arg file "$BACKUP_PATH" --arg release "$ADOPS_IMAGE_TAG" --arg backup_exec "$BACKUP_EXEC_ID" --arg verify_exec "$VERIFY_EXEC_ID" --arg previous_image "$PREVIOUS_IMAGE_TAG" --arg previous_release "$PREVIOUS_RELEASE_SHA" --arg previous_drive "$PREVIOUS_DRIVE_MODE" --arg previous_app "$PREVIOUS_APP_VOLUME" --arg previous_web "$PREVIOUS_WEB_VOLUME" '{
+  AttachStdout:true, AttachStderr:true, Tty:false,
+  Env:["BACKUP_FILE=" + $file, "BACKUP_RELEASE=" + $release, "BACKUP_EXEC_ID=" + $backup_exec, "VERIFY_EXEC_ID=" + $verify_exec, "PREVIOUS_IMAGE=" + $previous_image, "PREVIOUS_RELEASE=" + $previous_release, "PREVIOUS_DRIVE=" + $previous_drive, "PREVIOUS_APP=" + $previous_app, "PREVIOUS_WEB=" + $previous_web],
+  Cmd:["sh","-lc","set -eu; umask 077; metadata=\"$BACKUP_FILE.metadata\"; { printf \"backup_file=%s\\n\" \"$BACKUP_FILE\"; printf \"backup_format=custom\\n\"; printf \"release=%s\\n\" \"$BACKUP_RELEASE\"; printf \"backup_exec_id=%s\\n\" \"$BACKUP_EXEC_ID\"; printf \"restore_verify_exec_id=%s\\n\" \"$VERIFY_EXEC_ID\"; printf \"restore_verified=true\\n\"; printf \"previous_image_tag=%s\\n\" \"$PREVIOUS_IMAGE\"; printf \"previous_release_sha=%s\\n\" \"$PREVIOUS_RELEASE\"; printf \"previous_drive_mode=%s\\n\" \"$PREVIOUS_DRIVE\"; printf \"previous_app_volume=%s\\n\" \"$PREVIOUS_APP\"; printf \"previous_web_volume=%s\\n\" \"$PREVIOUS_WEB\"; printf \"created_at=%s\\n\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; } > \"$metadata\""]
+}')"
+if ! start_postgres_exec "$METADATA_PAYLOAD" 'PostgreSQL backup metadata' >/dev/null; then
+  exit 1
+fi
+
+persist_rollback_result() {
+  local status="$1"
+  local containers postgres_id payload
+  case "$status" in
+    completed|deploy_failed|readback_failed) ;;
+    *) return 1 ;;
+  esac
+
+  containers="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")" || return 1
+  postgres_id="$(jq -r '.[] | select(.Names[]? == "/adops-postgres") | .Id' <<<"$containers" | head -n 1)"
+  [[ -n "$postgres_id" ]] || return 1
+  payload="$(jq -n --arg file "$BACKUP_PATH" --arg status "$status" --arg release "$PREVIOUS_RELEASE_SHA" '{
+    AttachStdout:true, AttachStderr:true, Tty:false,
+    Env:["BACKUP_FILE=" + $file, "ROLLBACK_STATUS=" + $status, "ROLLBACK_RELEASE=" + $release],
+    Cmd:["sh","-lc","set -eu; umask 077; created_at=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; { printf \"event=rollback_result\\n\"; printf \"status=%s\\n\" \"$ROLLBACK_STATUS\"; printf \"release_sha=%s\\n\" \"$ROLLBACK_RELEASE\"; printf \"created_at=%s\\n\" \"$created_at\"; } > \"$BACKUP_FILE.rollback.log\"; { printf \"rollback_status=%s\\n\" \"$ROLLBACK_STATUS\"; printf \"rollback_checked_at=%s\\n\" \"$created_at\"; } >> \"$BACKUP_FILE.metadata\""]
+  }')" || return 1
+  POSTGRES_ID="$postgres_id" start_postgres_exec "$payload" 'PostgreSQL rollback metadata' 60 >/dev/null
+}
+
+perform_verified_rollback() {
+  local output status="deploy_failed"
+  local deploy_returned="false"
+  output="$(mktemp)"
+  chmod 600 "$output"
+
+  if COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
+    bash "$SCRIPT_DIR/deploy-stack.sh" "$ROLLBACK_ENV" >"$output" 2>&1; then
+    deploy_returned="true"
+  fi
+  if portainer_wait_for_stack_release adops "$PREVIOUS_IMAGE_TAG" \
+    "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" "$PREVIOUS_RELEASE_SHA" "$ROLLBACK_RELEASE_URL"; then
+    status="completed"
+  elif [[ "$deploy_returned" == "true" ]]; then
+    status="readback_failed"
+  fi
+  rm -f "$output"
+
+  if ! persist_rollback_result "$status"; then
+    printf 'Rollback status=%s, but its durable metadata could not be persisted.\n' "$status" >&2
+    return 1
+  fi
+  if [[ "$status" == "completed" ]]; then
+    printf 'Rollback confirmado por stack, volumes e release público; metadata persistida.\n' >&2
+    return 0
+  fi
+  printf 'Rollback não confirmado; status=%s foi persistido para auditoria.\n' "$status" >&2
+  return 1
+}
 
 for MIGRATION_FILE in \
   "$STACK_DIR/migrations/2026-08-26-daily-print-alerts.sql" \
@@ -110,10 +193,10 @@ for MIGRATION_FILE in \
     AttachStdout:true, AttachStderr:true, Tty:false,
     Cmd:["sh","-lc",("printf %s " + ($sql|@sh) + " | base64 -d | psql -v ON_ERROR_STOP=1 -U \"$POSTGRES_USER\" \"$POSTGRES_DB\"")]
   }')"
-  MIGRATION_EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$MIGRATION_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-  portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${MIGRATION_EXEC_ID}/start" >/dev/null
-  MIGRATION_EXIT_CODE="$(wait_portainer_exec "$MIGRATION_EXEC_ID" || true)"
-  [[ "$MIGRATION_EXIT_CODE" == "0" ]] || { printf 'PostgreSQL migration failed: %s\n' "$MIGRATION_FILE" >&2; exit 1; }
+  if ! start_postgres_exec "$MIGRATION_PAYLOAD" "PostgreSQL migration ${MIGRATION_FILE}" 300 >/dev/null; then
+    printf 'PostgreSQL migration failed: %s\n' "$MIGRATION_FILE" >&2
+    exit 1
+  fi
 done
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
@@ -142,15 +225,15 @@ if [[ -n "$LEGACY_MONITOR_ID" ]]; then
 fi
 
 DEPLOY_ENV="$(mktemp)"
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
-printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$ADOPS_IMAGE_TAG" "${DRIVE_INTEGRATION_MODE:-monitor}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|ADOPS_RELEASE_SHA|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$DEPLOY_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nADOPS_RELEASE_SHA=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$ADOPS_IMAGE_TAG" "$ADOPS_RELEASE_SHA" "${DRIVE_INTEGRATION_MODE:-$PREVIOUS_DRIVE_MODE}" "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" >> "$DEPLOY_ENV"
 chmod 600 "$DEPLOY_ENV"
 
 ROLLBACK_ENV="$(mktemp)"
-grep -vE '^(ADOPS_IMAGE_TAG|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$ROLLBACK_ENV"
-printf 'ADOPS_IMAGE_TAG=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
-  "$PREVIOUS_IMAGE_TAG" "$PREVIOUS_DRIVE_MODE" "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >> "$ROLLBACK_ENV"
+grep -vE '^(ADOPS_IMAGE_TAG|ADOPS_RELEASE_SHA|DRIVE_INTEGRATION_MODE|ADOPS_APP_SOURCE_VOLUME|ADOPS_WEB_PUBLIC_VOLUME)=' "$STACK_ENV_FILE" > "$ROLLBACK_ENV"
+printf 'ADOPS_IMAGE_TAG=%s\nADOPS_RELEASE_SHA=%s\nDRIVE_INTEGRATION_MODE=%s\nADOPS_APP_SOURCE_VOLUME=%s\nADOPS_WEB_PUBLIC_VOLUME=%s\n' \
+  "$PREVIOUS_IMAGE_TAG" "$PREVIOUS_RELEASE_SHA" "$PREVIOUS_DRIVE_MODE" "$PREVIOUS_APP_VOLUME" "$PREVIOUS_WEB_VOLUME" >> "$ROLLBACK_ENV"
 chmod 600 "$ROLLBACK_ENV"
 STACK_SWITCHED="true"
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
@@ -203,6 +286,11 @@ RUNNER_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/dock
 MONITOR_INSPECT="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${MONITOR_ID}/json")"
 printf '%s' "$RUNNER_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0] | select(startswith("GOOGLE_DRIVE_"))] | length == 0)' >/dev/null
 printf '%s' "$MONITOR_INSPECT" | jq -e '.State.Running == true and ([.Config.Env[] | split("=")[0]] | index("GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE") != null) and (.HostConfig.PortBindings | length == 0)' >/dev/null
+if ! portainer_wait_for_stack_release adops "$ADOPS_IMAGE_TAG" \
+  "$ADOPS_APP_SOURCE_VOLUME" "$ADOPS_WEB_PUBLIC_VOLUME" "$ADOPS_RELEASE_SHA" "$ROLLBACK_RELEASE_URL"; then
+  printf 'Production stack environment, mounts, or release did not match the requested deployment.\n' >&2
+  exit 1
+fi
 
 DEPLOY_COMPLETE="true"
 printf 'AdOps deployed release=%s backup=%s runtime=volume app=%s web=%s\n' \

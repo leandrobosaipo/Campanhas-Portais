@@ -39,7 +39,14 @@ upload_to_volume() {
   local tar_path="$4"
   local prepare_command="${5:-}"
   local container_name="adops-volume-upload-${volume}-${STAMP}"
-  local body code container_id
+  local body code container_id exec_deadline final_read_timeout keeper_seconds
+  exec_deadline="${PORTAINER_UPLOAD_EXEC_DEADLINE_SECONDS:-840}"
+  final_read_timeout="${PORTAINER_EXEC_FINAL_READ_TIMEOUT_SECONDS:-5}"
+  [[ "$exec_deadline" =~ ^[1-9][0-9]*$ && "$final_read_timeout" =~ ^[1-9][0-9]*$ ]] || {
+    printf 'Runtime upload deadlines must be positive integer seconds.\n' >&2
+    return 1
+  }
+  keeper_seconds=$((180 + exec_deadline + final_read_timeout + 120))
   body="$(mktemp)"
   # Portainer may need more than the Cloudflare default timeout while Docker
   # materializes a fresh versioned volume. Keep the request open long enough
@@ -48,9 +55,9 @@ upload_to_volume() {
     -X POST \
     -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg name "$container_name" --arg image "$image" --arg volume "$volume" --arg target "$mount_path" '{
+    -d "$(jq -n --arg name "$container_name" --arg image "$image" --arg volume "$volume" --arg target "$mount_path" --argjson keeper "$keeper_seconds" '{
       Image: $image,
-      Cmd: ["sh", "-lc", "sleep 300"],
+      Cmd: ["sh", "-lc", ("sleep " + ($keeper | tostring))],
       HostConfig: {
         Binds: [($volume + ":" + $target)]
       }
@@ -96,22 +103,20 @@ upload_to_volume() {
   rm -f "$body"
 
   if [[ -n "$prepare_command" ]]; then
-    local exec_id exit_code
-    exec_id="$(curl -fsS --max-time 30 \
-      -X POST \
-      -H "X-API-Key: ${PORTAINER_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d "$(jq -n --arg command "$prepare_command" '{AttachStdout:true,AttachStderr:true,Tty:false,WorkingDir:"/app",Cmd:["sh","-lc",$command]}')" \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/exec" | jq -r '.Id')"
-    curl -fsS --max-time 300 \
-      -X POST \
-      -H "X-API-Key: ${PORTAINER_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d '{"Detach":false,"Tty":false}' \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/start" >/dev/null
-    exit_code="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
-      "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${exec_id}/json" | jq -r '.ExitCode')"
-    [[ "$exit_code" == "0" ]] || { printf 'Runtime dependency install failed for volume=%s.\n' "$volume" >&2; exit 1; }
+    local exec_id payload
+    payload="$(jq -n --arg command "$prepare_command" \
+      '{
+        AttachStdout:true, AttachStderr:true, Tty:false, WorkingDir:"/app",
+        Env:["PREPARE_COMMAND=" + $command],
+        Cmd:["sh","-lc","set -eu; umask 077; log=/app/.runtime-install.log; printf \"event=runtime_install_started\\n\" > \"$log\"; if sh -lc \"$PREPARE_COMMAND\" >>\"$log\" 2>&1; then printf \"event=runtime_install_completed\\n\" >> \"$log\"; else printf \"event=runtime_install_failed\\n\" >> \"$log\"; exit 1; fi"]
+      }')"
+    if ! exec_id="$(portainer_run_detached_exec "$container_id" "$payload" \
+      "Runtime dependency install for volume=${volume}" "$exec_deadline")"; then
+      printf 'Runtime dependency install failed; restricted log is in /app/.runtime-install.log on volume=%s.\n' "$volume" >&2
+      curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
+        "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
+      return 1
+    fi
   fi
 
   curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
