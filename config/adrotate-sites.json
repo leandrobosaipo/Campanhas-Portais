@@ -55,7 +55,9 @@
       {
         "groupId": 1,
         "aliases": [
-          "MEGABANNER TOPO"
+          "MEGABANNER TOPO",
+          "MEGABANNER",
+          "MEGABANNER TOPO HEADER 825X120"
         ],
         "page": "home",
         "slotSelector": ".g.g-1",
@@ -82,7 +84,8 @@
         "aliases": [
           "BANNER TOPO LATERAL",
           "TOPO LATERAL",
-          "MEGA BANNER LATERAL"
+          "MEGA BANNER LATERAL",
+          "TOPO LATERAL HEADER 380X120"
         ],
         "page": "home",
         "slotSelector": ".g.g-10",
@@ -96,7 +99,8 @@
           "HOME 1",
           "MEGABANNER HOME 1",
           "MEGABANNER HOME1",
-          "MEGABANNER HOME 01"
+          "MEGABANNER HOME 01",
+          "HOME 01 728X90"
         ],
         "page": "home",
         "slotSelector": ".g.g-2",
@@ -114,7 +118,8 @@
         "groupId": 3,
         "aliases": [
           "HOME 2",
-          "SEGUNDA DOBRA"
+          "SEGUNDA DOBRA",
+          "HOME 02 728X90"
         ],
         "page": "home",
         "slotSelector": ".g.g-3",
@@ -128,7 +133,8 @@
       {
         "groupId": 4,
         "aliases": [
-          "HOME 3"
+          "HOME 3",
+          "HOME 03 728X90"
         ],
         "page": "home",
         "slotSelector": ".g.g-4",
@@ -136,12 +142,32 @@
         "scrollMode": "slot"
       },
       {
+        "groupId": 5,
+        "aliases": [
+          "HOME 4",
+          "HOME 04",
+          "MEGABANNER HOME 4",
+          "MEGABANNER HOME 04",
+          "HOME 04 728X90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-5",
+        "contextSelector": ".g.g-5",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
         "groupId": 6,
         "aliases": [
           "VIDEO",
           "VIDEO LATERAL",
           "LATERAL",
-          "LATERAL PRIMEIRA DOBRA"
+          "LATERAL PRIMEIRA DOBRA",
+          "PUBLI VIDEO 60",
+          "PUBLI VIDEO 60S",
+          "PUBLI VIDEO DE 60",
+          "PUBLI VIDEO DE 60S",
+          "VIDEO LATERAL 01 SIDEBAR 300X250"
         ],
         "page": "home",
         "slotSelector": ".g.g-6",
@@ -162,13 +188,44 @@
         }
       },
       {
+        "groupId": 7,
+        "aliases": [
+          "BANNER LATERAL SEGUNDA DOBRA",
+          "LATERAL 02",
+          "LATERAL SEGUNDA DOBRA",
+          "SEGUNDA DOBRA SIDEBAR",
+          "LATERAL 02 SIDEBAR 300X250"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-7",
+        "contextSelector": ".g.g-7",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
+        "groupId": 8,
+        "aliases": [
+          "LATERAL 03",
+          "LATERAL STICKY",
+          "ULTIMO LATERAL",
+          "ULTIMA POSICAO SIDEBAR",
+          "LATERAL 03 SIDEBAR STICKY 300X250"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-8",
+        "contextSelector": ".g.g-8",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
         "groupId": 9,
         "aliases": [
           "POP UP",
           "POPUP",
           "BANNER - 970X90",
           "BANNER 970X90",
-          "970X90"
+          "970X90",
+          "POP UP SITEWIDE 970X90"
         ],
         "page": "home",
         "slotSelector": "#cod5-bottom-popup-ad .g.g-9",
@@ -189,7 +246,8 @@
           "BANNER INTERNO NOTICIAS",
           "INTERNO DE NOTICIAS",
           "INTERNO DE NOTICIA",
-          "INTERNO NOTICIA"
+          "INTERNO NOTICIA",
+          "INTERNO MATERIA 728X90"
         ],
         "page": "article",
         "slotSelector": ".g.g-11",
@@ -210,6 +268,51 @@
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4
         }
+      },
+      {
+        "groupId": 12,
+        "aliases": [
+          "HOME 5",
+          "HOME 05",
+          "MEGABANNER HOME 5",
+          "MEGABANNER HOME 05",
+          "HOME 05 728X90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-12",
+        "contextSelector": ".g.g-12",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
+        "groupId": 13,
+        "aliases": [
+          "HOME 6",
+          "HOME 06",
+          "MEGABANNER HOME 6",
+          "MEGABANNER HOME 06",
+          "HOME 06 728X90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-13",
+        "contextSelector": ".g.g-13",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
+        "groupId": 14,
+        "aliases": [
+          "HOME 7",
+          "HOME 07",
+          "MEGABANNER HOME 7",
+          "MEGABANNER HOME 07",
+          "HOME 07 728X90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-14",
+        "contextSelector": ".g.g-14",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
       }
     ]
   },
