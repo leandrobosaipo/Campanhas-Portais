@@ -7640,13 +7640,8 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    const proof = status?.audit?.retroContentProof;
-    const strictAuditApproved = status?.status === "audited"
-      && proof?.status === "approved"
-      && proof?.futureCount === 0
-      && typeof proof?.manifestHash === "string"
-      && proof.manifestHash.length === 64;
-    if (strictAuditApproved) continue;
+    if (isReusableAuditedEvidence(status)) continue;
+    if (!["missing", "invalid_audit", "invalid_url"].includes(status?.status)) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
     const result = await captureProofWithRetry(insertion.id, targetDate);
@@ -7656,16 +7651,9 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => {
-    const proof = item?.audit?.retroContentProof;
-    return item?.status !== "audited"
-      || proof?.status !== "approved"
-      || proof?.futureCount !== 0
-      || typeof proof?.manifestHash !== "string"
-      || proof.manifestHash.length !== 64;
-  });
+  const failed = finalStatuses.filter((item) => !isReusableAuditedEvidence(item));
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem checklist final aprovado.`);
   }
 
   return {
