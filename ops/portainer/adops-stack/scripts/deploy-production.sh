@@ -75,9 +75,17 @@ EXEC_PAYLOAD="$(jq -n --arg file "/var/lib/postgresql/data/${BACKUP_NAME}" '{
   Cmd:["sh","-lc",("pg_dump -U \"$POSTGRES_USER\" \"$POSTGRES_DB\" | gzip -c > " + $file)]
 }')"
 EXEC_ID="$(portainer_curl -X POST -H 'Content-Type: application/json' -d "$EXEC_PAYLOAD" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${POSTGRES_ID}/exec" | jq -r '.Id')"
-portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":false,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
-EXIT_CODE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/json" | jq -r '.ExitCode')"
-[[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed.\n' >&2; exit 1; }
+[[ -n "$EXEC_ID" && "$EXEC_ID" != "null" ]] || { printf 'PostgreSQL backup exec was not created.\n' >&2; exit 1; }
+portainer_curl -X POST -H 'Content-Type: application/json' -d '{"Detach":true,"Tty":false}' "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/start" >/dev/null
+EXIT_CODE=""
+for backup_attempt in $(seq 1 60); do
+  EXEC_STATE="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/exec/${EXEC_ID}/json")"
+  EXEC_RUNNING="$(printf '%s' "$EXEC_STATE" | jq -r '.Running // false')"
+  EXIT_CODE="$(printf '%s' "$EXEC_STATE" | jq -r '.ExitCode // empty')"
+  [[ "$EXEC_RUNNING" != "true" && -n "$EXIT_CODE" ]] && break
+  sleep 2
+done
+[[ "$EXIT_CODE" == "0" ]] || { printf 'PostgreSQL backup failed or timed out.\n' >&2; exit 1; }
 
 export ADOPS_IMAGE_TAG="${ADOPS_IMAGE_TAG:0:12}"
 export ADOPS_RELEASE_SHA="${ADOPS_RELEASE_SHA:-$ADOPS_IMAGE_TAG}"
