@@ -52,6 +52,7 @@ jobs:
           node scripts/src/test-historical-reconstruction-frame.mjs
           node scripts/src/test-drive-pi-recovery-target.mjs
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
+          pnpm --dir scripts exec tsx src/test-preupload-reconstruction-clock.ts
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
       - name: PNMT reconstructed desktop anchor guards
