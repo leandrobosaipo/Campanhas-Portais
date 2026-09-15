@@ -16,6 +16,73 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
+ * @summary Preview or queue a guarded source-sheet correction
+ */
+export const CreateSheetCorrectionJobHeader = zod.object({
+  "Idempotency-Key": zod.string(),
+});
+
+export const createSheetCorrectionJobBodyReasonMin = 8;
+
+export const createSheetCorrectionJobBodyEvidenceRefMin = 8;
+
+export const createSheetCorrectionJobBodyChangesMax = 4;
+
+export const CreateSheetCorrectionJobBody = zod.object({
+  spreadsheetId: zod.string(),
+  sheetName: zod.string(),
+  blockSite: zod.string(),
+  rowNumber: zod.number().min(1),
+  apply: zod
+    .boolean()
+    .optional()
+    .describe("False returns a preview without writing or queueing."),
+  retryFailed: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Explicitly resume the same failed job, preserving its durable intent.",
+    ),
+  sourceDate: zod.coerce.date().optional(),
+  reason: zod.string().min(createSheetCorrectionJobBodyReasonMin),
+  evidenceRef: zod.string().min(createSheetCorrectionJobBodyEvidenceRefMin),
+  changes: zod
+    .array(
+      zod.object({
+        field: zod.enum([
+          "piCodigo",
+          "periodoOriginal",
+          "campaignName",
+          "localFormato",
+        ]),
+        expectedValue: zod.string(),
+        value: zod.string().min(1),
+      }),
+    )
+    .min(1)
+    .max(createSheetCorrectionJobBodyChangesMax),
+});
+
+/**
+ * @summary Queue a guarded rollback with persisted correction history
+ */
+export const RollbackSheetCorrectionJobParams = zod.object({
+  correctionId: zod.coerce.string().uuid(),
+});
+
+export const RollbackSheetCorrectionJobHeader = zod.object({
+  "Idempotency-Key": zod.string(),
+});
+
+export const rollbackSheetCorrectionJobBodyConfirmationNoteMin = 8;
+
+export const RollbackSheetCorrectionJobBody = zod.object({
+  confirmationNote: zod
+    .string()
+    .min(rollbackSheetCorrectionJobBodyConfirmationNoteMin),
+});
+
+/**
  * @summary Get the sanitized runtime topology and permission boundaries
  */
 export const GetOpsRuntimeTopologyResponse = zod.object({

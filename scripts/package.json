@@ -24,6 +24,7 @@
     "test:evidence-legacy-docs-contract": "node ./src/test-evidence-legacy-docs-contract.mjs",
     "test:monthly-report-target-evidences": "node ./src/test-monthly-report-target-evidences.mjs",
     "test:monthly-report-live-polling": "node ./src/test-monthly-report-live-polling.mjs",
+    "test:monthly-report-export-eligibility": "node ./src/test-monthly-report-export-eligibility.mjs",
     "audit:wordpress-managed-versions": "tsx ./src/audit-wordpress-managed-versions.ts",
     "sync:sites": "tsx ./src/sync-site-config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",

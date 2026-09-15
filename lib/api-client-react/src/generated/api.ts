@@ -47,6 +47,7 @@ import type {
   CreatePiSiteExportJob200,
   CreatePiSiteExportJob202,
   CreatePiSiteExportJobBody,
+  CreateSheetCorrectionJobBody,
   CreateSiteBody,
   DailyPrintStatus,
   DashboardSummary,
@@ -93,6 +94,7 @@ import type {
   PrintBackfillJobAccepted,
   PrintBackfillRequest,
   ReviewCaptureProof200,
+  RollbackSheetCorrectionJobBody,
   SelectInsertionDriveMedia200,
   Site,
   SiteBreakdown,
@@ -188,6 +190,181 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Preview or queue a guarded source-sheet correction
+ */
+export const getCreateSheetCorrectionJobUrl = () => {
+  return `/api/ops/jobs/sheet-correction`;
+};
+
+export const createSheetCorrectionJob = async (
+  createSheetCorrectionJobBody: CreateSheetCorrectionJobBody,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getCreateSheetCorrectionJobUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createSheetCorrectionJobBody),
+  });
+};
+
+export const getCreateSheetCorrectionJobMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSheetCorrectionJob>>,
+    TError,
+    { data: BodyType<CreateSheetCorrectionJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createSheetCorrectionJob>>,
+  TError,
+  { data: BodyType<CreateSheetCorrectionJobBody> },
+  TContext
+> => {
+  const mutationKey = ["createSheetCorrectionJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createSheetCorrectionJob>>,
+    { data: BodyType<CreateSheetCorrectionJobBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createSheetCorrectionJob(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateSheetCorrectionJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createSheetCorrectionJob>>
+>;
+export type CreateSheetCorrectionJobMutationBody =
+  BodyType<CreateSheetCorrectionJobBody>;
+export type CreateSheetCorrectionJobMutationError = ErrorType<void>;
+
+/**
+ * @summary Preview or queue a guarded source-sheet correction
+ */
+export const useCreateSheetCorrectionJob = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createSheetCorrectionJob>>,
+    TError,
+    { data: BodyType<CreateSheetCorrectionJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createSheetCorrectionJob>>,
+  TError,
+  { data: BodyType<CreateSheetCorrectionJobBody> },
+  TContext
+> => {
+  return useMutation(getCreateSheetCorrectionJobMutationOptions(options));
+};
+
+/**
+ * @summary Queue a guarded rollback with persisted correction history
+ */
+export const getRollbackSheetCorrectionJobUrl = (correctionId: string) => {
+  return `/api/ops/jobs/sheet-correction/${correctionId}/rollback`;
+};
+
+export const rollbackSheetCorrectionJob = async (
+  correctionId: string,
+  rollbackSheetCorrectionJobBody: RollbackSheetCorrectionJobBody,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getRollbackSheetCorrectionJobUrl(correctionId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(rollbackSheetCorrectionJobBody),
+  });
+};
+
+export const getRollbackSheetCorrectionJobMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>,
+    TError,
+    { correctionId: string; data: BodyType<RollbackSheetCorrectionJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>,
+  TError,
+  { correctionId: string; data: BodyType<RollbackSheetCorrectionJobBody> },
+  TContext
+> => {
+  const mutationKey = ["rollbackSheetCorrectionJob"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>,
+    { correctionId: string; data: BodyType<RollbackSheetCorrectionJobBody> }
+  > = (props) => {
+    const { correctionId, data } = props ?? {};
+
+    return rollbackSheetCorrectionJob(correctionId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RollbackSheetCorrectionJobMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>
+>;
+export type RollbackSheetCorrectionJobMutationBody =
+  BodyType<RollbackSheetCorrectionJobBody>;
+export type RollbackSheetCorrectionJobMutationError = ErrorType<void>;
+
+/**
+ * @summary Queue a guarded rollback with persisted correction history
+ */
+export const useRollbackSheetCorrectionJob = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>,
+    TError,
+    { correctionId: string; data: BodyType<RollbackSheetCorrectionJobBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof rollbackSheetCorrectionJob>>,
+  TError,
+  { correctionId: string; data: BodyType<RollbackSheetCorrectionJobBody> },
+  TContext
+> => {
+  return useMutation(getRollbackSheetCorrectionJobMutationOptions(options));
+};
 
 /**
  * @summary Get the sanitized runtime topology and permission boundaries

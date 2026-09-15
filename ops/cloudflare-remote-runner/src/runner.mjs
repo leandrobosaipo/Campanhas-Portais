@@ -16,6 +16,7 @@ import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.
 import { buildDailyPrintLiveProgress } from "../../shared/daily-print-status.mjs";
 import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
 import { isReusableAuditedEvidence, isScheduledMonthlyReportPayload } from "../../../scripts/src/monthly-evidence-contract.mjs";
+import { executeSheetCorrection } from "./sheet-correction.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -100,7 +101,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "1200000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,sheet-correction,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -1136,6 +1137,20 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
       });
       const siteId = readNumberRecord(raw, ["siteId"]);
       const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+      if (payload?.recoveryTarget) {
+        const expectedMd5 = String(selected.mediaItem?.md5Checksum || "").toLowerCase();
+        if (!expectedMd5 || String(materialized.md5 || "").toLowerCase() !== expectedMd5) throw new Error("Checksum autoritativo da mídia Drive ausente ou divergente.");
+        const profile = await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+        const expectedFormats = new Set((profile?.formats || []).map((value) => String(value).toUpperCase()));
+        const extension = path.extname(materialized.sourceName || "").slice(1).toUpperCase();
+        if (!expectedFormats.has(extension)) throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+        if (extension === "MP4") {
+          const metadata = await readOperationalVideoMetadata(materialized.filePath);
+          if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+        } else {
+          await inspectOperationalImage(materialized.filePath, { format: extension, width: Number(profile.width), height: Number(profile.height) });
+        }
+      }
       const bucket = spacesBucketForSite(siteSigla);
       const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
       await uploadBufferToSpaces({
@@ -2737,6 +2752,7 @@ function mergeDrivePiFields(parsed, parsedFromPdf, {
     campaignName: mergeFieldValue(parsed.campaignName, parsedFromPdf.campaignName),
     competencia: mergedCompetencia || inferredCompetencia,
     pdfCompetencia: parsedFromPdf.competencia || null,
+    pdfInsertions: Array.isArray(parsedFromPdf.insertions) ? parsedFromPdf.insertions : [],
     clienteId: preferPdfCommercialIdentity && parsedFromPdf.clienteId
       ? parsedFromPdf.clienteId
       : mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
@@ -2797,6 +2813,77 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText =
     agenciaId: readNumberRecord(campaign, ["agenciaId"]),
     insertions,
   };
+}
+
+function recoveryTargetKey(target) {
+  return [
+    normalizePiDigits(target?.piCodigo),
+    normalizeText(target?.siteSigla),
+    normalizeSlotKey(target?.localFormato),
+    target?.periodoInicio || "",
+    target?.periodoFim || "",
+  ].join("|");
+}
+
+function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
+  if (!target) return fields;
+  const expectedKey = recoveryTargetKey(target);
+  const rows = (Array.isArray(monthlySource?.items) ? monthlySource.items : []).filter((item) => recoveryTargetKey({
+    piCodigo: item?.piCodigo,
+    siteSigla: item?.siteSigla,
+    localFormato: item?.format?.normalized || item?.format?.sheet,
+    periodoInicio: item?.period?.start,
+    periodoFim: item?.period?.end,
+  }) === expectedKey && item?.sourceIdentity?.decision === "confirmed" && item?.format?.resolution?.safeToApply === true);
+  if (rows.length !== 1) throw new Error(rows.length ? "Fonte mensal contém alvo de recuperação ambíguo." : "Fonte mensal fresca não confirmou PI/portal/formato/período alvo.");
+  const row = rows[0];
+  const compatibleIds = row?.canonicalSelection?.compatibleInsertionIds;
+  const matchCount = row?.adops?.operationalMatchCount;
+  if (!Array.isArray(compatibleIds) || !Number.isInteger(matchCount)
+    || compatibleIds.length > 1 || matchCount > 1
+    || (target.insertionId && (compatibleIds.length !== 1 || matchCount !== 1 || Number(compatibleIds[0]) !== Number(target.insertionId)))) {
+    throw new Error("recovery_duplicate_or_unconfirmed_insertion");
+  }
+  const siteId = siteIdBySigla.get(String(target.siteSigla).toUpperCase());
+  if (!siteId) throw new Error("Portal alvo não existe no catálogo AdOps.");
+  const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);
+  if (!pdfPi || pdfPi !== normalizeExpectedPiIdentity(target.piCodigo)) throw new Error("PDF não confirma a PI do alvo de recuperação.");
+  const pdfScope = Array.isArray(fields?.pdfInsertions) ? fields.pdfInsertions : [];
+  const matchingPdfScopes = pdfScope.filter((item) => Number(item?.siteId) === Number(siteId)
+    && normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
+    && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim);
+  if (matchingPdfScopes.length !== 1) {
+    throw new Error("PDF não confirma formato e período do alvo de recuperação.");
+  }
+  return {
+    ...fields,
+    piCodigo: target.piCodigo,
+    insertions: [{
+      siteId,
+      siteSigla: String(target.siteSigla).toUpperCase(),
+      localFormato: target.localFormato,
+      localFormatoNormalizado: target.localFormato,
+      periodoInicio: target.periodoInicio,
+      periodoFim: target.periodoFim,
+      periodoOriginal: row?.period?.original || null,
+    }],
+    recoveryTarget: compatibleIds.length === 1 ? { ...target, insertionId: Number(compatibleIds[0]) } : target,
+  };
+}
+
+async function hydrateDrivePiRecoveryTarget(fields, payload) {
+  const target = payload?.recoveryTarget;
+  if (!target) return fields;
+  const competencia = fields?.competencia;
+  if (!competencia) throw new Error("Recuperação exige competência confirmada pelo PDF.");
+  const [monthlySource, sites] = await Promise.all([
+    privateApiGet(`/api/campaign-operations/evidence-monthly-source?competencia=${encodeURIComponent(competencia)}&asOfDate=${encodeURIComponent(todayInCuiaba())}`),
+    privateApiGet("/api/sites"),
+  ]);
+  const siteIdBySigla = new Map((Array.isArray(sites) ? sites : []).map((site) => [String(site?.sigla || "").toUpperCase(), Number(site?.id)]));
+  const hydrated = hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla);
+  payload.recoveryTarget = hydrated.recoveryTarget;
+  return hydrated;
 }
 
 async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {
@@ -4813,6 +4900,23 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
 }
 
 async function applyDrivePiToAdOps(fields, payload) {
+  if (payload?.recoveryTarget?.insertionId) {
+    const existing = await privateApiGet(`/api/insertions/${payload.recoveryTarget.insertionId}`);
+    const campaignId = readPositiveInteger(existing?.campanhaId ?? existing?.campaignId);
+    if (!campaignId) throw new Error("Alvo de recuperação não possui campanha canônica.");
+    const target = payload.recoveryTarget;
+    if (Number(existing.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing.localFormatoNormalizado || existing.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing.periodoInicio !== target.periodoInicio || existing.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção canônica diverge do alvo explícito de recuperação.");
+    }
+    return applyDrivePiToExpectedInsertion(fields, {
+      ...payload,
+      expectedInsertionId: target.insertionId,
+      expectedCampaignId: campaignId,
+      expectedPiCodigo: target.piCodigo,
+    });
+  }
   if (payload?.expectedInsertionId) return applyDrivePiToExpectedInsertion(fields, payload);
   const { campaign, created, dedupedBy } = await findOrCreateDrivePiCampaign(fields, payload);
   const campaignDetail = await privateApiGet(`/api/campaigns/${campaign.id}`);
@@ -4892,7 +4996,7 @@ function insertionScopeKey(raw) {
 }
 
 async function reconcileDrivePiStrictScope(applied, fields, payload) {
-  if (payload?.expectedInsertionId) {
+  if (payload?.expectedInsertionId || payload?.recoveryTarget) {
     return { skipped: true, reason: "expected_insertion_scope_preserved", cancelledInsertions: [] };
   }
   if (payload?.strictInsertionScope !== true || !applied?.campaignId) {
@@ -5438,7 +5542,7 @@ async function notifyDrivePiErrorTelegram(payload, error) {
   }).catch((telegramError) => ({ error: telegramError instanceof Error ? telegramError.message : String(telegramError) }));
 }
 
-async function executeDrivePiIngest(payload) {
+async function executeDrivePiIngest(payload, parentJobId = null) {
   const preflightOnly = payload?.preflightOnly === true;
   await updateDrivePiState(payload, "received", {
     parseRun: {
@@ -5564,6 +5668,26 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  fields = await hydrateDrivePiRecoveryTarget(fields, payload);
+  // Existing published media is immutable in recovery: never enter upload/PATCH paths.
+  if (payload?.recoveryTarget?.insertionId) {
+    const target = payload.recoveryTarget;
+    const existing = await privateApiGet(`/api/insertions/${target.insertionId}`);
+    if (normalizePiDigits(existing?.piCodigo) !== normalizePiDigits(target.piCodigo)
+      || Number(existing?.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing?.localFormatoNormalizado || existing?.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing?.periodoInicio !== target.periodoInicio || existing?.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção atual diverge do alvo de recuperação; nenhuma mídia foi alterada.");
+    }
+    if (existing.bannerPublicadoNoSite === true) {
+      if (!existing.mediaUrl) throw new Error("published_recovery_media_missing");
+      const backfill = preflightOnly ? null : await executeRecoveryEvidenceBackfill(target.insertionId, target, parentJobId);
+      await updateDrivePiState(payload, preflightOnly ? "validated" : "applied", {
+        parseRun: { fields: { recoveryTarget: target, backfill }, alerts: ["Publicação e mídia existentes preservadas; recuperação somente de evidências."] },
+      });
+      return { stage: preflightOnly ? "preflight_only" : "applied", eventId: payload.eventId, recoveryTarget: target, preservedPublishedMedia: true, backfill };
+    }
+  }
   let expectedInsertionContext = null;
   if (readPositiveInteger(payload?.expectedInsertionId) && readPositiveInteger(payload?.expectedCampaignId)) {
     const [expectedInsertion, expectedCampaign] = await Promise.all([
@@ -5626,7 +5750,7 @@ async function executeDrivePiIngest(payload) {
   const explicitPublishFlow = /api-publish$/.test(String(payload?.source || ""));
   const strictExplicitPublishFlow = explicitPublishFlow
     && payload?.strictInsertionScope === true
-    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0);
+    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0 || Boolean(payload?.recoveryTarget));
   const mutationEnabled = !preflightOnly && (
     explicitPublishFlow
     || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)
@@ -5838,23 +5962,31 @@ async function executeDrivePiIngest(payload) {
         date: firstNonEmptyString(payload?.date) || todayInCuiaba(),
         captureAt: firstNonEmptyString(payload?.captureAt),
       };
-      const preview = await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
-      const published = await executeAdrotatePublishJob({
+      const existing = payload?.recoveryTarget ? await privateApiGet(`/api/insertions/${insertionId}`) : null;
+      const alreadyPublished = existing?.bannerPublicadoNoSite === true;
+      const preview = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
+      const published = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({
         ...common,
         apply: true,
-        generateEvidence: payload?.generateEvidence !== false,
+        generateEvidence: payload?.recoveryTarget ? false : payload?.generateEvidence !== false,
       });
-      publicationResults.push({ insertionId, preview, published });
+      const backfill = payload?.recoveryTarget
+        ? await executeRecoveryEvidenceBackfill(insertionId, payload.recoveryTarget, parentJobId)
+        : null;
+      publicationResults.push({ insertionId, preview, published, backfill });
     }
     evidenceCoverage = {
       checked: publicationResults.map((item) => item.insertionId),
       results: publicationResults.map((item) => ({
         insertionId: item.insertionId,
-        status: item.published?.evidenceJob?.skipped
+        status: item.backfill?.ok === true
+          ? "audited"
+          : item.published?.evidenceJob?.skipped
           ? "not_due"
           : item.published?.evidenceJob
             ? "audited"
             : "not_requested",
+        backfill: item.backfill,
       })),
     };
   }
@@ -5950,6 +6082,7 @@ async function executeDrivePiIngest(payload) {
       size: item?.size ?? null,
     })),
     packageReadiness,
+    ...(preflightOnly ? { sourceDocument: packageContext?.pdf ? { sourceName: packageContext.pdf.sourceName, sha256: packageContext.pdf.sha256, bytes: packageContext.pdf.bytes, textExcerpt: packageContext.pdf.textExcerpt, parseError: packageContext.pdf.parseError } : null } : {}),
     reviewReasons: finalReviewReasons,
     dedupe: preApplyDedupe,
     rollout,
@@ -6409,6 +6542,23 @@ async function executePrintBackfill(job) {
     throw error;
   }
   return executionResult;
+}
+
+async function executeRecoveryEvidenceBackfill(insertionId, target, parentJobId) {
+  const result = await executePrintBackfill({
+    id: parentJobId || `drive-pi-recovery:${insertionId}`,
+    payload: {
+      insertionId,
+      fromDate: target.periodoInicio,
+      toDate: target.periodoFim < todayInCuiaba() ? target.periodoFim : todayInCuiaba(),
+      replace: false,
+      force: false,
+      reconstructionReason: "late_publication_recovery",
+    },
+  });
+  const missing = result.items.filter((item) => !["audited", "skipped_existing"].includes(item.status));
+  if (missing.length) throw new Error(`recovery_evidence_incomplete:${missing.map((item) => item.date).join(",")}`);
+  return result;
 }
 
 async function executePrintSingle(job) {
@@ -7638,13 +7788,8 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    const proof = status?.audit?.retroContentProof;
-    const strictAuditApproved = status?.status === "audited"
-      && proof?.status === "approved"
-      && proof?.futureCount === 0
-      && typeof proof?.manifestHash === "string"
-      && proof.manifestHash.length === 64;
-    if (strictAuditApproved) continue;
+    if (isReusableAuditedEvidence(status)) continue;
+    if (!["missing", "invalid_audit", "invalid_url"].includes(status?.status)) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
     const result = await captureProofWithRetry(insertion.id, targetDate);
@@ -7654,16 +7799,9 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => {
-    const proof = item?.audit?.retroContentProof;
-    return item?.status !== "audited"
-      || proof?.status !== "approved"
-      || proof?.futureCount !== 0
-      || typeof proof?.manifestHash !== "string"
-      || proof.manifestHash.length !== 64;
-  });
+  const failed = finalStatuses.filter((item) => !isReusableAuditedEvidence(item));
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem checklist final aprovado.`);
   }
 
   return {
@@ -8360,6 +8498,15 @@ async function handleJob(job, assertLease = () => undefined) {
   if (job.kind === "sync-planilha") {
     return executeSyncPlanilha(payload);
   }
+  if (job.kind === "sheet-correction") {
+    return executeSheetCorrection(payload, {
+      persistedIntent: job?.result?.sheetCorrection,
+      onIntent: async (intent) => progressJob(job.id, {
+        stage: "sheet_correction_intent_durable",
+        sheetCorrection: { state: "intent_durable", ...intent },
+      }),
+    });
+  }
   if (job.kind === "print-batch") {
     return executePrintBatch(job, assertLease);
   }
@@ -8407,7 +8554,7 @@ async function handleJob(job, assertLease = () => undefined) {
   }
   if (job.kind === "drive-pi-ingest") {
     try {
-      return await executeDrivePiIngest(payload);
+      return await executeDrivePiIngest(payload, job.id);
     } catch (error) {
       await updateDrivePiState(payload, "failed", {
         parseRun: {
@@ -8504,6 +8651,7 @@ async function runOnce(poolKinds = kinds, cod5_reservar = () => claimNext(poolKi
     return false;
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
+  if (job.result && typeof job.result === "object") jobProgressResults.set(job.id, job.result);
   try {
     const result = await runWithJobHeartbeat(
       job.id,
@@ -8638,6 +8786,8 @@ export {
   hasHttpsDrivePiDestination,
   httpDownloadBuffer,
   mergeExpectedDrivePiContext,
+  hydrateRecoveryTarget,
+  recoveryTargetKey,
   inspectOperationalImage,
   isRestrictedKvm8GatewaySite,
   parseRestrictedDbRows,

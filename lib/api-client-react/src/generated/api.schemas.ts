@@ -1461,6 +1461,50 @@ export interface CompetenciaBreakdown {
   atrasadas: number;
 }
 
+export type CreateSheetCorrectionJobBodyChangesItemField =
+  (typeof CreateSheetCorrectionJobBodyChangesItemField)[keyof typeof CreateSheetCorrectionJobBodyChangesItemField];
+
+export const CreateSheetCorrectionJobBodyChangesItemField = {
+  piCodigo: "piCodigo",
+  periodoOriginal: "periodoOriginal",
+  campaignName: "campaignName",
+  localFormato: "localFormato",
+} as const;
+
+export type CreateSheetCorrectionJobBodyChangesItem = {
+  field: CreateSheetCorrectionJobBodyChangesItemField;
+  expectedValue: string;
+  /** @minLength 1 */
+  value: string;
+};
+
+export type CreateSheetCorrectionJobBody = {
+  spreadsheetId: string;
+  sheetName: string;
+  blockSite: string;
+  /** @minimum 1 */
+  rowNumber: number;
+  /** False returns a preview without writing or queueing. */
+  apply?: boolean;
+  /** Explicitly resume the same failed job, preserving its durable intent. */
+  retryFailed?: boolean;
+  sourceDate?: string;
+  /** @minLength 8 */
+  reason: string;
+  /** @minLength 8 */
+  evidenceRef: string;
+  /**
+   * @minItems 1
+   * @maxItems 4
+   */
+  changes: CreateSheetCorrectionJobBodyChangesItem[];
+};
+
+export type RollbackSheetCorrectionJobBody = {
+  /** @minLength 8 */
+  confirmationNote: string;
+};
+
 /**
  * Preflight returns only the deterministic decision; apply executes it when the automation gate permits.
  */

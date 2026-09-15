@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import { serializeCampaignEvidenceFingerprint } from "../lib/campaign-evidence-fingerprint";
 import { promisify } from "node:util";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -1358,7 +1359,7 @@ async function listCampaignEvidenceInsertions(piCodigo: string, competencia: str
 function signCampaignEvidenceFingerprint(piCodigo: string, competencia: string, evidences: unknown[]) {
   const key = process.env.ADOPS_INTERNAL_API_TOKEN?.trim();
   if (!key) throw new Error("ADOPS_INTERNAL_API_TOKEN é obrigatório para assinar o descritor de evidências.");
-  return crypto.createHmac("sha256", key).update(JSON.stringify({ piCodigo, competencia, evidences })).digest("hex");
+  return crypto.createHmac("sha256", key).update(serializeCampaignEvidenceFingerprint(piCodigo, competencia, evidences)).digest("hex");
 }
 
 export async function describeCampaignEvidenceExport(piCodigo: string, competencia: string, asOfDate?: string) {
