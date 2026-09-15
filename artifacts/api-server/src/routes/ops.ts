@@ -101,6 +101,7 @@ type DrivePiEventPayload = {
   publish?: boolean;
   generateEvidence?: boolean;
   purgeCache?: boolean;
+  recoveryTarget?: { piCodigo: string; siteSigla: string; localFormato: string; periodoInicio: string; periodoFim: string; insertionId?: number };
   source?: string;
 };
 
@@ -860,6 +861,19 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
   if (!driveFileId || !name || !mimeType || !path || !modifiedTime || Number.isNaN(Date.parse(modifiedTime)) || !eventType) return null;
   const eventId = readOptionalString(body["eventId"]) ?? `drive:${driveFileId}:${modifiedTime}`;
   if (!/^drive:[A-Za-z0-9_-]+:.+/.test(eventId)) return null;
+  const target = asRecord(body["recoveryTarget"]);
+  let recoveryTarget: DrivePiEventPayload["recoveryTarget"] | undefined;
+  if (body["recoveryTarget"] !== undefined) {
+    const piCodigo = readOptionalString(target?.piCodigo);
+    const siteSigla = readOptionalString(target?.siteSigla)?.toUpperCase();
+    const localFormato = readOptionalString(target?.localFormato);
+    const periodoInicio = readOptionalString(target?.periodoInicio);
+    const periodoFim = readOptionalString(target?.periodoFim);
+    const insertionId = target?.insertionId === undefined ? undefined : readOptionalNumber(target.insertionId);
+    const invalidInsertionId = insertionId !== null && insertionId !== undefined && (!Number.isInteger(insertionId) || insertionId <= 0);
+    if (!piCodigo || !siteSigla || !localFormato || !periodoInicio || !periodoFim || !/^\d{4}-\d{2}-\d{2}$/.test(periodoInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(periodoFim) || periodoFim < periodoInicio || invalidInsertionId) return null;
+    recoveryTarget = { piCodigo, siteSigla, localFormato, periodoInicio, periodoFim, ...(insertionId != null ? { insertionId } : {}) };
+  }
   return {
     eventId,
     driveFileId,
@@ -880,6 +894,7 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     ...(typeof body["publish"] === "boolean" ? { publish: body["publish"] } : {}),
     ...(typeof body["generateEvidence"] === "boolean" ? { generateEvidence: body["generateEvidence"] } : {}),
     ...(typeof body["purgeCache"] === "boolean" ? { purgeCache: body["purgeCache"] } : {}),
+    ...(recoveryTarget ? { recoveryTarget } : {}),
     ...(readOptionalString(body["source"]) ? { source: readOptionalString(body["source"]) as string } : {}),
   };
 }
@@ -3385,6 +3400,10 @@ router.post("/ops/jobs/drive-pi-reconcile", async (req, res): Promise<void> => {
 });
 
 async function createDrivePiFolderJob(req: Request, res: Response, options: { preflightOnly: boolean; publishFlow: boolean }) {
+  if (req.body?.recoveryTarget !== undefined && (!options.publishFlow || req.body?.strictInsertionScope === false || req.body?.allowPdfInsertions !== false)) {
+    res.status(400).json({ error: "bad_request", details: "recoveryTarget exige drive-pi-publish, strictInsertionScope=true e allowPdfInsertions=false." });
+    return;
+  }
   const folderId = parseDriveFolderId(req.body?.folderUrl ?? req.body?.folderId ?? req.body?.driveFolderId);
   if (!folderId) {
     res.status(400).json({
@@ -3415,6 +3434,7 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     publish: options.publishFlow ? req.body?.publish !== false : req.body?.publish === true,
     generateEvidence: options.publishFlow ? req.body?.generateEvidence !== false : req.body?.generateEvidence === true,
     purgeCache: req.body?.purgeCache !== false,
+    ...(req.body?.recoveryTarget !== undefined ? { recoveryTarget: req.body.recoveryTarget } : {}),
     source,
   };
   const validated = validateDrivePiEvent(event);

@@ -148,6 +148,14 @@ type DrivePiEventPayload = {
   publish?: boolean;
   generateEvidence?: boolean;
   purgeCache?: boolean;
+  recoveryTarget?: {
+    piCodigo: string;
+    siteSigla: string;
+    localFormato: string;
+    periodoInicio: string;
+    periodoFim: string;
+    insertionId?: number;
+  };
   source?: string;
 };
 
@@ -1339,6 +1347,22 @@ function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event:
   const eventId = readOptionalString(body.eventId) ?? `drive:${driveFileId}:${modifiedTime}`;
   if (!/^drive:[A-Za-z0-9_-]+:.+/.test(eventId)) return { ok: false, response: badRequest("eventId inválido.") };
 
+  const recovery = body.recoveryTarget;
+  let recoveryTarget: DrivePiEventPayload["recoveryTarget"] | undefined;
+  if (recovery !== undefined) {
+    if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) return { ok: false, response: badRequest("recoveryTarget inválido.") };
+    const target = recovery as Record<string, unknown>;
+    const piCodigo = readOptionalString(target.piCodigo);
+    const siteSigla = readOptionalString(target.siteSigla)?.toUpperCase();
+    const localFormato = readOptionalString(target.localFormato);
+    const periodoInicio = readOptionalString(target.periodoInicio);
+    const periodoFim = readOptionalString(target.periodoFim);
+    const insertionId = target.insertionId === undefined ? null : Number(target.insertionId);
+    if (!piCodigo || !siteSigla || !localFormato || !periodoInicio || !periodoFim || !/^\d{4}-\d{2}-\d{2}$/.test(periodoInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(periodoFim) || periodoFim < periodoInicio || (insertionId !== null && (!Number.isInteger(insertionId) || insertionId <= 0))) {
+      return { ok: false, response: badRequest("recoveryTarget exige PI, portal, formato, período válido e insertionId positivo opcional.") };
+    }
+    recoveryTarget = { piCodigo, siteSigla, localFormato, periodoInicio, periodoFim, ...(insertionId !== null ? { insertionId } : {}) };
+  }
   return {
     ok: true,
     event: {
@@ -1361,6 +1385,7 @@ function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event:
       ...(typeof body.publish === "boolean" ? { publish: body.publish } : {}),
       ...(typeof body.generateEvidence === "boolean" ? { generateEvidence: body.generateEvidence } : {}),
       ...(typeof body.purgeCache === "boolean" ? { purgeCache: body.purgeCache } : {}),
+      ...(recoveryTarget ? { recoveryTarget } : {}),
       ...(readOptionalString(body.source) ? { source: readOptionalString(body.source) as string } : {}),
     },
   };
@@ -2889,6 +2914,9 @@ export default {
         const body = await readBody(request);
         const preflightOnly = path === "/api/ops/jobs/drive-pi-preflight";
         const publishFlow = path === "/api/ops/jobs/drive-pi-publish";
+        if (body.recoveryTarget !== undefined && (!publishFlow || body.strictInsertionScope === false || body.allowPdfInsertions !== false)) {
+          return badRequest("recoveryTarget exige drive-pi-publish, strictInsertionScope=true e allowPdfInsertions=false.");
+        }
         const folderId = parseDriveFolderId(body.folderUrl ?? body.folderId ?? body.driveFolderId);
         if (!folderId) return badRequest("Informe folderUrl, folderId ou driveFolderId válido do Google Drive.");
         const now = nowIso();
@@ -2912,6 +2940,7 @@ export default {
           publish: publishFlow ? body.publish !== false : body.publish === true,
           generateEvidence: publishFlow ? body.generateEvidence !== false : body.generateEvidence === true,
           purgeCache: body.purgeCache !== false,
+          ...(body.recoveryTarget !== undefined ? { recoveryTarget: body.recoveryTarget } : {}),
           source: preflightOnly
             ? "cloudflare-protected-api-preflight"
             : publishFlow

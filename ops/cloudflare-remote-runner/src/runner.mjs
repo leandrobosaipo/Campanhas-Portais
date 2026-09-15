@@ -1137,6 +1137,20 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
       });
       const siteId = readNumberRecord(raw, ["siteId"]);
       const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+      if (payload?.recoveryTarget) {
+        const expectedMd5 = String(selected.mediaItem?.md5Checksum || "").toLowerCase();
+        if (!expectedMd5 || String(materialized.md5 || "").toLowerCase() !== expectedMd5) throw new Error("Checksum autoritativo da mídia Drive ausente ou divergente.");
+        const profile = await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+        const expectedFormats = new Set((profile?.formats || []).map((value) => String(value).toUpperCase()));
+        const extension = path.extname(materialized.sourceName || "").slice(1).toUpperCase();
+        if (!expectedFormats.has(extension)) throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+        if (extension === "MP4") {
+          const metadata = await readOperationalVideoMetadata(materialized.filePath);
+          if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+        } else {
+          await inspectOperationalImage(materialized.filePath, { format: extension, width: Number(profile.width), height: Number(profile.height) });
+        }
+      }
       const bucket = spacesBucketForSite(siteSigla);
       const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
       await uploadBufferToSpaces({
@@ -2798,6 +2812,70 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText =
     agenciaId: readNumberRecord(campaign, ["agenciaId"]),
     insertions,
   };
+}
+
+function recoveryTargetKey(target) {
+  return [
+    normalizePiDigits(target?.piCodigo),
+    normalizeText(target?.siteSigla),
+    normalizeSlotKey(target?.localFormato),
+    target?.periodoInicio || "",
+    target?.periodoFim || "",
+  ].join("|");
+}
+
+function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
+  if (!target) return fields;
+  const expectedKey = recoveryTargetKey(target);
+  const rows = (Array.isArray(monthlySource?.items) ? monthlySource.items : []).filter((item) => recoveryTargetKey({
+    piCodigo: item?.piCodigo,
+    siteSigla: item?.siteSigla,
+    localFormato: item?.format?.normalized || item?.format?.sheet,
+    periodoInicio: item?.period?.start,
+    periodoFim: item?.period?.end,
+  }) === expectedKey && item?.sourceIdentity?.decision === "confirmed" && item?.format?.resolution?.safeToApply === true);
+  if (rows.length !== 1) throw new Error(rows.length ? "Fonte mensal contém alvo de recuperação ambíguo." : "Fonte mensal fresca não confirmou PI/portal/formato/período alvo.");
+  const row = rows[0];
+  const siteId = siteIdBySigla.get(String(target.siteSigla).toUpperCase());
+  if (!siteId) throw new Error("Portal alvo não existe no catálogo AdOps.");
+  const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);
+  if (!pdfPi || pdfPi !== normalizeExpectedPiIdentity(target.piCodigo)) throw new Error("PDF não confirma a PI do alvo de recuperação.");
+  const pdfScope = Array.isArray(fields?.raw?.insertions) ? fields.raw.insertions : [];
+  if (pdfScope.length && !pdfScope.some((item) => normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
+    && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim)) {
+    throw new Error("PDF não confirma formato e período do alvo de recuperação.");
+  }
+  return {
+    ...fields,
+    piCodigo: target.piCodigo,
+    insertions: [{
+      siteId,
+      siteSigla: String(target.siteSigla).toUpperCase(),
+      localFormato: target.localFormato,
+      localFormatoNormalizado: target.localFormato,
+      periodoInicio: target.periodoInicio,
+      periodoFim: target.periodoFim,
+      periodoOriginal: row?.period?.original || null,
+    }],
+    recoveryTarget: target,
+  };
+}
+
+async function hydrateDrivePiRecoveryTarget(fields, payload) {
+  const target = payload?.recoveryTarget;
+  if (!target) return fields;
+  // Legacy print-backfill reconstructs historical pages under the requested day.
+  // It cannot yet attest the actual capture timestamp, so never let this recovery
+  // path manufacture a past-looking proof.
+  if (target.periodoInicio < todayInCuiaba()) throw new Error("reconstruction_provenance_required");
+  const competencia = fields?.competencia;
+  if (!competencia) throw new Error("Recuperação exige competência confirmada pelo PDF.");
+  const [monthlySource, sites] = await Promise.all([
+    privateApiGet(`/api/campaign-operations/evidence-monthly-source?competencia=${encodeURIComponent(competencia)}&asOfDate=${encodeURIComponent(todayInCuiaba())}`),
+    privateApiGet("/api/sites"),
+  ]);
+  const siteIdBySigla = new Map((Array.isArray(sites) ? sites : []).map((site) => [String(site?.sigla || "").toUpperCase(), Number(site?.id)]));
+  return hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla);
 }
 
 async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {
@@ -4814,6 +4892,23 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
 }
 
 async function applyDrivePiToAdOps(fields, payload) {
+  if (payload?.recoveryTarget?.insertionId) {
+    const existing = await privateApiGet(`/api/insertions/${payload.recoveryTarget.insertionId}`);
+    const campaignId = readPositiveInteger(existing?.campanhaId ?? existing?.campaignId);
+    if (!campaignId) throw new Error("Alvo de recuperação não possui campanha canônica.");
+    const target = payload.recoveryTarget;
+    if (Number(existing.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing.localFormatoNormalizado || existing.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing.periodoInicio !== target.periodoInicio || existing.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção canônica diverge do alvo explícito de recuperação.");
+    }
+    return applyDrivePiToExpectedInsertion(fields, {
+      ...payload,
+      expectedInsertionId: target.insertionId,
+      expectedCampaignId: campaignId,
+      expectedPiCodigo: target.piCodigo,
+    });
+  }
   if (payload?.expectedInsertionId) return applyDrivePiToExpectedInsertion(fields, payload);
   const { campaign, created, dedupedBy } = await findOrCreateDrivePiCampaign(fields, payload);
   const campaignDetail = await privateApiGet(`/api/campaigns/${campaign.id}`);
@@ -4893,7 +4988,7 @@ function insertionScopeKey(raw) {
 }
 
 async function reconcileDrivePiStrictScope(applied, fields, payload) {
-  if (payload?.expectedInsertionId) {
+  if (payload?.expectedInsertionId || payload?.recoveryTarget) {
     return { skipped: true, reason: "expected_insertion_scope_preserved", cancelledInsertions: [] };
   }
   if (payload?.strictInsertionScope !== true || !applied?.campaignId) {
@@ -5565,6 +5660,7 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  fields = await hydrateDrivePiRecoveryTarget(fields, payload);
   let expectedInsertionContext = null;
   if (readPositiveInteger(payload?.expectedInsertionId) && readPositiveInteger(payload?.expectedCampaignId)) {
     const [expectedInsertion, expectedCampaign] = await Promise.all([
@@ -5627,7 +5723,7 @@ async function executeDrivePiIngest(payload) {
   const explicitPublishFlow = /api-publish$/.test(String(payload?.source || ""));
   const strictExplicitPublishFlow = explicitPublishFlow
     && payload?.strictInsertionScope === true
-    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0);
+    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0 || Boolean(payload?.recoveryTarget));
   const mutationEnabled = !preflightOnly && (
     explicitPublishFlow
     || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)
@@ -5843,7 +5939,7 @@ async function executeDrivePiIngest(payload) {
       const published = await executeAdrotatePublishJob({
         ...common,
         apply: true,
-        generateEvidence: payload?.generateEvidence !== false,
+        generateEvidence: payload?.recoveryTarget ? false : payload?.generateEvidence !== false,
       });
       publicationResults.push({ insertionId, preview, published });
     }
@@ -8638,6 +8734,8 @@ export {
   hasHttpsDrivePiDestination,
   httpDownloadBuffer,
   mergeExpectedDrivePiContext,
+  hydrateRecoveryTarget,
+  recoveryTargetKey,
   inspectOperationalImage,
   isRestrictedKvm8GatewaySite,
   parseRestrictedDbRows,
