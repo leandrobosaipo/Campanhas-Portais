@@ -1598,7 +1598,7 @@ function extractPdfCompetencia(text) {
 }
 
 function extractPdfVehicleName(text) {
-  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i)
+  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:?\s*([^\n]+)/i)
     || extractFlattenedClientVehicle(text)?.vehicleName
     || null;
 }
@@ -1621,7 +1621,7 @@ async function parseDrivePiPdfFields(archived) {
   if (!extracted) return {};
   const text = extracted.plain || "";
   const layout = extracted.layout || text;
-  const explicitPiCandidates = extractExplicitPisFromPdfText(text);
+  const explicitPiCandidates = extractExplicitPisFromPdfText(`${text}\n${layout}`);
   const piNumber = selectSingleExplicitPiCandidate(explicitPiCandidates);
   const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
