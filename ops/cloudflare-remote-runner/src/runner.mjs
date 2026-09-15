@@ -2865,10 +2865,6 @@ function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
 async function hydrateDrivePiRecoveryTarget(fields, payload) {
   const target = payload?.recoveryTarget;
   if (!target) return fields;
-  // Legacy print-backfill reconstructs historical pages under the requested day.
-  // It cannot yet attest the actual capture timestamp, so never let this recovery
-  // path manufacture a past-looking proof.
-  if (target.periodoInicio < todayInCuiaba()) throw new Error("reconstruction_provenance_required");
   const competencia = fields?.competencia;
   if (!competencia) throw new Error("Recuperação exige competência confirmada pelo PDF.");
   const [monthlySource, sites] = await Promise.all([
@@ -5936,23 +5932,31 @@ async function executeDrivePiIngest(payload) {
         date: firstNonEmptyString(payload?.date) || todayInCuiaba(),
         captureAt: firstNonEmptyString(payload?.captureAt),
       };
-      const preview = await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
-      const published = await executeAdrotatePublishJob({
+      const existing = payload?.recoveryTarget ? await privateApiGet(`/api/insertions/${insertionId}`) : null;
+      const alreadyPublished = existing?.bannerPublicadoNoSite === true;
+      const preview = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
+      const published = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({
         ...common,
         apply: true,
         generateEvidence: payload?.recoveryTarget ? false : payload?.generateEvidence !== false,
       });
-      publicationResults.push({ insertionId, preview, published });
+      const backfill = payload?.recoveryTarget
+        ? await executeRecoveryEvidenceBackfill(insertionId, payload.recoveryTarget)
+        : null;
+      publicationResults.push({ insertionId, preview, published, backfill });
     }
     evidenceCoverage = {
       checked: publicationResults.map((item) => item.insertionId),
       results: publicationResults.map((item) => ({
         insertionId: item.insertionId,
-        status: item.published?.evidenceJob?.skipped
+        status: item.backfill?.ok === true
+          ? "audited"
+          : item.published?.evidenceJob?.skipped
           ? "not_due"
           : item.published?.evidenceJob
             ? "audited"
             : "not_requested",
+        backfill: item.backfill,
       })),
     };
   }
@@ -6508,6 +6512,23 @@ async function executePrintBackfill(job) {
     throw error;
   }
   return executionResult;
+}
+
+async function executeRecoveryEvidenceBackfill(insertionId, target) {
+  const result = await executePrintBackfill({
+    id: `drive-pi-recovery:${insertionId}`,
+    payload: {
+      insertionId,
+      fromDate: target.periodoInicio,
+      toDate: target.periodoFim,
+      replace: false,
+      force: false,
+      reconstructionReason: "late_publication_recovery",
+    },
+  });
+  const missing = result.items.filter((item) => !["audited", "skipped_existing"].includes(item.status));
+  if (missing.length) throw new Error(`recovery_evidence_incomplete:${missing.map((item) => item.date).join(",")}`);
+  return result;
 }
 
 async function executePrintSingle(job) {

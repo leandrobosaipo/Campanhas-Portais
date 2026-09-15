@@ -32,6 +32,7 @@ for (const source of [publicApi, privateApi]) {
   assert.match(source, /recoveryTarget exige drive-pi-publish, strictInsertionScope=true e allowPdfInsertions=false/);
   assert.match(source, /recoveryTarget/);
 }
-assert.match(runner, /reconstruction_provenance_required/);
+assert.match(runner, /executeRecoveryEvidenceBackfill/);
+assert.match(runner, /reconstructionReason: "late_publication_recovery"/);
 assert.match(runner, /Checksum autoritativo da mídia Drive ausente ou divergente/);
 console.log("ok: recovery target requires one fresh monthly row and matching PDF");
