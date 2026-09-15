@@ -5659,6 +5659,25 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
   fields = await hydrateDrivePiRecoveryTarget(fields, payload);
+  // Existing published media is immutable in recovery: never enter upload/PATCH paths.
+  if (payload?.recoveryTarget?.insertionId) {
+    const target = payload.recoveryTarget;
+    const existing = await privateApiGet(`/api/insertions/${target.insertionId}`);
+    if (normalizePiDigits(existing?.piCodigo) !== normalizePiDigits(target.piCodigo)
+      || Number(existing?.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing?.localFormatoNormalizado || existing?.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing?.periodoInicio !== target.periodoInicio || existing?.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção atual diverge do alvo de recuperação; nenhuma mídia foi alterada.");
+    }
+    if (existing.bannerPublicadoNoSite === true) {
+      if (!existing.mediaUrl) throw new Error("published_recovery_media_missing");
+      const backfill = preflightOnly ? null : await executeRecoveryEvidenceBackfill(target.insertionId, target, parentJobId);
+      await updateDrivePiState(payload, preflightOnly ? "validated" : "applied", {
+        parseRun: { fields: { recoveryTarget: target, backfill }, alerts: ["Publicação e mídia existentes preservadas; recuperação somente de evidências."] },
+      });
+      return { stage: preflightOnly ? "preflight_only" : "applied", eventId: payload.eventId, recoveryTarget: target, preservedPublishedMedia: true, backfill };
+    }
+  }
   let expectedInsertionContext = null;
   if (readPositiveInteger(payload?.expectedInsertionId) && readPositiveInteger(payload?.expectedCampaignId)) {
     const [expectedInsertion, expectedCampaign] = await Promise.all([

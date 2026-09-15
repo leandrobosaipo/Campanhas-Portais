@@ -40,6 +40,10 @@ for (const source of [publicApi, privateApi]) {
 assert.match(runner, /executeRecoveryEvidenceBackfill/);
 assert.match(runner, /reconstructionReason: "late_publication_recovery"/);
 assert.match(runner, /pdfInsertions: Array\.isArray\(parsedFromPdf\.insertions\)/);
+const recoveryGuard = runner.indexOf('// Existing published media is immutable in recovery');
+const mediaResolution = runner.indexOf('const shouldResolveMedia =', recoveryGuard);
+const preservedReturn = runner.indexOf('preservedPublishedMedia: true', recoveryGuard);
+assert(recoveryGuard > 0 && preservedReturn > recoveryGuard && preservedReturn < mediaResolution);
 assert.match(runner, /id: parentJobId \|\| `drive-pi-recovery:/);
 assert.match(runner, /Checksum autoritativo da mídia Drive ausente ou divergente/);
 console.log("ok: recovery target requires one fresh monthly row and matching PDF");
