@@ -456,6 +456,9 @@ for (const [text, expected] of [
 }
 assert.equal(runner.extractExplicitPiFromPdfText("PI - TCE"), null);
 assert.deepEqual(runner.extractExplicitPisFromPdfText("PI 17046 / PI: 99999"), ["17046", "99999"]);
+assert.equal(runner.extractExplicitPiFromPdfText("INSERÇÃO 003218"), "3218");
+assert.equal(runner.extractExplicitPiFromPdfText("INSERCAO: 0003219"), "3219");
+assert.deepEqual(runner.extractExplicitPisFromPdfText("INSERÇÃO 003218 / PI 3219"), ["3219", "3218"], "rótulos divergentes continuam explícitos para o gate de ambiguidade");
 assert.equal(runner.extractPdfCompetencia("VEICULAÇÃO: AGOSTO/2026"), "AGOSTO/2026");
 assert.equal(runner.extractPdfVehicleName("VEICULO: SITE ROO NOTÍCIAS"), "SITE ROO NOTÍCIAS");
 assert.equal(runner.extractPdfVehicleName("VEICULOS: SITE ROO NOTÍCIAS"), null);
@@ -472,6 +475,15 @@ assert.deepEqual(runner.parsePeriodoFromLayoutText(`${z3DayHeader}\n${z3Markers.
   periodoFim: "2026-08-20",
   periodoOriginal: "14/08 - 20/08",
 });
+const septemberHeader = `${" ".repeat(32)}${Array.from({ length: 30 }, (_, index) => String(index + 1).padStart(2, " ")).join("  ")}`;
+const septemberMarkers = Array.from({ length: septemberHeader.length }, () => " ");
+for (const [index, character] of Array.from("MEGA BANNER TOPO - 825 X 120").entries()) septemberMarkers[index] = character;
+for (const day of [13, 14, 15]) septemberMarkers[septemberHeader.indexOf(String(day))] = "1";
+assert.deepEqual(runner.parsePeriodoFromLayoutText(`${septemberHeader}\n${septemberMarkers.join("")}`, "SETEMBRO/2026"), {
+  periodoInicio: "2026-09-13",
+  periodoFim: "2026-09-15",
+  periodoOriginal: "13/09 - 15/09",
+}, "calendário real de setembro usa suas 30 colunas e não texto livre para o período");
 const ambiguousMarkers = [...z3Markers];
 for (const day of [14, 15, 16, 17, 18, 19, 20]) ambiguousMarkers[z3DayHeader.indexOf(String(day))] = " ";
 for (const day of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) ambiguousMarkers[z3DayHeader.indexOf(String(day))] = "1";

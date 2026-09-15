@@ -1405,12 +1405,13 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
   const year = firstMatch(competencia, /(\d{4})/) || String(new Date().getFullYear());
   const month = monthNameToNumber(firstMatch(competencia, /([A-ZÇÃÉÍÓÚ]+)\/\d{4}/i) || "");
   if (!month) return {};
+  const expectedLastDay = new Date(Number(year), Number(month), 0).getDate();
 
   const lines = groupWordsByLine(words);
   const headerLines = lines.filter((line) => {
     const values = line.words.map((word) => word.text);
     const days = values.filter((text) => /^\d{1,2}$/.test(text)).map((text) => Number(text));
-    return days.includes(1) && days.includes(15) && days.includes(31);
+    return days.includes(1) && days.includes(15) && days.includes(expectedLastDay);
   });
   if (headerLines.length !== 1) return {};
   const headerLine = headerLines[0];
@@ -1421,7 +1422,7 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
     .filter((word) => word.day >= 1 && word.day <= 31)
     .sort((a, b) => a.day - b.day);
   const uniqueHeaderDays = new Set(dayWords.map((word) => word.day));
-  if (dayWords.length < 28 || dayWords.length > 31 || uniqueHeaderDays.size !== dayWords.length) return {};
+  if (dayWords.length !== expectedLastDay || uniqueHeaderDays.size !== expectedLastDay) return {};
 
   const minDayX = Math.min(...dayWords.map((word) => word.xCenter));
   const maxDayX = Math.max(...dayWords.map((word) => word.xCenter));
@@ -1434,7 +1435,7 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
         word.xCenter >= minDayX - 6 &&
         word.xCenter <= maxDayX + 6
       );
-      return { line, markers, formatMatch: /\bMEGABANNER\s+TOPO\b/i.test(rowText) };
+      return { line, markers, formatMatch: /\bMEGA\s*BANNER\s+TOPO\b/i.test(rowText) };
     })
     .filter((row) => row.formatMatch && row.markers.length > 0);
 
@@ -1478,19 +1479,20 @@ function parsePeriodoFromLayoutText(layoutText, competencia) {
 
   const month = monthNameToNumber(firstMatch(competencia, /([A-ZÇÃÉÍÓÚ]+)\/\d{4}/i) || "");
   if (!month) return {};
+  const expectedLastDay = new Date(Number(year), Number(month), 0).getDate();
   const lines = String(layoutText || "").split(/\r?\n/);
   const headerIndexes = lines.map((line, index) => ({ line, index })).filter(({ line }) => {
     const days = Array.from(line.matchAll(/\b(\d{1,2})\b/g)).map((match) => Number(match[1]));
     const uniqueDays = new Set(days);
-    return days.includes(1) && days.includes(15) && days.includes(31)
-      && days.length >= 28 && days.length <= 31 && uniqueDays.size === days.length;
+    return days.includes(1) && days.includes(15) && days.includes(expectedLastDay)
+      && days.length === expectedLastDay && uniqueDays.size === expectedLastDay;
   }).map(({ index }) => index);
   if (headerIndexes.length !== 1) return {};
   const headerIndex = headerIndexes[0];
   const header = lines[headerIndex];
   const insertionLines = headerIndex >= 0
     ? lines.slice(headerIndex + 1, headerIndex + 7)
-      .filter((line) => (line.match(/\bMEGABANNER\s+TOPO\b/gi) || []).length === 1 && (line.match(/\b1\b/g) || []).length > 0)
+      .filter((line) => (line.match(/\bMEGA\s*BANNER\s+TOPO\b/gi) || []).length === 1 && (line.match(/\b1\b/g) || []).length > 0)
     : [];
   if (!header || insertionLines.length !== 1) return {};
   const insertionLine = insertionLines[0];
@@ -1621,7 +1623,7 @@ async function parseDrivePiPdfFields(archived) {
   const piNumber = explicitPiCandidates[0] || null;
   const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
-  const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
+  const localFormato = firstMatch(text, /(MEGA\s*BANNER\s+TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGA\s*BANNER\s+TOPO)/i);
   const bboxPeriodo = parsePeriodoFromBboxText(extracted.bbox, competencia);
   const commercialLabels = extractPdfCommercialLabels(text);
   const parsed = {
@@ -1667,10 +1669,15 @@ function extractExplicitPiFromPdfText(text) {
 
 function extractExplicitPisFromPdfText(text) {
   const values = [];
-  const pattern = /\bPI(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:(?:N[ÚU]MERO|N\s*[º°o.]?)\s*)?[:#-]?\s*(\d{3,})\b/gi;
-  for (const match of String(text || "").matchAll(pattern)) {
-    const normalized = normalizeExpectedPiIdentity(match[1]);
-    if (normalized && !values.includes(normalized)) values.push(normalized);
+  const patterns = [
+    /\bPI(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:(?:N[ÚU]MERO|N\s*[º°o.]?)\s*)?[:#-]?\s*(\d{3,})\b/gi,
+    /\bINSER[ÇC][ÃA]O\s*[:#-]?\s*0*(\d{3,})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of String(text || "").matchAll(pattern)) {
+      const normalized = normalizeExpectedPiIdentity(match[1]);
+      if (normalized && !values.includes(normalized)) values.push(normalized);
+    }
   }
   return values;
 }
