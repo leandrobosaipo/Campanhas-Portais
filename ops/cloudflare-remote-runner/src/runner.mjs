@@ -2384,6 +2384,7 @@ async function buildDrivePiPackageContext(payload, archived) {
       modifiedTime: item.modifiedTime,
       webViewLink: item.webViewLink,
       size: item.size,
+      md5Checksum: item.md5Checksum,
     })),
     media: mediaItems.map((item) => ({
       driveFileId: item.driveFileId,
@@ -2392,6 +2393,7 @@ async function buildDrivePiPackageContext(payload, archived) {
       mimeType: item.mimeType,
       webViewLink: item.webViewLink,
       size: item.size,
+      md5Checksum: item.md5Checksum,
     })),
     textObservations,
     pdf: primaryArchive ? {

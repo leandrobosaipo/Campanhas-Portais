@@ -53,4 +53,15 @@ const preservedReturn = runner.indexOf('preservedPublishedMedia: true', recovery
 assert(recoveryGuard > 0 && preservedReturn > recoveryGuard && preservedReturn < mediaResolution);
 assert.match(runner, /id: parentJobId \|\| `drive-pi-recovery:/);
 assert.match(runner, /Checksum autoritativo da mídia Drive ausente ou divergente/);
+// Exercise the production package projection, not the simulation shortcut.
+const contextStart = runner.indexOf("async function buildDrivePiPackageContext(");
+const contextEnd = runner.indexOf("function classifyDrivePiPackage(", contextStart);
+assert(contextStart > 0 && contextEnd > contextStart);
+const buildContext = new Function("resolveDrivePiPackageFolder", "listDrivePiPackageItems", "readDriveTextObservations", "extractTextFromArchivedPdf", `${runner.slice(contextStart, contextEnd)}; return buildDrivePiPackageContext;`);
+for (const md5Checksum of ["8e1dc04a21a3976795f076c08a674e06", undefined]) {
+  const item = { driveFileId: "confirmed-gif", name: "banner.gif", mimeType: "image/gif", size: "61188", md5Checksum };
+  const context = await buildContext(async () => ({ folderId: "confirmed-folder" }), async () => [item], async () => [], async () => null)({}, null);
+  assert.equal(context.items[0].md5Checksum, md5Checksum);
+  assert.equal(context.media[0].md5Checksum, md5Checksum, "Drive checksum must reach the recovery validator without being invented");
+}
 console.log("ok: recovery target requires one fresh monthly row and matching PDF");
