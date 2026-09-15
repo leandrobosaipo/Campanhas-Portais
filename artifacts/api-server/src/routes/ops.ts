@@ -910,9 +910,9 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     ...(body["allowPeriodCorrection"] === true ? { allowPeriodCorrection: true } : {}),
     ...(body["allowCoexistence"] === true ? {
       allowCoexistence: true,
-      coexistingInsertionId: readOptionalNumber(body["coexistingInsertionId"]),
-      coexistenceGroupId: readOptionalNumber(body["coexistenceGroupId"]),
-      coexistenceConfirmation: readOptionalString(body["coexistenceConfirmation"]),
+      ...(readOptionalNumber(body["coexistingInsertionId"]) ? { coexistingInsertionId: readOptionalNumber(body["coexistingInsertionId"])! } : {}),
+      ...(readOptionalNumber(body["coexistenceGroupId"]) ? { coexistenceGroupId: readOptionalNumber(body["coexistenceGroupId"])! } : {}),
+      ...(readOptionalString(body["coexistenceConfirmation"]) ? { coexistenceConfirmation: readOptionalString(body["coexistenceConfirmation"])! } : {}),
     } : {}),
     ...(recoveryTarget ? { recoveryTarget } : {}),
     ...(readOptionalString(body["source"]) ? { source: readOptionalString(body["source"]) as string } : {}),
