@@ -4383,10 +4383,12 @@ reference_w = int(layout.get("referenceWidth") or 1280)
 scale = w / reference_w
 chrome_h = max(1, int(round(float(layout.get("chromeTopHeight") or 0) * scale)))
 taskbar_h = max(1, int(round(float(layout.get("taskbarHeight") or 0) * scale)))
+reconstruction = opts.get("reconstruction") or None
+reconstruction_footer_h = max(0, int(round(42 * scale))) if reconstruction else 0
 
 chrome_top = Image.open(chrome_top_path).convert("RGBA").resize((w, chrome_h))
 taskbar = Image.open(taskbar_path).convert("RGBA").resize((w, taskbar_h))
-canvas = Image.new("RGBA", (w, h + chrome_h + taskbar_h), (255, 255, 255, 255))
+canvas = Image.new("RGBA", (w, h + chrome_h + taskbar_h + reconstruction_footer_h), (255, 255, 255, 255))
 canvas.alpha_composite(chrome_top, (0, 0))
 canvas.alpha_composite(img, (0, chrome_h))
 canvas.alpha_composite(taskbar, (0, chrome_h + h))
@@ -4511,6 +4513,15 @@ tab_identity = draw_tab_identity()
 draw_dynamic_field("addressText", opts.get("addressText", opts.get("hostLabel", "")))
 draw_dynamic_field("systemDateTimeInline", date_text)
 
+if reconstruction:
+    footer_y = chrome_h + h + taskbar_h
+    draw.rectangle([0, footer_y, w, footer_y + reconstruction_footer_h], fill=(75, 45, 8, 255))
+    footer_font = ImageFont.truetype(frame_font_path, max(10, int(round(13 * scale))))
+    contracted = str(reconstruction.get("contractedDate") or "")
+    reconstructed_at = str(reconstruction.get("reconstructedAt") or "")
+    label = f"RECONSTRUÇÃO — data contratada: {contracted} — capturada em: {reconstructed_at} UTC"
+    draw.text((max(10, int(round(14 * scale))), footer_y + max(8, int(round(10 * scale)))), text_fit(label, max(1, w - int(round(28 * scale))), footer_font), fill=(255, 244, 214, 255), font=footer_font)
+
 scroll_metrics = opts.get("scrollMetrics") or {}
 try:
     viewport_height_css = float(scroll_metrics.get("viewportHeight") or 0)
@@ -4587,6 +4598,8 @@ print(json.dumps({
     "tabIconFallback": bool(tab_identity.get("tabIconFallback")),
     "chromeFrameHeight": chrome_h,
     "taskbarHeight": taskbar_h,
+    "reconstructionLabelRendered": bool(reconstruction),
+    "reconstructionFooterHeight": reconstruction_footer_h,
     "scrollbarRendered": scrollbar_rendered,
     "scrollbarThumbTop": scrollbar_thumb_top,
     "scrollbarThumbHeight": scrollbar_thumb_height,
@@ -4609,6 +4622,8 @@ print(json.dumps({
       tabIconFallback: null,
       chromeFrameHeight: null,
       taskbarHeight: null,
+      reconstructionLabelRendered: null,
+      reconstructionFooterHeight: null,
       scrollbarRendered: null,
       scrollbarThumbTop: null,
       scrollbarThumbHeight: null,
@@ -7750,11 +7765,14 @@ async function main() {
       minute: "2-digit",
       hour12: false,
     }).format(captureDate);
+    const frameSystemDateTime = captureClass === "historical_recovery"
+      ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", weekday: "long", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(capturedAt))
+      : systemDateTime;
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
@@ -8546,5 +8564,6 @@ if (require.main === module) {
     compactMetadataForPersistence,
     requiresRetroEditorialProof,
     buildEvidenceReplacementArchivePlan,
+    composeDesktopProof,
   };
 }
