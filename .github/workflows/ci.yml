@@ -54,6 +54,10 @@ jobs:
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
+      - name: PNMT reconstructed desktop anchor guards
+        run: |
+          node scripts/src/test-cross-portal-retro-reconstruction.mjs
+          node scripts/src/test-pnmt-static-retro-anchor.mjs
       - run: pnpm --dir scripts run test:strict-capture-readiness
       - run: pnpm --dir scripts run test:retro-content-time
       - run: pnpm --dir scripts run test:pixel-date-proof

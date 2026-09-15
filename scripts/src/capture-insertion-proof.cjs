@@ -3104,11 +3104,14 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         if (!(desktopHost instanceof HTMLElement)) return null;
         const style = window.getComputedStyle(desktopHost);
         const rect = desktopHost.getBoundingClientRect();
-        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || rect.height < 24) return null;
+        const header = desktopHost.closest(".omt-header-top");
+        if (!(header instanceof HTMLElement)) return null;
+        const headerRect = header.getBoundingClientRect();
+        if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
         let hasAdRotateUnavailableComment = false;
         while (walker.nextNode()) {
-          if (/adrotate.*(?:schedul|unavailable|indispon)/i.test(walker.currentNode.nodeValue || "")) {
+          if (String(walker.currentNode.nodeValue || "").trim() === "Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!") {
             hasAdRotateUnavailableComment = true;
             break;
           }
@@ -7876,6 +7879,10 @@ async function main() {
     }
 
     const finalComposedStage = trace.start("final_composed");
+    if (reconstruction) {
+      reconstruction.slotReconstructed = await page.locator("[data-adops-reconstructed-slot]").count() > 0;
+      reconstruction.historicalDisplayConfirmed = false;
+    }
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
       systemDateTime: frameSystemDateTime,
