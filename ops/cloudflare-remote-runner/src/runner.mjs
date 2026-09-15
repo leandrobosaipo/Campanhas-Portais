@@ -1603,8 +1603,8 @@ function extractPdfVehicleName(text, layout = "") {
     const candidate = String(value || "").trim();
     if (candidate && !values.some((item) => normalizeText(item) === normalizeText(candidate))) values.push(candidate);
   };
-  for (const match of String(text || "").matchAll(/(?:^|\n)[ \t]*VE[IÍ]CULO[ \t]*:?[ \t]*([^\n]+)/gi)) add(match[1]);
-  for (const match of String(layout || "").matchAll(/\bVE[IÍ]CULO[ \t]*:?[ \t]*([^\r\n]*?)(?=[ \t]+PER[IÍ]ODO\b|$)/gi)) add(match[1]);
+  for (const match of String(text || "").matchAll(/(?:^|\n)[ \t]*VE[IÍ]CULO\b[ \t]*:?[ \t]*([^\n]+)/gi)) add(match[1]);
+  for (const match of String(layout || "").matchAll(/\bVE[IÍ]CULO\b[ \t]*:?[ \t]*([^\r\n]*?)(?=[ \t]+PER[IÍ]ODO\b|$)/gi)) add(match[1]);
   const flattened = extractFlattenedClientVehicle(text)?.vehicleName;
   if (flattened) add(flattened);
   return values.length === 1 ? values[0] : null;
