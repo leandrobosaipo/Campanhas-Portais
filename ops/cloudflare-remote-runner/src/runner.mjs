@@ -1419,10 +1419,11 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
   const dayWords = headerLine.words
     .filter((word) => /^\d{1,2}$/.test(word.text))
     .map((word) => ({ ...word, day: Number(word.text) }))
-    .filter((word) => word.day >= 1 && word.day <= 31)
     .sort((a, b) => a.day - b.day);
   const uniqueHeaderDays = new Set(dayWords.map((word) => word.day));
-  if (dayWords.length !== expectedLastDay || uniqueHeaderDays.size !== expectedLastDay) return {};
+  const hasCompleteMonthHeader = dayWords.length === expectedLastDay && uniqueHeaderDays.size === expectedLastDay
+    && Array.from({ length: expectedLastDay }, (_, index) => index + 1).every((day) => uniqueHeaderDays.has(day));
+  if (!hasCompleteMonthHeader) return {};
 
   const minDayX = Math.min(...dayWords.map((word) => word.xCenter));
   const maxDayX = Math.max(...dayWords.map((word) => word.xCenter));
@@ -1485,7 +1486,8 @@ function parsePeriodoFromLayoutText(layoutText, competencia) {
     const days = Array.from(line.matchAll(/\b(\d{1,2})\b/g)).map((match) => Number(match[1]));
     const uniqueDays = new Set(days);
     return days.includes(1) && days.includes(15) && days.includes(expectedLastDay)
-      && days.length === expectedLastDay && uniqueDays.size === expectedLastDay;
+      && days.length === expectedLastDay && uniqueDays.size === expectedLastDay
+      && Array.from({ length: expectedLastDay }, (_, index) => uniqueDays.has(index + 1)).every(Boolean);
   }).map(({ index }) => index);
   if (headerIndexes.length !== 1) return {};
   const headerIndex = headerIndexes[0];
@@ -1620,7 +1622,7 @@ async function parseDrivePiPdfFields(archived) {
   const text = extracted.plain || "";
   const layout = extracted.layout || text;
   const explicitPiCandidates = extractExplicitPisFromPdfText(text);
-  const piNumber = explicitPiCandidates[0] || null;
+  const piNumber = selectSingleExplicitPiCandidate(explicitPiCandidates);
   const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
   const localFormato = firstMatch(text, /(MEGA\s*BANNER\s+TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGA\s*BANNER\s+TOPO)/i);
@@ -1665,6 +1667,14 @@ async function parseDrivePiPdfFields(archived) {
 
 function extractExplicitPiFromPdfText(text) {
   return extractExplicitPisFromPdfText(text)[0] || null;
+}
+
+function selectSingleExplicitPiCandidate(candidates) {
+  const values = Array.from(new Set((Array.isArray(candidates) ? candidates : [])
+    .map(normalizeExpectedPiIdentity)
+    .filter(Boolean)));
+  if (values.length > 1) throw new Error("PDF contém mais de uma PI explícita; recuperação bloqueada por ambiguidade.");
+  return values[0] || null;
 }
 
 function extractExplicitPisFromPdfText(text) {
@@ -8830,6 +8840,7 @@ export {
   validateDrivePiApplyFields,
   extractExplicitPiFromPdfText,
   extractExplicitPisFromPdfText,
+  selectSingleExplicitPiCandidate,
   validateCompositePdfEvidence,
   validateCompositePendingGuard,
   validateAdrotatePublicationGuard,
