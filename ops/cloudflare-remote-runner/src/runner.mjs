@@ -453,7 +453,7 @@ function normalizeText(value) {
 function normalizeSiteAlias(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) return null;
-  if (/\b(a folha livre|afolha livre|afl)\b/.test(normalized)) return "AFL";
+  if (/\b(a folha livre|afolha livre|folha liivre|afl)\b/.test(normalized)) return "AFL";
   if (/\b(o matogrossense|omatogrossense|matogrossense|omt)\b/.test(normalized)) return "OMT";
   if (/\b(perrengue|perrengue mt|perrengue mato grosso)\b/.test(normalized)) return "PERRENGUE";
   if (/\b(portal norte mt|portal norte|norte mt|pnmt|nmt)\b/.test(normalized)) return "PNMT";
@@ -1597,10 +1597,17 @@ function extractPdfCompetencia(text) {
   return firstMatch(text, /(?:PERÍODO|COLOCAÇÃO|VEICULAÇÃO)\s*:?\s*([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
 }
 
-function extractPdfVehicleName(text) {
-  return firstMatch(text, /(?:^|\n)\s*VE[IÍ]CULO\s*:\s*([^\n]+)/i)
-    || extractFlattenedClientVehicle(text)?.vehicleName
-    || null;
+function extractPdfVehicleName(text, layout = "") {
+  const values = [];
+  const add = (value) => {
+    const candidate = String(value || "").trim();
+    if (candidate && !values.some((item) => normalizeText(item) === normalizeText(candidate))) values.push(candidate);
+  };
+  for (const match of String(text || "").matchAll(/(?:^|\n)[ \t]*VE[IÍ]CULO[ \t]*:?[ \t]*([^\n]+)/gi)) add(match[1]);
+  for (const match of String(layout || "").matchAll(/\bVE[IÍ]CULO[ \t]*:?[ \t]*([^\r\n]*?)(?=[ \t]+PER[IÍ]ODO\b|$)/gi)) add(match[1]);
+  const flattened = extractFlattenedClientVehicle(text)?.vehicleName;
+  if (flattened) add(flattened);
+  return values.length === 1 ? values[0] : null;
 }
 
 function buildDrivePiPdfInsertions({ siteId, localFormato, periodo, clickUrl }) {
@@ -1621,7 +1628,7 @@ async function parseDrivePiPdfFields(archived) {
   if (!extracted) return {};
   const text = extracted.plain || "";
   const layout = extracted.layout || text;
-  const explicitPiCandidates = extractExplicitPisFromPdfText(text);
+  const explicitPiCandidates = extractExplicitPisFromPdfText(`${text}\n${layout}`);
   const piNumber = selectSingleExplicitPiCandidate(explicitPiCandidates);
   const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
@@ -1636,7 +1643,7 @@ async function parseDrivePiPdfFields(archived) {
     clientLegalName: commercialLabels.clientLegalName,
     clientCnpj: commercialLabels.clientCnpj,
     agencyName: commercialLabels.agencyName,
-    vehicleName: extractPdfVehicleName(text),
+    vehicleName: extractPdfVehicleName(text, layout),
     valorLiquido: parseCurrencyPtBr(firstMatch(text, /LIQUIDO R\$\s+([\d.,]+)/i)),
     clickUrl: firstMatch(text, /(https:\/\/[^\s)]+)/i),
     periodo: bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia),
