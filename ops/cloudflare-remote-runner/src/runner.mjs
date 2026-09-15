@@ -2752,6 +2752,7 @@ function mergeDrivePiFields(parsed, parsedFromPdf, {
     campaignName: mergeFieldValue(parsed.campaignName, parsedFromPdf.campaignName),
     competencia: mergedCompetencia || inferredCompetencia,
     pdfCompetencia: parsedFromPdf.competencia || null,
+    pdfInsertions: Array.isArray(parsedFromPdf.insertions) ? parsedFromPdf.insertions : [],
     clienteId: preferPdfCommercialIdentity && parsedFromPdf.clienteId
       ? parsedFromPdf.clienteId
       : mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
@@ -2840,7 +2841,7 @@ function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
   if (!siteId) throw new Error("Portal alvo não existe no catálogo AdOps.");
   const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);
   if (!pdfPi || pdfPi !== normalizeExpectedPiIdentity(target.piCodigo)) throw new Error("PDF não confirma a PI do alvo de recuperação.");
-  const pdfScope = Array.isArray(fields?.raw?.insertions) ? fields.raw.insertions : [];
+  const pdfScope = Array.isArray(fields?.pdfInsertions) ? fields.pdfInsertions : [];
   const matchingPdfScopes = pdfScope.filter((item) => normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
     && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim);
   if (matchingPdfScopes.length !== 1) {
@@ -5531,7 +5532,7 @@ async function notifyDrivePiErrorTelegram(payload, error) {
   }).catch((telegramError) => ({ error: telegramError instanceof Error ? telegramError.message : String(telegramError) }));
 }
 
-async function executeDrivePiIngest(payload) {
+async function executeDrivePiIngest(payload, parentJobId = null) {
   const preflightOnly = payload?.preflightOnly === true;
   await updateDrivePiState(payload, "received", {
     parseRun: {
@@ -5941,7 +5942,7 @@ async function executeDrivePiIngest(payload) {
         generateEvidence: payload?.recoveryTarget ? false : payload?.generateEvidence !== false,
       });
       const backfill = payload?.recoveryTarget
-        ? await executeRecoveryEvidenceBackfill(insertionId, payload.recoveryTarget)
+        ? await executeRecoveryEvidenceBackfill(insertionId, payload.recoveryTarget, parentJobId)
         : null;
       publicationResults.push({ insertionId, preview, published, backfill });
     }
@@ -6514,13 +6515,13 @@ async function executePrintBackfill(job) {
   return executionResult;
 }
 
-async function executeRecoveryEvidenceBackfill(insertionId, target) {
+async function executeRecoveryEvidenceBackfill(insertionId, target, parentJobId) {
   const result = await executePrintBackfill({
-    id: `drive-pi-recovery:${insertionId}`,
+    id: parentJobId || `drive-pi-recovery:${insertionId}`,
     payload: {
       insertionId,
       fromDate: target.periodoInicio,
-      toDate: target.periodoFim,
+      toDate: target.periodoFim < todayInCuiaba() ? target.periodoFim : todayInCuiaba(),
       replace: false,
       force: false,
       reconstructionReason: "late_publication_recovery",
@@ -8524,7 +8525,7 @@ async function handleJob(job, assertLease = () => undefined) {
   }
   if (job.kind === "drive-pi-ingest") {
     try {
-      return await executeDrivePiIngest(payload);
+      return await executeDrivePiIngest(payload, job.id);
     } catch (error) {
       await updateDrivePiState(payload, "failed", {
         parseRun: {
