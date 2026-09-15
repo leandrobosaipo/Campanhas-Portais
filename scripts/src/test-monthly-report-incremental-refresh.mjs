@@ -20,6 +20,8 @@ assert.match(report, /sincronização automática/);
 assert.match(report, /refreshRevision/);
 assert.match(report, /readPreviousPublicData/);
 assert.match(report, /reuseMonthlyDownloadUrls/);
+assert.match(report, /await writeFile\(outputPath, renderDynamicEvidenceReport\(\), "utf8"\)/);
+assert.match(report, /await writeFile\(snapshotPath, html, "utf8"\)/);
 assert.match(report, /group\.items\.every\(\(item\) => item\.batchDownloadUrl === reusableUrl\)/);
 assert.match(report, /group\.items\.every\(\(item\) => item\.completeCampaignDownloadUrl === reusableUrl\)/);
 assert.match(report, /buildPiSiteExportDownloadUrl\(apiBase, created\.jobId\)/);

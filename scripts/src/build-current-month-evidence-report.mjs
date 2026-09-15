@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs";
 import sitesConfig from "../../config/adrotate-sites.json" with { type: "json" };
 import {
   buildAtomicPublishCommand,
@@ -2336,7 +2337,7 @@ async function main() {
   const snapshotAssets = path.join(snapshotDir, "assets");
   await Promise.all([mkdir(latestAssets, { recursive: true }), mkdir(snapshotAssets, { recursive: true })]);
 
-  await writeFile(outputPath, html, "utf8");
+  await writeFile(outputPath, renderDynamicEvidenceReport(), "utf8");
   await writeFile(snapshotPath, html, "utf8");
   await writeFile(path.join(latestDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
   await writeFile(path.join(snapshotDir, "data.json"), JSON.stringify(data, null, 2), "utf8");
