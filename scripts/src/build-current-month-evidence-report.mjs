@@ -2260,6 +2260,8 @@ async function main() {
   const exportLinks = await materializeCampaignExports(enriched, monthEndForEvidence);
   const completeExportLinks = await materializeCompleteCampaignExports(enriched, monthEndForEvidence);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
+  const completePortalGroups = completeExportGroupKeys(enriched, portalExportGroupKey);
+  const completeCampaignGroups = completeExportGroupKeys(enriched, completeCampaignExportGroupKey);
   for (const item of enriched) {
     const canonicalPi = canonicalCommercialPi(item.piCodigo);
     item.batchDownloadUrl = canonicalPi
@@ -2267,6 +2269,8 @@ async function main() {
       : "";
     const completeKey = `${canonicalPi}:${normalize(item.competencia)}`;
     item.completeCampaignDownloadUrl = materializeOptionalExports ? completeExportLinks.get(completeKey) || "" : item.completeCampaignDownloadUrl || "";
+    if (!completePortalGroups.has(portalExportGroupKey(item))) item.batchDownloadUrl = "";
+    if (!completeCampaignGroups.has(completeCampaignExportGroupKey(item))) item.completeCampaignDownloadUrl = "";
     item.commercialExportBlocker = canonicalPi ? "" : "Aguardando PI/PDF para habilitar os ZIPs por PI.";
   }
 
