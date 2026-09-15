@@ -4,13 +4,11 @@ function cod5_string(value) {
 
 export function filterOperationalMediaCandidates(items, formats, dimensions = {}) {
   const allowed = new Set((Array.isArray(formats) ? formats : []).map((value) => String(value).toUpperCase()));
-  const expectedDimensions = Number(dimensions?.width) > 0 && Number(dimensions?.height) > 0
-    ? `${Number(dimensions.width)}X${Number(dimensions.height)}`
-    : null;
   return (Array.isArray(items) ? items : []).filter((item) => {
     const value = `${item?.mimeType || ""} ${item?.name || ""}`.toUpperCase();
-    return [...allowed].some((format) => value.includes(format))
-      && (!expectedDimensions || value.includes(expectedDimensions));
+    // The portal owns final rendering. File dimensions are reported by the
+    // preflight, but must not reject an otherwise verified Drive image.
+    return [...allowed].some((format) => value.includes(format));
   });
 }
 

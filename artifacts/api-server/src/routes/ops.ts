@@ -102,6 +102,15 @@ type DrivePiEventPayload = {
   generateEvidence?: boolean;
   purgeCache?: boolean;
   recoveryTarget?: { piCodigo: string; siteSigla: string; localFormato: string; periodoInicio: string; periodoFim: string; insertionId?: number };
+  expectedCampaignId?: number;
+  expectedInsertionId?: number;
+  expectedPiCodigo?: string;
+  periodSource?: "sheet" | "pi";
+  allowPeriodCorrection?: boolean;
+  allowCoexistence?: boolean;
+  coexistingInsertionId?: number;
+  coexistenceGroupId?: number;
+  coexistenceConfirmation?: string;
   source?: string;
 };
 
@@ -894,6 +903,17 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     ...(typeof body["publish"] === "boolean" ? { publish: body["publish"] } : {}),
     ...(typeof body["generateEvidence"] === "boolean" ? { generateEvidence: body["generateEvidence"] } : {}),
     ...(typeof body["purgeCache"] === "boolean" ? { purgeCache: body["purgeCache"] } : {}),
+    ...(readOptionalNumber(body["expectedCampaignId"]) ? { expectedCampaignId: readOptionalNumber(body["expectedCampaignId"])! } : {}),
+    ...(readOptionalNumber(body["expectedInsertionId"]) ? { expectedInsertionId: readOptionalNumber(body["expectedInsertionId"])! } : {}),
+    ...(readOptionalString(body["expectedPiCodigo"]) ? { expectedPiCodigo: readOptionalString(body["expectedPiCodigo"])! } : {}),
+    ...(body["periodSource"] === "sheet" ? { periodSource: "sheet" as const } : {}),
+    ...(body["allowPeriodCorrection"] === true ? { allowPeriodCorrection: true } : {}),
+    ...(body["allowCoexistence"] === true ? {
+      allowCoexistence: true,
+      ...(readOptionalNumber(body["coexistingInsertionId"]) ? { coexistingInsertionId: readOptionalNumber(body["coexistingInsertionId"])! } : {}),
+      ...(readOptionalNumber(body["coexistenceGroupId"]) ? { coexistenceGroupId: readOptionalNumber(body["coexistenceGroupId"])! } : {}),
+      ...(readOptionalString(body["coexistenceConfirmation"]) ? { coexistenceConfirmation: readOptionalString(body["coexistenceConfirmation"])! } : {}),
+    } : {}),
     ...(recoveryTarget ? { recoveryTarget } : {}),
     ...(readOptionalString(body["source"]) ? { source: readOptionalString(body["source"]) as string } : {}),
   };
@@ -3412,6 +3432,21 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     });
     return;
   }
+  const expectedCampaignId = readOptionalNumber(req.body?.expectedCampaignId);
+  const expectedInsertionId = readOptionalNumber(req.body?.expectedInsertionId);
+  const expectedPiCodigo = readOptionalString(req.body?.expectedPiCodigo);
+  const allowCoexistence = req.body?.allowCoexistence === true;
+  const coexistingInsertionId = readOptionalNumber(req.body?.coexistingInsertionId);
+  const coexistenceGroupId = readOptionalNumber(req.body?.coexistenceGroupId);
+  const coexistenceConfirmation = readOptionalString(req.body?.coexistenceConfirmation);
+  if ((expectedCampaignId == null) !== (expectedInsertionId == null) || (expectedInsertionId != null && (!expectedPiCodigo || !options.publishFlow))) {
+    res.status(400).json({ error: "bad_request", details: "Alvo explícito exige expectedCampaignId, expectedInsertionId e expectedPiCodigo no drive-pi-publish." });
+    return;
+  }
+  if (allowCoexistence && (!expectedCampaignId || !expectedInsertionId || !coexistingInsertionId || !coexistenceGroupId || !coexistenceConfirmation || coexistenceConfirmation.length < 8)) {
+    res.status(400).json({ error: "bad_request", details: "Coexistência exige alvo explícito, inserção já publicada, grupo e nota de confirmação." });
+    return;
+  }
   const now = nowIso();
   const source = options.preflightOnly ? "macmini-api-preflight" : options.publishFlow ? "macmini-api-publish" : "macmini-api";
   const event = {
@@ -3434,6 +3469,12 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     publish: options.publishFlow ? req.body?.publish !== false : req.body?.publish === true,
     generateEvidence: options.publishFlow ? req.body?.generateEvidence !== false : req.body?.generateEvidence === true,
     purgeCache: req.body?.purgeCache !== false,
+    ...(expectedCampaignId ? { expectedCampaignId } : {}),
+    ...(expectedInsertionId ? { expectedInsertionId } : {}),
+    ...(expectedPiCodigo ? { expectedPiCodigo } : {}),
+    ...(req.body?.periodSource === "sheet" ? { periodSource: "sheet" as const } : {}),
+    ...(req.body?.allowPeriodCorrection === true ? { allowPeriodCorrection: true } : {}),
+    ...(allowCoexistence ? { allowCoexistence: true, coexistingInsertionId, coexistenceGroupId, coexistenceConfirmation } : {}),
     ...(req.body?.recoveryTarget !== undefined ? { recoveryTarget: req.body.recoveryTarget } : {}),
     source,
   };
