@@ -4884,14 +4884,14 @@ function normalizeExpectedPiIdentity(value) {
   return normalizePiDigits(value)?.replace(/^0+(?=\d)/, "") || null;
 }
 
-function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo }) {
+function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo, allowMissingPdf = false }) {
   const expected = normalizeExpectedPiIdentity(expectedPiCodigo);
   const merged = normalizeExpectedPiIdentity(fieldsPiCodigo);
   const fromPdf = normalizeExpectedPiIdentity(pdfPiCodigo);
-  if (!expected || !fromPdf) {
+  if (!expected || (!fromPdf && !allowMissingPdf)) {
     throw new Error("O PDF não confirmou uma PI numérica; nenhuma mutação foi aplicada.");
   }
-  if (fromPdf !== expected) {
+  if (fromPdf && fromPdf !== expected) {
     throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
   }
   if (merged && merged !== expected) {
@@ -4936,6 +4936,7 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
     pdfPiCodigo: fields.pdfPiCodigo,
     campaignPiCodigo: campaign?.piCodigo,
     insertionPiCodigo: expected?.piCodigo,
+    allowMissingPdf: payload?.periodSource === "sheet" && payload?.allowPeriodCorrection === true,
   });
   validateExpectedDrivePiCommercialContext({
     campaignCompetencia: campaign?.competencia,
