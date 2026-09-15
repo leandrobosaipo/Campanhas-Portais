@@ -3344,6 +3344,104 @@ function normalizeEditorialUrl(value) {
   }
 }
 
+function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff || !Array.isArray(expectedPosts)) return {};
+  const grouped = new Map();
+  for (const post of expectedPosts) {
+    let sourceUrl;
+    try { sourceUrl = new URL(post?.url || post?.link); } catch { continue; }
+    if (sourceUrl.origin !== "https://portalnortemt.com") continue;
+    const path = normalizeEditorialUrl(sourceUrl.href);
+    const date = String(post?.date || "").trim();
+    const parsed = parseIsoLikeDate(date);
+    if (!path) continue;
+    const values = grouped.get(path) || [];
+    values.push({ date, parsed, id: Number(post?.id || 0) || null, sourceUrl: sourceUrl.href });
+    grouped.set(path, values);
+  }
+  const replacements = {};
+  for (const [path, values] of grouped) {
+    if (values.length !== 1) continue;
+    const value = values[0];
+    if (!value.parsed || value.parsed.getTime() > cutoff.getTime()) continue;
+    const match = value.date.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!match) continue;
+    replacements[path] = {
+      date: value.date,
+      label: `${match[3]}/${match[2]}/${match[1]} ${match[4]}:${match[5]}`,
+      postId: value.id,
+      sourceUrl: value.sourceUrl,
+      source: "wordpress_rest_verified",
+    };
+  }
+  return replacements;
+}
+
+function shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping) {
+  return mapping?.domain === "portalnortemt.com"
+    && (mapping?.page === "home" || mapping?.pageLabel === "Home");
+}
+
+async function normalizeVerifiedPnmtHeroRelativeDates(page, mapping, captureAt) {
+  if (!shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping)) return { applied: 0, reason: "not_configured" };
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff) return { applied: 0, reason: "invalid_cutoff" };
+  const expectedPosts = await page.evaluate(async (cutoff) => {
+    try {
+      if (window.location.origin !== "https://portalnortemt.com") return [];
+      const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
+      endpoint.searchParams.set("per_page", "25");
+      endpoint.searchParams.set("before", cutoff);
+      endpoint.searchParams.set("orderby", "date");
+      endpoint.searchParams.set("order", "desc");
+      endpoint.searchParams.set("_fields", "id,date,link");
+      const response = await fetch(endpoint.toString(), { cache: "no-store", credentials: "same-origin" });
+      const rows = response.ok ? await response.json() : null;
+      return Array.isArray(rows) ? rows : [];
+    } catch {
+      return [];
+    }
+  }, cutoff.toISOString());
+  const replacements = buildVerifiedEditorialDateReplacements(expectedPosts, captureAt);
+  const applied = await page.evaluate((verifiedDates) => {
+    if (window.location.origin !== "https://portalnortemt.com") return [];
+    const normalizePath = (value) => {
+      try { return new URL(String(value || ""), window.location.href).pathname.replace(/\/+$/, "") || "/"; } catch { return ""; }
+    };
+    const appliedRows = [];
+    for (const card of Array.from(document.querySelectorAll("article.hero-post"))) {
+      const link = card.querySelector("a[href]");
+      if (!link || new URL(link.href, window.location.href).origin !== window.location.origin) continue;
+      const replacement = verifiedDates[normalizePath(link?.href)];
+      if (!replacement) continue;
+      const dateNodes = Array.from(card.querySelectorAll("span,time,[class*='date'],[class*='time']"))
+        .filter((node) => /^\s*(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\s*$/i.test(String(node.textContent || "")));
+      if (dateNodes.length !== 1) continue;
+      const node = dateNodes[0];
+      const original = String(node.textContent || "").trim();
+      node.setAttribute("data-adops-retro-original-relative-date", original);
+      node.setAttribute("data-adops-retro-date-source", replacement.source);
+      node.setAttribute("data-adops-retro-post-date", replacement.date);
+      if (replacement.postId) node.setAttribute("data-adops-retro-post-id", String(replacement.postId));
+      node.textContent = replacement.label;
+      card.setAttribute("data-adops-retro-post-date", replacement.date);
+      card.setAttribute("data-adops-retro-date-source", replacement.source);
+      appliedRows.push({
+        url: new URL(link.href, window.location.href).toString(),
+        postId: replacement.postId || null,
+        date: replacement.date,
+        originalRelativeText: original,
+        visibleLabel: replacement.label,
+        source: replacement.source,
+        sourceUrl: replacement.sourceUrl,
+      });
+    }
+    return appliedRows;
+  }, replacements);
+  return { applied: applied.length, replacements: applied, reason: applied.length ? null : "no_verified_hero_relative_date" };
+}
+
 function evaluateRetroContentProof(payload) {
   const requestedCaptureAt = payload.requestedCaptureAt || null;
   const editorialSamples = Array.isArray(payload.editorialSamples) ? payload.editorialSamples.slice(0, 25) : [];
@@ -7218,6 +7316,7 @@ async function main() {
   let retroContentProof = null;
   let retroGate = null;
   let retroPreview = null;
+  let verifiedEditorialDateReplacements = [];
   let pendingLogFlush = { flushed: 0, kept: 0 };
   let logPersistence = { status: "skipped", queued: false, error: null };
 
@@ -7424,6 +7523,10 @@ async function main() {
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
     retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
+    const verifiedEditorialDates = captureClass === "historical_recovery" && mapping.auditConfig?.requireAbsoluteEditorialDates === true
+      ? await normalizeVerifiedPnmtHeroRelativeDates(page, mapping, effectiveCaptureAt)
+      : { replacements: [] };
+    verifiedEditorialDateReplacements = verifiedEditorialDates.replacements || [];
     await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename, staticRetroAdOptions);
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
     creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, insertion.mediaUrl, {
@@ -8008,6 +8111,7 @@ async function main() {
       captureClass,
       targetDate: isoDate,
       sourceJobId,
+      verifiedEditorialDateReplacements,
       resolvedRuleVersionHash: mapping.ruleVersionHash || null,
       requiredGates: {
         requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true,
@@ -8613,6 +8717,9 @@ if (require.main === module) {
     parseIsoLikeDate,
     evaluateContentTimeline,
     evaluateRelativeContentTimeline,
+    buildVerifiedEditorialDateReplacements,
+    shouldNormalizeVerifiedPnmtHeroRelativeDates,
+    normalizeVerifiedPnmtHeroRelativeDates,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
     compactMetadataForPersistence,
