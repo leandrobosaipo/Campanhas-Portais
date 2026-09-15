@@ -16,6 +16,7 @@ import { selectDailyPrintCandidates } from "../../shared/daily-print-candidates.
 import { buildDailyPrintLiveProgress } from "../../shared/daily-print-status.mjs";
 import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
 import { isReusableAuditedEvidence, isScheduledMonthlyReportPayload } from "../../../scripts/src/monthly-evidence-contract.mjs";
+import { executeSheetCorrection } from "./sheet-correction.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -100,7 +101,7 @@ const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTA
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
 const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "1200000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
+const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,sheet-correction,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe")
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
@@ -5950,6 +5951,7 @@ async function executeDrivePiIngest(payload) {
       size: item?.size ?? null,
     })),
     packageReadiness,
+    ...(preflightOnly ? { sourceDocument: packageContext?.pdf ? { sourceName: packageContext.pdf.sourceName, sha256: packageContext.pdf.sha256, bytes: packageContext.pdf.bytes, textExcerpt: packageContext.pdf.textExcerpt, parseError: packageContext.pdf.parseError } : null } : {}),
     reviewReasons: finalReviewReasons,
     dedupe: preApplyDedupe,
     rollout,
@@ -7638,13 +7640,8 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    const proof = status?.audit?.retroContentProof;
-    const strictAuditApproved = status?.status === "audited"
-      && proof?.status === "approved"
-      && proof?.futureCount === 0
-      && typeof proof?.manifestHash === "string"
-      && proof.manifestHash.length === 64;
-    if (strictAuditApproved) continue;
+    if (isReusableAuditedEvidence(status)) continue;
+    if (!["missing", "invalid_audit", "invalid_url"].includes(status?.status)) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
     const result = await captureProofWithRetry(insertion.id, targetDate);
@@ -7654,16 +7651,9 @@ async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride =
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => {
-    const proof = item?.audit?.retroContentProof;
-    return item?.status !== "audited"
-      || proof?.status !== "approved"
-      || proof?.futureCount !== 0
-      || typeof proof?.manifestHash !== "string"
-      || proof.manifestHash.length !== 64;
-  });
+  const failed = finalStatuses.filter((item) => !isReusableAuditedEvidence(item));
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem checklist final aprovado.`);
   }
 
   return {
@@ -8360,6 +8350,15 @@ async function handleJob(job, assertLease = () => undefined) {
   if (job.kind === "sync-planilha") {
     return executeSyncPlanilha(payload);
   }
+  if (job.kind === "sheet-correction") {
+    return executeSheetCorrection(payload, {
+      persistedIntent: job?.result?.sheetCorrection,
+      onIntent: async (intent) => progressJob(job.id, {
+        stage: "sheet_correction_intent_durable",
+        sheetCorrection: { state: "intent_durable", ...intent },
+      }),
+    });
+  }
   if (job.kind === "print-batch") {
     return executePrintBatch(job, assertLease);
   }
@@ -8504,6 +8503,7 @@ async function runOnce(poolKinds = kinds, cod5_reservar = () => claimNext(poolKi
     return false;
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
+  if (job.result && typeof job.result === "object") jobProgressResults.set(job.id, job.result);
   try {
     const result = await runWithJobHeartbeat(
       job.id,

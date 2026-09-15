@@ -525,6 +525,11 @@ async function main() {
     const agencyInfo = splitAgencyValue(row.agenciaValor);
     const clientName = inferClientName(row.peca, row.campanha);
     const piCodigo = normalizePi(row.peca, row.agenciaValor);
+    if (!normalizeCampaignPiIdentity(row.peca)) {
+      warnings.push(`${row.sourceSheet}: PI pendente em ${row.siteSigla} / ${row.campanha}; corrigir fonte antes de sincronizar.`);
+      changes.push({ type: "blocked_invalid_pi", siteSigla: row.siteSigla, campaignName: row.campanha });
+      continue;
+    }
     const normalizedCampaignName = normalizeSpaces(row.campanha);
     const localFormatoNormalizado = normalizeFormato(row.local);
     const insertionIdentity = buildCampaignInsertionIdentity({
@@ -585,6 +590,7 @@ async function main() {
       warnings.push(
         `${row.sourceSheet}: campanha duplicada detectada para ${normalizedCampaignName} / ${piCodigo ?? "sem-pi"} / ${row.siteSigla}. Mantendo campanha ${exactCampaignCandidates[0]!.id} como canônica para não criar novo duplicado.`,
       );
+      if (canonicalInsertionCandidates.length !== 1) continue;
     }
 
     if (!campaign) {
@@ -598,6 +604,7 @@ async function main() {
         warnings.push(
           `${row.sourceSheet}: identidade repetida em múltiplas campanhas para ${normalizedCampaignName} / ${piCodigo ?? "sem-pi"} / ${row.siteSigla}. Reaproveitando campanha ${sameIdentity?.id ?? "desconhecida"} em vez de criar outra.`,
         );
+        continue;
       }
       if (sameIdentity) {
         if (dryRun) {
