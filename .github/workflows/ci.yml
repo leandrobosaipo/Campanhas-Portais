@@ -51,6 +51,7 @@ jobs:
         run: |
           node scripts/src/test-historical-reconstruction-frame.mjs
           node scripts/src/test-drive-pi-recovery-target.mjs
+          node --test ops/cloudflare-remote-runner/test/pi-layout-identity.test.mjs
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
           pnpm --dir scripts exec tsx src/test-preupload-reconstruction-clock.ts
       - name: Install capture browser
