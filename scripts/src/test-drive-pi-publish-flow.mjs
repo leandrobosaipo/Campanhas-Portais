@@ -7,6 +7,23 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 process.env.ADOPS_RUNNER_TEST_MODE = "1";
 const runner = await import(path.join(root, "ops/cloudflare-remote-runner/src/runner.mjs"));
+const publicationPolicy = await import(path.join(root, "ops/cloudflare-remote-runner/src/publication-reconcile-policy.mjs"));
+
+assert.deepEqual(
+  publicationPolicy.filterOperationalMediaCandidates(
+    [{ name: "9773-670x90.gif", mimeType: "image/gif" }],
+    ["GIF"],
+    { width: 728, height: 90 },
+  ).map((item) => item.name),
+  ["9773-670x90.gif"],
+  "uma imagem Drive válida não pode ser bloqueada só pela dimensão nominal",
+);
+const periodFallback = runner.extendSitePeriodForSocialDelivery([
+  { siteId: 33, localFormato: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-20" },
+  { siteId: 33, localFormato: "INSTAGRAM", periodoInicio: "2026-09-01", periodoFim: "2026-09-22" },
+  { siteId: 35, localFormato: "INSTAGRAM", periodoInicio: "2026-09-01", periodoFim: "2026-09-30" },
+]);
+assert.equal(periodFallback[0].periodoFim, "2026-09-22", "fallback da PI deve usar o fim do Instagram do mesmo portal");
 
 const agencyPending = runner.validateDrivePiApplyFields({
   piCodigo: "PI 17464",
@@ -75,6 +92,18 @@ assert.equal(
   ),
   "/CUIABA/PI 14879",
   "identidade do portal deve usar somente nome e caminho da pasta",
+);
+assert.equal(
+  runner.selectDriveImageForInsertion(
+    { media: [
+      { driveFileId: "old", mimeType: "image/gif", name: "banner.gif", modifiedTime: "2026-09-01T00:00:00Z" },
+      { driveFileId: "latest", mimeType: "image/gif", name: "banner-2.gif", modifiedTime: "2026-09-02T00:00:00Z" },
+    ] },
+    { localFormato: "HOME 1" },
+    {},
+  ).mediaItem.driveFileId,
+  "latest",
+  "variações igualmente compatíveis devem usar a mídia mais recente",
 );
 const labelledPiFolder = runner.mergeExpectedDrivePiContext(parsedWithoutSiteId, {
   insertion: canonicalPerrengueInsertion,
@@ -182,6 +211,8 @@ for (const source of [publicApi, privateApi]) {
   assert(source.includes("/api/ops/jobs/drive-pi-publish") || source.includes("/ops/jobs/drive-pi-publish"));
   assert(source.includes("strictInsertionScope"));
   assert(source.includes("allowPdfInsertions"));
+  assert(source.includes("allowCoexistence"));
+  assert(source.includes("periodSource"));
 }
 assert(!adrotatePlugin.includes('WHERE `user` = 0 AND `group` = %d AND `ad` <> %d'), "publicação não pode remover outros anúncios do grupo");
 assert(adrotatePlugin.indexOf('SELECT `schedule` FROM') < adrotatePlugin.indexOf('$wpdb->delete($link_table'), "agenda existente deve ser lida antes de substituir links do anúncio");

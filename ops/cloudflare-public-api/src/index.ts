@@ -156,6 +156,15 @@ type DrivePiEventPayload = {
     periodoFim: string;
     insertionId?: number;
   };
+  expectedCampaignId?: number;
+  expectedInsertionId?: number;
+  expectedPiCodigo?: string;
+  periodSource?: "sheet" | "pi";
+  allowPeriodCorrection?: boolean;
+  allowCoexistence?: boolean;
+  coexistingInsertionId?: number;
+  coexistenceGroupId?: number;
+  coexistenceConfirmation?: string;
   source?: string;
 };
 
@@ -1385,6 +1394,17 @@ function validateDrivePiEvent(body: Record<string, unknown>): { ok: true; event:
       ...(typeof body.publish === "boolean" ? { publish: body.publish } : {}),
       ...(typeof body.generateEvidence === "boolean" ? { generateEvidence: body.generateEvidence } : {}),
       ...(typeof body.purgeCache === "boolean" ? { purgeCache: body.purgeCache } : {}),
+      ...(Number.isInteger(body.expectedCampaignId) ? { expectedCampaignId: Number(body.expectedCampaignId) } : {}),
+      ...(Number.isInteger(body.expectedInsertionId) ? { expectedInsertionId: Number(body.expectedInsertionId) } : {}),
+      ...(readOptionalString(body.expectedPiCodigo) ? { expectedPiCodigo: readOptionalString(body.expectedPiCodigo) } : {}),
+      ...(body.periodSource === "sheet" ? { periodSource: "sheet" as const } : {}),
+      ...(body.allowPeriodCorrection === true ? { allowPeriodCorrection: true } : {}),
+      ...(body.allowCoexistence === true ? {
+        allowCoexistence: true,
+        coexistingInsertionId: Number(body.coexistingInsertionId),
+        coexistenceGroupId: Number(body.coexistenceGroupId),
+        coexistenceConfirmation: readOptionalString(body.coexistenceConfirmation),
+      } : {}),
       ...(recoveryTarget ? { recoveryTarget } : {}),
       ...(readOptionalString(body.source) ? { source: readOptionalString(body.source) as string } : {}),
     },
@@ -2919,6 +2939,19 @@ export default {
         }
         const folderId = parseDriveFolderId(body.folderUrl ?? body.folderId ?? body.driveFolderId);
         if (!folderId) return badRequest("Informe folderUrl, folderId ou driveFolderId válido do Google Drive.");
+        const expectedCampaignId = body.expectedCampaignId === undefined ? null : Number(body.expectedCampaignId);
+        const expectedInsertionId = body.expectedInsertionId === undefined ? null : Number(body.expectedInsertionId);
+        const expectedPiCodigo = readOptionalString(body.expectedPiCodigo);
+        const allowCoexistence = body.allowCoexistence === true;
+        const coexistingInsertionId = body.coexistingInsertionId === undefined ? null : Number(body.coexistingInsertionId);
+        const coexistenceGroupId = body.coexistenceGroupId === undefined ? null : Number(body.coexistenceGroupId);
+        const coexistenceConfirmation = readOptionalString(body.coexistenceConfirmation);
+        if ((expectedCampaignId === null) !== (expectedInsertionId === null) || (expectedInsertionId !== null && (!Number.isInteger(expectedCampaignId) || !Number.isInteger(expectedInsertionId) || !expectedPiCodigo || !publishFlow))) {
+          return badRequest("Alvo explícito exige expectedCampaignId, expectedInsertionId e expectedPiCodigo no drive-pi-publish.");
+        }
+        if (allowCoexistence && (!expectedCampaignId || !expectedInsertionId || !Number.isInteger(coexistingInsertionId) || !Number.isInteger(coexistenceGroupId) || !coexistenceConfirmation || coexistenceConfirmation.length < 8)) {
+          return badRequest("Coexistência exige alvo explícito, inserção já publicada, grupo e nota de confirmação.");
+        }
         const now = nowIso();
         const event = {
           eventId: readOptionalString(body.eventId) ?? `drive:${folderId}:${publishFlow ? "publish:" : preflightOnly ? "preflight:" : ""}${now}`,
@@ -2940,6 +2973,12 @@ export default {
           publish: publishFlow ? body.publish !== false : body.publish === true,
           generateEvidence: publishFlow ? body.generateEvidence !== false : body.generateEvidence === true,
           purgeCache: body.purgeCache !== false,
+          ...(expectedCampaignId ? { expectedCampaignId } : {}),
+          ...(expectedInsertionId ? { expectedInsertionId } : {}),
+          ...(expectedPiCodigo ? { expectedPiCodigo } : {}),
+          ...(body.periodSource === "sheet" ? { periodSource: "sheet" as const } : {}),
+          ...(body.allowPeriodCorrection === true ? { allowPeriodCorrection: true } : {}),
+          ...(allowCoexistence ? { allowCoexistence: true, coexistingInsertionId, coexistenceGroupId, coexistenceConfirmation } : {}),
           ...(body.recoveryTarget !== undefined ? { recoveryTarget: body.recoveryTarget } : {}),
           source: preflightOnly
             ? "cloudflare-protected-api-preflight"

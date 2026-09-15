@@ -730,13 +730,27 @@ function selectDriveImageForInsertion(packageContext, raw, fields) {
       : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
   }
   if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
-  const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
+  const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return String(b.item?.modifiedTime || "").localeCompare(String(a.item?.modifiedTime || ""));
+  });
   return {
     mediaItem: ranked[0].item,
     ambiguous: ranked[0].score === ranked[1].score,
     candidates: images.length,
     score: ranked[0].score,
   };
+}
+
+function imageAspectWarning(mediaItem, profile) {
+  const expectedWidth = Number(profile?.width || 0);
+  const expectedHeight = Number(profile?.height || 0);
+  const match = String(mediaItem?.name || "").match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i);
+  if (!expectedWidth || !expectedHeight || !match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height || (width === expectedWidth && height === expectedHeight)) return null;
+  return `aspect_ratio_advisory:${width}x${height}:expected_${expectedWidth}x${expectedHeight}`;
 }
 
 async function downloadExternalMediaToArchive(url, fallbackName = "media") {
@@ -1148,7 +1162,10 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
           const metadata = await readOperationalVideoMetadata(materialized.filePath);
           if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
         } else {
-          await inspectOperationalImage(materialized.filePath, { format: extension, width: Number(profile.width), height: Number(profile.height) });
+          const metadata = await readOperationalImageMetadata(materialized.filePath);
+          if (String(metadata.format || "").toUpperCase() !== extension || !metadata.nonUniform) {
+            throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+          }
         }
       }
       const bucket = spacesBucketForSite(siteSigla);
@@ -1186,6 +1203,7 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         stagedUrl,
         mediaUrl,
         wordpressImport,
+        aspectWarning: imageAspectWarning(selected.mediaItem, await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]))),
       });
       resolvedInsertions.push({
         ...raw,
@@ -1201,6 +1219,20 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
     fields: { ...fields, insertions: resolvedInsertions, imageMediaProcessing: { skipped: false, results, issues } },
     imageMediaProcessing: { skipped: false, results, issues },
   };
+}
+
+function extendSitePeriodForSocialDelivery(insertions) {
+  const values = Array.isArray(insertions) ? insertions : [];
+  return values.map((insertion) => {
+    if (isSocialInsertion(insertion)) return insertion;
+    const siteId = Number(readNumberRecord(insertion, ["siteId"]) || 0);
+    const socialEnds = values
+      .filter((candidate) => isSocialInsertion(candidate) && Number(readNumberRecord(candidate, ["siteId"]) || 0) === siteId)
+      .map((candidate) => readStringRecord(candidate, ["periodoFim", "fim"]))
+      .filter(Boolean);
+    const latestEnd = [readStringRecord(insertion, ["periodoFim", "fim"]), ...socialEnds].filter(Boolean).sort().at(-1);
+    return latestEnd ? { ...insertion, periodoFim: latestEnd, periodoSource: "PI" } : insertion;
+  });
 }
 
 async function ensureRuntimeDirs() {
@@ -2768,7 +2800,7 @@ function mergeDrivePiFields(parsed, parsedFromPdf, {
     ? pdfInsertions
     : parsed.insertions?.length
       ? parsed.insertions
-      : pdfInsertions;
+      : extendSitePeriodForSocialDelivery(pdfInsertions);
   const mergedCompetencia = mergeFieldValue(parsed.competencia, parsedFromPdf.competencia);
   const inferredCompetencia = mergedCompetencia ? null : inferCompetenciaFromInsertionPeriod(parsedInsertions);
   return {
@@ -2826,7 +2858,15 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText =
   const insertions = parsedInsertions.length
     ? canHydrateUniqueSite
       ? [{ ...parsedInsertions[0], siteId: canonicalInsertion.siteId }]
-      : parsedInsertions
+      : parsedInsertions.map((raw) => {
+        const sameExpectedSlot = Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(canonicalInsertion.siteId || 0)
+          && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+            === normalizeSlotKey(canonicalInsertion.localFormatoNormalizado || canonicalInsertion.localFormato)
+          && readStringRecord(raw, ["periodoInicio", "inicio"]) === canonicalInsertion.periodoInicio;
+        return sameExpectedSlot && !readStringRecord(raw, ["mediaUrl", "media_url"]) && readStringRecord(insertion, ["mediaUrl"])
+          ? { ...raw, mediaUrl: readStringRecord(insertion, ["mediaUrl"]) }
+          : raw;
+      })
     : [canonicalInsertion];
   return {
     ...fields,
@@ -3050,11 +3090,13 @@ async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
       ? detail.insertions.find((item) => Number(item?.id) === expectedInsertionId)
       : null;
     const raw = fields.insertions.length === 1 ? fields.insertions[0] : null;
+    const allowSheetPeriodCorrection = expectedTarget?.periodSource === "sheet" && expectedTarget?.allowPeriodCorrection === true;
     const sameScope = Boolean(raw && expectedInsertion
       && Number(expectedInsertion.siteId ?? 0) === Number(readNumberRecord(raw, ["siteId"]) || 0)
       && normalizeSlotKey(expectedInsertion.localFormatoNormalizado ?? expectedInsertion.localFormato) === normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]))
       && expectedInsertion.periodoInicio === readStringRecord(raw, ["periodoInicio", "inicio"])
-      && expectedInsertion.periodoFim === readStringRecord(raw, ["periodoFim", "fim"]));
+      && (expectedInsertion.periodoFim === readStringRecord(raw, ["periodoFim", "fim"])
+        || (allowSheetPeriodCorrection && readStringRecord(raw, ["periodoFim", "fim"]) > expectedInsertion.periodoFim)));
     if (!sameScope) {
       return { ok: false, conflicts: [`dedupe_conflict: inserção canônica #${expectedInsertionId} não corresponde mais ao portal/formato/período`], checkedCampaignIds: [expectedCampaignId] };
     }
@@ -3072,7 +3114,13 @@ async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
         }
         relations.set(Number(insertion.id), relation);
       }
-      if (!isDiscardableDraftCampaign(competitorDetail, relations)) {
+      const allowedCoexistence = expectedTarget?.allowCoexistence === true
+        && Number(expectedTarget?.coexistingInsertionId) > 0
+        && String(expectedTarget?.coexistenceConfirmation || "").trim().length >= 8
+        && competitorDetail.insertions.some((insertion) => Number(insertion?.id) === Number(expectedTarget.coexistingInsertionId)
+          && Number(insertion?.siteId) === Number(expectedInsertion.siteId)
+          && Number(relations.get(Number(insertion?.id))?.plannedSelf?.groupId || 0) === Number(expectedTarget?.coexistenceGroupId || 0));
+      if (!isDiscardableDraftCampaign(competitorDetail, relations) && !allowedCoexistence) {
         return { ok: false, conflicts: [`dedupe_conflict: campanha concorrente #${competitor.id} possui publicação, mídia, evidência ou origem não descartável`], checkedCampaignIds: [expectedCampaignId, Number(competitor.id)] };
       }
       ignoredDraftCampaignIds.push(Number(competitor.id));
@@ -3082,6 +3130,11 @@ async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
       conflicts: [],
       checkedCampaignIds: [expectedCampaignId],
       ignoredDraftCampaignIds,
+      coexistence: expectedTarget?.allowCoexistence === true ? {
+        insertionId: Number(expectedTarget.coexistingInsertionId),
+        groupId: Number(expectedTarget.coexistenceGroupId),
+        reason: String(expectedTarget.coexistenceConfirmation).trim(),
+      } : null,
     };
   }
 
@@ -4892,12 +4945,14 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
   if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
     throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
   }
+  const allowSheetPeriodCorrection = payload?.periodSource === "sheet" && payload?.allowPeriodCorrection === true;
   const scoped = fields.insertions.filter((raw) => (
     Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expected.siteId || 0)
     && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
       === normalizeSlotKey(expected.localFormatoNormalizado || expected.localFormato)
     && readStringRecord(raw, ["periodoInicio", "inicio"]) === expected.periodoInicio
-    && readStringRecord(raw, ["periodoFim", "fim"]) === expected.periodoFim
+    && (readStringRecord(raw, ["periodoFim", "fim"]) === expected.periodoFim
+      || (allowSheetPeriodCorrection && readStringRecord(raw, ["periodoFim", "fim"]) > expected.periodoFim))
   ));
   if (scoped.length !== 1) {
     throw new Error("O PDF não contém exatamente o portal, formato e período da inserção canônica.");
@@ -4909,6 +4964,10 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
   await privateApiPatch(`/api/campaigns/${expectedCampaignId}`, { piCodigo: fields.piCodigo });
   await privateApiPatch(`/api/insertions/${expectedInsertionId}`, {
     mediaUrl,
+    ...(allowSheetPeriodCorrection ? {
+      periodoFim: readStringRecord(raw, ["periodoFim", "fim"]),
+      periodoOriginal: readStringRecord(raw, ["periodoOriginal"]) || expected.periodoOriginal,
+    } : {}),
     observacoes: [
       expected.observacoes,
       `Mídia e PI validadas pelo reconciliador: ${payload.path}`,
@@ -5764,7 +5823,16 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
   });
   const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
   const dedupeTarget = readPositiveInteger(payload?.expectedCampaignId) && readPositiveInteger(payload?.expectedInsertionId)
-    ? { expectedCampaignId: payload.expectedCampaignId, expectedInsertionId: payload.expectedInsertionId }
+    ? {
+      expectedCampaignId: payload.expectedCampaignId,
+      expectedInsertionId: payload.expectedInsertionId,
+      periodSource: payload?.periodSource,
+      allowPeriodCorrection: payload?.allowPeriodCorrection === true,
+      allowCoexistence: payload?.allowCoexistence === true,
+      coexistingInsertionId: payload?.coexistingInsertionId,
+      coexistenceGroupId: payload?.coexistenceGroupId,
+      coexistenceConfirmation: payload?.coexistenceConfirmation,
+    }
     : null;
   const dedupe = validation.ok && packageReadiness.ok && rollout.ok
     ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
@@ -5819,6 +5887,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
         piCodigo: fields.piCodigo,
         campaignName: fields.campaignName,
         competencia: fields.competencia,
+        periodSource: payload?.periodSource === "sheet" ? "planilha" : "PI",
+        effectivePeriodEnd: fields.insertions.length === 1 ? readStringRecord(fields.insertions[0], ["periodoFim", "fim"]) : null,
         clienteId: fields.clienteId,
         agenciaId: fields.agenciaId,
         insertions: fields.insertions,
@@ -8825,6 +8895,7 @@ export {
   normalizePerrengueAdrotateSnapshot,
   normalizePerrengueRebuildHealthPayload,
   mergeDrivePiFields,
+  extendSitePeriodForSocialDelivery,
   parsePeriodoFromBboxText,
   parsePeriodoFromLayoutText,
   parseDrivePiPdfFields,
