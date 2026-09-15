@@ -24,6 +24,14 @@ const periodFallback = runner.extendSitePeriodForSocialDelivery([
   { siteId: 35, localFormato: "INSTAGRAM", periodoInicio: "2026-09-01", periodoFim: "2026-09-30" },
 ]);
 assert.equal(periodFallback[0].periodoFim, "2026-09-22", "fallback da PI deve usar o fim do Instagram do mesmo portal");
+assert.doesNotThrow(() => runner.validateExpectedDrivePiIdentity({
+  expectedPiCodigo: "17408",
+  fieldsPiCodigo: "PI 17408 - GOV",
+  pdfPiCodigo: null,
+  campaignPiCodigo: "PI 17408 - GOV",
+  insertionPiCodigo: "PI 17408 - GOV",
+  allowMissingPdf: true,
+}), "período explícito da planilha pode corrigir inserção já confirmada sem PDF legível");
 
 const agencyPending = runner.validateDrivePiApplyFields({
   piCodigo: "PI 17464",
