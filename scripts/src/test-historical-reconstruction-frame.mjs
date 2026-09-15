@@ -7,6 +7,8 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { composeDesktopProof } = require("./capture-insertion-proof.cjs");
+const source = readFileSync(new URL("./capture-insertion-proof.cjs", import.meta.url), "utf8");
+assert.match(source, /const desktopFrameMetadata = composeDesktopProof\(viewportPng, finalPng, \{\s*osLabel: "Google Chrome",\s*systemDateTime: frameSystemDateTime,\s*reconstruction,/);
 try {
   execFileSync(process.env.ADOPS_CAPTURE_PYTHON || "python3", ["-c", "from PIL import Image"], { stdio: "pipe" });
 } catch {

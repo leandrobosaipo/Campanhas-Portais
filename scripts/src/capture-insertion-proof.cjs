@@ -3376,11 +3376,28 @@ function evaluateRetroCaptureGate(payload) {
     };
   }
   const issues = [];
-  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", requestedCaptureAt);
+  const reconstruction = payload.reconstruction && typeof payload.reconstruction === "object"
+    ? payload.reconstruction
+    : null;
+  const reconstructionAt = typeof reconstruction?.reconstructedAt === "string" &&
+    !Number.isNaN(new Date(reconstruction.reconstructedAt).getTime())
+    ? reconstruction.reconstructedAt
+    : null;
+  if (reconstruction && !reconstructionAt) {
+    issues.push({
+      code: "reconstruction_provenance_invalid",
+      detail: "reconstruction.reconstructedAt is missing or invalid",
+    });
+  }
+  // A reconstructed proof is captured now. Its desktop clock must therefore
+  // prove that real capture instant, while the page and editorial checks below
+  // continue to prove the contracted (requested) date independently.
+  const desktopExpectedAt = reconstructionAt || requestedCaptureAt;
+  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", desktopExpectedAt);
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
-      detail: `desktop=${payload.systemDateTime || "n/a"}`,
+      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${desktopExpectedAt}`,
     });
   }
   const pageReference = payload.pageDateObserved || payload.pageDateText || "";
@@ -7102,6 +7119,7 @@ async function main() {
   const reconstruction = captureClass === "historical_recovery"
     ? {
         reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
+        provenanceVersion: 2,
         contractedDate: isoDate,
         reconstructedAt: capturedAt,
         mediaUrl: insertion.mediaUrl,
@@ -7773,6 +7791,7 @@ async function main() {
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
       systemDateTime: frameSystemDateTime,
+      reconstruction,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
@@ -7832,7 +7851,8 @@ async function main() {
     const finalComposedStage = trace.start("final_composed");
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
+      reconstruction,
       siteSigla: insertion.siteSigla,
       tabTitle: mapping.browserTitle,
       hostLabel: mapping.hostLabel,
@@ -7991,7 +8011,7 @@ async function main() {
       mediaUrl: insertion.mediaUrl,
       mediaBasename,
       requestedCaptureAt: effectiveCaptureAt,
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
       pageDateText,
       pageDateObserved,
       contentDateSamples,

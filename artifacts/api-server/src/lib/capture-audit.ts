@@ -585,15 +585,32 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const reconstruction = metadata.reconstruction && typeof metadata.reconstruction === "object"
     ? metadata.reconstruction as Record<string, unknown>
     : null;
-  const auditedLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
+  const reconstructionAt = typeof reconstruction?.reconstructedAt === "string" &&
+    !Number.isNaN(new Date(reconstruction.reconstructedAt).getTime())
+    ? reconstruction.reconstructedAt
+    : null;
+  const reconstructionProvenanceV2 = reconstruction?.provenanceVersion === 2;
+  // `capturedAt` comes from the persisted capture log, not the runner request.
+  // Keep a small allowance for upload/audit latency, but never let a supplied
+  // historical timestamp stand in for the actual desktop clock.
+  const reconstructionTimestampMatchesServerCapture = Boolean(reconstructionAt && capturedAt) &&
+    Math.abs(new Date(reconstructionAt!).getTime() - new Date(capturedAt!).getTime()) <= 15 * 60 * 1000;
+  const declaredLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
     reconstruction?.reason === "late_publication_recovery" &&
     reconstruction?.contractedDate === canonicalTargetDate &&
-    typeof reconstruction?.reconstructedAt === "string" &&
     typeof reconstruction?.mediaUrl === "string" &&
     reconstruction.mediaUrl.trim().length > 0;
+  const auditedLatePublicationRecovery = declaredLatePublicationRecovery &&
+    (!reconstructionProvenanceV2 || reconstructionTimestampMatchesServerCapture);
+  // Keep older, non-reconstructed historical artifacts on their persisted
+  // contract. Any new artifact that declares a reconstruction must show the
+  // actual reconstruction instant in its desktop frame.
+  const declaredHistoricalReconstruction = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY && reconstructionProvenanceV2;
+  const reconstructionUsesActualDesktopClock = declaredHistoricalReconstruction && reconstructionTimestampMatchesServerCapture;
   const expectedEvaluationDate = canonicalTargetDate ? canonicalTargetDate.split("-").reverse().join("/") : "";
+  const desktopExpectedAt = reconstructionUsesActualDesktopClock ? reconstructionAt : requestedCaptureAt;
   const desktopMatches = requestedCaptureAt
-    ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
+    ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt!)
     : Boolean(expectedEvaluationDate) && systemDateTime.includes(expectedEvaluationDate);
   const pageMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(pageDateReference, requestedCaptureAt)
@@ -731,12 +748,19 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
       });
     issues.push(...trustIssues.slice(0, 6));
   }
+  if (declaredHistoricalReconstruction && !reconstructionTimestampMatchesServerCapture) {
+    issues.push({
+      code: "reconstruction_provenance_invalid",
+      label: "Timestamp de reconstrução não confiável",
+      detail: "A data real de reconstrução deve ser válida e corresponder ao registro de captura persistido pelo servidor.",
+    });
+  }
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
       label: "Hora da moldura divergente",
       detail: requestedCaptureAt
-        ? `A moldura do sistema não mostrou o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
+        ? `A moldura do sistema não mostrou o horário esperado para ${desktopExpectedAt || requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
         : `A moldura do sistema não mostrou a data esperada para ${canonicalTargetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
     });
   }
