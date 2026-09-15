@@ -2964,8 +2964,11 @@ function buildStaticRetroSlotPlan(mapping) {
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
+  const isPnmtDesktopTop = domain === "portalnortemt.com" && slotSelector === "div.hidden.lg\\:block .g.g-1";
   let contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-1"
     ? "header .omt-header-top #block-8"
+    : isPnmtDesktopTop
+      ? "div.hidden.lg\\:block #block-8"
     : new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
       ? "#block-9"
       : configuredContextSelector;
@@ -2985,9 +2988,9 @@ function buildStaticRetroSlotPlan(mapping) {
   if (!Number.isInteger(groupId) || groupId < 1) return null;
   if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
-  if (domain === "portalnortemt.com" && groupId !== 2) return null;
+  if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
   if (domain === "roonoticias.com" && groupId !== 1) return null;
-  return { contextSelector, groupClass: `g g-${groupId}`, groupId };
+  return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
 }
 
 function currentDateInCuiaba(now = new Date()) {
@@ -3026,6 +3029,8 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
   const missingSlotPlan = options.allowConfiguredSlotReconstruction === true
     ? buildStaticRetroSlotPlan(mapping)
     : null;
+  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && mapping?.auditConfig?.allowAuditedReconstruction !== true) return false;
+  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2) return false;
   return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan }) => {
     const normalizeSelector = (value) => String(value || "").trim();
     const createMissingInternalSlot = () => {
@@ -3090,8 +3095,26 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     };
     const createConfiguredHomeSlot = () => {
       if (!missingSlotPlan) return null;
-      const host = document.querySelector(missingSlotPlan.contextSelector);
+      const hosts = Array.from(document.querySelectorAll(missingSlotPlan.contextSelector));
+      if (missingSlotPlan.requireUniqueVisibleAnchor === true && hosts.length !== 1) return null;
+      const host = hosts[0];
       if (!(host instanceof HTMLElement)) return null;
+      if (missingSlotPlan.requireUniqueVisibleAnchor === true) {
+        const desktopHost = host.closest("div.hidden.lg\\:block");
+        if (!(desktopHost instanceof HTMLElement)) return null;
+        const style = window.getComputedStyle(desktopHost);
+        const rect = desktopHost.getBoundingClientRect();
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || rect.height < 24) return null;
+        const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
+        let hasAdRotateUnavailableComment = false;
+        while (walker.nextNode()) {
+          if (/adrotate.*(?:schedul|unavailable|indispon)/i.test(walker.currentNode.nodeValue || "")) {
+            hasAdRotateUnavailableComment = true;
+            break;
+          }
+        }
+        if (!hasAdRotateUnavailableComment) return null;
+      }
       const slot = document.createElement("div");
       slot.className = missingSlotPlan.groupClass;
       slot.setAttribute("data-adops-reconstructed-slot", String(missingSlotPlan.groupId));
@@ -3114,8 +3137,11 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         rect.height >= 24;
     };
     const slots = Array.from(document.querySelectorAll(slotSelector || ".g.g-1"));
+    if (missingSlotPlan?.requireUniqueVisibleAnchor === true && slots.length !== 0) {
+      return { applied: false, reason: "slot_conflict" };
+    }
     const slot = slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot();
-    if (!slot) return { applied: false, reason: "slot_missing" };
+    if (!slot) return { applied: false, reason: missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
     const basename = String(targetBasename || targetUrl.split("/").pop() || "").toLowerCase();
     if (slot.querySelector("[data-adops-static-retro-ad='1']")) {
       return { applied: false, reason: "static_retro_ad_already_present" };
@@ -7115,6 +7141,7 @@ async function main() {
   const staticRetroAdOptions = {
     allowConfiguredSlotReconstruction: allowConfiguredRetroSlotReconstruction,
     reconstructionReason: args.reconstructionReason,
+    reconstructionProvenanceVersion: captureClass === "historical_recovery" ? 2 : null,
   };
   const reconstruction = captureClass === "historical_recovery"
     ? {

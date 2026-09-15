@@ -38,7 +38,13 @@ assert.deepEqual(buildStaticRetroSlotPlan({ ...aflTop, domain: config.AFL.domain
   groupClass: "g g-1",
   groupId: 1,
 }, "AFL grupo 1 reconstrói somente no widget desktop canônico quando o anúncio expirado não renderiza o slot");
-assert.equal(buildStaticRetroSlotPlan({ ...pnmtTop, domain: config.PNMT.domain }), null, "PNMT grupo 1 exige o slot real; não cria contêiner sintético");
+assert.deepEqual(buildStaticRetroSlotPlan({ ...pnmtTop, domain: config.PNMT.domain }), {
+  contextSelector: "div.hidden.lg\\:block #block-8",
+  groupClass: "g g-1",
+  groupId: 1,
+  requireUniqueVisibleAnchor: true,
+}, "PNMT grupo 1 reconstrói somente no widget desktop canônico único");
+assert.equal(buildStaticRetroSlotPlan({ ...pnmtTop, domain: config.PNMT.domain, slotSelector: ".g.g-1" }), null, "PNMT não autoriza o grupo 1 fora do seletor desktop configurado");
 assert.equal(buildStaticRetroSlotPlan({ ...pnmtHome2, domain: config.PNMT.domain }), null, "PNMT grupo 3 não está autorizado para reconstrução de slot");
 assert.equal(buildStaticRetroSlotPlan({ domain: "example.com", page: "home", slotSelector: ".g.g-2", contextSelector: "main" }), null);
 assert.equal(buildStaticRetroSlotPlan({ domain: config.AFL.domain, page: "article", slotSelector: ".g.g-2", contextSelector: "#block-9" }), null);
