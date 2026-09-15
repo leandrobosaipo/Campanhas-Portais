@@ -3349,12 +3349,15 @@ function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
   if (!cutoff || !Array.isArray(expectedPosts)) return {};
   const grouped = new Map();
   for (const post of expectedPosts) {
-    const path = normalizeEditorialUrl(post?.url || post?.link);
+    let sourceUrl;
+    try { sourceUrl = new URL(post?.url || post?.link); } catch { continue; }
+    if (sourceUrl.origin !== "https://portalnortemt.com") continue;
+    const path = normalizeEditorialUrl(sourceUrl.href);
     const date = String(post?.date || "").trim();
     const parsed = parseIsoLikeDate(date);
     if (!path || !parsed || parsed.getTime() > cutoff.getTime()) continue;
     const values = grouped.get(path) || [];
-    values.push({ date, parsed, id: Number(post?.id || 0) || null });
+    values.push({ date, parsed, id: Number(post?.id || 0) || null, sourceUrl: sourceUrl.href });
     grouped.set(path, values);
   }
   const replacements = {};
@@ -3367,6 +3370,7 @@ function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
       date: value.date,
       label: `${match[3]}/${match[2]}/${match[1]} ${match[4]}:${match[5]}`,
       postId: value.id,
+      sourceUrl: value.sourceUrl,
       source: "wordpress_rest_verified",
     };
   }
@@ -3380,11 +3384,14 @@ function shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping) {
 
 async function normalizeVerifiedPnmtHeroRelativeDates(page, mapping, captureAt) {
   if (!shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping)) return { applied: 0, reason: "not_configured" };
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff) return { applied: 0, reason: "invalid_cutoff" };
   const expectedPosts = await page.evaluate(async (cutoff) => {
     try {
+      if (window.location.origin !== "https://portalnortemt.com") return [];
       const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
       endpoint.searchParams.set("per_page", "25");
-      endpoint.searchParams.set("before", new Date(cutoff).toISOString());
+      endpoint.searchParams.set("before", cutoff);
       endpoint.searchParams.set("orderby", "date");
       endpoint.searchParams.set("order", "desc");
       endpoint.searchParams.set("_fields", "id,date,link");
@@ -3394,9 +3401,10 @@ async function normalizeVerifiedPnmtHeroRelativeDates(page, mapping, captureAt) 
     } catch {
       return [];
     }
-  }, captureAt);
+  }, cutoff.toISOString());
   const replacements = buildVerifiedEditorialDateReplacements(expectedPosts, captureAt);
   const applied = await page.evaluate((verifiedDates) => {
+    if (window.location.origin !== "https://portalnortemt.com") return [];
     const normalizePath = (value) => {
       try { return new URL(String(value || ""), window.location.href).pathname.replace(/\/+$/, "") || "/"; } catch { return ""; }
     };
@@ -3425,6 +3433,7 @@ async function normalizeVerifiedPnmtHeroRelativeDates(page, mapping, captureAt) 
         originalRelativeText: original,
         visibleLabel: replacement.label,
         source: replacement.source,
+        sourceUrl: replacement.sourceUrl,
       });
     }
     return appliedRows;
@@ -7513,7 +7522,7 @@ async function main() {
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
     retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
-    const verifiedEditorialDates = isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true
+    const verifiedEditorialDates = captureClass === "historical_recovery" && mapping.auditConfig?.requireAbsoluteEditorialDates === true
       ? await normalizeVerifiedPnmtHeroRelativeDates(page, mapping, effectiveCaptureAt)
       : { replacements: [] };
     verifiedEditorialDateReplacements = verifiedEditorialDates.replacements || [];

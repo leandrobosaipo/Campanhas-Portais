@@ -14,11 +14,12 @@ const url = "https://portalnortemt.com/rotatoria-sera-substituida-por-semaforo-e
 const rows = [{ id: 71659, date: "2026-09-12T15:26:00", link: url }];
 assert.deepEqual(buildVerifiedEditorialDateReplacements(rows, captureAt), {
   "/rotatoria-sera-substituida-por-semaforo-em-cruzamento-movimentado-de-sinop": {
-    date: "2026-09-12T15:26:00", label: "12/09/2026 15:26", postId: 71659, source: "wordpress_rest_verified",
+    date: "2026-09-12T15:26:00", label: "12/09/2026 15:26", postId: 71659, source: "wordpress_rest_verified", sourceUrl: url,
   },
 });
 assert.deepEqual(buildVerifiedEditorialDateReplacements([{ ...rows[0], date: "2026-09-13T00:01:00" }], captureAt), {});
 assert.deepEqual(buildVerifiedEditorialDateReplacements([...rows, { ...rows[0], id: 99 }], captureAt), {});
+assert.deepEqual(buildVerifiedEditorialDateReplacements([{ ...rows[0], link: url.replace('portalnortemt.com', 'example.com') }], captureAt), {});
 
 class Element {
   constructor(text = "") { this.textContent = text; this.attrs = new Map(); }
@@ -52,6 +53,10 @@ assert.deepEqual(
   result.replacements,
 );
 const source = await readFile(new URL("./capture-insertion-proof.cjs", import.meta.url), "utf8");
+const call = source.match(/const verifiedEditorialDates = ([\s\S]*?);/)[1];
+const runCall = new Function('captureClass', 'mapping', 'normalizeVerifiedPnmtHeroRelativeDates', 'page', 'effectiveCaptureAt', `return (async () => (${call}))()`);
+assert.equal((await runCall('historical_recovery', { auditConfig: { requireAbsoluteEditorialDates: true } }, async () => ({ applied: 1 }), {}, captureAt)).applied, 1);
+assert.deepEqual(await runCall('scheduled', { auditConfig: { requireAbsoluteEditorialDates: true } }, async () => { throw Error('unexpected'); }, {}, captureAt), { replacements: [] });
 assert.ok(source.indexOf("normalizeVerifiedPnmtHeroRelativeDates(page, mapping, effectiveCaptureAt)") < source.indexOf('trace.start("critical_assets")'));
 assert.match(source, /verifiedEditorialDateReplacements,/);
 console.log("ok: PNMT hero relative date requires one verified, non-future WP permalink");
