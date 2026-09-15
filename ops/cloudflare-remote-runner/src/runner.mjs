@@ -2837,6 +2837,13 @@ function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
   }) === expectedKey && item?.sourceIdentity?.decision === "confirmed" && item?.format?.resolution?.safeToApply === true);
   if (rows.length !== 1) throw new Error(rows.length ? "Fonte mensal contém alvo de recuperação ambíguo." : "Fonte mensal fresca não confirmou PI/portal/formato/período alvo.");
   const row = rows[0];
+  const compatibleIds = row?.canonicalSelection?.compatibleInsertionIds;
+  const matchCount = row?.adops?.operationalMatchCount;
+  if (!Array.isArray(compatibleIds) || !Number.isInteger(matchCount)
+    || compatibleIds.length > 1 || matchCount > 1
+    || (target.insertionId && (compatibleIds.length !== 1 || matchCount !== 1 || Number(compatibleIds[0]) !== Number(target.insertionId)))) {
+    throw new Error("recovery_duplicate_or_unconfirmed_insertion");
+  }
   const siteId = siteIdBySigla.get(String(target.siteSigla).toUpperCase());
   if (!siteId) throw new Error("Portal alvo não existe no catálogo AdOps.");
   const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);

@@ -7,13 +7,15 @@ const { hydrateRecoveryTarget } = await import("../../ops/cloudflare-remote-runn
 const target = { piCodigo: "PI 3218", siteSigla: "ROO", localFormato: "MEGABANNER TOPO", periodoInicio: "2026-09-15", periodoFim: "2026-09-16" };
 const row = (overrides = {}) => ({
   piCodigo: "PI 3218", siteSigla: "ROO", format: { normalized: "MEGABANNER TOPO", resolution: { safeToApply: true } },
-  period: { start: "2026-09-15", end: "2026-09-16", original: "15/09 a 16/09" }, sourceIdentity: { decision: "confirmed" }, ...overrides,
+  period: { start: "2026-09-15", end: "2026-09-16", original: "15/09 a 16/09" }, sourceIdentity: { decision: "confirmed" }, canonicalSelection: { compatibleInsertionIds: [] }, adops: { operationalMatchCount: 0 }, ...overrides,
 });
 const base = { piCodigo: "PI 3218", pdfPiCodigo: "PI 3218", raw: { insertions: [{ localFormato: "MEGABANNER TOPO", periodoInicio: "2026-09-15", periodoFim: "2026-09-16" }] }, pdfInsertions: [{ localFormato: "MEGABANNER TOPO", periodoInicio: "2026-09-15", periodoFim: "2026-09-16" }] };
 const sites = new Map([["ROO", 32]]);
 const hydrated = hydrateRecoveryTarget(base, target, { items: [row()] }, sites);
 assert.equal(hydrated.insertions.length, 1);
 assert.equal(hydrated.insertions[0].siteId, 32);
+assert.throws(() => hydrateRecoveryTarget(base, target, { items: [row({ canonicalSelection: { compatibleInsertionIds: [1, 2] }, adops: { operationalMatchCount: 2 } })] }, sites), /recovery_duplicate/);
+assert.throws(() => hydrateRecoveryTarget(base, { ...target, insertionId: 3 }, { items: [row({ canonicalSelection: { compatibleInsertionIds: [1] }, adops: { operationalMatchCount: 1 } })] }, sites), /recovery_duplicate/);
 const callerSpoof = hydrateRecoveryTarget({
   ...base,
   raw: { insertions: [{ localFormato: "HOME 1", periodoInicio: "2026-09-15", periodoFim: "2026-09-16" }] },
