@@ -19,6 +19,8 @@ assert.deepEqual(buildVerifiedEditorialDateReplacements(rows, captureAt), {
 });
 assert.deepEqual(buildVerifiedEditorialDateReplacements([{ ...rows[0], date: "2026-09-13T00:01:00" }], captureAt), {});
 assert.deepEqual(buildVerifiedEditorialDateReplacements([...rows, { ...rows[0], id: 99 }], captureAt), {});
+assert.deepEqual(buildVerifiedEditorialDateReplacements([...rows, { ...rows[0], date: '2026-09-13T00:01:00' }], captureAt), {});
+assert.deepEqual(buildVerifiedEditorialDateReplacements([...rows, { ...rows[0], date: 'invalid' }], captureAt), {});
 assert.deepEqual(buildVerifiedEditorialDateReplacements([{ ...rows[0], link: url.replace('portalnortemt.com', 'example.com') }], captureAt), {});
 
 class Element {

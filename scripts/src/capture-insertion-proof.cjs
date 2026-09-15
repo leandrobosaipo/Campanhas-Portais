@@ -3355,7 +3355,7 @@ function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
     const path = normalizeEditorialUrl(sourceUrl.href);
     const date = String(post?.date || "").trim();
     const parsed = parseIsoLikeDate(date);
-    if (!path || !parsed || parsed.getTime() > cutoff.getTime()) continue;
+    if (!path) continue;
     const values = grouped.get(path) || [];
     values.push({ date, parsed, id: Number(post?.id || 0) || null, sourceUrl: sourceUrl.href });
     grouped.set(path, values);
@@ -3364,6 +3364,7 @@ function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
   for (const [path, values] of grouped) {
     if (values.length !== 1) continue;
     const value = values[0];
+    if (!value.parsed || value.parsed.getTime() > cutoff.getTime()) continue;
     const match = value.date.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
     if (!match) continue;
     replacements[path] = {
