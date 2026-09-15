@@ -2866,7 +2866,7 @@ function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
       periodoFim: target.periodoFim,
       periodoOriginal: row?.period?.original || null,
     }],
-    recoveryTarget: target,
+    recoveryTarget: compatibleIds.length === 1 ? { ...target, insertionId: Number(compatibleIds[0]) } : target,
   };
 }
 
@@ -2880,7 +2880,9 @@ async function hydrateDrivePiRecoveryTarget(fields, payload) {
     privateApiGet("/api/sites"),
   ]);
   const siteIdBySigla = new Map((Array.isArray(sites) ? sites : []).map((site) => [String(site?.sigla || "").toUpperCase(), Number(site?.id)]));
-  return hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla);
+  const hydrated = hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla);
+  payload.recoveryTarget = hydrated.recoveryTarget;
+  return hydrated;
 }
 
 async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {

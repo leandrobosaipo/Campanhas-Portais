@@ -870,7 +870,7 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     const periodoInicio = readOptionalString(target?.periodoInicio);
     const periodoFim = readOptionalString(target?.periodoFim);
     const insertionId = target?.insertionId === undefined ? undefined : readOptionalNumber(target.insertionId);
-    const invalidInsertionId = insertionId !== null && insertionId !== undefined && (!Number.isInteger(insertionId) || insertionId <= 0);
+    const invalidInsertionId = target?.insertionId !== undefined && (insertionId == null || !Number.isInteger(insertionId) || insertionId <= 0);
     if (!piCodigo || !siteSigla || !localFormato || !periodoInicio || !periodoFim || !/^\d{4}-\d{2}-\d{2}$/.test(periodoInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(periodoFim) || periodoFim < periodoInicio || invalidInsertionId) return null;
     recoveryTarget = { piCodigo, siteSigla, localFormato, periodoInicio, periodoFim, ...(insertionId != null ? { insertionId } : {}) };
   }
