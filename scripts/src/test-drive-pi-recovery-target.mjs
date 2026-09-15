@@ -20,6 +20,9 @@ for (const invalid of [
   { items: [row({ format: { normalized: "HOME 1", resolution: { safeToApply: true } } })] },
 ]) assert.throws(() => hydrateRecoveryTarget(base, target, invalid, sites));
 assert.throws(() => hydrateRecoveryTarget({ ...base, pdfPiCodigo: "PI 9999" }, target, { items: [row()] }, sites));
+for (const insertions of [[], [base.raw.insertions[0], base.raw.insertions[0]], [{ ...base.raw.insertions[0], periodoFim: "2026-09-30" }]]) {
+  assert.throws(() => hydrateRecoveryTarget({ ...base, raw: { insertions } }, target, { items: [row()] }, sites), /PDF não confirma/);
+}
 const [publicApi, privateApi, runner] = await Promise.all([
   readFile(new URL("../../ops/cloudflare-public-api/src/index.ts", import.meta.url), "utf8"),
   readFile(new URL("../../artifacts/api-server/src/routes/ops.ts", import.meta.url), "utf8"),

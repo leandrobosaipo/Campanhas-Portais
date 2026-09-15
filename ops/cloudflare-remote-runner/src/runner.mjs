@@ -2841,8 +2841,9 @@ function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
   const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);
   if (!pdfPi || pdfPi !== normalizeExpectedPiIdentity(target.piCodigo)) throw new Error("PDF não confirma a PI do alvo de recuperação.");
   const pdfScope = Array.isArray(fields?.raw?.insertions) ? fields.raw.insertions : [];
-  if (pdfScope.length && !pdfScope.some((item) => normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
-    && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim)) {
+  const matchingPdfScopes = pdfScope.filter((item) => normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
+    && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim);
+  if (matchingPdfScopes.length !== 1) {
     throw new Error("PDF não confirma formato e período do alvo de recuperação.");
   }
   return {
