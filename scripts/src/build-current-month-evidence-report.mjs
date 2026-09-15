@@ -50,6 +50,9 @@ import {
   completeExportGroupKeys,
   hasCompleteEvidenceGroup,
   portalExportGroupKey,
+  isPartialCampaignExportBatch,
+  completeCampaignExportBlocker,
+  validateCompleteCampaignExportLinks,
 } from "./monthly-report-export-eligibility.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -284,7 +287,7 @@ async function api(pathname, options = {}) {
       } catch {
         payload = text;
       }
-      if (!response.ok) throw new Error(`${pathname} HTTP ${response.status}: ${String(text).slice(0, 600)}`);
+      if (!response.ok && !isPartialCampaignExportBatch(pathname, response.status, payload)) throw new Error(`${pathname} HTTP ${response.status}: ${String(text).slice(0, 600)}`);
       return payload;
     } catch (error) {
       lastError = error;
@@ -665,6 +668,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
     groups.set(key, group);
   }
   const results = new Map();
+  const blockers = new Map();
   const readyGroups = [];
   for (const group of groups.values()) {
     if (!hasCompleteEvidenceGroup(group.items)) continue;
@@ -676,10 +680,10 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
     if (!materializeOptionalExports) continue;
     readyGroups.push(group);
   }
-  if (!readyGroups.length) return results;
+  if (!readyGroups.length) return { urls: results, blockers };
   const batchItems = [];
-  try {
-    for (let index = 0; index < readyGroups.length; index += 3) {
+  for (let index = 0; index < readyGroups.length; index += 3) {
+    try {
       const groupBatch = readyGroups.slice(index, index + 3);
       const batch = await api("/api/campaign-evidence-exports/jobs/batch", {
         method: "POST",
@@ -697,15 +701,19 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
         timeoutMs: MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS,
       });
       batchItems.push(...(batch.items || []));
+    } catch (error) {
+      console.warn(`[monthly-report] pacotes completos opcionais indisponíveis: ${error instanceof Error ? error.message : String(error)}`);
     }
-  } catch (error) {
-    console.warn(`[monthly-report] pacotes completos opcionais indisponíveis: ${error instanceof Error ? error.message : String(error)}`);
-    return results;
   }
   const itemByPi = new Map(batchItems.map((item) => [String(item.piCodigo), item]));
   await Promise.all(readyGroups.map(async (group) => {
     try {
       const created = itemByPi.get(String(group.piCodigo));
+      const blocker = completeCampaignExportBlocker(created, group);
+      if (blocker) {
+        blockers.set(group.key, blocker);
+        return;
+      }
       if (!created || !created.jobId || ![200, 202].includes(Number(created.httpStatus))) {
         throw new Error(`Exportação completa da PI ${group.piCodigo} foi bloqueada: ${created?.details || created?.error || "sem job"}.`);
       }
@@ -722,7 +730,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
       console.warn(`[monthly-report] pacote completo opcional indisponível para PI ${group.piCodigo}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }));
-  return results;
+  return { urls: results, blockers };
 }
 
 async function validateDeliveryUrl(url, label) {
@@ -770,15 +778,11 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
   const completePortalGroups = completeExportGroupKeys(insertions, portalExportGroupKey);
-  const completeCampaignGroups = completeExportGroupKeys(insertions, completeCampaignExportGroupKey);
   const missingPortalZips = insertions
     .filter((item) => completePortalGroups.has(portalExportGroupKey(item)) && !item.batchDownloadUrl)
     .map((item) => item.id);
-  const missingCompleteZips = insertions
-    .filter((item) => completeCampaignGroups.has(completeCampaignExportGroupKey(item)) && !item.completeCampaignDownloadUrl)
-    .map((item) => item.id);
   if (missingPortalZips.length) throw new Error(`Relatório sem ZIP por portal para inserções: ${missingPortalZips.join(", ")}.`);
-  if (missingCompleteZips.length) throw new Error(`Relatório sem ZIP completo para inserções: ${missingCompleteZips.join(", ")}.`);
+  validateCompleteCampaignExportLinks(insertions);
   const individualSamples = takeDeliverySamples(insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl)));
   const batchSamples = takeDeliverySamples(insertions.map((item) => item.batchDownloadUrl));
   const completeSamples = takeDeliverySamples(insertions.map((item) => item.completeCampaignDownloadUrl));
@@ -2268,10 +2272,12 @@ async function main() {
       ? materializeOptionalExports ? exportLinks.get(`${normalize(item.siteSigla)}:${normalize(canonicalPi)}`) || "" : item.batchDownloadUrl || ""
       : "";
     const completeKey = `${canonicalPi}:${normalize(item.competencia)}`;
-    item.completeCampaignDownloadUrl = materializeOptionalExports ? completeExportLinks.get(completeKey) || "" : item.completeCampaignDownloadUrl || "";
+    item.completeCampaignDownloadUrl = materializeOptionalExports ? completeExportLinks.urls.get(completeKey) || "" : item.completeCampaignDownloadUrl || "";
+    const completeBlocker = completeExportLinks.blockers.get(completeKey) || "";
     if (!completePortalGroups.has(portalExportGroupKey(item))) item.batchDownloadUrl = "";
     if (!completeCampaignGroups.has(completeCampaignExportGroupKey(item))) item.completeCampaignDownloadUrl = "";
-    item.commercialExportBlocker = canonicalPi ? "" : "Aguardando PI/PDF para habilitar os ZIPs por PI.";
+    item.completeCampaignExportStatus = completeBlocker ? "blocked" : item.completeCampaignDownloadUrl ? "ready" : "unavailable";
+    item.commercialExportBlocker = canonicalPi ? completeBlocker : "Aguardando PI/PDF para habilitar os ZIPs por PI.";
   }
 
   const summary = {
