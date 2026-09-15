@@ -2294,7 +2294,8 @@ async function loadOperationalMediaProfile(siteSigla, localFormat) {
   const config = JSON.parse(await readFile(path.join(PROJECT_ROOT, "config/adrotate-sites.json"), "utf8"));
   const siteConfig = config?.[String(siteSigla || "").toUpperCase()];
   const normalizedFormat = normalizeOperationalValue(localFormat);
-  const matches = (siteConfig?.formatMappings || []).filter((mapping) => (mapping?.aliases || []).some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
+  const matches = (siteConfig?.formatMappings || []).filter((mapping) => [...(mapping?.aliases || []), ...(mapping?.inputAliases || [])]
+    .some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
   if (matches.length !== 1) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
   const profile = matches[0].operationalMediaProfile
     ?? (normalizedFormat === "VIDEO"
