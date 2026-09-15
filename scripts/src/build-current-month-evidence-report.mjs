@@ -45,6 +45,12 @@ import {
   reuseMonthlyDownloadUrls,
   routeJobDownloadThroughOperationsApi,
 } from "./monthly-evidence-contract.mjs";
+import {
+  completeCampaignExportGroupKey,
+  completeExportGroupKeys,
+  hasCompleteEvidenceGroup,
+  portalExportGroupKey,
+} from "./monthly-report-export-eligibility.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const { operationsBase: apiBase, deliveryBase: deliveryApiBase } = resolveMonthlyReportApiBases();
@@ -588,7 +594,7 @@ async function materializeCampaignExports(items, asOfDate) {
   for (const item of items) {
     const canonicalPi = canonicalCommercialPi(item.piCodigo);
     if (!canonicalPi || !item.siteSigla) continue;
-    const key = `${normalize(item.siteSigla)}:${normalize(canonicalPi)}`;
+    const key = portalExportGroupKey(item);
     const group = groups.get(key) || { key, piCodigo: canonicalPi, siteSigla: item.siteSigla, items: [] };
     group.items.push(item);
     groups.set(key, group);
@@ -596,14 +602,13 @@ async function materializeCampaignExports(items, asOfDate) {
 
   const results = new Map();
   await mapLimit(Array.from(groups.values()), 3, async (group) => {
+    if (!hasCompleteEvidenceGroup(group.items)) return;
     const reusableUrl = group.items[0]?.batchDownloadUrl || "";
     if (reusableUrl && group.items.every((item) => item.batchDownloadUrl === reusableUrl)) {
       results.set(group.key, publicJobDownloadUrl(reusableUrl));
       return;
     }
     const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
-    const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
-    if (!required || evidenceDays.length !== required) return;
     if (preloaded[group.key]) {
       results.set(group.key, preloaded[group.key]);
       return;
@@ -654,7 +659,7 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   for (const item of items) {
     const piCodigo = canonicalCommercialPi(item.piCodigo);
     if (!piCodigo || !item.competencia) continue;
-    const key = `${piCodigo}:${normalize(item.competencia)}`;
+    const key = completeCampaignExportGroupKey(item);
     const group = groups.get(key) || { key, piCodigo, competencia: item.competencia, items: [] };
     group.items.push(item);
     groups.set(key, group);
@@ -662,14 +667,13 @@ async function materializeCompleteCampaignExports(items, asOfDate) {
   const results = new Map();
   const readyGroups = [];
   for (const group of groups.values()) {
+    if (!hasCompleteEvidenceGroup(group.items)) continue;
     const reusableUrl = group.items[0]?.completeCampaignDownloadUrl || "";
     if (reusableUrl && group.items.every((item) => item.completeCampaignDownloadUrl === reusableUrl)) {
       results.set(group.key, publicJobDownloadUrl(reusableUrl));
       continue;
     }
-    const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
-    const required = group.items.reduce((sum, item) => sum + item.requiredDays.length, 0);
-    if (!required || evidenceDays.length !== required || !materializeOptionalExports) continue;
+    if (!materializeOptionalExports) continue;
     readyGroups.push(group);
   }
   if (!readyGroups.length) return results;
@@ -765,12 +769,14 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   JSON.parse(await readFile(path.join(latestDir, "report.json"), "utf8"));
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
-  const exportEligible = insertions.filter((item) => {
-    const required = item.requiredDays?.length || 0;
-    return canonicalCommercialPi(item.piCodigo) && required > 0 && item.auditedDays === required;
-  });
-  const missingPortalZips = exportEligible.filter((item) => !item.batchDownloadUrl).map((item) => item.id);
-  const missingCompleteZips = exportEligible.filter((item) => !item.completeCampaignDownloadUrl).map((item) => item.id);
+  const completePortalGroups = completeExportGroupKeys(insertions, portalExportGroupKey);
+  const completeCampaignGroups = completeExportGroupKeys(insertions, completeCampaignExportGroupKey);
+  const missingPortalZips = insertions
+    .filter((item) => completePortalGroups.has(portalExportGroupKey(item)) && !item.batchDownloadUrl)
+    .map((item) => item.id);
+  const missingCompleteZips = insertions
+    .filter((item) => completeCampaignGroups.has(completeCampaignExportGroupKey(item)) && !item.completeCampaignDownloadUrl)
+    .map((item) => item.id);
   if (missingPortalZips.length) throw new Error(`Relatório sem ZIP por portal para inserções: ${missingPortalZips.join(", ")}.`);
   if (missingCompleteZips.length) throw new Error(`Relatório sem ZIP completo para inserções: ${missingCompleteZips.join(", ")}.`);
   const individualSamples = takeDeliverySamples(insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl)));
