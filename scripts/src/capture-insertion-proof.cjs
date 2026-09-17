@@ -2765,20 +2765,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
     if (main) {
       window.__cod5AflRetroDateObserver?.disconnect?.();
-      let rewriteQueued = false;
-      window.__cod5AflRetroDateObserver = new MutationObserver(() => {
-        if (rewriteQueued) return;
-        rewriteQueued = true;
-        queueMicrotask(() => {
-          rewriteQueued = false;
-          rewriteRelativeDates(main);
-        });
-      });
-      window.__cod5AflRetroDateObserver.observe(main, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
+      window.__cod5AflRetroDateObserver = null;
       const normalizeAllRetroDates = () => {
         for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
           normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
@@ -2786,7 +2773,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       };
       window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
       if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
-      window.__cod5AflRetroDateInterval = window.setInterval(normalizeAllRetroDates, 120);
+      window.__cod5AflRetroDateInterval = null;
     }
 
     const reservedArticles = new Set([hero, ...latest]);
@@ -2837,7 +2824,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       heroDateText,
       heroDateNodesUpdated,
       relativeDatesRewritten,
-      relativeDateObserverActive: Boolean(main),
+      relativeDateObserverActive: false,
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts, pageType: mapping?.page === "article" ? "article" : "home" });
@@ -2960,11 +2947,11 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
 
 function buildStaticRetroSlotPlan(mapping) {
   const domain = String(mapping?.domain || "").toLowerCase();
-  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "roonoticias.com"]).has(domain)) return null;
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
-  const isPnmtDesktopTop = domain === "portalnortemt.com" && slotSelector === "div.hidden.lg\\:block .g.g-1";
+  const isPnmtDesktopTop = new Set(["portalnortemt.com", "portalpantanalmt.com"]).has(domain) && slotSelector === "div.hidden.lg\\:block .g.g-1";
   let contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-1"
     ? "header .omt-header-top #block-8"
     : isPnmtDesktopTop
@@ -2989,6 +2976,7 @@ function buildStaticRetroSlotPlan(mapping) {
   if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
+  if (domain === "portalpantanalmt.com" && !isPnmtDesktopTop) return null;
   if (domain === "roonoticias.com" && groupId !== 1) return null;
   return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
 }
