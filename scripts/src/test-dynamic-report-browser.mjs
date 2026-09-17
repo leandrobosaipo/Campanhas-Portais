@@ -8,7 +8,7 @@ import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs
 const execFileAsync = promisify(execFile);
 const monthlyPayload = {
   generatedAt: "2026-09-01T12:00:00.000Z",
-  summary: { campaigns: 1, insertions: 1, active: 1, notPublished: 0, pending: 0, invalid: 0 },
+  summary: { campaigns: 1, insertions: 2, active: 2, notPublished: 0, pending: 1, invalid: 0 },
   portals: ["OMT"],
   pagination: { total: 1, nextCursor: null },
   items: [{
@@ -17,6 +17,12 @@ const monthlyPayload = {
     localFormatoNormalizado: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
     bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["complete"],
     evidenceDays: [{ date: "2026-09-01", status: "audited", url: "https://example.com/evidence.jpg" }],
+  }, {
+    id: 1902, campanhaId: 1001, campanhaName: "Campanha dinâmica", clienteNome: "Cliente teste",
+    agenciaNome: "Agência teste", piCodigo: "PI 42059", siteSigla: "OMT",
+    localFormatoNormalizado: "LATERAL", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
+    bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["scheduled"],
+    evidenceDays: [{ date: "2026-09-01", status: "scheduled", url: null }],
   }],
 };
 
@@ -46,6 +52,8 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     );
     assert.match(stdout, /Campanha dinâmica/);
     assert.match(stdout, /id="metricCampaigns">1</);
+    assert.match(stdout, /id="metricInsertions">2</);
+    assert.match(stdout, /<b>0<\/b> agendadas/);
     assert.match(stdout, /Dados consultados diretamente da API AdOps/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
