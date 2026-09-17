@@ -17,6 +17,13 @@ const aflTop = config.AFL.formatMappings.find((item) => item.groupId === 1);
 const pnmt = config.PNMT.formatMappings.find((item) => item.groupId === 2);
 const pnmtTop = config.PNMT.formatMappings.find((item) => item.groupId === 1);
 const pnmtHome2 = config.PNMT.formatMappings.find((item) => item.groupId === 3);
+const ppmtTop = config.PPMT.formatMappings.find((item) => item.groupId === 1);
+assert.deepEqual(buildStaticRetroSlotPlan({...ppmtTop, domain: config.PPMT.domain}), {
+  contextSelector: "div.hidden.lg\\:block #block-8", groupClass: "g g-1", groupId: 1,
+  requireUniqueVisibleAnchor: true,
+}, 'PPMT usa somente a âncora desktop observada, com as mesmas proteções de proveniência');
+assert.equal(buildStaticRetroSlotPlan({...ppmtTop, domain:config.PPMT.domain, slotSelector:'.g.g-1'}), null);
+assert.equal(buildStaticRetroSlotPlan({...ppmtTop, domain:config.PPMT.domain, slotSelector:'.g.g-2'}), null);
 
 assert.deepEqual(buildStaticRetroSlotPlan({ ...omt, domain: config.OMT.domain }), {
   contextSelector: ".header-top-banner",
