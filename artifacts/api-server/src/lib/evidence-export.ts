@@ -150,6 +150,33 @@ export function isApprovedEvidenceDownload(status: {
     && status.checklistValidation?.approved === true;
 }
 
+// Only the canonical auditor's normalized provenance can authorize an original capture.
+export function resolveExportAuditBasis(status: {
+  status?: string;
+  audit?: {
+    ok?: boolean;
+    captureClass?: string | null;
+    targetDate?: string | null;
+    capturedAt?: string | null;
+    sourceJobId?: string | null;
+    auditPolicyVersion?: string | null;
+    retroContentProof?: { status?: string; futureCount?: number; manifestHash?: string | null } | null;
+  } | null;
+}, date: string): "same_day_capture" | "editorial_proof" | null {
+  const audit = status.audit;
+  if (status.status !== "ok" || audit?.ok !== true) return null;
+  const capturedAt = new Date(audit.capturedAt ?? "");
+  if ((audit.captureClass === "scheduled" || audit.captureClass === "same_day_retry")
+    && audit.targetDate === date && audit.sourceJobId?.trim()
+    && audit.auditPolicyVersion === "audit-policy-v1" && Number.isFinite(capturedAt.getTime())
+    && new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" }).format(capturedAt) === date) {
+    return "same_day_capture";
+  }
+  const proof = audit.retroContentProof;
+  return proof?.status === "approved" && proof.futureCount === 0 && proof.manifestHash?.trim()
+    ? "editorial_proof" : null;
+}
+
 export function deliverySegment(
   value: string | null | undefined,
   fallback: string,
