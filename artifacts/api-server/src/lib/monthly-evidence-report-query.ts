@@ -1,6 +1,6 @@
 const VALID_PORTALS = new Set(["OMT", "ROO", "PERRENGUE", "AFL", "PNMT", "PPMT"]);
 const VALID_PUBLICATION_FILTERS = new Set(["all", "active", "not_published", "scheduled", "ending", "ended"]);
-const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "invalid"]);
+const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "scheduled", "invalid"]);
 const PUBLIC_INSERTION_FIELDS = [
   "id", "campanhaId", "campanhaName", "clienteNome", "agenciaNome", "piCodigo", "competencia",
   "siteSigla", "siteNome", "siteLogoUrl", "localFormato", "localFormatoNormalizado", "periodoInicio",
@@ -37,6 +37,7 @@ export function classifyMonthlyInsertion(options: {
   periodEnd: string;
   today: string;
   evidenceDays: Array<{ date: string; status: string }>;
+  currentHour?: number;
 }) {
   const publicationStates: string[] = [];
   if (options.periodStart > options.today) publicationStates.push("scheduled");
@@ -47,13 +48,18 @@ export function classifyMonthlyInsertion(options: {
   endingLimit.setUTCDate(endingLimit.getUTCDate() + 7);
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
-  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
-  const missing = options.evidenceDays.some((day) => day.status === "missing");
+  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled"].includes(day.status));
+  const awaitingToday = options.currentHour != null && options.currentHour < 18
+    && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
+    && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
+  const missing = options.evidenceDays.some((day) => day.status === "missing" && !(awaitingToday && day.date === options.today));
   const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);
   const evidenceStates = invalid
     ? ["invalid"]
     : missing
       ? ["missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
+      : awaitingToday
+        ? ["scheduled"]
       : ["complete"];
   return { publicationStates, evidenceStates };
 }
@@ -107,10 +113,12 @@ function sameMonthlyIdentity(left: MonthlyCanonicalCandidate, right: MonthlyCano
   const leftPi = String(left.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   const rightPi = String(right.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
   const campaignKey = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
-  const sameCampaign = campaignKey(left.campanhaName) && campaignKey(left.campanhaName) === campaignKey(right.campanhaName);
+  const leftCampaign = campaignKey(left.campanhaName);
+  const rightCampaign = campaignKey(right.campanhaName);
+  const sameCampaign = Boolean(leftCampaign && rightCampaign && leftCampaign === rightCampaign);
   const sameSite = (left.siteId ?? left.siteSigla) === (right.siteId ?? right.siteSigla);
   const sameFormat = canonicalFormatKey(left.localFormatoNormalizado ?? left.localFormato) === canonicalFormatKey(right.localFormatoNormalizado ?? right.localFormato);
-  return sameSite && sameFormat && ((leftPi && rightPi && leftPi === rightPi) || ((!leftPi || !rightPi) && sameCampaign));
+  return sameSite && sameFormat && ((leftPi && rightPi && leftPi === rightPi && (!leftCampaign || !rightCampaign || sameCampaign)) || ((!leftPi || !rightPi) && sameCampaign));
 }
 
 function periodsOverlap(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {

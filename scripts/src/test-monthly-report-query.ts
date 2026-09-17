@@ -144,3 +144,26 @@ test("normaliza os nomes detalhados usados nos cards duplicados", () => {
     { ...base, id: 1844, localFormato: "Video", mediaUrl: "y", bannerPublicadoNoSite: true },
   ]).map((row) => row.id), [1843, 1844]);
 });
+
+test("mantem campanhas nomeadas distintas com a mesma PI, portal e formato", () => {
+  const base = { piCodigo: "PI 91381", siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 3022, campanhaName: "C DISPLAY" },
+    { ...base, id: 3024, campanhaName: "PRESTAÇÃO DE CONTAS" },
+  ]).map((row) => row.id), [3022, 3024]);
+});
+
+test("marca falta do dia como aguardando horário antes das 18h sem atraso falso", () => {
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-17", status: "missing" }] }).evidenceStates, ["scheduled"]);
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-16", status: "missing" }, { date: "2026-09-17", status: "missing" }] }).evidenceStates, ["missing", "retroactive_missing"]);
+});
+
+test("não deduplica campanhas sem PI quando os nomes também não identificam equivalência", () => {
+  const base = { piCodigo: null, siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.equal(selectCanonicalMonthlyInsertions([{ ...base, id: 1, campanhaName: null }, { ...base, id: 2, campanhaName: null }]).length, 2);
+});
+test('classifica o estado scheduled produzido pela rota sem falso erro de auditoria', () => {
+  const input={published:true,periodStart:'2026-09-01',periodEnd:'2026-09-30',today:'2026-09-17',currentHour:10,evidenceDays:[{date:'2026-09-17',status:'scheduled'}]};
+  assert.deepEqual(classifyMonthlyInsertion(input).evidenceStates,['scheduled']);
+  assert.deepEqual(classifyMonthlyInsertion({...input,evidenceDays:[...input.evidenceDays,{date:'2026-09-16',status:'missing'}]}).evidenceStates,['missing','retroactive_missing']);
+});
