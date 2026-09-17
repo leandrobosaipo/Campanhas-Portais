@@ -153,6 +153,12 @@ test("mantem campanhas nomeadas distintas com a mesma PI, portal e formato", () 
   ]).map((row) => row.id), [3022, 3024]);
 });
 
-test("marca falta do dia como aguardando horário antes das 18h", () => {
-  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-17", status: "missing" }] }).evidenceStates, ["scheduled", "missing"]);
+test("marca falta do dia como aguardando horário antes das 18h sem atraso falso", () => {
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-17", status: "missing" }] }).evidenceStates, ["scheduled"]);
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-16", status: "missing" }, { date: "2026-09-17", status: "missing" }] }).evidenceStates, ["missing", "retroactive_missing"]);
+});
+
+test("não deduplica campanhas sem PI quando os nomes também não identificam equivalência", () => {
+  const base = { piCodigo: null, siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.equal(selectCanonicalMonthlyInsertions([{ ...base, id: 1, campanhaName: null }, { ...base, id: 2, campanhaName: null }]).length, 2);
 });

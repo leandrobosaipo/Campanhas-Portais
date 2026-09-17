@@ -49,14 +49,17 @@ export function classifyMonthlyInsertion(options: {
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
   const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
-  const missing = options.evidenceDays.some((day) => day.status === "missing");
-  const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);
   const awaitingToday = options.currentHour != null && options.currentHour < 18
-    && options.evidenceDays.some((day) => day.date === options.today && day.status === "missing");
+    && options.evidenceDays.some((day) => day.date === options.today && day.status === "missing")
+    && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
+  const missing = options.evidenceDays.some((day) => day.status === "missing" && !(awaitingToday && day.date === options.today));
+  const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);
   const evidenceStates = invalid
     ? ["invalid"]
     : missing
       ? [...(awaitingToday ? ["scheduled"] : []), "missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
+      : awaitingToday
+        ? ["scheduled"]
       : ["complete"];
   return { publicationStates, evidenceStates };
 }
@@ -112,10 +115,10 @@ function sameMonthlyIdentity(left: MonthlyCanonicalCandidate, right: MonthlyCano
   const campaignKey = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
   const leftCampaign = campaignKey(left.campanhaName);
   const rightCampaign = campaignKey(right.campanhaName);
-  const sameCampaign = leftCampaign && rightCampaign ? leftCampaign === rightCampaign : true;
+  const sameCampaign = Boolean(leftCampaign && rightCampaign && leftCampaign === rightCampaign);
   const sameSite = (left.siteId ?? left.siteSigla) === (right.siteId ?? right.siteSigla);
   const sameFormat = canonicalFormatKey(left.localFormatoNormalizado ?? left.localFormato) === canonicalFormatKey(right.localFormatoNormalizado ?? right.localFormato);
-  return sameSite && sameFormat && (((leftPi && rightPi && leftPi === rightPi) && sameCampaign) || ((!leftPi || !rightPi) && sameCampaign));
+  return sameSite && sameFormat && ((leftPi && rightPi && leftPi === rightPi && (!leftCampaign || !rightCampaign || sameCampaign)) || ((!leftPi || !rightPi) && sameCampaign));
 }
 
 function periodsOverlap(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
