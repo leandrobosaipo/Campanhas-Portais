@@ -50,7 +50,7 @@ export function classifyMonthlyInsertion(options: {
 
   const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
   const awaitingToday = options.currentHour != null && options.currentHour < 18
-    && options.evidenceDays.some((day) => day.date === options.today && day.status === "missing")
+    && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
     && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
   const missing = options.evidenceDays.some((day) => day.status === "missing" && !(awaitingToday && day.date === options.today));
   const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);

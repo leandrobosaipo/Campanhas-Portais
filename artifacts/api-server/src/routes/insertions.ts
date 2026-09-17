@@ -1666,8 +1666,8 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-    const bounds = monthBounds(query.month, today);
-    const currentHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Cuiaba", hour: "2-digit", hour12: false }).format(new Date()));
+  const bounds = monthBounds(query.month, today);
+    const currentHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Cuiaba", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
 
   try {
     const [year, monthNumber] = query.month.split("-");
@@ -1754,8 +1754,10 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           const proof = proofByInsertionDate.get(`${item.id}:${date}`) ?? null;
           const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
           const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
-          const status = !evidence
-            ? "missing"
+          const status = !evidence && date === today && currentHour < 18
+            ? "scheduled"
+            : !evidence
+              ? "missing"
             : !validUrl
               ? "invalid_url"
               : proofFailed
