@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { observeAdrotateResponse } from '../../artifacts/api-server/src/lib/adrotate-live-observation';
+const response = new Response('<img src="banner.gif">', {status:200,headers:{'cf-cache-status':'HIT',age:'120','cache-control':'max-age=600','set-cookie':'private=never-return','x-secret':'never-return'}});
+const result = observeAdrotateResponse(response, await response.text(), 'banner.gif');
+assert.equal(result.containsExpectedMediaBasename, true);
+assert.equal(result.headers['cf-cache-status'], 'HIT');
+assert.equal(result.headers.age, '120');
+assert.equal(result.headers['last-modified'], null);
+assert.deepEqual(Object.keys(result.headers).sort(), ['age','cache-control','cf-cache-status','content-type','date','last-modified']);
+assert.equal(JSON.stringify(result).includes('never-return'), false);
+assert.equal(observeAdrotateResponse(new Response('', {status:503}), '', 'banner.gif').containsExpectedMediaBasename, false);
+assert.equal(observeAdrotateResponse(new Response(''), '').containsExpectedMediaBasename, null);
+console.log('ok: upstream observation preserves normal cache and excludes private headers');
