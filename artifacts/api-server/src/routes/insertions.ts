@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import { observeAdrotateResponse } from "../lib/adrotate-live-observation";
 import { serializeCampaignEvidenceFingerprint } from "../lib/campaign-evidence-fingerprint";
 import { promisify } from "node:util";
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -1595,7 +1596,8 @@ echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   }
 }
 
-async function fetchLivePreview(siteSigla = "PERRENGUE") {
+async function fetchLivePreview(siteSigla = "PERRENGUE", expectedMediaBasename: string | null = null) {
+  const normalObservations: Array<ReturnType<typeof observeAdrotateResponse> & { pageUrl: string; parserItemCount: number }> = [];
   const siteConfig = getSiteIntegration(siteSigla);
   if (!siteConfig) {
     return {
@@ -1603,13 +1605,21 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
       homeUrl: null,
       articleUrl: null,
       warnings: ["Live preview ainda não configurado para este site."],
+      normalObservations,
       items: [] as Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }>,
     };
   }
 
   const warnings: string[] = [];
+  const readPage = async (pageUrl: string) => {
+    const response = await fetch(pageUrl, { signal: AbortSignal.timeout(30000) });
+    const html = await response.text();
+    normalObservations.push({ pageUrl, ...observeAdrotateResponse(response, html, expectedMediaBasename), parserItemCount: parseAdRotateSlotsFromHtml(html, pageUrl, getSupportedGroupIds(siteSigla)).length });
+    if (!response.ok) warnings.push(`Consulta pública respondeu HTTP ${response.status}: ${pageUrl}`);
+    return html;
+  };
   const homeUrl = siteConfig.homeUrl;
-  const homeHtml = await fetch(homeUrl).then((response) => response.text());
+  const homeHtml = await readPage(homeUrl);
   const supportedGroups = getSupportedGroupIds(siteSigla);
   const articleGroups = siteConfig.formatMappings.filter((item) => item.page === "article").map((item) => item.groupId);
   const detectedArticleUrl = extractFirstArticleUrl(homeHtml, siteConfig.domain);
@@ -1631,11 +1641,11 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
   let articleItems: Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }> = [];
 
   if (articleUrl) {
-    let articleHtml = await fetch(articleUrl).then((response) => response.text());
+    let articleHtml = await readPage(articleUrl);
     articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
     if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && safeFallbackUrl && articleUrl !== safeFallbackUrl) {
       articleUrl = safeFallbackUrl;
-      articleHtml = await fetch(articleUrl).then((response) => response.text());
+      articleHtml = await readPage(articleUrl);
       articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
       warnings.push("Usando URL interna de fallback para verificar posições de página interna.");
     }
@@ -1648,7 +1658,7 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
     ...articleItems,
   ].filter((item, index, array) => array.findIndex((candidate) => candidate.pageUrl === item.pageUrl && candidate.groupId === item.groupId && candidate.adId === item.adId) === index);
 
-  return { siteSigla, homeUrl, articleUrl, warnings, items };
+  return { siteSigla, homeUrl, articleUrl, warnings, items, normalObservations };
 }
 
 router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
@@ -1963,7 +1973,7 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     res.json({ insertionId: insertion.id, exactLiveMatches: [], historicalAdminMatches });
     return;
   }
-  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
+  const live = siteSigla ? await fetchLivePreview(siteSigla, mediaBasename) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [], normalObservations: [] };
   const exactLiveMatches = mediaBasename
     ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
     : [];
@@ -2039,6 +2049,7 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     } : null,
     plannedSelf,
     exactLiveMatches,
+    normalObservations: live.normalObservations,
     historicalAdminMatches,
     fallbackCandidates,
   });
