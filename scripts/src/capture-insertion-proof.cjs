@@ -5670,8 +5670,16 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
         const url = new URL(link.href, window.location.href).toString();
         const key = new URL(url).pathname.replace(/\/+$/, "") || "/";
         if (seen.has(key)) continue;
-        const relativeTime = String(card.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
-        if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
+        // Audit publication timestamps, not durations mentioned in headlines or excerpts.
+        for (const dateSelector of dateSelectors) {
+          let dateNodes = [];
+          try { dateNodes = card.matches(dateSelector) ? [card] : Array.from(card.querySelectorAll(dateSelector)); } catch { continue; }
+          for (const dateNode of dateNodes) {
+            if (dateNode.querySelector?.("h1,h2,h3,h4,.entry-title,article")) continue;
+            const relativeTime = String(dateNode.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
+            if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
+          }
+        }
         const date = readDate(card);
         if (!date) continue;
         const titleNode = card.querySelector("h1,h2,h3,h4,.entry-title,[class*='title']");
