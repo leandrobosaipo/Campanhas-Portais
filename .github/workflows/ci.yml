@@ -75,6 +75,7 @@ jobs:
       - run: node scripts/src/test-recovery-safety-sep17.mjs
       - run: node scripts/src/test-operational-publication-preflight.mjs
       - run: pnpm --dir scripts exec tsx src/test-monthly-report-query.ts
+      - run: pnpm --dir scripts exec tsx src/test-evidence-date-serialization.ts
       - run: pnpm --dir scripts run test:drive-source-conflicts
       - run: pnpm --dir scripts run test:adrotate-format-aliases
       - run: pnpm --dir scripts run test:media-consistency
