@@ -6198,7 +6198,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     };
   }
   const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "not_due", "not_requested"].includes(item?.status));
-  const finalStatus = applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
+  const finalStatus = preflightOnly && finalCanApply ? "validated"
+    : applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
   const finalReviewReasons = buildDrivePiReviewReasons({
     packageClassification,
     packageReadiness,
@@ -6264,6 +6265,9 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
 
   return {
     stage: finalStatus,
+    periodSource: payload?.periodSource === "sheet" ? "planilha" : "PI",
+    effectivePeriodEnd: fields.insertions.length === 1 ? fields.insertions[0].periodoFim : null,
+    mediaProcessing,
     eventId: payload.eventId,
     documentId: payload.documentId ?? null,
     driveFileId: payload.driveFileId,
