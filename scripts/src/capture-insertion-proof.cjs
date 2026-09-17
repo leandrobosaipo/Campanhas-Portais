@@ -2765,20 +2765,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
     if (main) {
       window.__cod5AflRetroDateObserver?.disconnect?.();
-      let rewriteQueued = false;
-      window.__cod5AflRetroDateObserver = new MutationObserver(() => {
-        if (rewriteQueued) return;
-        rewriteQueued = true;
-        queueMicrotask(() => {
-          rewriteQueued = false;
-          rewriteRelativeDates(main);
-        });
-      });
-      window.__cod5AflRetroDateObserver.observe(main, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
+      window.__cod5AflRetroDateObserver = null;
       const normalizeAllRetroDates = () => {
         for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
           normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
@@ -2786,7 +2773,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       };
       window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
       if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
-      window.__cod5AflRetroDateInterval = window.setInterval(normalizeAllRetroDates, 120);
+      window.__cod5AflRetroDateInterval = null;
     }
 
     const reservedArticles = new Set([hero, ...latest]);
@@ -2837,7 +2824,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       heroDateText,
       heroDateNodesUpdated,
       relativeDatesRewritten,
-      relativeDateObserverActive: Boolean(main),
+      relativeDateObserverActive: false,
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts, pageType: mapping?.page === "article" ? "article" : "home" });

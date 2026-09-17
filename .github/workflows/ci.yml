@@ -74,6 +74,8 @@ jobs:
       - run: pnpm --dir scripts run test:drive-pi-publish-flow
       - run: node scripts/src/test-recovery-safety-sep17.mjs
       - run: node scripts/src/test-home1-media-profiles.mjs
+      - run: node scripts/src/test-afl-retro-bounded-normalization.mjs
+      - run: node --test scripts/src/test-dynamic-report-counters-vm.mjs
       - run: node scripts/src/test-operational-publication-preflight.mjs
       - run: pnpm --dir scripts exec tsx src/test-monthly-report-query.ts
       - run: pnpm --dir scripts exec tsx src/test-evidence-date-serialization.ts
