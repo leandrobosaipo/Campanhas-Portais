@@ -1666,7 +1666,8 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-  const bounds = monthBounds(query.month, today);
+    const bounds = monthBounds(query.month, today);
+    const currentHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Cuiaba", hour: "2-digit", hour12: false }).format(new Date()));
 
   try {
     const [year, monthNumber] = query.month.split("-");
@@ -1688,8 +1689,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
-    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates)
-      .filter((item) => isValidHttpUrl(item.mediaUrl));
+    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates);
 
     const normalizedSearch = normalizeTextKey(query.search);
     const baseItems = monthly.map((item) => ({
@@ -1778,6 +1778,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           periodStart: item.periodoInicio || bounds.start,
           periodEnd: item.periodoFim || bounds.end,
           today,
+          currentHour,
           evidenceDays,
         });
         const siteIntegration = getSiteIntegration(item.siteSigla);

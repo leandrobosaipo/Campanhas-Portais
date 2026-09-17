@@ -144,3 +144,15 @@ test("normaliza os nomes detalhados usados nos cards duplicados", () => {
     { ...base, id: 1844, localFormato: "Video", mediaUrl: "y", bannerPublicadoNoSite: true },
   ]).map((row) => row.id), [1843, 1844]);
 });
+
+test("mantem campanhas nomeadas distintas com a mesma PI, portal e formato", () => {
+  const base = { piCodigo: "PI 91381", siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 3022, campanhaName: "C DISPLAY" },
+    { ...base, id: 3024, campanhaName: "PRESTAÇÃO DE CONTAS" },
+  ]).map((row) => row.id), [3022, 3024]);
+});
+
+test("marca falta do dia como aguardando horário antes das 18h", () => {
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-17", status: "missing" }] }).evidenceStates, ["scheduled", "missing"]);
+});
