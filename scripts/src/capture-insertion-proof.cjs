@@ -3081,21 +3081,28 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       slot.style.minHeight = "90px";
       return slot;
     };
-    const createConfiguredHomeSlot = () => {
-      if (!missingSlotPlan) return null;
+    const resolveUniqueDesktopAnchor = () => {
       const hosts = Array.from(document.querySelectorAll(missingSlotPlan.contextSelector));
-      if (missingSlotPlan.requireUniqueVisibleAnchor === true && hosts.length !== 1) return null;
+      if (hosts.length !== 1) return null;
       const host = hosts[0];
       if (!(host instanceof HTMLElement)) return null;
+      const desktopHost = host.closest("div.hidden.lg\\:block");
+      if (!(desktopHost instanceof HTMLElement)) return null;
+      const style = window.getComputedStyle(desktopHost);
+      const rect = desktopHost.getBoundingClientRect();
+      const header = desktopHost.closest(".omt-header-top");
+      if (!(header instanceof HTMLElement)) return null;
+      const headerRect = header.getBoundingClientRect();
+      if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
+      return host;
+    };
+    const createConfiguredHomeSlot = () => {
+      if (!missingSlotPlan) return null;
+      const host = missingSlotPlan.requireUniqueVisibleAnchor === true
+        ? resolveUniqueDesktopAnchor()
+        : document.querySelector(missingSlotPlan.contextSelector);
+      if (!(host instanceof HTMLElement)) return null;
       if (missingSlotPlan.requireUniqueVisibleAnchor === true) {
-        const desktopHost = host.closest("div.hidden.lg\\:block");
-        if (!(desktopHost instanceof HTMLElement)) return null;
-        const style = window.getComputedStyle(desktopHost);
-        const rect = desktopHost.getBoundingClientRect();
-        const header = desktopHost.closest(".omt-header-top");
-        if (!(header instanceof HTMLElement)) return null;
-        const headerRect = header.getBoundingClientRect();
-        if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
         let hasAdRotateUnavailableComment = false;
         while (walker.nextNode()) {
@@ -3129,7 +3136,20 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     };
     const slots = Array.from(document.querySelectorAll(slotSelector || ".g.g-1"));
     if (missingSlotPlan?.requireUniqueVisibleAnchor === true && slots.length !== 0) {
-      return { applied: false, reason: "slot_conflict" };
+      const host = resolveUniqueDesktopAnchor();
+      const existing = slots[0];
+      const media = existing ? Array.from(existing.querySelectorAll("img,video,source,iframe")) : [];
+      const onlyKnownPlaceholder = media.length === 1 && media[0].tagName === "IMG" && (() => {
+        try {
+          const image = media[0];
+          const sources = [image.currentSrc, image.getAttribute("src"), image.getAttribute("data-src"), image.getAttribute("data-lazy-src")].filter(Boolean);
+          return !image.getAttribute("srcset") && !image.getAttribute("data-srcset") && !image.getAttribute("data-lazy-srcset")
+            && sources.length > 0 && sources.every((src) => new URL(src, location.href).hostname === "placehold.co");
+        } catch { return false; }
+      })();
+      if (slots.length !== 1 || !host?.contains(existing) || !isUsableSlot(existing) || !onlyKnownPlaceholder) {
+        return { applied: false, reason: "slot_conflict" };
+      }
     }
     const slot = slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot();
     if (!slot) return { applied: false, reason: missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
