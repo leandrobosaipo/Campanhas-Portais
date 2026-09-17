@@ -162,3 +162,8 @@ test("não deduplica campanhas sem PI quando os nomes também não identificam e
   const base = { piCodigo: null, siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
   assert.equal(selectCanonicalMonthlyInsertions([{ ...base, id: 1, campanhaName: null }, { ...base, id: 2, campanhaName: null }]).length, 2);
 });
+test('classifica o estado scheduled produzido pela rota sem falso erro de auditoria', () => {
+  const input={published:true,periodStart:'2026-09-01',periodEnd:'2026-09-30',today:'2026-09-17',currentHour:10,evidenceDays:[{date:'2026-09-17',status:'scheduled'}]};
+  assert.deepEqual(classifyMonthlyInsertion(input).evidenceStates,['scheduled']);
+  assert.deepEqual(classifyMonthlyInsertion({...input,evidenceDays:[...input.evidenceDays,{date:'2026-09-16',status:'missing'}]}).evidenceStates,['missing','retroactive_missing']);
+});

@@ -48,7 +48,7 @@ export function classifyMonthlyInsertion(options: {
   endingLimit.setUTCDate(endingLimit.getUTCDate() + 7);
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
-  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
+  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled"].includes(day.status));
   const awaitingToday = options.currentHour != null && options.currentHour < 18
     && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
     && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
@@ -57,7 +57,7 @@ export function classifyMonthlyInsertion(options: {
   const evidenceStates = invalid
     ? ["invalid"]
     : missing
-      ? [...(awaitingToday ? ["scheduled"] : []), "missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
+      ? ["missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
       : awaitingToday
         ? ["scheduled"]
       : ["complete"];
