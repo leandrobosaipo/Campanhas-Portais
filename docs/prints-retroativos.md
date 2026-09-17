@@ -537,6 +537,14 @@ Além do PDF e dos JPEGs progressivos, a API inclui:
 
 O relatório e os manifestos são gerados pela API. Não devem ser montados manualmente depois do download.
 
+Capturas originais `scheduled`/`same_day_retry` aprovadas pelo auditor canônico
+são preservadas sem exigir um manifesto de reconstrução. A exportação confere
+job de origem, política de auditoria, data-alvo e data real de captura em Cuiabá.
+O manifesto informa `auditBasis=same_day_capture` e mantém `proof=null` quando
+não existe prova editorial. Reconstruções continuam exigindo prova editorial
+aprovada, hash do manifesto e zero conteúdo futuro (`auditBasis=editorial_proof`).
+Os totais de originais e reconstruções ficam separados na auditoria do pacote.
+
 ### Prompt operacional recomendado
 
 > Use somente os endpoints da API AdOps. Consulte a PI e o site, gere todas as capturas retroativas com `candidate=true` e `promote=true`, e aguarde cada job assíncrono. Libere somente datas com `status=audited` e `retroContentProof.status=approved`. Depois crie um job de exportação `mode=full-pdf` e `variant=web`. Confirme no ZIP: mesma quantidade de JPEGs progressivos, páginas de PDF e manifestos; zero PNG; `futureCount=0`; contact sheet presente; e `SHA256SUMS.txt` válido. Não entregue pacote parcial.

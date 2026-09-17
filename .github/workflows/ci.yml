@@ -54,6 +54,7 @@ jobs:
           node --test ops/cloudflare-remote-runner/test/pi-layout-identity.test.mjs
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
           pnpm --dir scripts exec tsx src/test-preupload-reconstruction-clock.ts
+          pnpm --dir scripts exec tsx src/test-export-audit-capture-class.mjs
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
       - name: PNMT reconstructed desktop anchor guards
