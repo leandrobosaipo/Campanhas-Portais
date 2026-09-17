@@ -655,6 +655,7 @@
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
           "postVisualWaitMs": 2600,
@@ -1148,6 +1149,7 @@
           "MEGABANNER HOME 1",
           "BANNER 728 X 90"
         ],
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "page": "home",
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",

@@ -12,8 +12,8 @@ export type SiteFormatMapping = {
   scrollMode?: "top" | "slot";
   proofStyle?: "viewport_only" | "viewport_with_slot_inset";
   operationalMediaProfile?: {
-    width: number;
-    height: number;
+    width?: number;
+    height?: number;
     formats: string[];
     deliveryTransform?: Record<string, unknown>;
     deliveryTransforms?: Record<string, Record<string, unknown>>;

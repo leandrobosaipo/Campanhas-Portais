@@ -2156,9 +2156,10 @@ async function inspectOperationalImage(filePath, expected) {
 
 async function prepareOperationalDeliveryImage(filePath, profile) {
   const source = await readOperationalImageMetadata(filePath);
-  const expectedFormat = String(profile?.formats?.[0] || "GIF").toUpperCase();
-  if (String(source.format || "").toUpperCase() !== expectedFormat) throw new Error("Formato binário da mídia diverge do esperado.");
+  const expectedFormat = String(source.format || "").toUpperCase();
+  if (!(profile?.formats || ["GIF"]).map(value => String(value).toUpperCase().replace(/^JPG$/, "JPEG")).includes(expectedFormat)) throw new Error("Formato binário da mídia diverge do esperado.");
   if (!source.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  if (!Number(profile?.width) || !Number(profile?.height)) return { transformed: false, source, metadata: source, filePath, transform: null };
   if (Number(source.width) === Number(profile?.width) && Number(source.height) === Number(profile?.height)) {
     return { transformed: false, source, metadata: source, filePath, transform: null };
   }
@@ -2241,10 +2242,10 @@ async function readOperationalVideoMetadata(filePath) {
 
 async function prepareOperationalDeliveryMedia(filePath, profile) {
   const extension = path.extname(filePath).toLowerCase();
-  const mediaFormat = extension === ".mp4" ? "MP4" : "GIF";
+  if (extension !== ".mp4") return prepareOperationalDeliveryImage(filePath, profile);
+  const mediaFormat = "MP4";
   const allowed = (Array.isArray(profile?.formats) ? profile.formats : []).map((value) => String(value).toUpperCase());
   if (!allowed.includes(mediaFormat)) throw new Error(`Perfil vigente não permite ${mediaFormat}.`);
-  if (mediaFormat === "GIF") return prepareOperationalDeliveryImage(filePath, profile);
 
   const source = await readOperationalVideoMetadata(filePath);
   const transform = profile?.deliveryTransforms?.MP4;
@@ -2321,8 +2322,7 @@ function normalizeOperationalMediaProfile(profile) {
     : null;
   return {
     groupId: Number(profile.groupId),
-    width: Number(profile.width),
-    height: Number(profile.height),
+    ...(Number(profile.width) > 0 && Number(profile.height) > 0 ? {width: Number(profile.width), height: Number(profile.height)} : {}),
     formats: (Array.isArray(profile.formats) ? profile.formats : []).map((value) => String(value).toUpperCase()).sort(),
     ...(deliveryTransform ? { deliveryTransform } : {}),
     ...(deliveryTransforms ? { deliveryTransforms } : {}),
@@ -7275,10 +7275,11 @@ async function executeOperationalMediaPublish(payload) {
   const mediaFormat = String(mediaMetadata.format || "GIF").toUpperCase();
   const deliveryBuffer = deliveryMedia.transformed ? await readFile(deliveryMedia.filePath) : materialized.buffer;
   const deliverySha256 = crypto.createHash("sha256").update(deliveryBuffer).digest("hex");
-  const deliveryExtension = mediaFormat === "MP4" ? ".mp4" : ".gif";
+  const deliveryExtension = {MP4: ".mp4", GIF: ".gif", PNG: ".png", JPEG: ".jpg"}[mediaFormat];
+  if (!deliveryExtension) throw new Error("Formato binário de entrega não suportado.");
   const deliverySourceName = deliveryMedia.transformed
     ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${mediaMetadata.width}x${mediaMetadata.height}${deliveryExtension}`
-    : materialized.sourceName;
+    : `${path.basename(materialized.sourceName, path.extname(materialized.sourceName))}${deliveryExtension}`;
   if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
 
   const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
@@ -7292,7 +7293,7 @@ async function executeOperationalMediaPublish(payload) {
   };
   const bucket = spacesBucketForSite(siteSigla);
   const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: deliverySourceName, contentHash: deliverySha256 });
-  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: mediaFormat === "MP4" ? "video/mp4" : "image/gif" });
+  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: contentTypeForMediaName(deliverySourceName) });
   const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
   const stagedReadback = await assertOperationalMediaReadback({
     mediaUrl: stagedUrl,
