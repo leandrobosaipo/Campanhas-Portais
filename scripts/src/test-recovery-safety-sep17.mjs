@@ -14,12 +14,14 @@ assert.equal(r.selectDriveImageForInsertion({media:[wrongType,wrongPi]}, {}, {pi
 const insertion={id:3024,campanhaId:1040,siteId:34,siteSigla:'AFL',piCodigo:'91381',localFormato:'MEGABANNER TOPO',periodoInicio:'2026-09-08',periodoFim:'2026-09-21'};
 assert.throws(()=>r.validateRequestedSiteIdentity([{siteId:31,siteSigla:'AFL'}],new Map([[34,'AFL'],[31,'OMT']])),/portal|site/i);
 assert.doesNotThrow(()=>r.validateRequestedSiteIdentity([{siteId:34,siteSigla:'AFL'}],new Map([[34,'AFL']])));
-const row={piCodigo:'91381',siteSigla:'AFL',campaignName:'PRESTAÇÃO DE CONTAS',adops:{insertionId:3024,campaignId:1040},period:{start:'2026-09-08',end:'2026-09-21'},drive:{status:'matched',folderId:'folder'},format:{resolution:{safeToApply:true,groupId:1}},canonicalSelection:{compatibleInsertionIds:[3024]}};
+const row={piCodigo:'91381',siteSigla:'AFL',campaignName:'PRESTAÇÃO DE CONTAS',adops:{insertionId:3024,campaignId:1040},period:{start:'2026-09-08',end:'2026-09-21'},drive:{status:'matched',folderId:'folder'},format:{resolution:{safeToApply:true,groupId:1}},canonicalSelection:{decision:'confirmed',insertionId:3024,compatibleInsertionIds:[3024]}};
 const source={source:{downloadedAt:new Date().toISOString()},items:[row]};
 assert.equal(r.validateExpectedSheetScope(source,insertion,{driveFileId:'folder',expectedPiCodigo:'91381'}).period.end,'2026-09-21');
 assert.throws(()=>r.validateExpectedSheetScope({...source,items:[row,row]},insertion,{driveFileId:'folder',expectedPiCodigo:'91381'}));
 assert.throws(()=>r.validateExpectedSheetScope(source,insertion,{driveFileId:'wrong',expectedPiCodigo:'91381'}));
 assert.throws(()=>r.validateExpectedSheetScope({...source,source:{downloadedAt:'2026-09-01T00:00:00Z'}},insertion,{driveFileId:'folder',expectedPiCodigo:'91381'}));
+assert.doesNotThrow(()=>r.validateExpectedSheetScope({...source,items:[{...row,canonicalSelection:{...row.canonicalSelection,compatibleInsertionIds:[3024,3025]}}]},insertion,{driveFileId:'folder',expectedPiCodigo:'91381'}));
+assert.throws(()=>r.validateExpectedSheetScope({...source,items:[{...row,canonicalSelection:{...row.canonicalSelection,decision:'ambiguous'}}]},insertion,{driveFileId:'folder',expectedPiCodigo:'91381'}));
 const periods=r.extendSitePeriodForSocialDelivery([{siteId:33,piCodigo:'1',campaignName:'A',localFormato:'TOPO',periodoFim:'2026-09-20'},{siteId:33,piCodigo:'2',campaignName:'B',localFormato:'INSTAGRAM',periodoFim:'2026-09-30'}]);
 assert.equal(periods[0].periodoFim,'2026-09-20');
 const video={siteId:34,localFormato:'VIDEO'};

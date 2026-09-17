@@ -2942,8 +2942,9 @@ function validateExpectedSheetScope(source, insertion, payload) {
   if (rows.length !== 1) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
   const row = rows[0];
   if (row.drive?.status !== "matched" || row.drive?.folderId !== payload.driveFileId) throw new Error("sheet_drive_mismatch: pasta não corresponde ao alvo da planilha.");
-  if (!row.format?.resolution?.safeToApply || row.canonicalSelection?.compatibleInsertionIds?.length !== 1
-    || Number(row.canonicalSelection.compatibleInsertionIds[0]) !== Number(insertion.id)) throw new Error("sheet_scope_unsafe: posição ou inserção ambígua.");
+  if (!row.format?.resolution?.safeToApply || row.canonicalSelection?.decision !== "confirmed"
+    || Number(row.canonicalSelection.insertionId) !== Number(insertion.id)
+    || !row.canonicalSelection.compatibleInsertionIds?.some(id => Number(id) === Number(insertion.id))) throw new Error("sheet_scope_unsafe: posição ou inserção ambígua.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(row.period?.start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(row.period?.end || "") || row.period.start > row.period.end) throw new Error("sheet_period_invalid");
   return row;
 }
@@ -5864,6 +5865,15 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     });
     const monthlySource = await privateApiGet(`/api/campaign-operations/evidence-monthly-source?date=${todayInCuiaba()}`);
     const sheetRow = validateExpectedSheetScope(monthlySource, expectedInsertion, payload);
+    // Legacy variants can share the slot but never silently displace a live or exact-period insertion.
+    for (const id of sheetRow.canonicalSelection.compatibleInsertionIds.filter(id => Number(id) !== Number(expectedInsertion.id))) {
+      const sibling = await privateApiGet(`/api/insertions/${id}`);
+      const relation = await privateApiGet(`/api/integrations/adrotate/insertions/${id}/relation`);
+      if (sibling.mediaUrl || sibling.bannerPublicadoNoSite || relation?.exactLiveMatches?.length
+        || (sibling.periodoInicio === sheetRow.period.start && sibling.periodoFim === sheetRow.period.end)) {
+        throw new Error(`sheet_duplicate_insertion:${id}: variante exige revisão; nenhuma publicação alterada.`);
+      }
+    }
     if (payload.allowCoexistence === true && Number(payload.coexistenceGroupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("coexistence_group_mismatch: grupo deve corresponder à planilha.");
     validateExpectedDrivePiIdentity({ expectedPiCodigo: payload.expectedPiCodigo, fieldsPiCodigo: fields.piCodigo,
       pdfPiCodigo: fields.pdfPiCodigo, campaignPiCodigo: expectedCampaign.piCodigo,
