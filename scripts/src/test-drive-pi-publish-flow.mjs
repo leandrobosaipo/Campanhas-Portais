@@ -270,6 +270,11 @@ assert.match(runnerSource, /validateDrivePiDedupeSafety\(fields, expectedTarget 
 assert.match(runnerSource, /ignoredDraftCampaignIds/,
   "rascunho concorrente deve ser registrado sem impedir a inserção canônica exata");
 const safeDraft = { origem: "google-drive-monitor", insertions: [{ id: 2407, statusNormalizado: "aguardando_publicacao", observacoes: "Criado a partir do Drive: /AFL/AGOSTO", bannerPublicadoNoSite: false, mediaUrl: null, totalEvidencias: 0, printGerado: false }] };
+assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plannedSelf: { adrotateGroupId: 2, externalKey: '2407', mediaUrl: null }, exactLiveMatches: [], historicalAdminMatches: [] }]])), true,
+  "projeção de slot sem mídia ou anúncio não comprova publicação");
+for (const relation of [{plannedSelf:{mediaUrl:'https://example.com/banner.gif'}}, {publicationConfirmation:{jobId:'confirmed'}}, {exactLiveMatches:[{adId:1}]}, {historicalAdminMatches:[{adId:1}]}]) {
+  assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, relation]])), false);
+}
 assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plannedSelf: null, exactLiveMatches: [], historicalAdminMatches: [] }]])), true,
   "rascunho sem mídia, publicação ou evidência pode ser ignorado diante do alvo canônico");
 for (const unsafe of [

@@ -3,6 +3,15 @@ import test from "node:test";
 import vm from "node:vm";
 import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs";
 
+test('rascunho com captura de hoje não aparece como em dia', () => {
+  const html = renderDynamicEvidenceReport();
+  const expression = html.match(/const stateLabel=(.*?); const groupUrl=/)?.[1];
+  assert.ok(expression);
+  assert.equal(vm.runInNewContext(expression, {item:{publicationStates:['not_published'],evidenceStates:['scheduled']}}), 'Publicação pendente');
+  assert.equal(vm.runInNewContext(expression, {item:{publicationStates:['active'],evidenceStates:['scheduled']}}), 'Aguardando horário de captura');
+  assert.match(html, /Há publicação pendente/);
+});
+
 test("executa no VM as expressões reais de contagem do HTML gerado", () => {
   const html = renderDynamicEvidenceReport();
   const state = { items: [

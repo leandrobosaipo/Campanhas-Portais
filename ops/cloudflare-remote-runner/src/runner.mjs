@@ -3107,7 +3107,9 @@ function isDiscardableDraftCampaign(detail, relationsByInsertionId = new Map()) 
     const knownDraftOrigin = /^(criado a partir do drive|sincronizado da planilha)/.test(normalizeText(insertion?.observacoes));
     const relation = relationsByInsertionId.get(Number(insertion?.id)) || {};
     const hasAdrotateHistory = Boolean(
-      relation?.plannedSelf
+      firstNonEmptyString(relation?.plannedSelf?.mediaUrl)
+      || Number(relation?.plannedSelf?.adId || relation?.plannedSelf?.adrotateBannerId || 0) > 0
+      || relation?.publicationConfirmation
       || (Array.isArray(relation?.exactLiveMatches) && relation.exactLiveMatches.length)
       || (Array.isArray(relation?.historicalAdminMatches) && relation.historicalAdminMatches.length),
     );
