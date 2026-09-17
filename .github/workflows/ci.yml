@@ -44,7 +44,7 @@ jobs:
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --dir scripts run test:api-bundle-runtime
       - name: Install image export runtime
-        run: sudo apt-get update && sudo apt-get install -y python3-pil imagemagick zip unzip
+        run: sudo apt-get update && sudo apt-get install -y python3-pil imagemagick ffmpeg php-cli zip unzip
       - run: pnpm --dir scripts run test:evidence-web-export
       - run: pnpm --dir scripts run test:monthly-report-export-eligibility
       - name: Recovery provenance and immutable exports
