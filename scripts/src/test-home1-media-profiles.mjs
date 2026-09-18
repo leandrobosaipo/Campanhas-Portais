@@ -6,6 +6,9 @@ import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 process.env.ADOPS_RUNNER_TEST_MODE = '1';
 const runner = await import('../../ops/cloudflare-remote-runner/src/runner.mjs');
+const lateralProfile = await runner.loadOperationalMediaProfile('PERRENGUE', 'TOPO LATERAL — HEADER — 380x120');
+assert.equal(lateralProfile.groupId, 10);
+assert.deepEqual(lateralProfile.formats, ['GIF', 'JPEG', 'PNG']);
 const dir = await mkdtemp(join(tmpdir(), 'adops-home1-check-'));
 try {
   for (const [ext, format] of [['gif','GIF'],['png','PNG'],['jpg','JPEG']]) {

@@ -4,15 +4,39 @@ function positiveInteger(value) {
 }
 
 export function selectDailyPrintCandidates(items, targetDate, options = {}) {
+  const scope = [...(Array.isArray(items) ? items : [])];
+  const represented = new Set(scope.map(item => positiveInteger(item?.adops?.insertionId)));
+  for (const { insertion, audit } of options.publishedInsertions ?? []) {
+    const id = positiveInteger(insertion?.id);
+    if (!id || represented.has(id) || audit?.insertionId !== id || audit?.targetDate !== targetDate) continue;
+    if (!['ok', 'missing', 'invalid_audit', 'invalid_url'].includes(audit.status)) continue;
+    if (insertion.bannerPublicadoNoSite !== true || !insertion.mediaUrl || insertion.archivedAt || insertion.supersededByInsertionId) continue;
+    if (/^(cancelad[oa]|inativ[oa]|arquivad[oa]|superseded|concluido)$/.test(String(insertion.statusNormalizado ?? '').trim().toLowerCase())) continue;
+    if (!insertion.periodoInicio || !insertion.periodoFim || targetDate < insertion.periodoInicio || targetDate > insertion.periodoFim) continue;
+    represented.add(id);
+    scope.push({
+      adops: { ...insertion, insertionId: id },
+      evidence: { requiredDates: [targetDate], missingDates: audit.status === 'missing' ? [targetDate] : [], invalidDates: audit.status.startsWith('invalid_') ? [targetDate] : [] },
+      captureScopeSource: 'published_insertion_audit',
+    });
+  }
   const pendingIds = new Set((Array.isArray(options.pendingInsertionIds) ? options.pendingInsertionIds : [])
     .map(positiveInteger)
     .filter(Boolean));
   const competencia = typeof options.competencia === "string" && options.competencia.trim()
     ? options.competencia.trim().toUpperCase()
     : null;
-  return (Array.isArray(items) ? items : []).filter((item) => {
+  return scope.filter((item) => {
     const insertionId = positiveInteger(item?.adops?.insertionId);
-    if (item?.publicationHealth?.status === "blocked_upstream") return false;
+    // Capture an explicitly selected, observed creative; never authorize publication here.
+    const confirmedCanonical = item?.publicationHealth?.reason === 'duplicate_identity'
+      && item?.canonicalSelection?.decision === 'confirmed'
+      && item.canonicalSelection.insertionId === insertionId
+      && item?.sourceIdentity?.decision === 'confirmed'
+      && item?.publicationHealth?.expectedMediaObserved === true
+      && positiveInteger(item?.publicationHealth?.expectedGroupId)
+      && item?.adops?.publicConfirmation === 'confirmed';
+    if (item?.publicationHealth?.status === "blocked_upstream" && !confirmedCanonical) return false;
     if (pendingIds.size > 0 && !pendingIds.has(insertionId)) return false;
     if (competencia && String(item?.adops?.competencia || "").toUpperCase() !== competencia) return false;
     const publicConfirmed = item?.adops?.publicConfirmation === "confirmed";
