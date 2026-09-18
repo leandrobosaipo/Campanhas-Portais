@@ -101,6 +101,11 @@
           "MEGA BANNER LATERAL",
           "TOPO LATERAL — HEADER — 380x120"
         ],
+        "operationalMediaProfile": {
+          "width": 380,
+          "height": 120,
+          "formats": ["GIF", "PNG", "JPEG"]
+        },
         "page": "home",
         "slotSelector": ".g.g-10",
         "contextSelector": "#header-ads-row",

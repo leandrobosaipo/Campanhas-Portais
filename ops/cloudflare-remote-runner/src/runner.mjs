@@ -6332,25 +6332,48 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     params.set("siteSigla", String(site.sigla));
   }
   const operations = await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
+  // The sheet is not an inventory of already-published insertions (e.g. coexisting campaigns).
+  const publishedQuery = new URLSearchParams({ date: targetDate });
+  if (siteId) publishedQuery.set('siteId', String(siteId));
+  if (competencia) publishedQuery.set('competencia', competencia);
+  const publishedAudit = await privateApiGet(`/api/insertions/capture-proof/audit?${publishedQuery}`);
+  if (!Array.isArray(publishedAudit?.items)) throw new Error('daily_print_published_scope_unavailable');
+  const representedIds = new Set((operations?.items ?? []).map(item => readPositiveInteger(item?.adops?.insertionId)));
+  const publishedInsertions = [];
+  for (const audit of publishedAudit.items) {
+    if (representedIds.has(audit.insertionId)) continue;
+    const insertion = await privateApiGet(`/api/insertions/${audit.insertionId}`);
+    publishedInsertions.push({ insertion, audit });
+  }
   const pendingInsertionIds = new Set((Array.isArray(payload?.pendingInsertionIds) ? payload.pendingInsertionIds : []).map(readPositiveInteger).filter(Boolean));
   const candidates = selectDailyPrintCandidates(operations?.items, targetDate, {
     pendingInsertionIds: [...pendingInsertionIds],
     competencia,
+    publishedInsertions,
   });
   const candidateInsertionIds = candidates
     .map((item) => readPositiveInteger(item?.adops?.insertionId))
     .filter(Boolean);
+  const blocked = (operations?.items ?? []).filter(item => {
+    const id = readPositiveInteger(item?.adops?.insertionId);
+    return !candidateInsertionIds.includes(id)
+      && (pendingInsertionIds.size === 0 || pendingInsertionIds.has(id))
+      && (!competencia || item?.adops?.competencia === competencia)
+      && item?.evidence?.requiredDates?.includes(targetDate);
+  }).map(item => ({ insertionId: readPositiveInteger(item?.adops?.insertionId), status: 'blocked_upstream',
+    error: item?.publicationHealth?.reason ?? 'canonical_insertion_not_capture_ready' }));
+  const expectedTotal = candidates.length + blocked.length;
   const captured = [];
   const skipped = [];
-  const failed = [];
+  const failed = [...blocked];
   const publishLiveProgress = async (runningInsertionId = null, extra = {}) => {
     try {
       await progressJob(job.id, {
         stage: "capture_async_dispatch",
         targetDate,
         itemsDone: captured.length + skipped.length + failed.length,
-        itemsTotal: candidates.length,
-        percentTotal: candidates.length ? Math.round(((captured.length + skipped.length + failed.length) / candidates.length) * 100) : 100,
+        itemsTotal: expectedTotal,
+        percentTotal: expectedTotal ? Math.round(((captured.length + skipped.length + failed.length) / expectedTotal) * 100) : 100,
         liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
         ...extra,
       });
@@ -6360,9 +6383,9 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     }
   };
   await publishLiveProgress(null, {
-    itemsDone: 0,
-    itemsTotal: candidateInsertionIds.length,
-    percentTotal: candidates.length ? 0 : 100,
+    itemsDone: blocked.length,
+    itemsTotal: expectedTotal,
+    percentTotal: expectedTotal ? Math.round(blocked.length / expectedTotal * 100) : 100,
   });
   let transportError = null;
   for (const item of candidates) {
@@ -6420,12 +6443,12 @@ async function executePrintBatch(job, assertLease = () => undefined) {
   const outcome = classifyDailyPrintOutcome({
     jobId: job.id,
     childJobId: captured.at(-1)?.captureJobId ?? null,
-    expectedTotal: candidates.length,
+    expectedTotal,
     audit: {
       date: targetDate,
-      totalEligible: Number(audit?.totalEligible ?? 0),
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
       ok: Number(audit?.ok ?? 0),
-      missing: Number(audit?.missing ?? 0),
+      missing: Number(audit?.missing ?? 0) + blocked.length,
       invalid: Number(audit?.invalid ?? 0),
       missingDates: Number(audit?.missing ?? 0) > 0 ? [targetDate] : [],
       invalidDates: Number(audit?.invalid ?? 0) > 0 ? [targetDate] : [],
@@ -6437,6 +6460,7 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     targetDate,
     mode: "async_per_insertion",
     totalCandidates: candidates.length,
+    blocked,
     captured,
     skipped,
     failed,
@@ -6454,9 +6478,9 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       invalid: audit.invalid,
     },
     canonicalAudit: {
-      expected: candidates.length,
+      expected: expectedTotal,
       approved: Number(audit.ok ?? 0),
-      missing: Number(audit.missing ?? 0),
+      missing: Number(audit.missing ?? 0) + blocked.length,
       invalid: Number(audit.invalid ?? 0),
     },
     transportError,
@@ -6487,10 +6511,10 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       transportError: transportError ?? null,
       errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
       date: targetDate,
-      expectedTotal: candidates.length,
-      totalEligible: audit?.totalEligible ?? null,
+      expectedTotal,
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
       ok: audit?.ok ?? null,
-      missing: audit?.missing ?? null,
+      missing: Number(audit?.missing ?? 0) + blocked.length,
       invalid: audit?.invalid ?? null,
       failedInsertionIds: failed.map((item) => item.insertionId),
       nextRecoveryAt: payload?.nextRecoveryAt ?? null,
@@ -8968,6 +8992,7 @@ async function main() {
 }
 
 export {
+  loadOperationalMediaProfile,
   validateRequestedSiteIdentity,
   validateExpectedSheetScope,
   agencyAliasCandidates,
