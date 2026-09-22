@@ -820,6 +820,11 @@ assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublis
 assert.match(runnerSource, /executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: false \}, \{ compositePendingGuardAlreadyValidated: true \}\)[\s\S]*executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: true \}, \{ compositePendingGuardAlreadyValidated: true \}\)/,
   "publicação operacional não pode revalidar como pendente o estado que ela própria acabou de vincular");
 const adrotateConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+for (const [siteSigla, groupId] of [["PERRENGUE", 11], ["OMT", 9], ["AFL", 14], ["PNMT", 14], ["PPMT", 14], ["ROO", 8]]) {
+  const mapping = adrotateConfig[siteSigla].formatMappings.find((item) => item.groupId === groupId);
+  assert.deepEqual(mapping?.operationalMediaProfile?.formats, ["GIF", "PNG", "JPEG"],
+    `${siteSigla} grupo ${groupId} precisa aceitar imagem no banner interno`);
+}
 for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
   assert.deepEqual(mapping?.operationalMediaProfile, {
