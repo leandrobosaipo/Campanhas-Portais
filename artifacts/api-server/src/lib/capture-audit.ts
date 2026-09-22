@@ -299,7 +299,7 @@ function hasKnownCapturePolicy(version: unknown) {
   return typeof version === "string" && version.trim() === AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
 }
 
-function buildCaptureClassTrustContext({
+export function buildCaptureClassTrustContext({
   canonicalTargetDate,
   metadataTargetDate,
   captureClass,

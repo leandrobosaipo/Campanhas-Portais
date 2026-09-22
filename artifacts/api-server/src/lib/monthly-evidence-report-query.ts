@@ -1,11 +1,37 @@
 const VALID_PORTALS = new Set(["OMT", "ROO", "PERRENGUE", "AFL", "PNMT", "PPMT"]);
 const VALID_PUBLICATION_FILTERS = new Set(["all", "active", "not_published", "scheduled", "ending", "ended"]);
-const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "scheduled", "invalid"]);
+const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "scheduled", "invalid", "documentary_pending"]);
 const PUBLIC_INSERTION_FIELDS = [
   "id", "campanhaId", "campanhaName", "clienteNome", "agenciaNome", "piCodigo", "competencia",
   "siteSigla", "siteNome", "siteLogoUrl", "localFormato", "localFormatoNormalizado", "periodoInicio",
   "periodoFim", "statusNormalizado", "bannerPublicadoNoSite", "mediaUrl", "portalUrl", "adrotateGroupId", "adrotateGroupUrl",
 ] as const;
+
+function monthlyArtifact(value: unknown) {
+  try { const parsed = new URL(String(value)); return `${parsed.origin}${parsed.pathname}`; }
+  catch { return null; }
+}
+
+export function selectMonthlyEvidenceProof<T extends { uploadedUrl?: string | null; cacheBustedUrl?: string | null; updatedAt: Date }>(url: string | null | undefined, rows: T[]) {
+  return rows.filter(row => !url || [row.uploadedUrl, row.cacheBustedUrl].some(value => monthlyArtifact(value) && monthlyArtifact(value) === monthlyArtifact(url)))
+    .reduce<T | null>((latest, row) => !latest || latest.updatedAt < row.updatedAt ? row : latest, null);
+}
+
+export function monthlyEvidenceProvenance(url: string | null | undefined, proof: {
+  uploadedUrl?: string | null;
+  cacheBustedUrl?: string | null;
+  metadata?: Record<string, unknown>;
+} | null, trustedCapture = false) {
+  const matches = Boolean(monthlyArtifact(url) && [proof?.uploadedUrl, proof?.cacheBustedUrl].some(value => monthlyArtifact(value) === monthlyArtifact(url)));
+  const metadata = matches ? proof?.metadata ?? {} : {};
+  const captureClass = typeof metadata.captureClass === 'string' ? metadata.captureClass : null;
+  const reconstructed = captureClass === 'historical_recovery' || Boolean(metadata.reconstruction);
+  return {
+    captureClass,
+    documentaryStatus: reconstructed ? 'reconstruction_requires_acceptance'
+      : trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '') ? 'capture_recorded' : 'provenance_unverified',
+  };
+}
 
 export function normalizeMonthlyReportMonth(value: unknown) {
   if (typeof value !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
@@ -48,7 +74,8 @@ export function classifyMonthlyInsertion(options: {
   endingLimit.setUTCDate(endingLimit.getUTCDate() + 7);
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
-  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled"].includes(day.status));
+  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled", "reconstruction", "provenance_unverified"].includes(day.status));
+  const documentaryPending = options.evidenceDays.some(day => ["reconstruction", "provenance_unverified"].includes(day.status));
   const awaitingToday = options.currentHour != null && options.currentHour < 18
     && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
     && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
@@ -61,6 +88,10 @@ export function classifyMonthlyInsertion(options: {
       : awaitingToday
         ? ["scheduled"]
       : ["complete"];
+  if (documentaryPending) {
+    if (evidenceStates.includes('complete')) evidenceStates.splice(evidenceStates.indexOf('complete'), 1);
+    evidenceStates.push('documentary_pending');
+  }
   return { publicationStates, evidenceStates };
 }
 

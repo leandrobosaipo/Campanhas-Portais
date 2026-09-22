@@ -10,7 +10,32 @@ import {
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
+  monthlyEvidenceProvenance,
+  selectMonthlyEvidenceProof,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
+
+test('reconstrucao nunca vira original pelo resultado da auditoria tecnica', () => {
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z' } };
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png?v=1', proof).documentaryStatus, 'reconstruction_requires_acceptance');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/b.png', proof).documentaryStatus, 'provenance_unverified');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', null).documentaryStatus, 'provenance_unverified');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled' } }).documentaryStatus, 'provenance_unverified');
+  const trusted = monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled', capturedAt: 'not-a-date' } }, true);
+  assert.equal(trusted.documentaryStatus, 'capture_recorded');
+  assert.equal('capturedAt' in trusted, false, 'horário deve vir apenas da correlação canônica da rota');
+});
+
+test('reconstrucao exige conferência documental mesmo sem erro técnico', () => {
+  const result = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [{ date: '2026-09-18', status: 'reconstruction' }] });
+  assert.deepEqual(result.evidenceStates, ['documentary_pending']);
+});
+
+test('tentativa nova não promovida não oculta a prova do arquivo preservado', () => {
+  const original = { uploadedUrl: 'https://example.test/original.png', updatedAt: new Date('2026-09-18') };
+  const candidate = { uploadedUrl: 'https://example.test/candidate.png', updatedAt: new Date('2026-09-20') };
+  assert.equal(selectMonthlyEvidenceProof(original.uploadedUrl, [original, candidate]), original);
+  assert.equal(selectMonthlyEvidenceProof('https://example.test/unknown.png', [candidate]), null);
+});
 
 test("remove insercoes arquivadas ou substituidas antes do enriquecimento", () => {
   assert.deepEqual(excludeSupersededMonthlyInsertions([

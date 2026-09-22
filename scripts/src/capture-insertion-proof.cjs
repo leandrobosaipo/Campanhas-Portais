@@ -4270,6 +4270,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         inPopupRow: !!node.closest(".perrengue-popup-ads-row"),
         isStaticRetroAd: !!node.closest("[data-adops-static-retro-ad]"),
         isTopGroup: node.classList.contains("g-1"),
+        isLateralGroup: node.classList.contains("g-10"),
         isPopupGroup: node.classList.contains("g-9"),
       }))
       .filter((entry) => entry.inHeaderAdsRow || entry.inPopupRow || entry.isStaticRetroAd)
@@ -4292,14 +4293,15 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    if (beforeHeaderGroups.length > 1) {
+    if (beforeHeaderGroups.filter((entry) => entry.isTopGroup).length > 1 ||
+        beforeHeaderGroups.filter((entry) => entry.isLateralGroup).length > 1) {
       issues.push({
         code: "multiple_header_ad_groups_before_logo",
         detail: `groups=${beforeHeaderGroups.length}`,
       });
     }
 
-    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !entry.isTopGroup);
+    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !(entry.isTopGroup || entry.isLateralGroup));
     if (invalidBeforeHeaderGroups.length > 0) {
       issues.push({
         code: "invalid_ad_group_before_logo",
@@ -4307,8 +4309,8 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    const topGroup = document.querySelector("#header-ads-row .g.g-1");
-    if (topGroup instanceof HTMLElement) {
+    for (const topGroup of document.querySelectorAll("#header-ads-row .g.g-1, #header-ads-row .g.g-10")) {
+      if (!(topGroup instanceof HTMLElement)) continue;
       const visibleChildren = Array.from(topGroup.querySelectorAll(":scope > .g-dyn, :scope > .g-single"))
         .filter((node) => node instanceof HTMLElement && isVisible(node) && hasVisibleMedia(node));
       if (visibleChildren.length > 1) {
@@ -4337,6 +4339,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         box: entry.box,
         inHeaderAdsRow: entry.inHeaderAdsRow,
         isTopGroup: entry.isTopGroup,
+        isLateralGroup: entry.isLateralGroup,
         isPopupGroup: entry.isPopupGroup,
       })),
       popupRowsBeforeHeader: popupRowsBeforeHeader.map(toBox).filter(Boolean),
