@@ -312,6 +312,7 @@
         "slotSelector": ".g.g-11",
         "contextSelector": ".g.g-11",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "preferArticleFallbackForRetro": true,
           "criticalContentSelectors": [
@@ -551,7 +552,8 @@
         "page": "article",
         "slotSelector": ".g.g-9",
         "contextSelector": ".g.g-9",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ]
   },
@@ -735,6 +737,7 @@
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "postVisualWaitMs": 2600,
           "gifFrameSelection": "source_preferred",
@@ -887,7 +890,8 @@
         "page": "article",
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ],
     "disableOriginOverride": true
@@ -1052,7 +1056,8 @@
         "page": "article",
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ]
   },
@@ -1212,6 +1217,7 @@
         "slotSelector": ".g.g-8",
         "contextSelector": ".g.g-8",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "allowViewportImageMisses": 1,
           "gifAllowedFrameRanges": [
