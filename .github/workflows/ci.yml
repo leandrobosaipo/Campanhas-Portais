@@ -67,6 +67,8 @@ jobs:
       - run: pnpm --dir scripts run test:adops-definitive-gates
       - run: pnpm --dir scripts run test:afl-retro-date-config-isolation
       - run: node --check scripts/src/capture-insertion-proof.cjs
+      - run: node scripts/src/test-perrengue-header-dom-policy.mjs
+      - run: node scripts/src/test-perrengue-header-ad-policy.mjs
       - run: node --check ops/cloudflare-remote-runner/src/runner.mjs
       - run: pnpm --dir scripts run test:perrengue-static-retro-sparse
       - run: pnpm --filter @workspace/adops run build
