@@ -34,6 +34,8 @@ import {
   CAPTURE_CLASS_SAME_DAY_RETRY,
   CAPTURE_CLASS_SCHEDULED,
   buildRetroCaptureAt,
+  correlateCaptureLogProvenance,
+  buildCaptureClassTrustContext,
   eachIsoDay,
   evaluateCaptureMetadata,
   formatIsoDate,
@@ -98,6 +100,8 @@ import {
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
+  monthlyEvidenceProvenance,
+  selectMonthlyEvidenceProof,
 } from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
@@ -1751,11 +1755,12 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       rows.push(row);
       evidenceRowsByInsertion.set(row.insercaoId, rows);
     }
-    const proofByInsertionDate = new Map<string, typeof captureProofLogsTable.$inferSelect>();
+    const proofByInsertionDate = new Map<string, Array<typeof captureProofLogsTable.$inferSelect>>();
     for (const row of pageProofRows) {
       const key = `${row.insertionId}:${row.targetDate}`;
-      const previous = proofByInsertionDate.get(key);
-      if (!previous || previous.updatedAt < row.updatedAt) proofByInsertionDate.set(key, row);
+      const rows = proofByInsertionDate.get(key) ?? [];
+      rows.push(row);
+      proofByInsertionDate.set(key, rows);
     }
     const evaluated: Array<Record<string, unknown>> = [];
     for (let offset = 0; offset < pageSource.length; offset += 4) {
@@ -1770,7 +1775,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
         const evidenceDays = evidenceDates.map((date) => {
           const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === date) ?? null;
-          const proof = proofByInsertionDate.get(`${item.id}:${date}`) ?? null;
+          const proof = selectMonthlyEvidenceProof(evidence?.arquivoUrl, proofByInsertionDate.get(`${item.id}:${date}`) ?? []);
           const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
           const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
           const status = !evidence && date === today && currentHour < 18
@@ -1784,9 +1789,26 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
                 : proof
                   ? "audited"
                   : "audited_best_effort";
+          const correlation = proof ? correlateCaptureLogProvenance({ ...proof, evidenceUrl: evidence?.arquivoUrl ?? null }) : null;
+          const trustedCapture = correlation && buildCaptureClassTrustContext({
+            canonicalTargetDate: date,
+            metadataTargetDate: correlation.targetDate,
+            captureClass: typeof proof?.metadata.captureClass === 'string' ? proof.metadata.captureClass : null,
+            sourceJobId: correlation.sourceJobId,
+            capturedAt: correlation.capturedAt,
+            auditPolicyVersion: typeof proof?.metadata.auditPolicyVersion === 'string' ? proof.metadata.auditPolicyVersion : null,
+          }).trusted;
+          const provenance = monthlyEvidenceProvenance(evidence?.arquivoUrl, proof, Boolean(trustedCapture));
+          const displayStatus = status.startsWith('audited')
+            ? provenance.documentaryStatus === 'reconstruction_requires_acceptance' ? 'reconstruction'
+              : provenance.documentaryStatus === 'provenance_unverified' ? 'provenance_unverified' : status
+            : status;
           return {
             date,
-            status,
+            status: displayStatus,
+            technicalStatus: status,
+            ...provenance,
+            capturedAt: correlation?.capturedAt ?? null,
             evidenceId: evidence?.id ?? null,
             url: evidence?.arquivoUrl ?? null,
             checklistApproved: status === "audited",
@@ -1828,7 +1850,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       insertions: baseFiltered.length,
       active: baseFiltered.filter(({ states }) => states.publicationStates.includes("active")).length,
       notPublished: baseFiltered.filter(({ states }) => states.publicationStates.includes("not_published")).length,
-      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => state === "missing" || state === "retroactive_missing")).length,
+      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => ["missing", "retroactive_missing", "documentary_pending"].includes(state))).length,
       invalid: evaluated.filter((item) => (item.evidenceStates as string[]).includes("invalid")).length,
       evidenceScope: "page",
     };
