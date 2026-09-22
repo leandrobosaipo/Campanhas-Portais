@@ -824,6 +824,8 @@ for (const [siteSigla, groupId] of [["PERRENGUE", 11], ["OMT", 9], ["AFL", 14], 
   const mapping = adrotateConfig[siteSigla].formatMappings.find((item) => item.groupId === groupId);
   assert.deepEqual(mapping?.operationalMediaProfile?.formats, ["GIF", "PNG", "JPEG"],
     `${siteSigla} grupo ${groupId} precisa aceitar imagem no banner interno`);
+  assert.deepEqual((await runner.loadOperationalMediaProfile(siteSigla, "BANNER INTERNO NOTICIAS - 728X90")).formats,
+    ["GIF", "JPEG", "PNG"], `${siteSigla} precisa resolver a descrição dimensional da planilha`);
 }
 for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
