@@ -719,8 +719,14 @@ function scoreImageMediaForInsertion(mediaItem, raw, fields) {
   return score;
 }
 
-function selectDriveImageForInsertion(packageContext, raw, fields) {
-  const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isImageMediaItem);
+function selectDriveImageForInsertion(packageContext, raw, fields, profile) {
+  const allowed = (profile?.formats || ['GIF', 'PNG', 'JPEG', 'WEBP']).map(value => String(value).toUpperCase().replace(/^JPG$/, 'JPEG'));
+  const pi = normalizePiDigits(fields?.piCodigo);
+  const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(item => {
+    const extension = path.extname(item?.name || '').slice(1).toUpperCase().replace(/^JPG$/, 'JPEG');
+    const namedPi = String(item?.name || '').match(/\bPI[\s_-]*(\d+)\b/i)?.[1];
+    return isImageMediaItem(item) && allowed.includes(extension) && (!namedPi || !pi || normalizePiDigits(namedPi) === pi);
+  });
   if (images.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
   const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
   if (explicitDriveFileId) {
@@ -730,13 +736,18 @@ function selectDriveImageForInsertion(packageContext, raw, fields) {
       : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
   }
   if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
+  const expectedChecksum = readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]);
+  const checksumMatch = expectedChecksum && images.find((item) => String(item.md5Checksum || "").toLowerCase() === expectedChecksum.toLowerCase());
+  if (checksumMatch) return { mediaItem: checksumMatch, ambiguous: false, candidates: images.length, selectedBy: "existing_checksum" };
   const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return String(b.item?.modifiedTime || "").localeCompare(String(a.item?.modifiedTime || ""));
+    return String(b.item?.modifiedTime || "").localeCompare(String(a.item?.modifiedTime || ""))
+      || b.score - a.score
+      || String(a.item?.driveFileId || "").localeCompare(String(b.item?.driveFileId || ""));
   });
   return {
     mediaItem: ranked[0].item,
-    ambiguous: ranked[0].score === ranked[1].score,
+    ambiguous: false,
+    selectedBy: "latest_eligible_drive_image",
     candidates: images.length,
     score: ranked[0].score,
   };
@@ -1045,7 +1056,8 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
       resolvedInsertions.push(raw);
       continue;
     }
-    const observed = selectObservedMediaLink(packageContext, "video");
+    const observed = payload?.expectedInsertionId || payload?.recoveryTarget
+      ? { link: null, ambiguous: false } : selectObservedMediaLink(packageContext, "video");
     const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveVideoForInsertion(packageContext, raw, fields);
     if (!observed.link && !selected.mediaItem?.driveFileId) {
       issues.push(`video_media_missing:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "video"}`);
@@ -1069,6 +1081,19 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
         observedLink: observed.link,
         fallbackName: "video-source.mp4",
       });
+      if (payload?.preflightOnly === true || payload?.expectedInsertionId || payload?.recoveryTarget) {
+        const metadata = await readOperationalVideoMetadata(archivedVideo.filePath);
+        const expectedMd5 = selected.mediaItem?.md5Checksum;
+        if (!expectedMd5 || archivedVideo.md5 !== expectedMd5 || !(metadata.width > 0 && metadata.height > 0)) throw new Error("Vídeo Drive inválido ou checksum divergente.");
+      }
+      if (payload?.preflightOnly === true) {
+        results.push({ siteId: readNumberRecord(raw, ["siteId"]),
+          localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+          sourceDriveFileId: selected.mediaItem.driveFileId, md5: archivedVideo.md5,
+          validated: true, uploaded: false });
+        resolvedInsertions.push(raw);
+        continue;
+      }
       const compressed = await compressVideoWithCod5Api({
         inputPath: archivedVideo.filePath,
         sourceName: archivedVideo.sourceName,
@@ -1136,8 +1161,13 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
       resolvedInsertions.push(raw);
       continue;
     }
-    const observed = selectObservedMediaLink(packageContext, "image");
-    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields);
+    const siteId = readNumberRecord(raw, ["siteId"]);
+    const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+    const profile = await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+    // Explicitly scoped repairs may only reuse binaries present in the confirmed folder.
+    const observed = payload?.expectedInsertionId || payload?.recoveryTarget
+      ? { link: null, ambiguous: false } : selectObservedMediaLink(packageContext, "image");
+    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields, profile);
     if ((!observed.link && !selected.mediaItem?.driveFileId) || observed.ambiguous || selected.ambiguous) {
       issues.push(`${observed.ambiguous || selected.ambiguous ? "image_media_ambiguous" : "image_media_missing"}:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"}`);
       resolvedInsertions.push(raw);
@@ -1149,24 +1179,28 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         observedLink: observed.link,
         fallbackName: "banner.gif",
       });
-      const siteId = readNumberRecord(raw, ["siteId"]);
-      const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
-      if (payload?.recoveryTarget) {
+      if (payload?.recoveryTarget || payload?.expectedInsertionId) {
         const expectedMd5 = String(selected.mediaItem?.md5Checksum || "").toLowerCase();
         if (!expectedMd5 || String(materialized.md5 || "").toLowerCase() !== expectedMd5) throw new Error("Checksum autoritativo da mídia Drive ausente ou divergente.");
-        const profile = await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
-        const expectedFormats = new Set((profile?.formats || []).map((value) => String(value).toUpperCase()));
+        const confirmedMd5 = readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]);
+        if (confirmedMd5 && confirmedMd5.toLowerCase() !== expectedMd5) throw new Error("Checksum da mídia diverge da confirmação explícita.");
         const extension = path.extname(materialized.sourceName || "").slice(1).toUpperCase();
-        if (!expectedFormats.has(extension)) throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
-        if (extension === "MP4") {
-          const metadata = await readOperationalVideoMetadata(materialized.filePath);
-          if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
-        } else {
+        const allowed = (profile.formats || []).map(value => String(value).toUpperCase().replace(/^JPG$/, 'JPEG'));
+        if (!allowed.includes(extension.replace(/^JPG$/, 'JPEG'))) throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+        {
           const metadata = await readOperationalImageMetadata(materialized.filePath);
-          if (String(metadata.format || "").toUpperCase() !== extension || !metadata.nonUniform) {
+          if (String(metadata.format || "").toUpperCase() !== (extension === "JPG" ? "JPEG" : extension) || !metadata.nonUniform) {
             throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
           }
         }
+      }
+      if (payload?.preflightOnly === true) {
+        results.push({ siteId, siteSigla, sourceDriveFileId: selected.mediaItem?.driveFileId,
+          localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+          sourceName: materialized.sourceName, md5: materialized.md5, sha256: materialized.sha256,
+          validated: true, uploaded: false, aspectWarning: imageAspectWarning(selected.mediaItem, profile) });
+        resolvedInsertions.push(raw);
+        continue;
       }
       const bucket = spacesBucketForSite(siteSigla);
       const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
@@ -1203,7 +1237,7 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         stagedUrl,
         mediaUrl,
         wordpressImport,
-        aspectWarning: imageAspectWarning(selected.mediaItem, await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]))),
+        aspectWarning: imageAspectWarning(selected.mediaItem, profile),
       });
       resolvedInsertions.push({
         ...raw,
@@ -1227,7 +1261,10 @@ function extendSitePeriodForSocialDelivery(insertions) {
     if (isSocialInsertion(insertion)) return insertion;
     const siteId = Number(readNumberRecord(insertion, ["siteId"]) || 0);
     const socialEnds = values
-      .filter((candidate) => isSocialInsertion(candidate) && Number(readNumberRecord(candidate, ["siteId"]) || 0) === siteId)
+      .filter((candidate) => isSocialInsertion(candidate) && Number(readNumberRecord(candidate, ["siteId"]) || 0) === siteId
+        && normalizePiDigits(candidate.piCodigo) === normalizePiDigits(insertion.piCodigo)
+        && normalizeText(candidate.campaignName || candidate.campanhaNome) === normalizeText(insertion.campaignName || insertion.campanhaNome)
+        && String(candidate.commercialBlockId || "") === String(insertion.commercialBlockId || ""))
       .map((candidate) => readStringRecord(candidate, ["periodoFim", "fim"]))
       .filter(Boolean);
     const latestEnd = [readStringRecord(insertion, ["periodoFim", "fim"]), ...socialEnds].filter(Boolean).sort().at(-1);
@@ -2119,9 +2156,10 @@ async function inspectOperationalImage(filePath, expected) {
 
 async function prepareOperationalDeliveryImage(filePath, profile) {
   const source = await readOperationalImageMetadata(filePath);
-  const expectedFormat = String(profile?.formats?.[0] || "GIF").toUpperCase();
-  if (String(source.format || "").toUpperCase() !== expectedFormat) throw new Error("Formato binário da mídia diverge do esperado.");
+  const expectedFormat = String(source.format || "").toUpperCase();
+  if (!(profile?.formats || ["GIF"]).map(value => String(value).toUpperCase().replace(/^JPG$/, "JPEG")).includes(expectedFormat)) throw new Error("Formato binário da mídia diverge do esperado.");
   if (!source.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  if (!Number(profile?.width) || !Number(profile?.height)) return { transformed: false, source, metadata: source, filePath, transform: null };
   if (Number(source.width) === Number(profile?.width) && Number(source.height) === Number(profile?.height)) {
     return { transformed: false, source, metadata: source, filePath, transform: null };
   }
@@ -2134,7 +2172,8 @@ async function prepareOperationalDeliveryImage(filePath, profile) {
     && Number(transform.targetHeight) === Number(profile?.height)
     && Number(transform.targetWidth) > Number(transform.sourceWidth)
     && Number(transform.targetHeight) === Number(transform.sourceHeight);
-  if (!exactTransform) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+  if (!exactTransform) return { transformed: false, source, metadata: source, filePath, transform: null,
+    aspectWarning: `aspect_ratio_advisory:${source.width}x${source.height}:expected_${profile.width}x${profile.height}` };
 
   const outputPath = path.join(
     path.dirname(filePath),
@@ -2203,10 +2242,10 @@ async function readOperationalVideoMetadata(filePath) {
 
 async function prepareOperationalDeliveryMedia(filePath, profile) {
   const extension = path.extname(filePath).toLowerCase();
-  const mediaFormat = extension === ".mp4" ? "MP4" : "GIF";
+  if (extension !== ".mp4") return prepareOperationalDeliveryImage(filePath, profile);
+  const mediaFormat = "MP4";
   const allowed = (Array.isArray(profile?.formats) ? profile.formats : []).map((value) => String(value).toUpperCase());
   if (!allowed.includes(mediaFormat)) throw new Error(`Perfil vigente não permite ${mediaFormat}.`);
-  if (mediaFormat === "GIF") return prepareOperationalDeliveryImage(filePath, profile);
 
   const source = await readOperationalVideoMetadata(filePath);
   const transform = profile?.deliveryTransforms?.MP4;
@@ -2258,8 +2297,9 @@ async function assertOperationalMediaReadback({ mediaUrl, expectedSha256, expect
   try {
     const metadata = expectedFormat === "MP4"
       ? await readOperationalVideoMetadata(readbackPath)
-      : await inspectOperationalImage(readbackPath, { width: Number(expectedProfile.width), height: Number(expectedProfile.height), format: "GIF" });
-    if (Number(metadata.width) !== Number(expectedProfile.width) || Number(metadata.height) !== Number(expectedProfile.height)) throw new Error("Readback público da mídia divergiu das dimensões aprovadas.");
+      : await readOperationalImageMetadata(readbackPath);
+    if (expectedFormat !== "MP4" && (String(metadata.format).toUpperCase() !== expectedFormat || !metadata.nonUniform)) throw new Error("Readback público contém imagem inválida.");
+    if (expectedFormat === "MP4" && (Number(metadata.width) !== Number(expectedProfile.width) || Number(metadata.height) !== Number(expectedProfile.height))) throw new Error("Readback público da mídia divergiu das dimensões aprovadas.");
     return { ok: true, sha256: actualSha256, bytes: bytes.length, metadata };
   } finally {
     await rm(readbackPath, { force: true });
@@ -2282,8 +2322,7 @@ function normalizeOperationalMediaProfile(profile) {
     : null;
   return {
     groupId: Number(profile.groupId),
-    width: Number(profile.width),
-    height: Number(profile.height),
+    ...(Number(profile.width) > 0 && Number(profile.height) > 0 ? {width: Number(profile.width), height: Number(profile.height)} : {}),
     formats: (Array.isArray(profile.formats) ? profile.formats : []).map((value) => String(value).toUpperCase()).sort(),
     ...(deliveryTransform ? { deliveryTransform } : {}),
     ...(deliveryTransforms ? { deliveryTransforms } : {}),
@@ -2294,7 +2333,11 @@ async function loadOperationalMediaProfile(siteSigla, localFormat) {
   const config = JSON.parse(await readFile(path.join(PROJECT_ROOT, "config/adrotate-sites.json"), "utf8"));
   const siteConfig = config?.[String(siteSigla || "").toUpperCase()];
   const normalizedFormat = normalizeOperationalValue(localFormat);
-  const matches = (siteConfig?.formatMappings || []).filter((mapping) => (mapping?.aliases || []).some((alias) => normalizeOperationalValue(alias) === normalizedFormat));
+  const normalizedFormats = new Set([
+    normalizedFormat,
+    normalizedFormat.replace(/\s*(?:[-—–]\s*)?\d+\s*X\s*\d+$/, "").trim(),
+  ]);
+  const matches = (siteConfig?.formatMappings || []).filter((mapping) => [...(mapping?.aliases || []), ...(mapping?.inputAliases || [])].some((alias) => normalizedFormats.has(normalizeOperationalValue(alias))));
   if (matches.length !== 1) throw new Error("Formato operacional não possui um perfil de mídia único na configuração vigente.");
   const profile = matches[0].operationalMediaProfile
     ?? (normalizedFormat === "VIDEO"
@@ -2423,6 +2466,7 @@ async function buildDrivePiPackageContext(payload, archived) {
       name: item.name,
       path: item.path,
       mimeType: item.mimeType,
+      modifiedTime: item.modifiedTime,
       webViewLink: item.webViewLink,
       size: item.size,
       md5Checksum: item.md5Checksum,
@@ -2881,6 +2925,34 @@ function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText =
   };
 }
 
+function validateRequestedSiteIdentity(insertions, siteSiglaById) {
+  for (const raw of insertions || []) {
+    const siteId = readNumberRecord(raw, ["siteId"]);
+    const sigla = readStringRecord(raw, ["siteSigla"]);
+    if (siteId && (!siteSiglaById.has(Number(siteId)) || (sigla && siteSiglaById.get(Number(siteId)) !== sigla.toUpperCase()))) {
+      throw new Error("site_identity_mismatch: número e sigla do portal divergem; nenhuma mídia foi enviada.");
+    }
+  }
+}
+
+function validateExpectedSheetScope(source, insertion, payload) {
+  const downloadedAt = source?.source?.downloadedAt || source?.sheet?.downloadedAt;
+  const age = Date.now() - Date.parse(downloadedAt || "");
+  if (!Number.isFinite(age) || age < -60000 || age > 15 * 60000) throw new Error("sheet_source_stale: planilha fresca obrigatória antes de publicar.");
+  const rows = (source?.items || []).filter((row) => Number(row?.adops?.insertionId) === Number(insertion.id)
+    && Number(row?.adops?.campaignId) === Number(insertion.campanhaId)
+    && normalizePiDigits(row.piCodigo) === normalizePiDigits(payload.expectedPiCodigo)
+    && String(row.siteSigla).toUpperCase() === String(insertion.siteSigla).toUpperCase());
+  if (rows.length !== 1) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+  const row = rows[0];
+  if (row.drive?.status !== "matched" || row.drive?.folderId !== payload.driveFileId) throw new Error("sheet_drive_mismatch: pasta não corresponde ao alvo da planilha.");
+  if (!row.format?.resolution?.safeToApply || row.canonicalSelection?.decision !== "confirmed"
+    || Number(row.canonicalSelection.insertionId) !== Number(insertion.id)
+    || !row.canonicalSelection.compatibleInsertionIds?.some(id => Number(id) === Number(insertion.id))) throw new Error("sheet_scope_unsafe: posição ou inserção ambígua.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(row.period?.start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(row.period?.end || "") || row.period.start > row.period.end) throw new Error("sheet_period_invalid");
+  return row;
+}
+
 function recoveryTargetKey(target) {
   return [
     normalizePiDigits(target?.piCodigo),
@@ -3039,7 +3111,9 @@ function isDiscardableDraftCampaign(detail, relationsByInsertionId = new Map()) 
     const knownDraftOrigin = /^(criado a partir do drive|sincronizado da planilha)/.test(normalizeText(insertion?.observacoes));
     const relation = relationsByInsertionId.get(Number(insertion?.id)) || {};
     const hasAdrotateHistory = Boolean(
-      relation?.plannedSelf
+      firstNonEmptyString(relation?.plannedSelf?.mediaUrl)
+      || Number(relation?.plannedSelf?.adId || relation?.plannedSelf?.adrotateBannerId || 0) > 0
+      || relation?.publicationConfirmation
       || (Array.isArray(relation?.exactLiveMatches) && relation.exactLiveMatches.length)
       || (Array.isArray(relation?.historicalAdminMatches) && relation.historicalAdminMatches.length),
     );
@@ -3117,9 +3191,9 @@ async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
       const allowedCoexistence = expectedTarget?.allowCoexistence === true
         && Number(expectedTarget?.coexistingInsertionId) > 0
         && String(expectedTarget?.coexistenceConfirmation || "").trim().length >= 8
-        && competitorDetail.insertions.some((insertion) => Number(insertion?.id) === Number(expectedTarget.coexistingInsertionId)
+        && competitorDetail.insertions.every((insertion) => Number(insertion?.id) === Number(expectedTarget.coexistingInsertionId)
           && Number(insertion?.siteId) === Number(expectedInsertion.siteId)
-          && Number(relations.get(Number(insertion?.id))?.plannedSelf?.groupId || 0) === Number(expectedTarget?.coexistenceGroupId || 0));
+          && Number(relations.get(Number(insertion?.id))?.plannedSelf?.adrotateGroupId || 0) === Number(expectedTarget?.coexistenceGroupId || 0));
       if (!isDiscardableDraftCampaign(competitorDetail, relations) && !allowedCoexistence) {
         return { ok: false, conflicts: [`dedupe_conflict: campanha concorrente #${competitor.id} possui publicação, mídia, evidência ou origem não descartável`], checkedCampaignIds: [expectedCampaignId, Number(competitor.id)] };
       }
@@ -3278,11 +3352,14 @@ function validateOptionalDrivePiDestination(fields, expectedInsertion = null) {
   }
 }
 
-function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false, requireHttpsDestination = false, expectedInsertion = null } = {}) {
+function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false, requireHttpsDestination = false, expectedInsertion = null, preflightOnly = false } = {}) {
   const hasInsertionMedia = fields.insertions.some((item) => readStringRecord(item, ["mediaUrl", "media_url"]));
-  const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"]));
+  const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"])
+    && !(preflightOnly && mediaProcessing?.results?.some(result => result.validated === true && result.uploaded === false
+      && Number(result.siteId) === Number(item.siteId)
+      && normalizeSlotKey(result.localFormato) === normalizeSlotKey(item.localFormato || item.localFormatoNormalizado))));
   const issues = [];
-  if (!packageClassification?.hasPdf) issues.push("missing_pi_pdf");
+  if (!packageClassification?.hasPdf && !fields.sheetVerified) issues.push("missing_pi_pdf");
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
   if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
   if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
@@ -4884,14 +4961,14 @@ function normalizeExpectedPiIdentity(value) {
   return normalizePiDigits(value)?.replace(/^0+(?=\d)/, "") || null;
 }
 
-function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo }) {
+function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo, allowMissingPdf = false }) {
   const expected = normalizeExpectedPiIdentity(expectedPiCodigo);
   const merged = normalizeExpectedPiIdentity(fieldsPiCodigo);
   const fromPdf = normalizeExpectedPiIdentity(pdfPiCodigo);
-  if (!expected || !fromPdf) {
+  if (!expected || (!fromPdf && !allowMissingPdf)) {
     throw new Error("O PDF não confirmou uma PI numérica; nenhuma mutação foi aplicada.");
   }
-  if (fromPdf !== expected) {
+  if (fromPdf && fromPdf !== expected) {
     throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
   }
   if (merged && merged !== expected) {
@@ -4936,6 +5013,7 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
     pdfPiCodigo: fields.pdfPiCodigo,
     campaignPiCodigo: campaign?.piCodigo,
     insertionPiCodigo: expected?.piCodigo,
+    allowMissingPdf: Boolean(fields.sheetVerified),
   });
   validateExpectedDrivePiCommercialContext({
     campaignCompetencia: campaign?.competencia,
@@ -4945,7 +5023,7 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
   if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
     throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
   }
-  const allowSheetPeriodCorrection = payload?.periodSource === "sheet" && payload?.allowPeriodCorrection === true;
+  const allowSheetPeriodCorrection = Boolean(fields.sheetVerified);
   const scoped = fields.insertions.filter((raw) => (
     Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expected.siteId || 0)
     && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
@@ -5753,6 +5831,9 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  const siteCatalog = await getSiteSiglaByIdMap();
+  validateRequestedSiteIdentity(payload?.parsedPi?.insertions || [], siteCatalog);
+  validateRequestedSiteIdentity(fields.insertions, siteCatalog);
   fields = await hydrateDrivePiRecoveryTarget(fields, payload);
   // Existing published media is immutable in recovery: never enter upload/PATCH paths.
   if (payload?.recoveryTarget?.insertionId) {
@@ -5788,6 +5869,39 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
       campaign: expectedCampaign,
       sourceText: buildDrivePiFolderIdentityText(payload, packageContext),
     });
+    const monthlySource = await privateApiGet(`/api/campaign-operations/evidence-monthly-source?date=${todayInCuiaba()}`);
+    const sheetRow = validateExpectedSheetScope(monthlySource, expectedInsertion, payload);
+    // Legacy variants can share the slot but never silently displace a live or exact-period insertion.
+    for (const id of sheetRow.canonicalSelection.compatibleInsertionIds.filter(id => Number(id) !== Number(expectedInsertion.id))) {
+      const sibling = await privateApiGet(`/api/insertions/${id}`);
+      const relation = await privateApiGet(`/api/integrations/adrotate/insertions/${id}/relation`);
+      if (sibling.mediaUrl || sibling.bannerPublicadoNoSite || relation?.exactLiveMatches?.length
+        || (sibling.periodoInicio === sheetRow.period.start && sibling.periodoFim === sheetRow.period.end)) {
+        throw new Error(`sheet_duplicate_insertion:${id}: variante exige revisão; nenhuma publicação alterada.`);
+      }
+    }
+    if (payload.allowCoexistence === true && Number(payload.coexistenceGroupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("coexistence_group_mismatch: grupo deve corresponder à planilha.");
+    validateExpectedDrivePiIdentity({ expectedPiCodigo: payload.expectedPiCodigo, fieldsPiCodigo: fields.piCodigo,
+      pdfPiCodigo: fields.pdfPiCodigo, campaignPiCodigo: expectedCampaign.piCodigo,
+      insertionPiCodigo: expectedInsertion.piCodigo, allowMissingPdf: true });
+    const requested = payload?.parsedPi?.insertions || [];
+    if (requested.length > 1) throw new Error("Alvo explícito aceita somente uma inserção.");
+    for (const raw of [...requested, ...fields.insertions.filter((item) => !isSocialInsertion(item))]) {
+      if (Number(raw.siteId || expectedInsertion.siteId) !== Number(expectedInsertion.siteId)) throw new Error("Portal diverge da inserção esperada.");
+      const profile = await loadOperationalMediaProfile(expectedInsertion.siteSigla, raw.localFormatoNormalizado || raw.localFormato);
+      if (Number(profile.groupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("Posição diverge da planilha atual.");
+    }
+    const raw = requested[0] || fields.insertions[0] || {};
+    fields.insertions = [{ ...raw, siteId: expectedInsertion.siteId, siteSigla: expectedInsertion.siteSigla,
+      localFormato: expectedInsertion.localFormato, localFormatoNormalizado: expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato,
+      periodoInicio: sheetRow.period.start, periodoFim: sheetRow.period.end, periodoOriginal: sheetRow.period.original,
+      mediaUrl: expectedInsertion.mediaUrl || null }];
+    fields.sheetVerified = { downloadedAt: monthlySource.source?.downloadedAt, row: sheetRow.sheetSource, folderId: sheetRow.drive.folderId };
+    payload.periodSource = "sheet";
+    payload.allowPeriodCorrection = true;
+    // This marker is derived here, never accepted from an API caller.
+    payload.verifiedSheetScope = fields.sheetVerified;
+    if (payload.publish === true && (sheetRow.period.start > todayInCuiaba() || sheetRow.period.end < todayInCuiaba())) throw new Error("publication_outside_period: recuperar evidências sem reativar campanha encerrada.");
   }
   const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
   fields = clickUrlResolution.fields;
@@ -5799,6 +5913,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
   if (payload?.publish === true && destinationPolicy.ok && destinationPolicy.url) {
     await assertPublicOperationalDestination(destinationPolicy.url);
   }
+  const earlyDedupe = await validateDrivePiDedupeSafety(fields, payload);
+  if (!earlyDedupe.ok) throw new Error(earlyDedupe.conflicts.join("; "));
   const shouldResolveMedia = (payload?.resolveMedia === true || payload?.publish === true)
     && (payload?.publish !== true || destinationPolicy.ok);
   const videoResolution = shouldResolveMedia
@@ -5817,7 +5933,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
   };
   const validation = validateDrivePiApplyFields(fields);
   const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, {
-    requireResolvedMedia: payload?.publish === true,
+    requireResolvedMedia: payload?.publish === true || preflightOnly,
+    preflightOnly,
     requireHttpsDestination: payload?.publish === true,
     expectedInsertion: expectedInsertionContext,
   });
@@ -6053,7 +6170,7 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     for (const insertionId of getAppliedInsertionIds(applied)) {
       const common = {
         insertionId,
-        replaceExisting: true,
+        replaceExisting: payload?.allowCoexistence !== true,
         purgeCache: payload?.purgeCache !== false,
         date: firstNonEmptyString(payload?.date) || todayInCuiaba(),
         captureAt: firstNonEmptyString(payload?.captureAt),
@@ -6087,7 +6204,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     };
   }
   const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "not_due", "not_requested"].includes(item?.status));
-  const finalStatus = applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
+  const finalStatus = preflightOnly && finalCanApply ? "validated"
+    : applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
   const finalReviewReasons = buildDrivePiReviewReasons({
     packageClassification,
     packageReadiness,
@@ -6153,6 +6271,9 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
 
   return {
     stage: finalStatus,
+    periodSource: payload?.periodSource === "sheet" ? "planilha" : "PI",
+    effectivePeriodEnd: fields.insertions.length === 1 ? fields.insertions[0].periodoFim : null,
+    mediaProcessing,
     eventId: payload.eventId,
     documentId: payload.documentId ?? null,
     driveFileId: payload.driveFileId,
@@ -6215,25 +6336,48 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     params.set("siteSigla", String(site.sigla));
   }
   const operations = await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
+  // The sheet is not an inventory of already-published insertions (e.g. coexisting campaigns).
+  const publishedQuery = new URLSearchParams({ date: targetDate });
+  if (siteId) publishedQuery.set('siteId', String(siteId));
+  if (competencia) publishedQuery.set('competencia', competencia);
+  const publishedAudit = await privateApiGet(`/api/insertions/capture-proof/audit?${publishedQuery}`);
+  if (!Array.isArray(publishedAudit?.items)) throw new Error('daily_print_published_scope_unavailable');
+  const representedIds = new Set((operations?.items ?? []).map(item => readPositiveInteger(item?.adops?.insertionId)));
+  const publishedInsertions = [];
+  for (const audit of publishedAudit.items) {
+    if (representedIds.has(audit.insertionId)) continue;
+    const insertion = await privateApiGet(`/api/insertions/${audit.insertionId}`);
+    publishedInsertions.push({ insertion, audit });
+  }
   const pendingInsertionIds = new Set((Array.isArray(payload?.pendingInsertionIds) ? payload.pendingInsertionIds : []).map(readPositiveInteger).filter(Boolean));
   const candidates = selectDailyPrintCandidates(operations?.items, targetDate, {
     pendingInsertionIds: [...pendingInsertionIds],
     competencia,
+    publishedInsertions,
   });
   const candidateInsertionIds = candidates
     .map((item) => readPositiveInteger(item?.adops?.insertionId))
     .filter(Boolean);
+  const blocked = (operations?.items ?? []).filter(item => {
+    const id = readPositiveInteger(item?.adops?.insertionId);
+    return !candidateInsertionIds.includes(id)
+      && (pendingInsertionIds.size === 0 || pendingInsertionIds.has(id))
+      && (!competencia || item?.adops?.competencia === competencia)
+      && item?.evidence?.requiredDates?.includes(targetDate);
+  }).map(item => ({ insertionId: readPositiveInteger(item?.adops?.insertionId), status: 'blocked_upstream',
+    error: item?.publicationHealth?.reason ?? 'canonical_insertion_not_capture_ready' }));
+  const expectedTotal = candidates.length + blocked.length;
   const captured = [];
   const skipped = [];
-  const failed = [];
+  const failed = [...blocked];
   const publishLiveProgress = async (runningInsertionId = null, extra = {}) => {
     try {
       await progressJob(job.id, {
         stage: "capture_async_dispatch",
         targetDate,
         itemsDone: captured.length + skipped.length + failed.length,
-        itemsTotal: candidates.length,
-        percentTotal: candidates.length ? Math.round(((captured.length + skipped.length + failed.length) / candidates.length) * 100) : 100,
+        itemsTotal: expectedTotal,
+        percentTotal: expectedTotal ? Math.round(((captured.length + skipped.length + failed.length) / expectedTotal) * 100) : 100,
         liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
         ...extra,
       });
@@ -6243,9 +6387,9 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     }
   };
   await publishLiveProgress(null, {
-    itemsDone: 0,
-    itemsTotal: candidateInsertionIds.length,
-    percentTotal: candidates.length ? 0 : 100,
+    itemsDone: blocked.length,
+    itemsTotal: expectedTotal,
+    percentTotal: expectedTotal ? Math.round(blocked.length / expectedTotal * 100) : 100,
   });
   let transportError = null;
   for (const item of candidates) {
@@ -6303,12 +6447,12 @@ async function executePrintBatch(job, assertLease = () => undefined) {
   const outcome = classifyDailyPrintOutcome({
     jobId: job.id,
     childJobId: captured.at(-1)?.captureJobId ?? null,
-    expectedTotal: candidates.length,
+    expectedTotal,
     audit: {
       date: targetDate,
-      totalEligible: Number(audit?.totalEligible ?? 0),
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
       ok: Number(audit?.ok ?? 0),
-      missing: Number(audit?.missing ?? 0),
+      missing: Number(audit?.missing ?? 0) + blocked.length,
       invalid: Number(audit?.invalid ?? 0),
       missingDates: Number(audit?.missing ?? 0) > 0 ? [targetDate] : [],
       invalidDates: Number(audit?.invalid ?? 0) > 0 ? [targetDate] : [],
@@ -6320,6 +6464,7 @@ async function executePrintBatch(job, assertLease = () => undefined) {
     targetDate,
     mode: "async_per_insertion",
     totalCandidates: candidates.length,
+    blocked,
     captured,
     skipped,
     failed,
@@ -6337,9 +6482,9 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       invalid: audit.invalid,
     },
     canonicalAudit: {
-      expected: candidates.length,
+      expected: expectedTotal,
       approved: Number(audit.ok ?? 0),
-      missing: Number(audit.missing ?? 0),
+      missing: Number(audit.missing ?? 0) + blocked.length,
       invalid: Number(audit.invalid ?? 0),
     },
     transportError,
@@ -6370,10 +6515,10 @@ async function executePrintBatch(job, assertLease = () => undefined) {
       transportError: transportError ?? null,
       errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
       date: targetDate,
-      expectedTotal: candidates.length,
-      totalEligible: audit?.totalEligible ?? null,
+      expectedTotal,
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
       ok: audit?.ok ?? null,
-      missing: audit?.missing ?? null,
+      missing: Number(audit?.missing ?? 0) + blocked.length,
       invalid: audit?.invalid ?? null,
       failedInsertionIds: failed.map((item) => item.insertionId),
       nextRecoveryAt: payload?.nextRecoveryAt ?? null,
@@ -7160,10 +7305,11 @@ async function executeOperationalMediaPublish(payload) {
   const mediaFormat = String(mediaMetadata.format || "GIF").toUpperCase();
   const deliveryBuffer = deliveryMedia.transformed ? await readFile(deliveryMedia.filePath) : materialized.buffer;
   const deliverySha256 = crypto.createHash("sha256").update(deliveryBuffer).digest("hex");
-  const deliveryExtension = mediaFormat === "MP4" ? ".mp4" : ".gif";
+  const deliveryExtension = {MP4: ".mp4", GIF: ".gif", PNG: ".png", JPEG: ".jpg"}[mediaFormat];
+  if (!deliveryExtension) throw new Error("Formato binário de entrega não suportado.");
   const deliverySourceName = deliveryMedia.transformed
     ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${mediaMetadata.width}x${mediaMetadata.height}${deliveryExtension}`
-    : materialized.sourceName;
+    : `${path.basename(materialized.sourceName, path.extname(materialized.sourceName))}${deliveryExtension}`;
   if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
 
   const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
@@ -7177,7 +7323,7 @@ async function executeOperationalMediaPublish(payload) {
   };
   const bucket = spacesBucketForSite(siteSigla);
   const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: deliverySourceName, contentHash: deliverySha256 });
-  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: mediaFormat === "MP4" ? "video/mp4" : "image/gif" });
+  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: contentTypeForMediaName(deliverySourceName) });
   const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
   const stagedReadback = await assertOperationalMediaReadback({
     mediaUrl: stagedUrl,
@@ -8850,6 +8996,9 @@ async function main() {
 }
 
 export {
+  loadOperationalMediaProfile,
+  validateRequestedSiteIdentity,
+  validateExpectedSheetScope,
   agencyAliasCandidates,
   assertOperationalMediaReadback,
   buildSpacesImageObjectKey,

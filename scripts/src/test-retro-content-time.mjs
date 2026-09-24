@@ -102,18 +102,7 @@ assert.equal(approved.ok, true);
 assert.equal(approved.contentTimeline.maxObserved, "2026-07-15T20:12:00.000Z");
 assert.equal(approved.relativeContentTimeline.ok, true);
 
-const reconstructedWithActualClock = evaluateRetroCaptureGate({
-  requestedCaptureAt: "2026-07-15T19:06:00-04:00",
-  systemDateTime: "quarta-feira, 15/09/2026, 02:30",
-  reconstruction: { provenanceVersion: 2, reconstructedAt: "2026-09-15T02:30:00.000Z" },
-  pageDateObserved: "2026-07-15T19:06:00-04:00",
-  contentDateSamples: ["15/07/2026 16:12"],
-  contentRelativeTimeSamples: [],
-});
-assert.equal(reconstructedWithActualClock.ok, true);
-assert.equal(reconstructedWithActualClock.codes.includes("desktop_time_mismatch"), false);
-
-const reconstructedWithHistoricClock = evaluateRetroCaptureGate({
+const reconstructedWithHistoricalClock = evaluateRetroCaptureGate({
   requestedCaptureAt: "2026-07-15T19:06:00-04:00",
   systemDateTime: "quarta-feira, 15/07/2026, 19:06",
   reconstruction: { provenanceVersion: 2, reconstructedAt: "2026-09-15T02:30:00.000Z" },
@@ -121,8 +110,19 @@ const reconstructedWithHistoricClock = evaluateRetroCaptureGate({
   contentDateSamples: ["15/07/2026 16:12"],
   contentRelativeTimeSamples: [],
 });
-assert.equal(reconstructedWithHistoricClock.ok, false);
-assert.ok(reconstructedWithHistoricClock.codes.includes("desktop_time_mismatch"));
+assert.equal(reconstructedWithHistoricalClock.ok, true);
+assert.equal(reconstructedWithHistoricalClock.codes.includes("desktop_time_mismatch"), false);
+
+const reconstructedWithActualClock = evaluateRetroCaptureGate({
+  requestedCaptureAt: "2026-07-15T19:06:00-04:00",
+  systemDateTime: "terça-feira, 15/09/2026, 02:30",
+  reconstruction: { provenanceVersion: 2, reconstructedAt: "2026-09-15T02:30:00.000Z" },
+  pageDateObserved: "2026-07-15T19:06:00-04:00",
+  contentDateSamples: ["15/07/2026 16:12"],
+  contentRelativeTimeSamples: [],
+});
+assert.equal(reconstructedWithActualClock.ok, false);
+assert.ok(reconstructedWithActualClock.codes.includes("desktop_time_mismatch"));
 
 const compact = compactMetadataForPersistence({
   contentDateSamples: Array.from({ length: 30 }, (_, index) => `15/07/2026 ${index}:00`),

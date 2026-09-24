@@ -10,7 +10,32 @@ import {
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
+  monthlyEvidenceProvenance,
+  selectMonthlyEvidenceProof,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
+
+test('reconstrucao nunca vira original pelo resultado da auditoria tecnica', () => {
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z' } };
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png?v=1', proof).documentaryStatus, 'reconstruction_requires_acceptance');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/b.png', proof).documentaryStatus, 'provenance_unverified');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', null).documentaryStatus, 'provenance_unverified');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled' } }).documentaryStatus, 'provenance_unverified');
+  const trusted = monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled', capturedAt: 'not-a-date' } }, true);
+  assert.equal(trusted.documentaryStatus, 'capture_recorded');
+  assert.equal('capturedAt' in trusted, false, 'horário deve vir apenas da correlação canônica da rota');
+});
+
+test('reconstrucao exige conferência documental mesmo sem erro técnico', () => {
+  const result = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [{ date: '2026-09-18', status: 'reconstruction' }] });
+  assert.deepEqual(result.evidenceStates, ['documentary_pending']);
+});
+
+test('tentativa nova não promovida não oculta a prova do arquivo preservado', () => {
+  const original = { uploadedUrl: 'https://example.test/original.png', updatedAt: new Date('2026-09-18') };
+  const candidate = { uploadedUrl: 'https://example.test/candidate.png', updatedAt: new Date('2026-09-20') };
+  assert.equal(selectMonthlyEvidenceProof(original.uploadedUrl, [original, candidate]), original);
+  assert.equal(selectMonthlyEvidenceProof('https://example.test/unknown.png', [candidate]), null);
+});
 
 test("remove insercoes arquivadas ou substituidas antes do enriquecimento", () => {
   assert.deepEqual(excludeSupersededMonthlyInsertions([
@@ -143,4 +168,27 @@ test("normaliza os nomes detalhados usados nos cards duplicados", () => {
     { ...base, id: 2190, localFormato: "Video — Lateral 01 — Sidebar — 300x250", mediaUrl: null, bannerPublicadoNoSite: false },
     { ...base, id: 1844, localFormato: "Video", mediaUrl: "y", bannerPublicadoNoSite: true },
   ]).map((row) => row.id), [1843, 1844]);
+});
+
+test("mantem campanhas nomeadas distintas com a mesma PI, portal e formato", () => {
+  const base = { piCodigo: "PI 91381", siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.deepEqual(selectCanonicalMonthlyInsertions([
+    { ...base, id: 3022, campanhaName: "C DISPLAY" },
+    { ...base, id: 3024, campanhaName: "PRESTAÇÃO DE CONTAS" },
+  ]).map((row) => row.id), [3022, 3024]);
+});
+
+test("marca falta do dia como aguardando horário antes das 18h sem atraso falso", () => {
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-17", status: "missing" }] }).evidenceStates, ["scheduled"]);
+  assert.deepEqual(classifyMonthlyInsertion({ published: true, periodStart: "2026-09-01", periodEnd: "2026-09-30", today: "2026-09-17", currentHour: 17, evidenceDays: [{ date: "2026-09-16", status: "missing" }, { date: "2026-09-17", status: "missing" }] }).evidenceStates, ["missing", "retroactive_missing"]);
+});
+
+test("não deduplica campanhas sem PI quando os nomes também não identificam equivalência", () => {
+  const base = { piCodigo: null, siteId: 1, localFormatoNormalizado: "TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30", mediaUrl: null, bannerPublicadoNoSite: false };
+  assert.equal(selectCanonicalMonthlyInsertions([{ ...base, id: 1, campanhaName: null }, { ...base, id: 2, campanhaName: null }]).length, 2);
+});
+test('classifica o estado scheduled produzido pela rota sem falso erro de auditoria', () => {
+  const input={published:true,periodStart:'2026-09-01',periodEnd:'2026-09-30',today:'2026-09-17',currentHour:10,evidenceDays:[{date:'2026-09-17',status:'scheduled'}]};
+  assert.deepEqual(classifyMonthlyInsertion(input).evidenceStates,['scheduled']);
+  assert.deepEqual(classifyMonthlyInsertion({...input,evidenceDays:[...input.evidenceDays,{date:'2026-09-16',status:'missing'}]}).evidenceStates,['missing','retroactive_missing']);
 });

@@ -3439,8 +3439,9 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
   const coexistingInsertionId = readOptionalNumber(req.body?.coexistingInsertionId);
   const coexistenceGroupId = readOptionalNumber(req.body?.coexistenceGroupId);
   const coexistenceConfirmation = readOptionalString(req.body?.coexistenceConfirmation);
-  if ((expectedCampaignId == null) !== (expectedInsertionId == null) || (expectedInsertionId != null && (!expectedPiCodigo || !options.publishFlow))) {
-    res.status(400).json({ error: "bad_request", details: "Alvo explícito exige expectedCampaignId, expectedInsertionId e expectedPiCodigo no drive-pi-publish." });
+  if ((expectedCampaignId == null) !== (expectedInsertionId == null) || (expectedInsertionId != null && (!expectedPiCodigo || (!options.publishFlow && !options.preflightOnly)))
+    || [expectedCampaignId, expectedInsertionId, coexistingInsertionId, coexistenceGroupId].some((id) => id != null && (!Number.isInteger(id) || id <= 0))) {
+    res.status(400).json({ error: "bad_request", details: "Alvo explícito exige IDs positivos, expectedCampaignId, expectedInsertionId e expectedPiCodigo no preflight ou publish." });
     return;
   }
   if (allowCoexistence && (!expectedCampaignId || !expectedInsertionId || !coexistingInsertionId || !coexistenceGroupId || !coexistenceConfirmation || coexistenceConfirmation.length < 8)) {
@@ -3463,7 +3464,7 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     parsedPi: req.body?.parsedPi,
     preflightOnly: options.preflightOnly,
     explicitFolder: true,
-    resolveMedia: options.publishFlow ? req.body?.resolveMedia !== false : req.body?.resolveMedia === true,
+    resolveMedia: options.preflightOnly || options.publishFlow ? req.body?.resolveMedia !== false : req.body?.resolveMedia === true,
     strictInsertionScope: options.publishFlow ? req.body?.strictInsertionScope !== false : req.body?.strictInsertionScope === true,
     allowPdfInsertions: options.publishFlow ? req.body?.allowPdfInsertions === true : req.body?.allowPdfInsertions !== false,
     publish: options.publishFlow ? req.body?.publish !== false : req.body?.publish === true,

@@ -2765,20 +2765,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
     const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
     if (main) {
       window.__cod5AflRetroDateObserver?.disconnect?.();
-      let rewriteQueued = false;
-      window.__cod5AflRetroDateObserver = new MutationObserver(() => {
-        if (rewriteQueued) return;
-        rewriteQueued = true;
-        queueMicrotask(() => {
-          rewriteQueued = false;
-          rewriteRelativeDates(main);
-        });
-      });
-      window.__cod5AflRetroDateObserver.observe(main, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
+      window.__cod5AflRetroDateObserver = null;
       const normalizeAllRetroDates = () => {
         for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
           normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
@@ -2786,7 +2773,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       };
       window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
       if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
-      window.__cod5AflRetroDateInterval = window.setInterval(normalizeAllRetroDates, 120);
+      window.__cod5AflRetroDateInterval = null;
     }
 
     const reservedArticles = new Set([hero, ...latest]);
@@ -2837,7 +2824,7 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       heroDateText,
       heroDateNodesUpdated,
       relativeDatesRewritten,
-      relativeDateObserverActive: Boolean(main),
+      relativeDateObserverActive: false,
       editorialContentMatches,
     };
   }, { captureAt, retroPosts: posts, pageType: mapping?.page === "article" ? "article" : "home" });
@@ -2960,11 +2947,11 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
 
 function buildStaticRetroSlotPlan(mapping) {
   const domain = String(mapping?.domain || "").toLowerCase();
-  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "roonoticias.com"]).has(domain)) return null;
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
-  const isPnmtDesktopTop = domain === "portalnortemt.com" && slotSelector === "div.hidden.lg\\:block .g.g-1";
+  const isPnmtDesktopTop = new Set(["portalnortemt.com", "portalpantanalmt.com"]).has(domain) && slotSelector === "div.hidden.lg\\:block .g.g-1";
   let contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-1"
     ? "header .omt-header-top #block-8"
     : isPnmtDesktopTop
@@ -2989,6 +2976,7 @@ function buildStaticRetroSlotPlan(mapping) {
   if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
+  if (domain === "portalpantanalmt.com" && !isPnmtDesktopTop) return null;
   if (domain === "roonoticias.com" && groupId !== 1) return null;
   return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
 }
@@ -3093,21 +3081,28 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       slot.style.minHeight = "90px";
       return slot;
     };
-    const createConfiguredHomeSlot = () => {
-      if (!missingSlotPlan) return null;
+    const resolveUniqueDesktopAnchor = () => {
       const hosts = Array.from(document.querySelectorAll(missingSlotPlan.contextSelector));
-      if (missingSlotPlan.requireUniqueVisibleAnchor === true && hosts.length !== 1) return null;
+      if (hosts.length !== 1) return null;
       const host = hosts[0];
       if (!(host instanceof HTMLElement)) return null;
+      const desktopHost = host.closest("div.hidden.lg\\:block");
+      if (!(desktopHost instanceof HTMLElement)) return null;
+      const style = window.getComputedStyle(desktopHost);
+      const rect = desktopHost.getBoundingClientRect();
+      const header = desktopHost.closest(".omt-header-top");
+      if (!(header instanceof HTMLElement)) return null;
+      const headerRect = header.getBoundingClientRect();
+      if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
+      return host;
+    };
+    const createConfiguredHomeSlot = () => {
+      if (!missingSlotPlan) return null;
+      const host = missingSlotPlan.requireUniqueVisibleAnchor === true
+        ? resolveUniqueDesktopAnchor()
+        : document.querySelector(missingSlotPlan.contextSelector);
+      if (!(host instanceof HTMLElement)) return null;
       if (missingSlotPlan.requireUniqueVisibleAnchor === true) {
-        const desktopHost = host.closest("div.hidden.lg\\:block");
-        if (!(desktopHost instanceof HTMLElement)) return null;
-        const style = window.getComputedStyle(desktopHost);
-        const rect = desktopHost.getBoundingClientRect();
-        const header = desktopHost.closest(".omt-header-top");
-        if (!(header instanceof HTMLElement)) return null;
-        const headerRect = header.getBoundingClientRect();
-        if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
         let hasAdRotateUnavailableComment = false;
         while (walker.nextNode()) {
@@ -3141,7 +3136,20 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     };
     const slots = Array.from(document.querySelectorAll(slotSelector || ".g.g-1"));
     if (missingSlotPlan?.requireUniqueVisibleAnchor === true && slots.length !== 0) {
-      return { applied: false, reason: "slot_conflict" };
+      const host = resolveUniqueDesktopAnchor();
+      const existing = slots[0];
+      const media = existing ? Array.from(existing.querySelectorAll("img,video,source,iframe")) : [];
+      const onlyKnownPlaceholder = media.length === 1 && media[0].tagName === "IMG" && (() => {
+        try {
+          const image = media[0];
+          const sources = [image.currentSrc, image.getAttribute("src"), image.getAttribute("data-src"), image.getAttribute("data-lazy-src")].filter(Boolean);
+          return !image.getAttribute("srcset") && !image.getAttribute("data-srcset") && !image.getAttribute("data-lazy-srcset")
+            && sources.length > 0 && sources.every((src) => new URL(src, location.href).hostname === "placehold.co");
+        } catch { return false; }
+      })();
+      if (slots.length !== 1 || !host?.contains(existing) || !isUsableSlot(existing) || !onlyKnownPlaceholder) {
+        return { applied: false, reason: "slot_conflict" };
+      }
     }
     const slot = slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot();
     if (!slot) return { applied: false, reason: missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
@@ -3516,15 +3524,13 @@ function evaluateRetroCaptureGate(payload) {
       detail: "reconstruction.reconstructedAt is missing or invalid",
     });
   }
-  // A reconstructed proof is captured now. Its desktop clock must therefore
-  // prove that real capture instant, while the page and editorial checks below
-  // continue to prove the contracted (requested) date independently.
-  const desktopExpectedAt = reconstructionAt || requestedCaptureAt;
-  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", desktopExpectedAt);
+  // The page and desktop frame represent the contracted historical instant.
+  // The real reconstruction instant remains in metadata for provenance.
+  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", requestedCaptureAt);
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
-      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${desktopExpectedAt}`,
+      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${requestedCaptureAt}`,
     });
   }
   const pageReference = payload.pageDateObserved || payload.pageDateText || "";
@@ -4262,6 +4268,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         inPopupRow: !!node.closest(".perrengue-popup-ads-row"),
         isStaticRetroAd: !!node.closest("[data-adops-static-retro-ad]"),
         isTopGroup: node.classList.contains("g-1"),
+        isLateralGroup: node.classList.contains("g-10"),
         isPopupGroup: node.classList.contains("g-9"),
       }))
       .filter((entry) => entry.inHeaderAdsRow || entry.inPopupRow || entry.isStaticRetroAd)
@@ -4284,14 +4291,15 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    if (beforeHeaderGroups.length > 1) {
+    if (beforeHeaderGroups.filter((entry) => entry.isTopGroup).length > 1 ||
+        beforeHeaderGroups.filter((entry) => entry.isLateralGroup).length > 1) {
       issues.push({
         code: "multiple_header_ad_groups_before_logo",
         detail: `groups=${beforeHeaderGroups.length}`,
       });
     }
 
-    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !entry.isTopGroup);
+    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !(entry.isTopGroup || entry.isLateralGroup));
     if (invalidBeforeHeaderGroups.length > 0) {
       issues.push({
         code: "invalid_ad_group_before_logo",
@@ -4299,8 +4307,8 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    const topGroup = document.querySelector("#header-ads-row .g.g-1");
-    if (topGroup instanceof HTMLElement) {
+    for (const topGroup of document.querySelectorAll("#header-ads-row .g.g-1, #header-ads-row .g.g-10")) {
+      if (!(topGroup instanceof HTMLElement)) continue;
       const visibleChildren = Array.from(topGroup.querySelectorAll(":scope > .g-dyn, :scope > .g-single"))
         .filter((node) => node instanceof HTMLElement && isVisible(node) && hasVisibleMedia(node));
       if (visibleChildren.length > 1) {
@@ -4329,6 +4337,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         box: entry.box,
         inHeaderAdsRow: entry.inHeaderAdsRow,
         isTopGroup: entry.isTopGroup,
+        isLateralGroup: entry.isLateralGroup,
         isPopupGroup: entry.isPopupGroup,
       })),
       popupRowsBeforeHeader: popupRowsBeforeHeader.map(toBox).filter(Boolean),
@@ -4527,12 +4536,10 @@ reference_w = int(layout.get("referenceWidth") or 1280)
 scale = w / reference_w
 chrome_h = max(1, int(round(float(layout.get("chromeTopHeight") or 0) * scale)))
 taskbar_h = max(1, int(round(float(layout.get("taskbarHeight") or 0) * scale)))
-reconstruction = opts.get("reconstruction") or None
-reconstruction_footer_h = max(0, int(round(42 * scale))) if reconstruction else 0
 
 chrome_top = Image.open(chrome_top_path).convert("RGBA").resize((w, chrome_h))
 taskbar = Image.open(taskbar_path).convert("RGBA").resize((w, taskbar_h))
-canvas = Image.new("RGBA", (w, h + chrome_h + taskbar_h + reconstruction_footer_h), (255, 255, 255, 255))
+canvas = Image.new("RGBA", (w, h + chrome_h + taskbar_h), (255, 255, 255, 255))
 canvas.alpha_composite(chrome_top, (0, 0))
 canvas.alpha_composite(img, (0, chrome_h))
 canvas.alpha_composite(taskbar, (0, chrome_h + h))
@@ -4657,15 +4664,6 @@ tab_identity = draw_tab_identity()
 draw_dynamic_field("addressText", opts.get("addressText", opts.get("hostLabel", "")))
 draw_dynamic_field("systemDateTimeInline", date_text)
 
-if reconstruction:
-    footer_y = chrome_h + h + taskbar_h
-    draw.rectangle([0, footer_y, w, footer_y + reconstruction_footer_h], fill=(75, 45, 8, 255))
-    footer_font = ImageFont.truetype(frame_font_path, max(10, int(round(13 * scale))))
-    contracted = str(reconstruction.get("contractedDate") or "")
-    reconstructed_at = str(reconstruction.get("reconstructedAt") or "")
-    label = f"RECONSTRUÇÃO — data contratada: {contracted} — capturada em: {reconstructed_at} UTC"
-    draw.text((max(10, int(round(14 * scale))), footer_y + max(8, int(round(10 * scale)))), text_fit(label, max(1, w - int(round(28 * scale))), footer_font), fill=(255, 244, 214, 255), font=footer_font)
-
 scroll_metrics = opts.get("scrollMetrics") or {}
 try:
     viewport_height_css = float(scroll_metrics.get("viewportHeight") or 0)
@@ -4742,8 +4740,6 @@ print(json.dumps({
     "tabIconFallback": bool(tab_identity.get("tabIconFallback")),
     "chromeFrameHeight": chrome_h,
     "taskbarHeight": taskbar_h,
-    "reconstructionLabelRendered": bool(reconstruction),
-    "reconstructionFooterHeight": reconstruction_footer_h,
     "scrollbarRendered": scrollbar_rendered,
     "scrollbarThumbTop": scrollbar_thumb_top,
     "scrollbarThumbHeight": scrollbar_thumb_height,
@@ -4766,8 +4762,6 @@ print(json.dumps({
       tabIconFallback: null,
       chromeFrameHeight: null,
       taskbarHeight: null,
-      reconstructionLabelRendered: null,
-      reconstructionFooterHeight: null,
       scrollbarRendered: null,
       scrollbarThumbTop: null,
       scrollbarThumbHeight: null,
@@ -5682,8 +5676,16 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
         const url = new URL(link.href, window.location.href).toString();
         const key = new URL(url).pathname.replace(/\/+$/, "") || "/";
         if (seen.has(key)) continue;
-        const relativeTime = String(card.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
-        if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
+        // Audit publication timestamps, not durations mentioned in headlines or excerpts.
+        for (const dateSelector of dateSelectors) {
+          let dateNodes = [];
+          try { dateNodes = card.matches(dateSelector) ? [card] : Array.from(card.querySelectorAll(dateSelector)); } catch { continue; }
+          for (const dateNode of dateNodes) {
+            if (dateNode.querySelector?.("h1,h2,h3,h4,.entry-title,article")) continue;
+            const relativeTime = String(dateNode.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
+            if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
+          }
+        }
         const date = readDate(card);
         if (!date) continue;
         const titleNode = card.querySelector("h1,h2,h3,h4,.entry-title,[class*='title']");
@@ -7916,15 +7918,12 @@ async function main() {
       minute: "2-digit",
       hour12: false,
     }).format(captureDate);
-    const frameSystemDateTime = captureClass === "historical_recovery"
-      ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC", weekday: "long", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(capturedAt))
-      : systemDateTime;
+    const frameSystemDateTime = systemDateTime;
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
       systemDateTime: frameSystemDateTime,
-      reconstruction,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
@@ -7989,7 +7988,6 @@ async function main() {
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
       systemDateTime: frameSystemDateTime,
-      reconstruction,
       siteSigla: insertion.siteSigla,
       tabTitle: mapping.browserTitle,
       hostLabel: mapping.hostLabel,

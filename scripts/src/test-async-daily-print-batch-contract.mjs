@@ -16,7 +16,7 @@ test("lote diário usa jobs assíncronos por inserção e fecha pela auditoria a
   assert.match(flow, /daily_print_audit_incomplete/);
   assert.match(flow, /incidentLayer: incident\.layer/);
   assert.match(flow, /transportError: transportError/);
-  assert.match(flow, /expectedTotal: candidates\.length/);
+  assert.match(flow, /expectedTotal,/);
   assert.match(flow, /error\.jobResult = executionResult/);
   assert.match(flow, /selectDailyPrintCandidates\(operations\?\.items, targetDate, \{[\s\S]*?competencia,/);
   assert.doesNotMatch(flow, /\.filter\([^)]*competencia/);

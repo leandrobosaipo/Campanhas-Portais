@@ -299,7 +299,7 @@ function hasKnownCapturePolicy(version: unknown) {
   return typeof version === "string" && version.trim() === AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
 }
 
-function buildCaptureClassTrustContext({
+export function buildCaptureClassTrustContext({
   canonicalTargetDate,
   metadataTargetDate,
   captureClass,
@@ -602,13 +602,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     reconstruction.mediaUrl.trim().length > 0;
   const auditedLatePublicationRecovery = declaredLatePublicationRecovery &&
     (!reconstructionProvenanceV2 || reconstructionTimestampMatchesServerCapture);
-  // Keep older, non-reconstructed historical artifacts on their persisted
-  // contract. Any new artifact that declares a reconstruction must show the
-  // actual reconstruction instant in its desktop frame.
+  // Keep the contracted historical instant in the visible frame. The actual
+  // reconstruction instant remains separately validated as provenance.
   const declaredHistoricalReconstruction = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY && reconstructionProvenanceV2;
-  const reconstructionUsesActualDesktopClock = declaredHistoricalReconstruction && reconstructionTimestampMatchesServerCapture;
   const expectedEvaluationDate = canonicalTargetDate ? canonicalTargetDate.split("-").reverse().join("/") : "";
-  const desktopExpectedAt = reconstructionUsesActualDesktopClock ? reconstructionAt : requestedCaptureAt;
+  const desktopExpectedAt = requestedCaptureAt;
   const desktopMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt!)
     : Boolean(expectedEvaluationDate) && systemDateTime.includes(expectedEvaluationDate);

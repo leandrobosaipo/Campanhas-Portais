@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { composeDesktopProof } = require("./capture-insertion-proof.cjs");
 const source = readFileSync(new URL("./capture-insertion-proof.cjs", import.meta.url), "utf8");
-assert.match(source, /const desktopFrameMetadata = composeDesktopProof\(viewportPng, finalPng, \{\s*osLabel: "Google Chrome",\s*systemDateTime: frameSystemDateTime,\s*reconstruction,/);
+assert.match(source, /const desktopFrameMetadata = composeDesktopProof\(viewportPng, finalPng, \{\s*osLabel: "Google Chrome",\s*systemDateTime: frameSystemDateTime,/);
 try {
   execFileSync(process.env.ADOPS_CAPTURE_PYTHON || "python3", ["-c", "from PIL import Image"], { stdio: "pipe" });
 } catch {
@@ -25,12 +25,12 @@ try {
     systemDateTime: "segunda-feira, 15/09/2026, 02:30",
     reconstruction: { contractedDate: "2026-09-14", reconstructedAt: "2026-09-15T02:30:00.000Z" },
   });
-  assert.equal(result.reconstructionLabelRendered, true);
-  assert(result.reconstructionFooterHeight > 0);
+  assert.equal(result.reconstructionLabelRendered, undefined);
+  assert.equal(result.reconstructionFooterHeight, undefined);
   const dimensions = JSON.parse(execFileSync(python, ["-c", "from PIL import Image; import json,sys; print(json.dumps(Image.open(sys.argv[1]).size))", output], { encoding: "utf8" }));
-  assert(dimensions[1] > 720 + result.chromeFrameHeight + result.taskbarHeight, "rótulo deve ficar após a taskbar, sem deslocar viewport");
+  assert.deepEqual(dimensions, [1280, 720 + result.chromeFrameHeight + result.taskbarHeight], "reconstrução não deve adicionar faixa ao PNG");
   assert(readFileSync(output).length > 0);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
-console.log("ok: historical reconstruction frame adds explicit footer after taskbar");
+console.log("ok: historical reconstruction frame keeps the standard frame without a footer");

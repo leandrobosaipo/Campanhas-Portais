@@ -243,7 +243,7 @@ router.get("/insertions/:insertionId/evidences", async (req, res): Promise<void>
     .from(evidencesTable)
     .where(eq(evidencesTable.insercaoId, params.data.insertionId))
     .orderBy(evidencesTable.criadoEm);
-  res.json(ListEvidencesResponse.parse(evidences));
+  res.json(ListEvidencesResponse.parse(evidences.map(evidence => ({ ...evidence, criadoEm: evidence.criadoEm.toISOString() }))));
 });
 
 router.post("/insertions/:insertionId/evidences", async (req, res): Promise<void> => {

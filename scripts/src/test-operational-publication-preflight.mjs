@@ -820,6 +820,13 @@ assert.match(runnerSource, /expectedUpdatedAt: published\?\.insertionAfterPublis
 assert.match(runnerSource, /executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: false \}, \{ compositePendingGuardAlreadyValidated: true \}\)[\s\S]*executeAdrotatePublishJob\(\{ \.\.\.publishBase, apply: true \}, \{ compositePendingGuardAlreadyValidated: true \}\)/,
   "publicação operacional não pode revalidar como pendente o estado que ela própria acabou de vincular");
 const adrotateConfig = JSON.parse(await readFile(new URL("../../config/adrotate-sites.json", import.meta.url), "utf8"));
+for (const [siteSigla, groupId] of [["PERRENGUE", 11], ["OMT", 9], ["AFL", 14], ["PNMT", 14], ["PPMT", 14], ["ROO", 8]]) {
+  const mapping = adrotateConfig[siteSigla].formatMappings.find((item) => item.groupId === groupId);
+  assert.deepEqual(mapping?.operationalMediaProfile?.formats, ["GIF", "PNG", "JPEG"],
+    `${siteSigla} grupo ${groupId} precisa aceitar imagem no banner interno`);
+  assert.deepEqual((await runner.loadOperationalMediaProfile(siteSigla, "BANNER INTERNO NOTICIAS - 728X90")).formats,
+    ["GIF", "JPEG", "PNG"], `${siteSigla} precisa resolver a descrição dimensional da planilha`);
+}
 for (const [groupId, width, height] of [[1, 825, 120], [9, 970, 90]]) {
   const mapping = adrotateConfig.PERRENGUE.formatMappings.find((item) => item.groupId === groupId);
   assert.deepEqual(mapping?.operationalMediaProfile, {
@@ -910,7 +917,7 @@ try {
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
-  await assert.rejects(() => runner.prepareOperationalDeliveryImage(supplied, {
+  const advisoryDelivery = await runner.prepareOperationalDeliveryImage(supplied, {
     width: 970,
     height: 90,
     formats: ["GIF"],
@@ -921,7 +928,10 @@ try {
       targetWidth: 825,
       targetHeight: 120,
     },
-  }), /Dimens/);
+  });
+  assert.equal(advisoryDelivery.transformed, false);
+  assert.equal(advisoryDelivery.metadata.width, 820);
+  assert.match(advisoryDelivery.aspectWarning, /aspect_ratio_advisory/);
 
   const sourceVideo = path.join(dir, "source-824x120.mp4");
   await execFileAsync("ffmpeg", ["-y", "-f", "lavfi", "-i", "testsrc=size=824x120:rate=12", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", sourceVideo], { timeout: 30000 });

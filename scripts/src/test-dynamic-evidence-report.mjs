@@ -6,6 +6,17 @@ import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs
 
 const html = renderDynamicEvidenceReport();
 
+test('separa reconstrução de aceite e mostra a data real da captura', () => {
+  assert.match(html, /Reconstrução — precisa de aceite/);
+  assert.match(html, /Capturada em/);
+  assert.match(html, /Não comprova sozinha a veiculação no passado/);
+  assert.match(html, /documentary_pending/);
+  assert.doesNotMatch(html, /prints aprovados/);
+  assert.match(html, /\['complete','missing','retroactive_missing','invalid','documentary_pending'\]\.includes/);
+  assert.match(html, /Há comprovação pendente/);
+  assert.match(html, /day\.technicalStatus\|\|day\.status/);
+});
+
 test("gera uma casca pequena sem registros incorporados", () => {
   assert.ok(html.length < 85_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);

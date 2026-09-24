@@ -45,6 +45,32 @@ try {
 
   await page.setContent(`${anchor}<div class='hidden lg:block'><div class='g g-1'></div></div>`);
   assert.equal((await applyPerrengueStaticRetroAd(page, mapping, media, "banner.svg", options)).reason, "slot_conflict");
+
+  const placeholder = "<div class='g g-1' style='width:815px;height:120px'><img src='https://placehold.co/815x120/png?text=ANUNCIE+AQUI' width='815' height='120'></div>";
+  const placeholderAnchor = anchor.replace(/<!--.*?-->/, placeholder).replace('height:0', 'height:120px');
+  const ppmtMapping = { ...mapping, domain: 'portalpantanalmt.com' };
+  await page.route('https://placehold.co/**', route => route.fulfill({ contentType: 'image/svg+xml', body: "<svg xmlns='http://www.w3.org/2000/svg' width='815' height='120'/>" }));
+  await page.setContent(placeholderAnchor);
+  assert.equal((await applyPerrengueStaticRetroAd(page, ppmtMapping, media, 'banner.svg', options)).applied, true);
+  assert.equal(await page.locator('[data-adops-static-retro-ad="1"]').count(), 1);
+  for (const html of [
+    placeholderAnchor + placeholderAnchor,
+    placeholderAnchor.replace(placeholder, placeholder + placeholder),
+    placeholderAnchor.replace('display:block', 'display:none'),
+    placeholderAnchor.replace('omt-header-top', 'unknown-header'),
+    placeholderAnchor.replace(placeholder, '') + `<div class='hidden lg:block'>${placeholder}</div>`,
+    placeholderAnchor.replace(placeholder, "<div class='g g-1' style='width:815px;height:120px'></div>"),
+    placeholderAnchor.replace(placeholder, placeholder.replace('</div>', `<img src="${media}"></div>`)),
+    placeholderAnchor.replace('<img ', `<img data-src="${media}" `),
+    placeholderAnchor.replace('<img ', '<img srcset="https://example.com/other-campaign.png 2x" '),
+    placeholderAnchor.replace('<img ', '<img data-lazy-srcset="https://example.com/other-campaign.png 2x" '),
+    placeholderAnchor.replace('placehold.co/', 'placehold.co.example.com/'),
+    placeholderAnchor.replace('https://placehold.co/815x120/png?text=ANUNCIE+AQUI', media),
+  ]) {
+    await page.setContent(html);
+    assert.equal((await applyPerrengueStaticRetroAd(page, ppmtMapping, media, 'banner.svg', options)).applied, false);
+    assert.equal(await page.locator('[data-adops-static-retro-ad="1"]').count(), 0);
+  }
 } finally {
   await page.close();
   await browser.close();

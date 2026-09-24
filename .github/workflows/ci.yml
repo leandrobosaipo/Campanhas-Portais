@@ -44,7 +44,7 @@ jobs:
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --dir scripts run test:api-bundle-runtime
       - name: Install image export runtime
-        run: sudo apt-get update && sudo apt-get install -y python3-pil zip unzip
+        run: sudo apt-get update && sudo apt-get install -y python3-pil imagemagick ffmpeg php-cli zip unzip
       - run: pnpm --dir scripts run test:evidence-web-export
       - run: pnpm --dir scripts run test:monthly-report-export-eligibility
       - name: Recovery provenance and immutable exports
@@ -54,6 +54,7 @@ jobs:
           node --test ops/cloudflare-remote-runner/test/pi-layout-identity.test.mjs
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
           pnpm --dir scripts exec tsx src/test-preupload-reconstruction-clock.ts
+          pnpm --dir scripts exec tsx src/test-export-audit-capture-class.mjs
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
       - name: PNMT reconstructed desktop anchor guards
@@ -66,12 +67,25 @@ jobs:
       - run: pnpm --dir scripts run test:adops-definitive-gates
       - run: pnpm --dir scripts run test:afl-retro-date-config-isolation
       - run: node --check scripts/src/capture-insertion-proof.cjs
+      - run: node scripts/src/test-perrengue-header-dom-policy.mjs
+      - run: node scripts/src/test-perrengue-header-ad-policy.mjs
       - run: node --check ops/cloudflare-remote-runner/src/runner.mjs
       - run: pnpm --dir scripts run test:perrengue-static-retro-sparse
       - run: pnpm --filter @workspace/adops run build
       - run: pnpm --dir scripts run test:runtime-auth
       - run: pnpm --dir scripts run test:drive-pi-event-flow
       - run: pnpm --dir scripts run test:drive-pi-publish-flow
+      - run: node scripts/src/test-recovery-safety-sep17.mjs
+      - run: node scripts/src/test-home1-media-profiles.mjs
+      - run: node --test scripts/src/test-daily-print-completeness.mjs scripts/src/test-daily-print-status.mjs scripts/src/test-async-daily-print-batch-contract.mjs
+      - run: node scripts/src/test-afl-retro-bounded-normalization.mjs
+      - run: node scripts/src/test-relative-editorial-date-scope.mjs
+      - run: node scripts/src/test-adrotate-normal-observation.mjs
+      - run: pnpm --dir scripts exec tsx src/test-adrotate-live-observation.ts
+      - run: node --test scripts/src/test-dynamic-report-counters-vm.mjs
+      - run: node scripts/src/test-operational-publication-preflight.mjs
+      - run: pnpm --dir scripts exec tsx src/test-monthly-report-query.ts
+      - run: pnpm --dir scripts exec tsx src/test-evidence-date-serialization.ts
       - run: pnpm --dir scripts run test:drive-source-conflicts
       - run: pnpm --dir scripts run test:adrotate-format-aliases
       - run: pnpm --dir scripts run test:media-consistency

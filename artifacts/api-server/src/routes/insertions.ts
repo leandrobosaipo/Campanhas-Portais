@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
+import { observeAdrotateResponse } from "../lib/adrotate-live-observation";
 import { serializeCampaignEvidenceFingerprint } from "../lib/campaign-evidence-fingerprint";
 import { promisify } from "node:util";
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -33,6 +34,8 @@ import {
   CAPTURE_CLASS_SAME_DAY_RETRY,
   CAPTURE_CLASS_SCHEDULED,
   buildRetroCaptureAt,
+  correlateCaptureLogProvenance,
+  buildCaptureClassTrustContext,
   eachIsoDay,
   evaluateCaptureMetadata,
   formatIsoDate,
@@ -69,6 +72,7 @@ import {
   prepareEvidenceImage,
   resolveDeliveryDateRange,
   resolveDeliveryPiCode,
+  resolveExportAuditBasis,
   selectApprovedCanonicalEvidenceRows,
   selectCanonicalEvidencePerDate,
   type EvidenceImageVariant,
@@ -96,6 +100,8 @@ import {
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
+  monthlyEvidenceProvenance,
+  selectMonthlyEvidenceProof,
 } from "../lib/monthly-evidence-report-query";
 
 const router: IRouter = Router();
@@ -200,12 +206,18 @@ async function writeRetroAuditArtifacts(options: {
         ? rawMetadata.retroContentManifest as Record<string, unknown>
         : {};
       const proof = status.audit?.retroContentProof ?? null;
+      const auditBasis = resolveExportAuditBasis(status, date);
       const manifest = {
         version: 1,
         piCodigo: options.descriptor.piCodigo,
         siteSigla: options.descriptor.siteSigla,
         insertionId: insertion.id,
         date,
+        auditBasis,
+        captureClass: status.audit?.captureClass ?? null,
+        capturedAt: status.audit?.capturedAt ?? null,
+        sourceJobId: status.audit?.sourceJobId ?? null,
+        auditPolicyVersion: status.audit?.auditPolicyVersion ?? null,
         cutoff: typeof rawManifest.cutoff === "string" ? rawManifest.cutoff : status.audit?.requestedCaptureAt ?? null,
         source: typeof rawManifest.source === "string" ? rawManifest.source : proof?.sourceMode ?? null,
         reconstructed: rawManifest.reconstructed === true,
@@ -213,8 +225,7 @@ async function writeRetroAuditArtifacts(options: {
         visiblePosts: sanitizeEditorialPosts(rawManifest.visiblePosts),
         proof,
       };
-      const approved = status.status === "ok" && proof?.status === "approved" && proof?.futureCount === 0 && Boolean(proof?.manifestHash);
-      if (!approved) {
+      if (!auditBasis) {
         throw new EvidenceExportInputError(`Prova editorial não aprovada na inserção ${insertion.id}, data ${date}.`, 422);
       }
       const manifestName = `${deliverySegment(insertion.siteSigla, "SITE")}-INSERCAO-${insertion.id}-${date}.json`;
@@ -223,6 +234,7 @@ async function writeRetroAuditArtifacts(options: {
         insertionId: insertion.id,
         date,
         status: "audited",
+        auditBasis,
         retroContentProof: proof,
         manifestFile: `04-AUDITORIA/MANIFESTOS-EDITORIAIS/${manifestName}`,
       });
@@ -230,12 +242,14 @@ async function writeRetroAuditArtifacts(options: {
   }
 
   const report = {
-    ok: entries.length > 0 && entries.every((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved"),
+    ok: entries.length > 0 && entries.every((entry) => Boolean(entry.auditBasis)),
     generatedAt: new Date().toISOString(),
     piCodigo: options.descriptor.piCodigo,
     siteSigla: options.descriptor.siteSigla,
     total: entries.length,
-    approved: entries.filter((entry) => (entry.retroContentProof as Record<string, unknown>)?.status === "approved").length,
+    approved: entries.length,
+    originalCaptures: entries.filter((entry) => entry.auditBasis === "same_day_capture").length,
+    editorialProofApproved: entries.filter((entry) => entry.auditBasis === "editorial_proof").length,
     futureCount: entries.reduce((sum, entry) => sum + Number((entry.retroContentProof as Record<string, unknown>)?.futureCount || 0), 0),
     entries,
   };
@@ -1595,7 +1609,8 @@ echo wp_json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
   }
 }
 
-async function fetchLivePreview(siteSigla = "PERRENGUE") {
+async function fetchLivePreview(siteSigla = "PERRENGUE", expectedMediaBasename: string | null = null) {
+  const normalObservations: Array<ReturnType<typeof observeAdrotateResponse> & { pageUrl: string; parserItemCount: number }> = [];
   const siteConfig = getSiteIntegration(siteSigla);
   if (!siteConfig) {
     return {
@@ -1603,13 +1618,21 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
       homeUrl: null,
       articleUrl: null,
       warnings: ["Live preview ainda não configurado para este site."],
+      normalObservations,
       items: [] as Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }>,
     };
   }
 
   const warnings: string[] = [];
+  const readPage = async (pageUrl: string) => {
+    const response = await fetch(pageUrl, { signal: AbortSignal.timeout(30000) });
+    const html = await response.text();
+    normalObservations.push({ pageUrl, ...observeAdrotateResponse(response, html, expectedMediaBasename), parserItemCount: parseAdRotateSlotsFromHtml(html, pageUrl, getSupportedGroupIds(siteSigla)).length });
+    if (!response.ok) warnings.push(`Consulta pública respondeu HTTP ${response.status}: ${pageUrl}`);
+    return html;
+  };
   const homeUrl = siteConfig.homeUrl;
-  const homeHtml = await fetch(homeUrl).then((response) => response.text());
+  const homeHtml = await readPage(homeUrl);
   const supportedGroups = getSupportedGroupIds(siteSigla);
   const articleGroups = siteConfig.formatMappings.filter((item) => item.page === "article").map((item) => item.groupId);
   const detectedArticleUrl = extractFirstArticleUrl(homeHtml, siteConfig.domain);
@@ -1631,11 +1654,11 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
   let articleItems: Array<{ pageUrl: string; groupId: number; adId: number; mediaUrl: string | null; mediaBasename: string | null }> = [];
 
   if (articleUrl) {
-    let articleHtml = await fetch(articleUrl).then((response) => response.text());
+    let articleHtml = await readPage(articleUrl);
     articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
     if (articleGroups.length && !articleItems.some((item) => articleGroups.includes(item.groupId)) && safeFallbackUrl && articleUrl !== safeFallbackUrl) {
       articleUrl = safeFallbackUrl;
-      articleHtml = await fetch(articleUrl).then((response) => response.text());
+      articleHtml = await readPage(articleUrl);
       articleItems = parseAdRotateSlotsFromHtml(articleHtml, articleUrl, supportedGroups);
       warnings.push("Usando URL interna de fallback para verificar posições de página interna.");
     }
@@ -1648,7 +1671,7 @@ async function fetchLivePreview(siteSigla = "PERRENGUE") {
     ...articleItems,
   ].filter((item, index, array) => array.findIndex((candidate) => candidate.pageUrl === item.pageUrl && candidate.groupId === item.groupId && candidate.adId === item.adId) === index);
 
-  return { siteSigla, homeUrl, articleUrl, warnings, items };
+  return { siteSigla, homeUrl, articleUrl, warnings, items, normalObservations };
 }
 
 router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
@@ -1667,6 +1690,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     day: "2-digit",
   }).format(new Date());
   const bounds = monthBounds(query.month, today);
+    const currentHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Cuiaba", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
 
   try {
     const [year, monthNumber] = query.month.split("-");
@@ -1688,8 +1712,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         && item.supersededByInsertionId == null
         && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
     });
-    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates)
-      .filter((item) => isValidHttpUrl(item.mediaUrl));
+    const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates);
 
     const normalizedSearch = normalizeTextKey(query.search);
     const baseItems = monthly.map((item) => ({
@@ -1732,11 +1755,12 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       rows.push(row);
       evidenceRowsByInsertion.set(row.insercaoId, rows);
     }
-    const proofByInsertionDate = new Map<string, typeof captureProofLogsTable.$inferSelect>();
+    const proofByInsertionDate = new Map<string, Array<typeof captureProofLogsTable.$inferSelect>>();
     for (const row of pageProofRows) {
       const key = `${row.insertionId}:${row.targetDate}`;
-      const previous = proofByInsertionDate.get(key);
-      if (!previous || previous.updatedAt < row.updatedAt) proofByInsertionDate.set(key, row);
+      const rows = proofByInsertionDate.get(key) ?? [];
+      rows.push(row);
+      proofByInsertionDate.set(key, rows);
     }
     const evaluated: Array<Record<string, unknown>> = [];
     for (let offset = 0; offset < pageSource.length; offset += 4) {
@@ -1751,11 +1775,13 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
         const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
         const evidenceDays = evidenceDates.map((date) => {
           const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === date) ?? null;
-          const proof = proofByInsertionDate.get(`${item.id}:${date}`) ?? null;
+          const proof = selectMonthlyEvidenceProof(evidence?.arquivoUrl, proofByInsertionDate.get(`${item.id}:${date}`) ?? []);
           const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
           const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
-          const status = !evidence
-            ? "missing"
+          const status = !evidence && date === today && currentHour < 18
+            ? "scheduled"
+            : !evidence
+              ? "missing"
             : !validUrl
               ? "invalid_url"
               : proofFailed
@@ -1763,9 +1789,26 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
                 : proof
                   ? "audited"
                   : "audited_best_effort";
+          const correlation = proof ? correlateCaptureLogProvenance({ ...proof, evidenceUrl: evidence?.arquivoUrl ?? null }) : null;
+          const trustedCapture = correlation && buildCaptureClassTrustContext({
+            canonicalTargetDate: date,
+            metadataTargetDate: correlation.targetDate,
+            captureClass: typeof proof?.metadata.captureClass === 'string' ? proof.metadata.captureClass : null,
+            sourceJobId: correlation.sourceJobId,
+            capturedAt: correlation.capturedAt,
+            auditPolicyVersion: typeof proof?.metadata.auditPolicyVersion === 'string' ? proof.metadata.auditPolicyVersion : null,
+          }).trusted;
+          const provenance = monthlyEvidenceProvenance(evidence?.arquivoUrl, proof, Boolean(trustedCapture));
+          const displayStatus = status.startsWith('audited')
+            ? provenance.documentaryStatus === 'reconstruction_requires_acceptance' ? 'reconstruction'
+              : provenance.documentaryStatus === 'provenance_unverified' ? 'provenance_unverified' : status
+            : status;
           return {
             date,
-            status,
+            status: displayStatus,
+            technicalStatus: status,
+            ...provenance,
+            capturedAt: correlation?.capturedAt ?? null,
             evidenceId: evidence?.id ?? null,
             url: evidence?.arquivoUrl ?? null,
             checklistApproved: status === "audited",
@@ -1778,6 +1821,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           periodStart: item.periodoInicio || bounds.start,
           periodEnd: item.periodoFim || bounds.end,
           today,
+          currentHour,
           evidenceDays,
         });
         const siteIntegration = getSiteIntegration(item.siteSigla);
@@ -1806,7 +1850,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       insertions: baseFiltered.length,
       active: baseFiltered.filter(({ states }) => states.publicationStates.includes("active")).length,
       notPublished: baseFiltered.filter(({ states }) => states.publicationStates.includes("not_published")).length,
-      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => state === "missing" || state === "retroactive_missing")).length,
+      pending: evaluated.filter((item) => (item.evidenceStates as string[]).some((state) => ["missing", "retroactive_missing", "documentary_pending"].includes(state))).length,
       invalid: evaluated.filter((item) => (item.evidenceStates as string[]).includes("invalid")).length,
       evidenceScope: "page",
     };
@@ -1960,7 +2004,7 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     res.json({ insertionId: insertion.id, exactLiveMatches: [], historicalAdminMatches });
     return;
   }
-  const live = siteSigla ? await fetchLivePreview(siteSigla) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [] };
+  const live = siteSigla ? await fetchLivePreview(siteSigla, mediaBasename) : { siteSigla: null, homeUrl: null, articleUrl: null, warnings: ["Inserção sem site vinculado."], items: [], normalObservations: [] };
   const exactLiveMatches = mediaBasename
     ? live.items.filter((item) => item.groupId === groupId && item.mediaBasename === mediaBasename).map(enrichLiveItem)
     : [];
@@ -2036,6 +2080,7 @@ router.get("/integrations/adrotate/insertions/:id/relation", async (req, res): P
     } : null,
     plannedSelf,
     exactLiveMatches,
+    normalObservations: live.normalObservations,
     historicalAdminMatches,
     fallbackCandidates,
   });
@@ -3977,7 +4022,8 @@ router.get("/pi-site-exports", async (req, res): Promise<void> => {
         insertions: exportableInsertions,
       });
       await writeContactSheet(tempDir, join(pdfOutputDir, "IMAGENS-INDEPENDENTES"));
-      readmeLines.push(`Provas editoriais aprovadas: ${retroAudit.approved}/${retroAudit.total}`);
+      readmeLines.push(`Evidências aprovadas: ${retroAudit.approved}/${retroAudit.total}`);
+      readmeLines.push(`Capturas originais no dia: ${retroAudit.originalCaptures}; reconstruções com prova editorial: ${retroAudit.editorialProofApproved}`);
       readmeLines.push(`Notícias futuras detectadas: ${retroAudit.futureCount}`);
       readmeLines.push("");
       await writeFile(join(tempDir, "00-LEIA-ME.txt"), readmeLines.join("\n"), "utf8");

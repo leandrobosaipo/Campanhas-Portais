@@ -115,14 +115,14 @@ try {
     lateDate.textContent = "há 6 dias";
     hero?.appendChild(lateDate);
   });
-  await page.waitForFunction(() => document.querySelector(".late-relative-date")?.textContent !== "há 6 dias");
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
   assert.match(await page.locator(".late-relative-date").textContent() ?? "", /^29\/07\/2026\s+15:29$/);
 
   await page.evaluate(() => {
     const date = document.querySelector("article.hero-post [data-adops-retro-date-node='1']");
     if (date) date.textContent = "29/18:24";
   });
-  await page.waitForFunction(() => document.querySelector("article.hero-post [data-adops-retro-date-node='1']")?.textContent === "29/07/2026 15:29");
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
   assert.equal(
     await page.locator("article.hero-post [data-adops-retro-date-node='1']").first().textContent(),
     "29/07/2026 15:29",
