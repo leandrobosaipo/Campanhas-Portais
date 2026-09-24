@@ -758,6 +758,7 @@ export async function getActiveCampaignOperations(options: {
   for (const row of sheet.rows) {
     const matches = findAdopsMatches(row, insertions);
     const { insertion, compatible } = selectBestAdopsMatch(row, matches);
+    const operationalMatches = compatible.filter((candidate) => candidate.periodoInicio === row.periodoInicio && candidate.periodoFim === row.periodoFim);
     const drive = await findDriveCampaignMedia({
       siteSigla: row.blockSite,
       piCodigo: row.piCodigo,
@@ -907,7 +908,7 @@ export async function getActiveCampaignOperations(options: {
         publicConfirmation,
         statusNormalizado: insertion?.statusNormalizado ?? null,
         matchedBy: insertion ? "pi_site" : "none",
-        operationalMatchCount: compatible.length,
+        operationalMatchCount: operationalMatches.length,
       },
       evidence,
       publicationHealth,
