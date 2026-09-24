@@ -15,7 +15,7 @@ const metadata = {
   auditPolicyVersion: "audit-policy-v1",
   capturedAt: now.toISOString(),
   requestedCaptureAt: `${targetDate}T21:53:00-04:00`,
-  systemDateTime: "terça-feira, 15/09/2026, 03:59",
+  systemDateTime: "sábado, 12/09/2026, 21:53",
   pageDateText: `${targetDate}T21:53:00-04:00`,
   reconstruction: {
     provenanceVersion: 2,
@@ -52,7 +52,7 @@ const baseline = {
   evidenceStatus: "blocked",
 } as unknown as AuditChecklistValidation;
 
-test("real reconstruction clock clears only its preliminary mismatch, without minting provenance", () => {
+test("historical screenshot clock clears only its preliminary mismatch, without minting provenance", () => {
   const result = validatePreUploadReconstructionClock(baseline, metadata, now);
   assert.equal(result.approved, true);
   assert.equal(result.preliminary, true);
@@ -64,7 +64,7 @@ test("real reconstruction clock clears only its preliminary mismatch, without mi
   assert.equal(evaluateCaptureMetadata(metadata, targetDate, now).ok, false, "the same raw request still fails final persisted provenance");
 });
 
-test("untrusted timestamps, historical desktop clock and invalid reconstruction identity remain blocked", () => {
+test("untrusted timestamps, wrong historical desktop clock and invalid reconstruction identity remain blocked", () => {
   for (const reconstruction of [
     { ...metadata.reconstruction, reconstructedAt: "2026-09-15T03:44:59.000Z" },
     { ...metadata.reconstruction, reconstructedAt: "2026-09-15T04:15:01.000Z" },
@@ -78,7 +78,7 @@ test("untrusted timestamps, historical desktop clock and invalid reconstruction 
     assert.equal(result.approved, false);
     assert(result.blockingIssues.some((issue) => issue.code === "preupload_reconstruction_clock_invalid"));
   }
-  assert.equal(validatePreUploadReconstructionClock(baseline, { ...metadata, systemDateTime: metadata.requestedCaptureAt }, now).approved, false);
+  assert.equal(validatePreUploadReconstructionClock(baseline, { ...metadata, systemDateTime: "terça-feira, 15/09/2026, 03:59" }, now).approved, false);
   assert.equal(validatePreUploadReconstructionClock(baseline, { ...metadata, captureClass: "scheduled" }, now).approved, false);
 });
 

@@ -35,6 +35,7 @@ export function validatePreUploadReconstructionClock(
   const declaredAt = typeof reconstruction.reconstructedAt === "string" ? reconstruction.reconstructedAt : "";
   const instant = /(?:Z|[+-]\d{2}:\d{2})$/.test(declaredAt) ? new Date(declaredAt) : new Date(NaN);
   const recent = Number.isFinite(instant.getTime()) && Math.abs(instant.getTime() - receivedAt.getTime()) <= 15 * 60 * 1000;
+  const requestedCaptureAt = typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : "";
   const valid = validation.contract.ok
     && validation.contract.resolvedRule.auditConfig.allowAuditedReconstruction === true
     && validation.contract.period.inPeriod
@@ -45,7 +46,9 @@ export function validatePreUploadReconstructionClock(
     && reconstruction.mediaUrl === validation.contract.expectedMedia.mediaUrl
     && recent
     && typeof metadata.systemDateTime === "string"
-    && pageTextMatchesRequestedCaptureAt(metadata.systemDateTime, instant.toISOString());
+    // The screenshot clock represents the contracted historical instant. The
+    // reconstruction timestamp remains a separate, server-correlated proof.
+    && pageTextMatchesRequestedCaptureAt(metadata.systemDateTime, requestedCaptureAt);
   const clockIssue = {
     code: valid ? "preupload_reconstruction_clock_checked" : "preupload_reconstruction_clock_invalid",
     gate: "preUploadReconstructionClock",
