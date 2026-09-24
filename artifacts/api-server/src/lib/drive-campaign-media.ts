@@ -95,7 +95,7 @@ export function extractDrivePiCandidates(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
   const normalizePi = (digits: string | null | undefined) => {
-    const value = String(digits ?? "").replace(/^0+/, "");
+    const value = String(digits ?? "");
     return value.length >= 3 ? value : null;
   };
   const explicit = [...normalized.matchAll(/\bPI\s*[-_:]?\s*(\d{3,})\b/g)].map((match) => normalizePi(match[1]));

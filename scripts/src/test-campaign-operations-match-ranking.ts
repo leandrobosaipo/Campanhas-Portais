@@ -88,6 +88,11 @@ test("associa PI sem numero somente por portal, campanha e periodo exatos", () =
   assert.deepEqual(matches.map((candidate) => candidate.id), [1944]);
 });
 
+test("preserva PI operacional 0000 na identidade AdOps", () => {
+  assert.equal(normalizeCampaignPiIdentity("PI 0000 - AGUAS CBA"), "0000");
+  assert.equal(normalizeCampaignPiIdentity("0000"), "0000");
+});
+
 test("posição canônica é estável entre labels operacionais", () => {
   assert.equal(resolveCampaignPlacementCode("MEGA BANNER HOME 1"), "home_1");
   assert.equal(resolveCampaignPlacementCode("HOME 1"), "home_1");

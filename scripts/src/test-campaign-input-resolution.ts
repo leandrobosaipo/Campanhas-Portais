@@ -7,6 +7,10 @@ import {
   type DriveRawItem,
 } from "../../artifacts/api-server/src/lib/drive-campaign-media";
 
+test("Drive preserva zeros da PI 0000", () => {
+  assert.deepEqual(extractDrivePiCandidates("PI 0000 - SORTE NA CONTA"), ["0000"]);
+});
+
 function folder(id: string, path: string): DriveRawItem {
   return {
     id,

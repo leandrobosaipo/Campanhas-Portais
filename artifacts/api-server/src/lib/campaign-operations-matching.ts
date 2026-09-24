@@ -35,7 +35,7 @@ export type CampaignOperationMatchCandidate = {
 };
 
 export function normalizeCampaignPiIdentity(value: unknown) {
-  const digits = String(value ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const digits = String(value ?? "").replace(/\D/g, "");
   return digits || null;
 }
 
