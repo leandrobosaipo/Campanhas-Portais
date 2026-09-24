@@ -3,8 +3,12 @@ import * as XLSX from "xlsx";
 import {
   indexToColumnLabel,
   resolveCurrentSheetCampaignRowMetadata,
+  extractPiDigits,
   loadCurrentSheetCampaigns,
 } from "../../artifacts/api-server/src/lib/current-sheet-campaigns.ts";
+
+assert.equal(extractPiDigits("PI 0000 - AGUAS CBA"), "0000", "PI 0000 deve preservar os zeros");
+assert.equal(extractPiDigits("PI 91493 - OBRAS"), "91493", "PI numérica deve permanecer estável");
 
 const baseHeaders = ["AGENCIA", "PECA", "CAMPANHA", "PERIODO", "LOCAL", "STATUS"];
 const metadata = resolveCurrentSheetCampaignRowMetadata({

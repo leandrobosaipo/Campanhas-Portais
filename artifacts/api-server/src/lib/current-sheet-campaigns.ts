@@ -429,8 +429,8 @@ function addDays(dateKey: string, days: number) {
 
 export function extractPiDigits(value: string | null | undefined) {
   const normalized = normalizeForMatch(value);
-  const piMatch = normalized.match(/\bPI\s*0*([0-9]+)\b/);
+  const piMatch = normalized.match(/\bPI\s*([0-9]+)\b/);
   if (piMatch) return piMatch[1] ?? null;
-  const anyMatch = normalized.match(/\b0*([0-9]{3,})\b/);
+  const anyMatch = normalized.match(/\b([0-9]{3,})\b/);
   return anyMatch?.[1] ?? null;
 }
