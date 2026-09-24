@@ -94,6 +94,7 @@ type DrivePiEventPayload = {
   parsedPi?: unknown;
   simulation?: unknown;
   preflightOnly?: boolean;
+  operationMode?: "strict" | "operational_minimum";
   explicitFolder?: boolean;
   resolveMedia?: boolean;
   strictInsertionScope?: boolean;
@@ -896,6 +897,7 @@ function validateDrivePiEvent(body: Record<string, unknown>): DrivePiEventPayloa
     ...(body["parsedPi"] !== undefined ? { parsedPi: body["parsedPi"] } : {}),
     ...(body["simulation"] !== undefined ? { simulation: body["simulation"] } : {}),
     ...(body["preflightOnly"] === true ? { preflightOnly: true } : {}),
+    ...(body["operationMode"] === "operational_minimum" ? { operationMode: "operational_minimum" as const } : {}),
     ...(body["explicitFolder"] === true ? { explicitFolder: true } : {}),
     ...(typeof body["resolveMedia"] === "boolean" ? { resolveMedia: body["resolveMedia"] } : {}),
     ...(typeof body["strictInsertionScope"] === "boolean" ? { strictInsertionScope: body["strictInsertionScope"] } : {}),
@@ -3463,6 +3465,7 @@ async function createDrivePiFolderJob(req: Request, res: Response, options: { pr
     simulation: req.body?.simulation,
     parsedPi: req.body?.parsedPi,
     preflightOnly: options.preflightOnly,
+    ...(req.body?.operationMode === "operational_minimum" ? { operationMode: "operational_minimum" as const } : {}),
     explicitFolder: true,
     resolveMedia: options.preflightOnly || options.publishFlow ? req.body?.resolveMedia !== false : req.body?.resolveMedia === true,
     strictInsertionScope: options.publishFlow ? req.body?.strictInsertionScope !== false : req.body?.strictInsertionScope === true,

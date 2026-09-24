@@ -141,6 +141,7 @@ type DrivePiEventPayload = {
   parsedPi?: unknown;
   simulation?: unknown;
   preflightOnly?: boolean;
+  operationMode?: "strict" | "operational_minimum";
   explicitFolder?: boolean;
   resolveMedia?: boolean;
   strictInsertionScope?: boolean;
@@ -2966,6 +2967,7 @@ export default {
           simulation: body.simulation,
           parsedPi: body.parsedPi,
           preflightOnly,
+          ...(body.operationMode === "operational_minimum" ? { operationMode: "operational_minimum" as const } : {}),
           explicitFolder: true,
           resolveMedia: publishFlow ? body.resolveMedia !== false : body.resolveMedia === true,
           strictInsertionScope: publishFlow ? body.strictInsertionScope !== false : body.strictInsertionScope === true,

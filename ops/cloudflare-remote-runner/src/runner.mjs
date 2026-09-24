@@ -3376,6 +3376,25 @@ function validateDrivePiPackageReadiness(packageClassification, fields, mediaPro
   };
 }
 
+function getDrivePiReadiness(validation, packageReadiness, rollout, dedupe, operationMode) {
+  const minimumMissing = new Set(["piCodigo", "campanhaNome", "competencia", "clienteId", "agentQuality"]);
+  const operationalValidation = {
+    ...validation,
+    missing: (validation.missing || []).filter((item) => !minimumMissing.has(item)),
+    ok: (validation.invalidInsertions || []).length === 0
+      && Boolean(validation.missing?.includes("insertions") === false),
+  };
+  const operationalPackage = {
+    ...packageReadiness,
+    issues: (packageReadiness.issues || []).filter((item) => item !== "missing_pi_pdf"),
+  };
+  operationalPackage.ok = operationalPackage.issues.length === 0 && operationalPackage.hasMedia;
+  const strictReady = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
+  const operationalReady = operationMode === "operational_minimum"
+    && operationalValidation.ok && operationalPackage.ok && rollout.ok && dedupe.ok;
+  return { operationalValidation, operationalPackage, strictReady, operationalReady };
+}
+
 async function updateDrivePiState(payload, status, extra = {}) {
   if (!payload?.eventId) return null;
   return request("/api/ops/drive-pi-events/status", {
@@ -5015,12 +5034,13 @@ async function applyDrivePiToExpectedInsertion(fields, payload) {
     insertionPiCodigo: expected?.piCodigo,
     allowMissingPdf: Boolean(fields.sheetVerified),
   });
-  validateExpectedDrivePiCommercialContext({
+  if (payload?.operationMode !== "operational_minimum") validateExpectedDrivePiCommercialContext({
     campaignCompetencia: campaign?.competencia,
     fieldsCompetencia: fields.competencia,
     pdfCompetencia: fields.pdfCompetencia,
   });
-  if (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0)) {
+  if (payload?.operationMode !== "operational_minimum"
+    && (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0))) {
     throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
   }
   const allowSheetPeriodCorrection = Boolean(fields.sheetVerified);
@@ -5707,6 +5727,7 @@ async function notifyDrivePiErrorTelegram(payload, error) {
 
 async function executeDrivePiIngest(payload, parentJobId = null) {
   const preflightOnly = payload?.preflightOnly === true;
+  const operationMode = payload?.operationMode === "operational_minimum" ? "operational_minimum" : "strict";
   await updateDrivePiState(payload, "received", {
     parseRun: {
       fields: null,
@@ -5938,7 +5959,13 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     requireHttpsDestination: payload?.publish === true,
     expectedInsertion: expectedInsertionContext,
   });
-  const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
+  const operationMinimum = payload?.operationMode === "operational_minimum";
+  const minimumValidation = operationMinimum
+    ? { ...validation, ok: (validation.invalidInsertions || []).length === 0 && !validation.missing.includes("insertions") }
+    : validation;
+  const rollout = (validation.ok || minimumValidation.ok)
+    ? await validateDrivePiSiteRollout(fields)
+    : { ok: true, blockedSites: [], resolvedSites: [] };
   const dedupeTarget = readPositiveInteger(payload?.expectedCampaignId) && readPositiveInteger(payload?.expectedInsertionId)
     ? {
       expectedCampaignId: payload.expectedCampaignId,
@@ -5951,10 +5978,13 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
       coexistenceConfirmation: payload?.coexistenceConfirmation,
     }
     : null;
-  const dedupe = validation.ok && packageReadiness.ok && rollout.ok
+  const dedupe = (validation.ok || minimumValidation.ok) && (packageReadiness.ok || operationMinimum) && rollout.ok
     ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
-  const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
+  const readiness = getDrivePiReadiness(validation, packageReadiness, rollout, dedupe, operationMode);
+  const effectiveValidation = operationMode === "operational_minimum" ? readiness.operationalValidation : validation;
+  const effectivePackageReadiness = operationMode === "operational_minimum" ? readiness.operationalPackage : packageReadiness;
+  const canApply = operationMode === "operational_minimum" ? readiness.operationalReady : readiness.strictReady;
   // The protected drive-pi-publish endpoint is an explicit mutation request even
   // when publish=false. That mode updates AdOps/media only and must not touch
   // AdRotate, cache or evidence for an expired campaign.
@@ -5987,8 +6017,8 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
   const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;
   const reviewReasons = buildDrivePiReviewReasons({
     packageClassification,
-    packageReadiness,
-    validation,
+    packageReadiness: effectivePackageReadiness,
+    validation: effectiveValidation,
     rollout,
     dedupe: preApplyDedupe,
     preflightOnly,
@@ -6062,7 +6092,10 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     missing: validation.missing,
     invalidInsertions: validation.invalidInsertions,
     reviewReasons,
-    packageReadiness,
+    packageReadiness: effectivePackageReadiness,
+    operationMode,
+    strictReady: readiness.strictReady,
+    operationalReady: readiness.operationalReady,
     dedupe: preApplyDedupe,
     rollout,
     agentAnalysis: fields.agentAnalysis || agentResult,
