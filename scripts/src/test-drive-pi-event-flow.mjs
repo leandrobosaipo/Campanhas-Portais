@@ -71,6 +71,7 @@ await check("operational-minimum-explicit-sheet-target-fallback", async () => {
   const source = read(runnerSourcePath);
   assert(source.includes("explicit_operational_target"), "runner sem fallback explícito de alvo operacional");
   assert(source.includes("sheet_target_ambiguous"), "runner não pode remover o bloqueio estrito de ambiguidade");
+  assert(source.includes("preflightFolderId || resolvedFolderId"), "runner não reutiliza a pasta validada pelo preflight");
   return { guarded: true };
 });
 

@@ -7228,13 +7228,19 @@ async function executeDrivePiReconcile(payload) {
   if (selectedDriveFileId && !selectedDriveFile && sourcePreflightJobId) {
     const preflightJob = await privateApiGet(`/api/ops/jobs/${encodeURIComponent(sourcePreflightJobId)}`);
     const execution = preflightJob?.result?.execution;
+    const preflightPayload = preflightJob?.payload || {};
     const preflightCandidates = Array.isArray(execution?.mediaCandidates) ? execution.mediaCandidates : [];
     const resolvedFolderId = String(consistency?.drive?.folderId || "").trim();
     const preflightFolderId = String(execution?.driveFileId || "").trim();
     if (preflightJob?.kind !== "drive-pi-ingest" || preflightJob?.status !== "completed" || execution?.preflightOnly !== true) {
       throw new Error(`Job ${sourcePreflightJobId} não é um preflight Drive concluído.`);
     }
-    if (!resolvedFolderId || preflightFolderId !== resolvedFolderId) {
+    if (Number(preflightPayload.expectedInsertionId || 0) !== insertionId
+      || (preflightPayload.expectedCampaignId && Number(preflightPayload.expectedCampaignId) !== Number(before?.campanhaId || before?.campaignId || 0))) {
+      throw new Error(`Preflight ${sourcePreflightJobId} não corresponde à inserção/campanha canônica ${insertionId}.`);
+    }
+    const validatedFolderId = preflightFolderId || resolvedFolderId;
+    if (!validatedFolderId || (resolvedFolderId && preflightFolderId !== resolvedFolderId)) {
       throw new Error(`Preflight ${sourcePreflightJobId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
     }
     selectedDriveFile = preflightCandidates.find((file) => String(file?.driveFileId || "") === selectedDriveFileId) || null;
