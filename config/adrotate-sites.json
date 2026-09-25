@@ -165,6 +165,7 @@
         "slotSelector": ".g.g-3",
         "contextSelector": ".g.g-3",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "width": 670, "height": 90, "formats": ["GIF", "MP4"] },
         "auditOverrides": {
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4
