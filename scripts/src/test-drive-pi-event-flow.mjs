@@ -18,6 +18,10 @@ const EXPECTED_RUNNER_ID = process.env.ADOPS_EXPECTED_RUNNER_ID || "runner-1";
 const liveSmokeReportRoot = path.join(repoRoot, "docs/harness-reports/drive-pi-live-smoke");
 const results = [];
 
+// Regression guard: operational-minimum intake may use an explicit canonical
+// campaign/insertion when the legacy sheet row has no PI code yet.
+const runnerSourcePath = path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs");
+
 function read(filePath) {
   return fs.readFileSync(filePath, "utf8");
 }
@@ -62,6 +66,13 @@ function assertIncludes(content, markers, label) {
   const missing = markers.filter((marker) => !content.includes(marker));
   assert(missing.length === 0, `${label} sem marcador(es): ${missing.join(", ")}`);
 }
+
+await check("operational-minimum-explicit-sheet-target-fallback", async () => {
+  const source = read(runnerSourcePath);
+  assert(source.includes("explicit_operational_target"), "runner sem fallback explícito de alvo operacional");
+  assert(source.includes("sheet_target_ambiguous"), "runner não pode remover o bloqueio estrito de ambiguidade");
+  return { guarded: true };
+});
 
 function timestampForPath(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");

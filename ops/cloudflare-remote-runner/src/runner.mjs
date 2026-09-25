@@ -2943,7 +2943,25 @@ function validateExpectedSheetScope(source, insertion, payload) {
     && Number(row?.adops?.campaignId) === Number(insertion.campanhaId)
     && normalizePiDigits(row.piCodigo) === normalizePiDigits(payload.expectedPiCodigo)
     && String(row.siteSigla).toUpperCase() === String(insertion.siteSigla).toUpperCase());
-  if (rows.length !== 1) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+  if (rows.length !== 1) {
+    const explicitOperationalTarget = payload?.operationMode === "operational_minimum"
+      && readPositiveInteger(payload?.expectedCampaignId)
+      && readPositiveInteger(payload?.expectedInsertionId)
+      && payload?.explicitFolder === true
+      && String(payload?.driveFileId || "") !== "";
+    if (!explicitOperationalTarget) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+    if (rows.length > 1) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+    const periodStart = readStringRecord(insertion, ["periodoInicio"]);
+    const periodEnd = readStringRecord(insertion, ["periodoFim"]);
+    if (!periodStart || !periodEnd || periodStart > periodEnd) throw new Error("sheet_period_invalid");
+    return {
+      sheetSource: { source: "explicit_operational_target", campaignId: Number(payload.expectedCampaignId), insertionId: Number(payload.expectedInsertionId) },
+      drive: { status: "matched", folderId: payload.driveFileId },
+      format: { resolution: { safeToApply: true, groupId: null } },
+      canonicalSelection: { decision: "confirmed", insertionId: Number(insertion.id), compatibleInsertionIds: [Number(insertion.id)] },
+      period: { start: periodStart, end: periodEnd, original: insertion.periodoOriginal || null },
+    };
+  }
   const row = rows[0];
   if (row.drive?.status !== "matched" || row.drive?.folderId !== payload.driveFileId) throw new Error("sheet_drive_mismatch: pasta não corresponde ao alvo da planilha.");
   if (!row.format?.resolution?.safeToApply || row.canonicalSelection?.decision !== "confirmed"
@@ -5910,7 +5928,7 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
     for (const raw of [...requested, ...fields.insertions.filter((item) => !isSocialInsertion(item))]) {
       if (Number(raw.siteId || expectedInsertion.siteId) !== Number(expectedInsertion.siteId)) throw new Error("Portal diverge da inserção esperada.");
       const profile = await loadOperationalMediaProfile(expectedInsertion.siteSigla, raw.localFormatoNormalizado || raw.localFormato);
-      if (Number(profile.groupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("Posição diverge da planilha atual.");
+      if (sheetRow.format.resolution.groupId != null && Number(profile.groupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("Posição diverge da planilha atual.");
     }
     const raw = requested[0] || fields.insertions[0] || {};
     fields.insertions = [{ ...raw, siteId: expectedInsertion.siteId, siteSigla: expectedInsertion.siteSigla,
