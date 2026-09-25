@@ -6304,6 +6304,7 @@ async function executeDrivePiIngest(payload, parentJobId = null) {
 
   return {
     stage: finalStatus,
+    runnerBuildSha: process.env.ADOPS_IMAGE_TAG || "unknown",
     periodSource: payload?.periodSource === "sheet" ? "planilha" : "PI",
     effectivePeriodEnd: fields.insertions.length === 1 ? fields.insertions[0].periodoFim : null,
     mediaProcessing,
