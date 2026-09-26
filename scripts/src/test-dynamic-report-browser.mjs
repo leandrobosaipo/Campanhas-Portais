@@ -16,7 +16,7 @@ const monthlyPayload = {
     agenciaNome: "Agência teste", piCodigo: "PI 42059", siteSigla: "OMT",
     localFormatoNormalizado: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
     bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["complete"],
-    evidenceDays: [{ date: "2026-09-01", status: "audited", url: "https://example.com/evidence.jpg" }],
+    evidenceDays: [{ date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.jpg" }],
   }],
 };
 
@@ -33,6 +33,12 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
       ).replace(
         "const REPORT_API_BASE = 'https://adops-api.codigo5.com.br'",
         `const REPORT_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "const EVIDENCE_API_BASE = 'https://adops-api.codigo5.com.br'",
+        `const EVIDENCE_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "</body>",
+        '<script>setTimeout(()=>document.querySelector(".evidence-day")?.click(),500)</script></body>',
       ));
       return;
     }
@@ -65,6 +71,7 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.match(stdout, /Dados consultados diretamente da API AdOps/);
     assert.match(stdout, /Campanha pendente/);
     assert.match(stdout, /Conferir pendências/);
+    assert.ok((stdout.match(/adopsEvidenceVersion=44-2026-09-01T12%3A00%3A00.000Z/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
