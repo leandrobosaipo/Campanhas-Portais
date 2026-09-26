@@ -25,10 +25,26 @@ const monthlyPayload = {
 
 test("Chrome real renderiza a resposta dinâmica da API", async () => {
   const requestMethods = [];
+  const reportRequests = [];
+  const firstPage = Array.from({ length: 12 }, (_, index) => ({
+    ...monthlyPayload.items[0],
+    id: 1901 + index,
+    campanhaId: 1001 + index,
+    campanhaName: index === 0 ? "Campanha dinâmica" : `Campanha ${1001 + index}`,
+    evidenceDays: index === 0 ? monthlyPayload.items[0].evidenceDays : [],
+  }));
+  const secondPage = Array.from({ length: 11 }, (_, index) => ({
+    ...monthlyPayload.items[0], id: 2000 + index, campanhaId: 2000 + index,
+    campanhaName: `Campanha ${2000 + index}`, evidenceDays: [],
+  }));
+  secondPage.unshift(firstPage[0]);
+  const thirdPage = [3217, 3218].map((id) => ({ ...monthlyPayload.items[0], id, campanhaId: id, campanhaName: `Campanha ${id}`, evidenceDays: [] }));
+  let failSecondPageOnce = true;
   const server = createServer((request, response) => {
     requestMethods.push(request.method);
+    const requestUrl = new URL(request.url, "http://localhost");
     response.setHeader("access-control-allow-origin", "*");
-    if (request.url === "/") {
+    if (requestUrl.pathname === "/") {
       response.setHeader("content-type", "text/html; charset=utf-8");
       response.end(renderDynamicEvidenceReport().replace(
         "const API_BASE = 'https://adops-api-public.leandro471.workers.dev'",
@@ -41,12 +57,24 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
         `const EVIDENCE_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
       ).replace(
         "</body>",
-        '<script>setTimeout(()=>document.querySelector(".evidence-day")?.click(),500)</script></body>',
+        '<script>const status=document.querySelector("#statusMessage");new MutationObserver(()=>{if(status.classList.contains("bad")&&status.textContent.includes("incompleta")){document.body.dataset.partialCardsOnError=document.querySelectorAll(".campaign").length;setTimeout(()=>document.querySelector("#refreshButton").click(),0)}}).observe(status,{attributes:true,childList:true,subtree:true});setTimeout(()=>{const click=()=>{const thumb=document.querySelector(".evidence-day");if(thumb){thumb.click();setTimeout(()=>{document.body.dataset.campaignCards=document.querySelectorAll(".campaign").length;document.body.dataset.hasReconstructionOverlay=!!document.querySelector(".reconstruction-label");document.body.dataset.hasSeparateReconstructionNote=!!document.querySelector(".thumb-status");document.body.dataset.modalHasReconstructionStatus=document.querySelector("#evidenceDetails")?.textContent.includes("reconstruída")},500)}else setTimeout(click,100)};click()},500)</script></body>',
       ));
       return;
     }
     response.setHeader("content-type", "application/json");
-    if (request.url.startsWith("/api/reports/evidences/monthly")) response.end(JSON.stringify(monthlyPayload));
+    if (request.url.startsWith("/api/reports/evidences/monthly")) {
+      const url = new URL(request.url, "http://localhost");
+      reportRequests.push(url);
+      const cursor = url.searchParams.get("cursor");
+      if (cursor === "12" && failSecondPageOnce) {
+        failSecondPageOnce = false;
+        response.statusCode = 503;
+        response.end("temporary page failure");
+        return;
+      }
+      const page = cursor === "12" ? secondPage : cursor === "24" ? thirdPage : firstPage;
+      response.end(JSON.stringify({ ...monthlyPayload, items: page, summary: { ...monthlyPayload.summary, campaigns: 25 }, pagination: { total: 25, nextCursor: cursor === "24" ? null : cursor === "12" ? "24" : "12" } }));
+    }
     else if (request.url === "/api/ops/daily-print-status") response.end(JSON.stringify({ lastAttempt: { status: "completed", approved: 1, expected: 1, targetDate: "2026-09-01", summary: "Rotina concluída." } }));
     else response.end(JSON.stringify({
       sheet: { name: "SETEMBRO 2026" }, driveInventory: { snapshotStatus: "fresh", itemCount: 8 }, upcomingItems: [],
@@ -66,17 +94,25 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     const port = server.address().port;
     const { stdout } = await execFileAsync(
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", `http://127.0.0.1:${port}/`],
+      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=8000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`],
       { timeout: 15_000, maxBuffer: 2_000_000 },
     );
     assert.match(stdout, /Campanha dinâmica/);
-    assert.match(stdout, /id="metricCampaigns">1</);
-    assert.match(stdout, /Dados consultados diretamente da API AdOps/);
+    assert.match(stdout, /Campanha 3217/);
+    assert.match(stdout, /id="metricCampaigns">25</);
+    assert.match(stdout, /Dados completos consultados diretamente da API AdOps/);
     assert.match(stdout, /Campanha pendente/);
     assert.match(stdout, /Conferir pendências/);
     assert.match(stdout, /alt="Evidência 1901 2026-09-02"/);
-    assert.match(stdout, /Reconstrução · aceite pendente/);
+    assert.match(stdout, /data-has-reconstruction-overlay="false"/);
+    assert.match(stdout, /data-has-separate-reconstruction-note="true"/);
+    assert.match(stdout, /data-modal-has-reconstruction-status="true"/);
+    assert.match(stdout, /data-partial-cards-on-error="0"/);
+    assert.match(stdout, /data-campaign-cards="25"/);
     assert.ok((stdout.match(/adopsEvidenceVersion=45-2026-09-02T13%3A00%3A00.000Z-2/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência reconstruída");
+    assert.equal(reportRequests.length, 5, "todas as páginas devem ser carregadas automaticamente e uma falha deve permitir tentar de novo");
+    assert.deepEqual(reportRequests.map((url) => url.searchParams.get("cursor")), [null, "12", null, "12", "24"]);
+    assert.ok(reportRequests.every((url) => url.searchParams.get("month") === "2026-09" && url.searchParams.get("publication") === "active" && url.searchParams.get("portal") === "OMT" && url.searchParams.get("search") === "Campanha"), "filtros devem ser preservados em cada página");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
