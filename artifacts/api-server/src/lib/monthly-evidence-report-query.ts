@@ -57,6 +57,15 @@ export function monthBounds(month: string, today: string) {
   return { start, end, evidenceEnd: today >= start && today <= end ? today : today < start ? start : end };
 }
 
+export function monthlyReportInsertionMatches(item: Record<string, unknown>, bounds: { start: string; end: string }) {
+  const periodStart = String(item.periodoInicio || "");
+  const periodEnd = String(item.periodoFim || "");
+  const status = String(item.statusNormalizado || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  return periodEnd >= bounds.start
+    && periodStart <= bounds.end
+    && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(status);
+}
+
 export function classifyMonthlyInsertion(options: {
   published: boolean;
   periodStart: string;

@@ -7,7 +7,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { and, desc, eq, sql, inArray } from "drizzle-orm";
+import { and, desc, eq, sql, inArray, gte, lte } from "drizzle-orm";
 import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable } from "@workspace/db";
 import {
   CreateInsertionBody,
@@ -96,6 +96,7 @@ import {
   buildMonthlyReportQuery,
   classifyMonthlyInsertion,
   monthBounds,
+  monthlyReportInsertionMatches,
   pageMonthlyInsertions,
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
@@ -1693,24 +1694,21 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     const currentHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Cuiaba", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
 
   try {
-    const [year, monthNumber] = query.month.split("-");
-    const monthNames = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
-    const expectedCompetencias = new Set([
-      `${monthNumber} ${year}`,
-      `${monthNames[Number(monthNumber) - 1]} ${year}`,
-    ]);
-    const monthlyCampaigns = (await db.select().from(campaignsTable))
-      .filter((campaign) => expectedCompetencias.has(normalizeTextKey(campaign.competencia)));
+    // This view is period-based. Competencia is commercial metadata and must
+    // not suppress a live insertion whose dates overlap the requested month.
+    const monthlyCampaigns = await db.select().from(campaignsTable);
     const rawInsertions = monthlyCampaigns.length
-      ? await db.select().from(insertionsTable).where(inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id))).orderBy(insertionsTable.createdAt)
+      ? await db.select().from(insertionsTable).where(and(
+        inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id)),
+        lte(insertionsTable.periodoInicio, bounds.end),
+        gte(insertionsTable.periodoFim, bounds.start),
+      )).orderBy(insertionsTable.createdAt)
       : [];
     const enriched = await enrichMonthlyReportInsertions(excludeSupersededMonthlyInsertions(rawInsertions), monthlyCampaigns);
     const monthlyCandidates = enriched.filter((item) => {
-      return String(item.periodoFim || "") >= bounds.start
-        && String(item.periodoInicio || "") <= bounds.end
+      return monthlyReportInsertionMatches(item, bounds)
         && item.archivedAt == null
-        && item.supersededByInsertionId == null
-        && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(normalizeTextKey(item.statusNormalizado));
+        && item.supersededByInsertionId == null;
     });
     const monthly = selectCanonicalMonthlyInsertions(monthlyCandidates);
 
