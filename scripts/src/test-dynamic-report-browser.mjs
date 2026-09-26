@@ -16,7 +16,10 @@ const monthlyPayload = {
     agenciaNome: "Agência teste", piCodigo: "PI 42059", siteSigla: "OMT",
     localFormatoNormalizado: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
     bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["complete"],
-    evidenceDays: [{ date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.jpg" }],
+    evidenceDays: [
+      { date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.jpg?v=1" },
+      { date: "2026-09-02", status: "reconstruction", technicalStatus: "audited", evidenceId: 45, verifiedAt: "2026-09-02T13:00:00.000Z", url: "https://example.com/reconstruction.jpg?v=2" },
+    ],
   }],
 };
 
@@ -71,7 +74,9 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.match(stdout, /Dados consultados diretamente da API AdOps/);
     assert.match(stdout, /Campanha pendente/);
     assert.match(stdout, /Conferir pendências/);
-    assert.ok((stdout.match(/adopsEvidenceVersion=44-2026-09-01T12%3A00%3A00.000Z/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência");
+    assert.match(stdout, /alt="Evidência 1901 2026-09-02"/);
+    assert.match(stdout, /Reconstrução · aceite pendente/);
+    assert.ok((stdout.match(/adopsEvidenceVersion=45-2026-09-02T13%3A00%3A00.000Z-2/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência reconstruída");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
