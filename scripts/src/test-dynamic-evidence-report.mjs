@@ -75,7 +75,7 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "preview=1",
   ]) assert.match(html, new RegExp(marker));
   assert.doesNotMatch(html, /<b class="latest-label">|>Mais recente</);
-  assert.match(html, /REPORT_LOAD_TIMEOUT_MS = 20_000/);
+  assert.match(html, /REPORT_LOAD_TIMEOUT_MS = 90_000/);
   assert.match(html, /Sessão AdOps necessária/);
   assert.match(html, /\.thumb img\s*\{/);
   assert.match(html, /\.brand img/);

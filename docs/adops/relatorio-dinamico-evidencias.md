@@ -11,6 +11,7 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Meses antigos usam a mesma página pelo seletor ou por `?mes=AAAA-MM`.
 - Busca e filtros consultam `GET /api/reports/evidences/monthly`.
 - A paginação é por campanha; uma campanha não pode ser dividida entre páginas.
+- A listagem só aparece depois de carregar todas as páginas. O limite total da consulta é 90 segundos; se excedido, nenhum resultado parcial é apresentado e o botão `Atualizar` permite tentar novamente.
 - Miniaturas usam o endpoint de evidência com `preview=1`, disposição inline, ETag e cache público.
 - O download explícito de JPEG continua como anexo.
 - O ZIP da campanha continua no fluxo assíncrono `/api/pi-site-exports/jobs`.
@@ -51,6 +52,8 @@ mkdir -p relatorios/adops-evidencias
 cp docs/reports/adops-evidencias/index.html relatorios/adops-evidencias/index.html
 node scripts/src/publish-report-to-sites.mjs relatorios/adops-evidencias
 ```
+
+O publicador só aceita o slug canônico, prepara staging, troca o diretório atomicamente e preserva a versão anterior em `adops-evidencias.backup-<timestamp>`. Antes de encerrar, compara o HTML público com o artefato local (desconsiderando somente a âncora oculta inserida pelo Cloudflare).
 
 Testar a URL pública no mês corrente e em agosto de 2026, no desktop e em 390 px.
 

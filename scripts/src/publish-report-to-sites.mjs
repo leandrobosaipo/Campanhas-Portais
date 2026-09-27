@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { findReportsMountSource, resolveReportPortainerUrl } from "./monthly-evidence-contract.mjs";
 
 const repoRoot = process.cwd();
 const reportDir = path.resolve(process.argv[2] || "");
 const portainerEnvFile = process.env.PORTAINER_ENV_FILE || "/Users/leandrobosaipo/Projetos/macmini/.env.portainer";
 const endpointId = process.env.PORTAINER_ENDPOINT_ID || "3";
+const publishToken = new Date().toISOString().replace(/[-:.TZ]/g, "");
+const stagingName = `${path.basename(reportDir)}.staging-${publishToken}`;
+const backupName = `${path.basename(reportDir)}.backup-${publishToken}`;
 
-if (!reportDir.startsWith(path.join(repoRoot, "relatorios") + path.sep)) {
-  throw new Error("Informe uma pasta dentro de relatorios/.");
+if (path.dirname(reportDir) !== path.join(repoRoot, "relatorios") || path.basename(reportDir) !== "adops-evidencias") {
+  throw new Error("Informe somente relatorios/adops-evidencias; publicação fora do relatório canônico bloqueada.");
 }
 
 function parseEnv(text) {
@@ -24,7 +28,7 @@ function parseEnv(text) {
 }
 
 const env = parseEnv(await readFile(portainerEnvFile, "utf8"));
-const portainerBase = String(env.PORTAINER_URL || "").replace(/\/$/, "");
+const portainerBase = resolveReportPortainerUrl(env);
 const apiKey = env.PORTAINER_API_KEY;
 if (!portainerBase || !apiKey) throw new Error("Configuração Portainer ausente.");
 
@@ -37,16 +41,42 @@ async function portainer(method, pathname, body, contentType = "application/json
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`Portainer ${method} ${pathname} HTTP ${response.status}: ${text.slice(0, 300)}`);
-  return text ? JSON.parse(text) : null;
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function execInContainer(containerId, command) {
+  const created = await portainer("POST", `/api/endpoints/${endpointId}/docker/containers/${containerId}/exec`, {
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: true,
+    Cmd: ["sh", "-lc", command],
+  });
+  const output = await portainer("POST", `/api/endpoints/${endpointId}/docker/exec/${created.Id}/start`, { Detach: false, Tty: true });
+  let inspected = await portainer("GET", `/api/endpoints/${endpointId}/docker/exec/${created.Id}/json`);
+  for (let attempt = 0; inspected?.Running && attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    inspected = await portainer("GET", `/api/endpoints/${endpointId}/docker/exec/${created.Id}/json`);
+  }
+  if (inspected?.Running || inspected?.ExitCode !== 0) {
+    throw new Error(`Troca atômica falhou (${inspected?.ExitCode ?? "sem código de saída"}): ${String(output || "").slice(0, 500)}`);
+  }
 }
 
 const slug = path.basename(reportDir);
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "adops-report-publish-"));
-const tarPath = path.join(tempRoot, `${slug}.tar`);
+const tarPath = path.join(tempRoot, `${stagingName}.tar`);
 let helperId = null;
 
 try {
-  const tar = spawnSync("tar", ["--no-xattrs", "-C", path.dirname(reportDir), "-cf", tarPath, slug], {
+  const tarRoot = path.join(tempRoot, "publish");
+  const stagedReport = path.join(tarRoot, stagingName);
+  await mkdir(tarRoot, { recursive: true });
+  await cp(reportDir, stagedReport, { recursive: true });
+  if (!(await readFile(path.join(stagedReport, "index.html"), "utf8")).includes("<!doctype html")) {
+    throw new Error("HTML do relatório ausente ou inválido; publicação cancelada.");
+  }
+  const tar = spawnSync("tar", ["--no-xattrs", "-C", tarRoot, "-cf", tarPath, stagingName], {
     encoding: "utf8",
     env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
@@ -56,15 +86,14 @@ try {
   const sites = containers.find((item) => (item.Names || []).includes("/sites-index"));
   if (!sites) throw new Error("Container sites-index não encontrado.");
   const inspect = await portainer("GET", `/api/endpoints/${endpointId}/docker/containers/${sites.Id}/json`);
-  const reportsMount = (inspect.Mounts || []).find((mount) => mount.Type === "bind" && mount.Destination === "/app/reports");
-  if (!reportsMount?.Source) throw new Error("Bind específico /app/reports não encontrado.");
+  const reportsMountSource = findReportsMountSource(inspect.Mounts);
 
   const helper = await portainer("POST", `/api/endpoints/${endpointId}/docker/containers/create?name=adops-report-publish-${Date.now()}`, {
     Image: "node:22-alpine",
     Labels: { "cod5.project": "adops", "cod5.kind": "report-publisher", "cod5.service": slug },
     Cmd: ["sh", "-lc", "mkdir -p /target && sleep 120"],
     HostConfig: {
-      Binds: [`${reportsMount.Source}:/target`],
+      Binds: [`${reportsMountSource}:/target`],
       NetworkMode: "none",
       RestartPolicy: { Name: "no" },
     },
@@ -73,8 +102,21 @@ try {
   await portainer("POST", `/api/endpoints/${endpointId}/docker/containers/${helperId}/start`);
   const archive = await readFile(tarPath);
   await portainer("PUT", `/api/endpoints/${endpointId}/docker/containers/${helperId}/archive?path=${encodeURIComponent("/target")}`, archive, "application/x-tar");
+  const safeAtomicCommand = `cd /target && test -f '${stagingName}/index.html' && if [ -e '${slug}' ]; then test -f '${slug}/index.html' && test ! -e '${backupName}' && mv '${slug}' '${backupName}'; fi && mv '${stagingName}' '${slug}' || { code=$?; if [ -d '${backupName}' ] && [ ! -e '${slug}' ]; then mv '${backupName}' '${slug}'; fi; exit "$code"; }`;
+  await execInContainer(helperId, safeAtomicCommand);
 
-  console.log(JSON.stringify({ ok: true, slug, target: `/app/reports/${slug}`, mount: "/app/reports" }));
+  const publicResponse = await fetch(`https://sites.codigo5.com.br/reports/${slug}/?verify=${publishToken}`, {
+    headers: { "cache-control": "no-cache" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const publicHtml = await publicResponse.text();
+  const withoutCloudflareAnchor = (html) => html.replace(/<a href="https:\/\/sites\.codigo5\.com\.br\/cdn-cgi\/content\?id=[^"]+"[^>]*><\/a>/g, "");
+  const expectedHtml = await readFile(path.join(reportDir, "index.html"), "utf8");
+  if (!publicResponse.ok || withoutCloudflareAnchor(publicHtml) !== expectedHtml) {
+    throw new Error(`Leitura pública do relatório não confirmou a versão publicada (HTTP ${publicResponse.status}); backup mantido em /app/reports/${backupName}.`);
+  }
+
+  console.log(JSON.stringify({ ok: true, slug, target: `/app/reports/${slug}`, mount: "/app/reports", backup: `/app/reports/${backupName}` }));
 } finally {
   if (helperId) {
     await portainer("POST", `/api/endpoints/${endpointId}/docker/containers/${helperId}/stop?t=2`).catch(() => null);
