@@ -46,7 +46,7 @@ export function renderDynamicEvidenceReport() {
     const REPORT_API_BASE = 'https://adops-api.codigo5.com.br';
     const EVIDENCE_API_BASE = 'https://adops-api.codigo5.com.br';
     const API_PATH = '/api/reports/evidences/monthly';
-    const REPORT_LOAD_TIMEOUT_MS = 90_000;
+    const REPORT_LOAD_TIMEOUT_MS = 20_000;
     const timeZone = 'America/Cuiaba';
     const byId = (id) => document.getElementById(id);
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -261,7 +261,7 @@ export function renderDynamicEvidenceReport() {
         state.items = [];
         byId('reportContent').innerHTML = '<div class="empty">A lista não foi carregada por completo. Use Atualizar para tentar novamente.</div>';
         status.className = 'wrap notice bad';
-        status.textContent = 'Consulta incompleta: ' + (timedOut ? 'a consulta completa excedeu 90 segundos.' : error.message);
+        status.textContent = 'Consulta incompleta: ' + (timedOut ? 'a consulta completa excedeu 20 segundos.' : error.message);
       } finally {
         clearTimeout(timeout);
         if (sequence === state.requestSequence) byId('refreshButton').disabled = false;

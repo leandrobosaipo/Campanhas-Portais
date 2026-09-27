@@ -345,11 +345,11 @@ test("encerra consulta pendurada, não mostra resultado parcial e libera Atualiz
         "https://adops-api.codigo5.com.br",
         `http://127.0.0.1:${server.address().port}`,
       ).replace(
-        "const REPORT_LOAD_TIMEOUT_MS = 90_000;",
+        "const REPORT_LOAD_TIMEOUT_MS = 20_000;",
         "const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{if(new URL(input,location.href).pathname==='/api/reports/evidences/monthly')return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));return nativeFetch(input,init)};const REPORT_LOAD_TIMEOUT_MS = 50;",
       ).replace(
         "</body>",
-        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("excedeu 90 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
+        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("excedeu 20 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
       ));
       return;
     }
@@ -364,7 +364,7 @@ test("encerra consulta pendurada, não mostra resultado parcial e libera Atualiz
       ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=1000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active`],
       { timeout: 15_000, maxBuffer: 2_000_000 },
     );
-    assert.match(stdout, /consulta completa excedeu 90 segundos/);
+    assert.match(stdout, /consulta completa excedeu 20 segundos/);
     assert.match(stdout, /data-refresh-enabled="true"/);
     assert.match(stdout, /data-partial-campaign-count="0"/);
     assert.match(stdout, /A lista não foi carregada por completo/);

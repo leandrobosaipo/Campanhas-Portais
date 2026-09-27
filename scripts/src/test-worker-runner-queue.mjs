@@ -82,7 +82,7 @@ function fakeEnv(options = {}) {
         },
         async all() {
           if (/status IN \('queued','ready_for_runner','running'\)/.test(sql)) return { results: Array.from(rows.values()) };
-          if (/SELECT \* FROM ops_jobs/.test(sql) && /kind IN/.test(sql)) return { results: options.dailyJobs ?? [] };
+          if (/SELECT \* FROM ops_jobs/.test(sql) && (/kind IN/.test(sql) || /json_extract\(payload_json/.test(sql))) return { results: options.dailyJobs ?? [] };
           return { results: [] };
         },
       };
@@ -130,6 +130,33 @@ test("status diário público expõe somente o resumo canônico e não vaza payl
   assert.match(payload.lastAttempt.summary, /14 de 16 inserções.*2 precisam/);
   assert.equal(payload.lastAttempt.errorCode, null);
   assert.match(payload.lastAttempt.nextRecoveryAt, /T(22:30|23:00|23:30|00:00|00:30|01:00|01:30|12:00):00\.000Z$/);
+});
+
+test("status diário público associa causa allowlisted à mesma data e inserção", async () => {
+  const fixture = fakeEnv({
+    dailyJobs: [{
+      ...jobRecord(),
+      id: "daily-blocker",
+      status: "failed",
+      payload_json: JSON.stringify({ source: "cloudflare-cron-daily-print", date: "2026-09-22" }),
+      result_json: JSON.stringify({ execution: {
+        targetDate: "2026-09-22",
+        blocked: [{ insertionId: 3075, error: "drive_media_not_linked" }],
+        failed: [{ insertionId: 3020, error: "private stack trace must not leak" }],
+      } }),
+      created_at: "2026-09-22T22:00:00.000Z",
+      updated_at: "2026-09-22T22:14:00.000Z",
+    }],
+  });
+  const response = await worker.fetch(new Request("https://worker.test/api/ops/daily-print-status?date=2026-09-22"), fixture.env, {});
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.lastAttempt.insertionOutcomes, [
+    { insertionId: 3075, targetDate: "2026-09-22", status: "blocked", reasonCode: "drive_media_not_linked" },
+    { insertionId: 3020, targetDate: "2026-09-22", status: "failed", reasonCode: "capture_failed" },
+  ]);
+  assert.equal(JSON.stringify(payload).includes("private stack trace"), false);
 });
 
 test("job destinado ao runner nasce pronto no D1 sem depender da Cloudflare Queue", async () => {
