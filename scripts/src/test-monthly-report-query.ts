@@ -72,8 +72,13 @@ test("gera consulta paginada e limitada sem enviar filtros vazios", () => {
     evidence: "missing",
     search: "cliente x",
     offset: 20,
-    limit: 12,
+    limit: 50,
   });
+});
+
+test("aceita até 50 campanhas por página para reduzir consultas sequenciais", () => {
+  assert.equal(buildMonthlyReportQuery({ month: "2026-09", limit: "50" }).limit, 50);
+  assert.equal(buildMonthlyReportQuery({ month: "2026-09", limit: "500" }).limit, 50);
 });
 
 test("recusa filtros desconhecidos e cursor negativo", () => {

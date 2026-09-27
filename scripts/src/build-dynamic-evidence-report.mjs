@@ -193,7 +193,7 @@ export function renderDynamicEvidenceReport() {
       status.className = 'wrap notice';
       status.textContent = 'Consultando a API AdOps…';
       byId('refreshButton').disabled = true;
-      const baseQuery = new URLSearchParams({ month: state.month, limit: '12' });
+      const baseQuery = new URLSearchParams({ month: state.month, limit: '50' });
       if (controls.search.value.trim()) baseQuery.set('search', controls.search.value.trim());
       const requestedPortal = controls.portal.dataset.requested || controls.portal.value;
       if (requestedPortal) baseQuery.set('portal', requestedPortal);

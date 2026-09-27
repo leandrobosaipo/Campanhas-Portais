@@ -211,6 +211,6 @@ export function buildMonthlyReportQuery(query: Record<string, unknown>) {
     evidence,
     search: typeof query.search === "string" ? query.search.trim().slice(0, 160) : "",
     offset: boundedInteger(query.cursor, 0, 0, Number.MAX_SAFE_INTEGER),
-    limit: boundedInteger(query.limit, 12, 1, 12),
+    limit: boundedInteger(query.limit, 12, 1, 50),
   };
 }

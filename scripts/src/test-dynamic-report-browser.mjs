@@ -128,6 +128,7 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.equal(operationRequests[0].searchParams.get("date"), null);
     assert.equal(rawJobListRequested, false);
     assert.deepEqual(reportRequests.map((url) => url.searchParams.get("cursor")), [null, "12", null, "12", "24"]);
+    assert.ok(reportRequests.every((url) => url.searchParams.get("limit") === "50"), "o cliente usa o limite maior para reduzir requisições sem dispensar paginação");
     assert.ok(reportRequests.every((url) => url.searchParams.get("month") === "2026-09" && url.searchParams.get("publication") === "active" && url.searchParams.get("portal") === "OMT" && url.searchParams.get("search") === "Campanha"), "filtros devem ser preservados em cada página");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
