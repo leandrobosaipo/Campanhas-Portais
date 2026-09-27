@@ -26,6 +26,7 @@ const monthlyPayload = {
 test("Chrome real renderiza a resposta dinâmica da API", async () => {
   const requestMethods = [];
   const reportRequests = [];
+  const operationRequests = [];
   const firstPage = Array.from({ length: 12 }, (_, index) => ({
     ...monthlyPayload.items[0],
     id: 1901 + index,
@@ -75,7 +76,10 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
       const page = cursor === "12" ? secondPage : cursor === "24" ? thirdPage : firstPage;
       response.end(JSON.stringify({ ...monthlyPayload, items: page, summary: { ...monthlyPayload.summary, campaigns: 25 }, pagination: { total: 25, nextCursor: cursor === "24" ? null : cursor === "12" ? "24" : "12" } }));
     }
-    else if (request.url === "/api/ops/daily-print-status") response.end(JSON.stringify({ lastAttempt: { status: "completed", approved: 1, expected: 1, targetDate: "2026-09-01", summary: "Rotina concluída." } }));
+    else if (requestUrl.pathname === "/api/ops/jobs") {
+      operationRequests.push(requestUrl);
+      response.end(JSON.stringify({ items: [{ id: "daily-job-1", kind: "print-batch", status: "failed", payload: { routineKind: "daily-print", targetDate: "2026-09-26" }, result: { execution: { captured: [{ insertionId: 1901, status: "audited" }], blocked: [{ insertionId: 1902 }], failed: [] } } }] }));
+    }
     else response.end(JSON.stringify({
       sheet: { name: "SETEMBRO 2026" }, driveInventory: { snapshotStatus: "fresh", itemCount: 8 }, upcomingItems: [],
       items: [{
@@ -100,6 +104,10 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.match(stdout, /Campanha dinâmica/);
     assert.match(stdout, /Campanha 3217/);
     assert.match(stdout, /id="metricCampaigns">25</);
+    assert.match(stdout, /Último lote diário/);
+    assert.match(stdout, /2026-09-26/);
+    assert.match(stdout, /1 auditados/);
+    assert.match(stdout, /1 bloqueados/);
     assert.match(stdout, /Dados completos consultados diretamente da API AdOps/);
     assert.match(stdout, /Campanha pendente/);
     assert.match(stdout, /Conferir pendências/);
@@ -111,6 +119,9 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.match(stdout, /data-campaign-cards="25"/);
     assert.ok((stdout.match(/adopsEvidenceVersion=45-2026-09-02T13%3A00%3A00.000Z-2/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência reconstruída");
     assert.equal(reportRequests.length, 5, "todas as páginas devem ser carregadas automaticamente e uma falha deve permitir tentar de novo");
+    assert.equal(operationRequests.length, 1);
+    assert.equal(operationRequests[0].searchParams.get("kind"), "print-batch");
+    assert.equal(operationRequests[0].searchParams.get("limit"), "100");
     assert.deepEqual(reportRequests.map((url) => url.searchParams.get("cursor")), [null, "12", null, "12", "24"]);
     assert.ok(reportRequests.every((url) => url.searchParams.get("month") === "2026-09" && url.searchParams.get("publication") === "active" && url.searchParams.get("portal") === "OMT" && url.searchParams.get("search") === "Campanha"), "filtros devem ser preservados em cada página");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
