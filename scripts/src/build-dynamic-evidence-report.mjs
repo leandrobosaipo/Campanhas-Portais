@@ -111,12 +111,31 @@ export function renderDynamicEvidenceReport() {
         const attempts = [...(payload.recentAttempts || []), payload.lastAttempt].filter(Boolean);
         if (sequence !== state.requestSequence) return;
         const diagnostics = new Map();
+        const reasonLabels = {
+          drive_media_not_linked: 'mídia encontrada no Drive, mas não vinculada no AdOps',
+          media_missing: 'mídia não encontrada',
+          adrotate_relation_missing: 'relação com AdRotate ausente',
+          expected_media_not_observed: 'mídia esperada não observada no portal',
+          public_html_not_confirmed: 'HTML público ainda não confirmou a publicação',
+          duplicate_identity: 'identidade duplicada exige revisão',
+          capture_failed: 'captura do print falhou',
+          audit_failed: 'auditoria do print reprovou',
+          unknown_blocker: 'impedimento registrado; motivo não detalhado',
+        };
         for (const attempt of attempts) {
           const date = attempt.targetDate;
           if (!dates.has(date)) continue;
+          for (const outcome of attempt.insertionOutcomes || []) {
+            const id = Number(outcome.insertionId);
+            if (outcome.targetDate !== date || !Number.isInteger(id) || id <= 0) continue;
+            diagnostics.set(id + ':' + date, {
+              status: outcome.status === 'failed' ? 'falhou' : 'bloqueado',
+              error: reasonLabels[outcome.reasonCode] || reasonLabels.unknown_blocker,
+            });
+          }
           for (const insertionId of attempt.failedInsertionIds || []) {
             const id = Number(insertionId);
-            if (Number.isInteger(id) && id > 0) diagnostics.set(id + ':' + date, {
+            if (Number.isInteger(id) && id > 0 && !diagnostics.has(id + ':' + date)) diagnostics.set(id + ':' + date, {
               status: 'impedimento registrado no lote', error: 'motivo individual não disponível',
             });
           }

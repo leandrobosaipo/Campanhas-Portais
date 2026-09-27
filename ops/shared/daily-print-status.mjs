@@ -1,5 +1,30 @@
 const TIME_ZONE = "America/Cuiaba";
 const DAILY_SOURCE = "cloudflare-cron-daily-print";
+const PUBLIC_REASON_CODES = new Set([
+  "drive_media_not_linked", "media_missing", "adrotate_relation_missing",
+  "expected_media_not_observed", "public_html_not_confirmed", "duplicate_identity",
+  "capture_failed", "audit_failed",
+]);
+
+function safeInsertionOutcomes(job, targetDate) {
+  const result = job?.result && typeof job.result === "object" ? job.result : {};
+  const execution = result.execution && typeof result.execution === "object" ? result.execution : result;
+  if (execution.targetDate !== targetDate) return [];
+  const outcomes = [];
+  const seen = new Set();
+  for (const [key, status] of [["blocked", "blocked"], ["failed", "failed"]]) {
+    for (const item of Array.isArray(execution[key]) ? execution[key] : []) {
+      const insertionId = Number(item?.insertionId);
+      if (!Number.isInteger(insertionId) || insertionId <= 0 || seen.has(insertionId)) continue;
+      seen.add(insertionId);
+      const rawReason = String(item?.error ?? item?.reason ?? "");
+      const reasonCode = [...PUBLIC_REASON_CODES].find((code) => rawReason === code || rawReason.includes(`${code}:`))
+        ?? (status === "failed" ? "capture_failed" : "unknown_blocker");
+      outcomes.push({ insertionId, targetDate, status, reasonCode });
+    }
+  }
+  return outcomes;
+}
 
 function insertionIds(values) {
   return [...new Set((Array.isArray(values) ? values : [])
@@ -164,6 +189,7 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
     invalid: counts?.invalid ?? 0,
     summary: summarize(counts, String(latest.status)),
     ...safeIncident(latest),
+    insertionOutcomes: safeInsertionOutcomes(latest, String(dailyTargetDate(latest))),
     nextRecoveryAt: full ? null : nextRecoveryAt(now, String(dailyTargetDate(latest))),
   } : null;
   const approvedJob = dailyJobs.find((job) => {
@@ -182,6 +208,7 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
         targetDate: String(dailyTargetDate(job)),
         status: ["queued", "ready_for_runner", "running", "completed", "failed"].includes(status) ? status : "unknown",
         failedInsertionIds: safeIncident(job).failedInsertionIds.filter((id) => id > 0),
+        insertionOutcomes: safeInsertionOutcomes(job, String(dailyTargetDate(job))),
       };
     }),
     ...(requestedDate ? { requestedDate } : {}),

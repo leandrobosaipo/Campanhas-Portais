@@ -259,6 +259,10 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
         lastAttempt: { jobId: "safe-job-id", targetDate: "2026-09-27", status: "completed", expected: 2, approved: 2, missing: 0, invalid: 0, summary: "Rotina concluída" },
         recentAttempts: ["2026-09-01", "2026-09-03"].map(targetDate => ({
           jobId: "safe-job-id", targetDate, status: "failed", errorCode: "audit_incomplete", failedInsertionIds: [1901],
+          insertionOutcomes: [{
+            insertionId: 1901, targetDate, status: "blocked",
+            reasonCode: targetDate === "2026-09-01" ? "drive_media_not_linked" : "expected_media_not_observed",
+          }],
         })),
       }));
       return;
@@ -273,14 +277,14 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
       ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2500", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09`],
       { timeout: 15_000, maxBuffer: 2_000_000 },
     );
-    assert.match(stdout, /2026-09-01: impedimento registrado no lote — motivo individual não disponível/);
+    assert.match(stdout, /2026-09-01: bloqueado — mídia encontrada no Drive, mas não vinculada no AdOps/);
     assert.match(stdout, /Mídia não vinculada ao AdOps/);
     assert.match(stdout, /Grupo AdRotate não resolvido para este formato/);
     assert.match(stdout, /AdOps não marca publicação confirmada/);
     assert.match(stdout, /causa do cron não confirmada no histórico recente/);
     assert.match(stdout, /auditoria reprovada/);
     assert.match(stdout, /Comprovação documental pendente/);
-    assert.match(stdout, /2026-09-03: impedimento registrado no lote — motivo individual não disponível/);
+    assert.match(stdout, /2026-09-03: bloqueado — mídia esperada não observada no portal/);
     assert.doesNotMatch(stdout, /private runtime detail/);
     assert.equal(rawJobListRequested, false, "o relatório não deve baixar payload/result brutos de jobs");
     assert.deepEqual([...new Set(observedDailyStatusDates)], ["latest"]);

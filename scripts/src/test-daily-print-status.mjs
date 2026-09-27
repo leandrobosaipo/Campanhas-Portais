@@ -35,7 +35,7 @@ test("resume a última rotina usando somente a auditoria canônica do próprio l
     startedAt: "2026-08-17T22:00:50.000Z", finishedAt: "2026-08-17T22:14:25.000Z",
     expected: 16, approved: 14, missing: 2, invalid: 0,
     summary: "14 de 16 inserções tiveram o print aprovado; 2 precisam de nova tentativa.",
-    errorCode: null, failedInsertionIds: [], nextRecoveryAt: "2026-08-18T01:30:00.000Z",
+    errorCode: null, failedInsertionIds: [], insertionOutcomes: [], nextRecoveryAt: "2026-08-18T01:30:00.000Z",
   });
   assert.deepEqual(result.lastFullyApproved, { targetDate: "2026-08-16", finishedAt: "2026-08-16T22:10:00.000Z" });
   assert.equal(JSON.stringify(result).includes("daily_print_audit_incomplete"), false);
@@ -107,9 +107,32 @@ test("expõe apenas índice resumido por data e inserção, nunca payload/result
   }] });
 
   assert.deepEqual(result.recentAttempts, [{
-    jobId: "daily-1", targetDate: "2026-08-26", status: "failed", failedInsertionIds: [3044],
+    jobId: "daily-1", targetDate: "2026-08-26", status: "failed", failedInsertionIds: [3044], insertionOutcomes: [],
   }]);
   assert.equal(JSON.stringify(result.recentAttempts).includes("must-not-leak"), false);
+});
+
+test("expõe motivo allowlist por inserção apenas do mesmo dia, sem texto livre do runner", () => {
+  const result = buildDailyPrintStatus({ jobs: [{
+    id: "daily-outcomes", kind: "print-batch", status: "failed", createdAt: "2026-08-26T22:00:00.000Z",
+    payload: { source: "cloudflare-cron-daily-print", date: "2026-08-26" },
+    result: { execution: {
+      targetDate: "2026-08-26",
+      blocked: [{ insertionId: 3044, status: "blocked_upstream", error: "drive_media_not_linked" }],
+      failed: [{ insertionId: 3022, status: "failed", error: "secret detail must not leak" }],
+    } },
+  }, {
+    id: "wrong-day", kind: "print-batch", status: "failed", createdAt: "2026-08-25T22:00:00.000Z",
+    payload: { source: "cloudflare-cron-daily-print", date: "2026-08-25" },
+    result: { execution: { targetDate: "2026-08-25", blocked: [{ insertionId: 9999, status: "blocked_upstream", error: "drive_media_not_linked" }] } },
+  }] });
+
+  assert.deepEqual(result.lastAttempt.insertionOutcomes, [
+    { insertionId: 3044, targetDate: "2026-08-26", status: "blocked", reasonCode: "drive_media_not_linked" },
+    { insertionId: 3022, targetDate: "2026-08-26", status: "failed", reasonCode: "capture_failed" },
+  ]);
+  assert.equal(JSON.stringify(result).includes("secret detail"), false);
+  assert.equal(JSON.stringify(result.lastAttempt).includes("9999"), false);
 });
 
 test("lê auditoria de jobs legados aninhada em execution", () => {
