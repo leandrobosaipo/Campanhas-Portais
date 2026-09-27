@@ -118,3 +118,80 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll(
+        "https://adops-api.codigo5.com.br",
+        `http://127.0.0.1:${server.address().port}`,
+      ));
+      return;
+    }
+    response.setHeader("content-type", "application/json");
+    response.statusCode = url.pathname === "/api/reports/evidences/monthly" ? 401 : 200;
+    response.end(JSON.stringify({ error: "authentication_required" }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await execFileAsync(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`],
+      { timeout: 15_000, maxBuffer: 2_000_000 },
+    );
+    assert.match(stdout, /Sessão AdOps necessária/);
+    assert.match(stdout, /id="reportLoginLink"/);
+    const href = stdout.match(/id="reportLoginLink" href="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    assert.ok(href);
+    const login = new URL(href);
+    const next = new URL(login.searchParams.get("next"));
+    assert.equal(login.pathname, "/api/auth/google/login");
+    assert.equal(next.searchParams.get("publication"), "active");
+    assert.equal(next.searchParams.get("portal"), "OMT");
+    assert.equal(next.searchParams.get("q"), "Campanha");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("encerra consulta pendurada, não mostra resultado parcial e libera Atualizar", async () => {
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replace(
+        "https://adops-api.codigo5.com.br",
+        `http://127.0.0.1:${server.address().port}`,
+      ).replace(
+        "const REPORT_LOAD_TIMEOUT_MS = 20_000;",
+        "const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{if(new URL(input,location.href).pathname==='/api/reports/evidences/monthly')return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));return nativeFetch(input,init)};const REPORT_LOAD_TIMEOUT_MS = 50;",
+      ).replace(
+        "</body>",
+        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("dentro de 20 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
+      ));
+      return;
+    }
+    response.statusCode = 200;
+    response.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await execFileAsync(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=1000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active`],
+      { timeout: 15_000, maxBuffer: 2_000_000 },
+    );
+    assert.match(stdout, /API não respondeu dentro de 20 segundos/);
+    assert.match(stdout, /data-refresh-enabled="true"/);
+    assert.match(stdout, /data-partial-campaign-count="0"/);
+    assert.match(stdout, /A lista não foi carregada por completo/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

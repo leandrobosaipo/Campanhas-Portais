@@ -18,7 +18,7 @@ test('separa reconstrução de aceite e mostra a data real da captura', () => {
 });
 
 test("gera uma casca pequena sem registros incorporados", () => {
-  assert.ok(html.length < 85_000, `HTML inicial inesperadamente grande: ${html.length}`);
+  assert.ok(html.length < 90_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);
   assert.match(html, /\/api\/reports\/evidences\/monthly/);
 });
@@ -49,7 +49,8 @@ test("preserva filtros, URL, modais, acessibilidade e paginação", () => {
     'data-operations-section="agenda"',
     'id="campaignPackage"',
     'Abrir no AdOps',
-    'id="loadMore"',
+    'Carregando campanhas:',
+    'nextCursor',
     "history.replaceState",
     "aria-live=\"polite\"",
     "@media \\(max-width:760px\\)",
@@ -66,12 +67,16 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "Baixar ZIP desta campanha",
     "evidence-section",
     "thumbs evidence-track",
-    "latest-label",
+    "thumb-item",
+    "thumb-status",
     "evidenceDownloadUrl",
     "imageMaxWidth=800",
     "imageMaxWidth=1600",
     "preview=1",
   ]) assert.match(html, new RegExp(marker));
+  assert.doesNotMatch(html, /<b class="latest-label">|>Mais recente</);
+  assert.match(html, /REPORT_LOAD_TIMEOUT_MS = 20_000/);
+  assert.match(html, /Sessão AdOps necessária/);
   assert.match(html, /\.thumb img\s*\{/);
   assert.match(html, /\.brand img/);
   assert.match(html, /min-height:\s*44px/);
