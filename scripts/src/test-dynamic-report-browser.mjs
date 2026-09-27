@@ -27,6 +27,7 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
   const requestMethods = [];
   const reportRequests = [];
   const operationRequests = [];
+  let rawJobListRequested = false;
   const firstPage = Array.from({ length: 12 }, (_, index) => ({
     ...monthlyPayload.items[0],
     id: 1901 + index,
@@ -77,8 +78,12 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
       response.end(JSON.stringify({ ...monthlyPayload, items: page, summary: { ...monthlyPayload.summary, campaigns: 25 }, pagination: { total: 25, nextCursor: cursor === "24" ? null : cursor === "12" ? "24" : "12" } }));
     }
     else if (requestUrl.pathname === "/api/ops/jobs") {
+      rawJobListRequested = true;
+      response.end(JSON.stringify({ items: [] }));
+    }
+    else if (requestUrl.pathname === "/api/ops/daily-print-status") {
       operationRequests.push(requestUrl);
-      response.end(JSON.stringify({ items: [{ id: "daily-job-1", kind: "print-batch", status: "failed", payload: { routineKind: "daily-print", targetDate: "2026-09-26" }, result: { execution: { captured: [{ insertionId: 1901, status: "audited" }], blocked: [{ insertionId: 1902 }], failed: [] } } }] }));
+      response.end(JSON.stringify({ lastAttempt: { jobId: "daily-job-1", status: "partial", targetDate: "2026-09-26", approved: 1, expected: 3, missing: 1, invalid: 0, summary: "Último lote diário: partial · 1 auditados · 1 bloqueados · 0 falhas" } }));
     }
     else response.end(JSON.stringify({
       sheet: { name: "SETEMBRO 2026" }, driveInventory: { snapshotStatus: "fresh", itemCount: 8 }, upcomingItems: [],
@@ -120,8 +125,8 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
     assert.ok((stdout.match(/adopsEvidenceVersion=45-2026-09-02T13%3A00%3A00.000Z-2/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência reconstruída");
     assert.equal(reportRequests.length, 5, "todas as páginas devem ser carregadas automaticamente e uma falha deve permitir tentar de novo");
     assert.equal(operationRequests.length, 1);
-    assert.equal(operationRequests[0].searchParams.get("kind"), "print-batch");
-    assert.equal(operationRequests[0].searchParams.get("limit"), "100");
+    assert.equal(operationRequests[0].searchParams.get("date"), null);
+    assert.equal(rawJobListRequested, false);
     assert.deepEqual(reportRequests.map((url) => url.searchParams.get("cursor")), [null, "12", null, "12", "24"]);
     assert.ok(reportRequests.every((url) => url.searchParams.get("month") === "2026-09" && url.searchParams.get("publication") === "active" && url.searchParams.get("portal") === "OMT" && url.searchParams.get("search") === "Campanha"), "filtros devem ser preservados em cada página");
     assert.deepEqual([...new Set(requestMethods)], ["GET"]);
@@ -222,7 +227,8 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
     publicationStates: ["not_published"], evidenceStates: ["invalid", "documentary_pending"],
     evidenceDays: [{ date: "2026-09-02", status: "invalid", technicalStatus: "invalid" }],
   };
-  let observedJobListQuery = null;
+  const observedDailyStatusDates = [];
+  let rawJobListRequested = false;
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");
     response.setHeader("access-control-allow-origin", "*");
@@ -241,20 +247,20 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
       return;
     }
     if (url.pathname === "/api/ops/jobs") {
-      observedJobListQuery = [url.searchParams.get("kind"), url.searchParams.get("limit")];
-      response.end(JSON.stringify({ items: [{
-        id: "batch-1", kind: "print-batch", status: "failed", payload: { date: "2026-09-01" },
-        result: { execution: { targetDate: "2026-09-01", blocked: [
-          { insertionId: 1901, status: "blocked_upstream", error: "drive_media_not_linked" },
-          { insertionId: 9999, status: "blocked_upstream", error: "expected_media_not_observed" },
-        ], failed: [] } },
-      }, {
-        id: "batch-2", kind: "print-batch", status: "failed", payload: { date: "2026-09-02" },
-        result: { execution: { targetDate: "2026-09-02", blocked: [{ insertionId: 1901, status: "blocked_upstream", error: "expected_media_not_observed" }], failed: [] } },
-      }, {
-        id: "batch-3", kind: "print-batch", status: "failed", payload: { date: "2026-09-03" },
-        result: { execution: { targetDate: "2026-09-03", blocked: [], failed: [{ insertionId: 1901, status: "failed", error: "private runtime detail" }] } },
-      }] }));
+      rawJobListRequested = true;
+      response.end(JSON.stringify({ items: [] }));
+      return;
+    }
+    if (url.pathname === "/api/ops/daily-print-status") {
+      const date = url.searchParams.get("date") || "latest";
+      observedDailyStatusDates.push(date);
+      const failedInsertionIds = date === "2026-09-01" || date === "2026-09-03" ? [1901] : [];
+      response.end(JSON.stringify({
+        lastAttempt: { jobId: "safe-job-id", targetDate: "2026-09-27", status: "completed", expected: 2, approved: 2, missing: 0, invalid: 0, summary: "Rotina concluída" },
+        recentAttempts: ["2026-09-01", "2026-09-03"].map(targetDate => ({
+          jobId: "safe-job-id", targetDate, status: "failed", errorCode: "audit_incomplete", failedInsertionIds: [1901],
+        })),
+      }));
       return;
     }
     response.end(JSON.stringify({ sheet: {}, driveInventory: {}, upcomingItems: [], items: [] }));
@@ -267,17 +273,17 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
       ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2500", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09`],
       { timeout: 15_000, maxBuffer: 2_000_000 },
     );
-    assert.match(stdout, /2026-09-01: bloqueada — mídia do Drive ainda não vinculada ao AdOps/);
-    assert.doesNotMatch(stdout, /2026-09-01: bloqueada — mídia esperada não observada no portal/);
+    assert.match(stdout, /2026-09-01: impedimento registrado no lote — motivo individual não disponível/);
     assert.match(stdout, /Mídia não vinculada ao AdOps/);
     assert.match(stdout, /Grupo AdRotate não resolvido para este formato/);
     assert.match(stdout, /AdOps não marca publicação confirmada/);
     assert.match(stdout, /causa do cron não confirmada no histórico recente/);
     assert.match(stdout, /auditoria reprovada/);
     assert.match(stdout, /Comprovação documental pendente/);
-    assert.match(stdout, /2026-09-03: falhou — detalhe técnico não disponível/);
+    assert.match(stdout, /2026-09-03: impedimento registrado no lote — motivo individual não disponível/);
     assert.doesNotMatch(stdout, /private runtime detail/);
-    assert.deepEqual(observedJobListQuery, ["print-batch", "100"]);
+    assert.equal(rawJobListRequested, false, "o relatório não deve baixar payload/result brutos de jobs");
+    assert.deepEqual([...new Set(observedDailyStatusDates)], ["latest"]);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

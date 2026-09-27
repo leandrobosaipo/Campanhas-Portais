@@ -98,6 +98,20 @@ test("consulta histórica não promete recuperação de outra data", () => {
   assert.equal(result.lastAttempt.nextRecoveryAt, null);
 });
 
+test("expõe apenas índice resumido por data e inserção, nunca payload/result do lote", () => {
+  const result = buildDailyPrintStatus({ jobs: [{
+    id: "daily-1", kind: "print-batch", status: "failed", createdAt: "2026-08-26T22:00:00.000Z",
+    payload: { source: "cloudflare-cron-daily-print", date: "2026-08-26", secretLikeValue: "must-not-leak" },
+    result: { canonicalAudit: { expected: 2, approved: 1, missing: 1, invalid: 0 }, internalTrace: "must-not-leak" },
+    error: 'daily_print_audit_incomplete:{"errorCode":"audit_incomplete","failedInsertionIds":[3044]}',
+  }] });
+
+  assert.deepEqual(result.recentAttempts, [{
+    jobId: "daily-1", targetDate: "2026-08-26", status: "failed", failedInsertionIds: [3044],
+  }]);
+  assert.equal(JSON.stringify(result.recentAttempts).includes("must-not-leak"), false);
+});
+
 test("lê auditoria de jobs legados aninhada em execution", () => {
   const result = buildDailyPrintStatus({ jobs: [{
     id: "legacy", status: "completed", createdAt: "2026-08-22T22:00:00.000Z", updatedAt: "2026-08-22T22:10:00.000Z",

@@ -175,6 +175,15 @@ export function buildDailyPrintStatus({ jobs = [], now = new Date(), targetDate 
     timeZone: TIME_ZONE,
     schedule: "18:00",
     nextRunAt: nextRunAt(now),
+    recentAttempts: dailyJobs.slice(0, 100).map((job) => {
+      const status = String(job.status || "unknown");
+      return {
+        jobId: String(job.id),
+        targetDate: String(dailyTargetDate(job)),
+        status: ["queued", "ready_for_runner", "running", "completed", "failed"].includes(status) ? status : "unknown",
+        failedInsertionIds: safeIncident(job).failedInsertionIds.filter((id) => id > 0),
+      };
+    }),
     ...(requestedDate ? { requestedDate } : {}),
     lastAttempt,
     lastFullyApproved: approvedJob ? { targetDate: dailyTargetDate(approvedJob), finishedAt: approvedJob.updatedAt ?? null } : null,
