@@ -101,6 +101,11 @@ type RequiredAction =
   | "confirm_source_identity"
   | "review_live_slot_conflict";
 
+export function campaignCreationRequiredAction(hasCanonicalInsertion: boolean, compatibleCandidateCount: number): RequiredAction | null {
+  if (hasCanonicalInsertion || compatibleCandidateCount > 1) return null;
+  return "create_campaign_or_insertion";
+}
+
 type OperationStatus =
   | "ok"
   | "needs_create_in_adops"
@@ -821,7 +826,8 @@ export async function getActiveCampaignOperations(options: {
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
-    if (!insertion) requiredActions.push("create_campaign_or_insertion");
+    const createAction = campaignCreationRequiredAction(Boolean(insertion), compatible.length);
+    if (createAction) requiredActions.push(createAction);
     if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
     if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
@@ -951,7 +957,8 @@ export async function getActiveCampaignOperations(options: {
     // Future ads are intentionally not required to appear in public HTML before their start date.
     const liveSlotIssues: string[] = [];
 
-    if (!insertion) requiredActions.push("create_campaign_or_insertion");
+    const createAction = campaignCreationRequiredAction(Boolean(insertion), compatible.length);
+    if (createAction) requiredActions.push(createAction);
     if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
     if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
