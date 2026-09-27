@@ -158,6 +158,44 @@ test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
   }
 });
 
+test("consulta mensal pública funciona sem credenciais quando a API permite origem wildcard", async () => {
+  const apiServer = createServer((request, response) => {
+    response.setHeader("access-control-allow-origin", "*");
+    response.setHeader("content-type", "application/json");
+    if (new URL(request.url, "http://localhost").pathname === "/api/reports/evidences/monthly") {
+      response.end(JSON.stringify(monthlyPayload));
+      return;
+    }
+    response.end(JSON.stringify({ items: [], sheet: {}, driveInventory: {}, upcomingItems: [] }));
+  });
+  await new Promise((resolve) => apiServer.listen(0, "127.0.0.1", resolve));
+  const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
+  const pageServer = createServer((request, response) => {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(renderDynamicEvidenceReport().replaceAll(
+      "https://adops-api.codigo5.com.br", apiBase,
+    ).replaceAll("https://adops-api-public.leandro471.workers.dev", apiBase));
+  });
+  await new Promise((resolve) => pageServer.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = pageServer.address().port;
+    const { stdout } = await execFileAsync(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", `http://127.0.0.1:${port}/`],
+      { timeout: 15_000, maxBuffer: 2_000_000 },
+    );
+    assert.ok(
+      stdout.includes("Campanha dinâmica"),
+      `a lista pública deve carregar; erro observado: ${stdout.match(/Consulta incompleta[^<]*/)?.[0] ?? "nenhum texto de erro"}`,
+    );
+    assert.match(stdout, /Dados completos consultados diretamente da API AdOps/);
+  } finally {
+    pageServer.closeAllConnections();
+    apiServer.closeAllConnections();
+    await Promise.all([pageServer, apiServer].map(server => new Promise(resolve => server.close(resolve))));
+  }
+});
+
 test("encerra consulta pendurada, não mostra resultado parcial e libera Atualizar", async () => {
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");

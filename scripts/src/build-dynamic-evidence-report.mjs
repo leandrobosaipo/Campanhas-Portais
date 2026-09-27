@@ -133,7 +133,7 @@ export function renderDynamicEvidenceReport() {
           const query = new URLSearchParams(baseQuery);
           if (cursor) query.set('cursor', cursor);
           const response = await fetch(REPORT_API_BASE + API_PATH + '?' + query, {
-            signal: controller.signal, credentials: 'include', headers: { accept: 'application/json' },
+            signal: controller.signal, headers: { accept: 'application/json' },
           });
           if (response.status === 401) {
             syncUrl();
