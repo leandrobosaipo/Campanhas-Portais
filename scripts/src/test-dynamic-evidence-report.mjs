@@ -18,7 +18,7 @@ test('separa reconstrução de aceite e mostra a data real da captura', () => {
 });
 
 test("gera uma casca pequena sem registros incorporados", () => {
-  assert.ok(html.length < 90_000, `HTML inicial inesperadamente grande: ${html.length}`);
+  assert.ok(html.length < 93_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);
   assert.match(html, /\/api\/reports\/evidences\/monthly/);
 });

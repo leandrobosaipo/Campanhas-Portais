@@ -196,6 +196,70 @@ test("consulta mensal pública funciona sem credenciais quando a API permite ori
   }
 });
 
+test("mostra causa de pendência somente quando lote confirma a mesma data e inserção", async () => {
+  const item = {
+    ...monthlyPayload.items[0], id: 1901, evidenceStates: ["missing"],
+    evidenceDays: [
+      { date: "2026-09-01", status: "missing", technicalStatus: "missing" },
+      { date: "2026-09-03", status: "missing", technicalStatus: "missing" },
+    ],
+  };
+  let observedJobListQuery = null;
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    response.setHeader("access-control-allow-origin", "*");
+    response.setHeader("content-type", "application/json");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll(
+        "https://adops-api.codigo5.com.br", `http://127.0.0.1:${server.address().port}`,
+      ).replaceAll(
+        "https://adops-api-public.leandro471.workers.dev", `http://127.0.0.1:${server.address().port}`,
+      ));
+      return;
+    }
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      response.end(JSON.stringify({ ...monthlyPayload, items: [item], pagination: { total: 1, nextCursor: null } }));
+      return;
+    }
+    if (url.pathname === "/api/ops/jobs") {
+      observedJobListQuery = [url.searchParams.get("kind"), url.searchParams.get("limit")];
+      response.end(JSON.stringify({ items: [{
+        id: "batch-1", kind: "print-batch", status: "failed", payload: { date: "2026-09-01" },
+        result: { execution: { targetDate: "2026-09-01", blocked: [
+          { insertionId: 1901, status: "blocked_upstream", error: "drive_media_not_linked" },
+          { insertionId: 9999, status: "blocked_upstream", error: "expected_media_not_observed" },
+        ], failed: [] } },
+      }, {
+        id: "batch-2", kind: "print-batch", status: "failed", payload: { date: "2026-09-02" },
+        result: { execution: { targetDate: "2026-09-02", blocked: [{ insertionId: 1901, status: "blocked_upstream", error: "expected_media_not_observed" }], failed: [] } },
+      }, {
+        id: "batch-3", kind: "print-batch", status: "failed", payload: { date: "2026-09-03" },
+        result: { execution: { targetDate: "2026-09-03", blocked: [], failed: [{ insertionId: 1901, status: "failed", error: "private runtime detail" }] } },
+      }] }));
+      return;
+    }
+    response.end(JSON.stringify({ sheet: {}, driveInventory: {}, upcomingItems: [], items: [] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await execFileAsync(
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2500", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09`],
+      { timeout: 15_000, maxBuffer: 2_000_000 },
+    );
+    assert.match(stdout, /2026-09-01: bloqueada — mídia do Drive ainda não vinculada ao AdOps/);
+    assert.doesNotMatch(stdout, /2026-09-01: bloqueada — mídia esperada não observada no portal/);
+    assert.match(stdout, /2026-09-03: falhou — detalhe técnico não disponível/);
+    assert.doesNotMatch(stdout, /private runtime detail/);
+    assert.deepEqual(observedJobListQuery, ["print-batch", "100"]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("encerra consulta pendurada, não mostra resultado parcial e libera Atualizar", async () => {
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");

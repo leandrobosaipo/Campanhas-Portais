@@ -54,7 +54,7 @@ export function renderDynamicEvidenceReport() {
     const currentMonth = () => { const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Cuiaba', year:'numeric', month:'2-digit' }).formatToParts(new Date()); return parts.find((p)=>p.type==='year').value + '-' + parts.find((p)=>p.type==='month').value; };
     const validMonth = (value) => /^[0-9]{4}-(0[1-9]|1[0-2])$/.test(String(value || ''));
     const params = new URLSearchParams(location.search);
-    const state = { month: validMonth(params.get('mes')) ? params.get('mes') : currentMonth(), items: [], controller: null, requestSequence: 0, evidenceDays: [], evidenceIndex: 0, evidenceItem: null, evidencePollJobId: null };
+    const state = { month: validMonth(params.get('mes')) ? params.get('mes') : currentMonth(), items: [], controller: null, requestSequence: 0, evidenceDays: [], evidenceIndex: 0, evidenceItem: null, evidencePollJobId: null, captureDiagnostics: new Map(), captureDiagnosticsUnavailable: false };
     const controls = { month:byId('monthFilter'), search:byId('campaignSearch'), portal:byId('portalFilter'), publication:byId('publicationFilter'), evidence:byId('evidenceFilter') };
     controls.portal.dataset.requested = params.get('portal') || '';
     controls.month.value = state.month;
@@ -72,7 +72,60 @@ export function renderDynamicEvidenceReport() {
     const renderEvidenceThumb = (item,day,index) => { const technicallyAudited=(day.technicalStatus||day.status).startsWith('audited'); const dateLabel=escapeHtml(day.date.split('-').reverse().slice(0,2).join('/')); if(technicallyAudited&&day.url){const reconstruction=day.status==='reconstruction';return '<div class="thumb-item"><button class="thumb audited evidence-day" type="button" data-insertion="'+item.id+'" data-day="'+index+'" aria-label="Abrir evidência '+item.id+' '+escapeHtml(day.date)+(reconstruction?', reconstrução; aceite pendente':'')+'" title="'+escapeHtml(statusLabel(day.status))+'"><img loading="lazy" decoding="async" '+(index<3?'src':'data-src')+'="'+escapeHtml(evidenceDownloadUrl(item,day))+'" alt="Evidência '+item.id+' '+escapeHtml(day.date)+'"><span>'+dateLabel+'</span>'+'</button>'+(reconstruction?'<span class="thumb-status">Reconstrução · aceite pendente</span>':'')+'</div>'}return '<button class="day-card evidence-day '+escapeHtml(day.status)+'" type="button" data-insertion="'+item.id+'" data-day="'+index+'"><span>'+dateLabel+'</span><b>'+escapeHtml(statusLabel(day.status))+'</b></button>'; };
     const insertionMarkup = (item) => { const days=[...(item.evidenceDays||[])].sort((a,b)=>String(b.date).localeCompare(String(a.date))); const approved=days.filter(day=>(day.technicalStatus||day.status).startsWith('audited')).length; const progress=days.length?Math.round(approved*100/days.length):100; const stateLabel=(item.publicationStates||[]).includes('not_published')?'Publicação pendente':(item.evidenceStates||[]).includes('invalid')?'Evidência com erro':(item.evidenceStates||[]).includes('missing')?'Print pendente':(item.evidenceStates||[]).includes('scheduled')?'Aguardando horário de captura':(item.evidenceStates||[]).includes('documentary_pending')?'Comprovação pendente':'Em dia'; const groupUrl=safeUrl(item.adrotateGroupUrl); return '<article class="insertion">'+
       '<div class="insertion-main">'+mediaMarkup(item)+'<div><div class="status-list"><strong>Inserção #'+item.id+'</strong>'+stateTag(item.publicationStates?.[0]||'active')+stateTag(item.evidenceStates?.[0]||'complete','evidence')+'</div><strong>'+escapeHtml(item.localFormatoNormalizado||item.localFormato||'Formato não informado')+'</strong><p class="campaign-meta">'+escapeHtml(item.clienteNome||'Cliente não informado')+' · '+escapeHtml(item.piCodigo||'PI não informada')+' · '+escapeHtml(item.siteSigla||'Portal')+'</p><p class="campaign-meta">Campanha de '+escapeHtml(item.periodoInicio||'—')+' até '+escapeHtml(item.periodoFim||'—')+'.</p><p><strong>'+approved+' de '+days.length+' capturas conferidas.</strong> '+escapeHtml(stateLabel)+'.</p><div class="bar" role="progressbar" aria-valuenow="'+progress+'" aria-valuemin="0" aria-valuemax="100"><i style="width:'+progress+'%"></i></div><div class="campaign-actions">'+(safeUrl(item.portalUrl)?'<a class="button" href="'+escapeHtml(safeUrl(item.portalUrl))+'" target="_blank" rel="noopener">'+icon('link')+' Abrir portal</a>':'')+(groupUrl?'<button class="button adrotate-ad-open" type="button" data-insertion="'+item.id+'">'+icon('plugin')+' Abrir anúncio no AdRotate</button><a class="button" href="'+escapeHtml(groupUrl)+'" target="_blank" rel="noopener">'+icon('link')+' Abrir grupo no AdRotate</a>':'')+(safeUrl(item.mediaUrl)?'<button class="button media-open" type="button" data-insertion="'+item.id+'">'+icon('image')+' Ver mídia</button>':'')+'<a class="button" href="https://adops.codigo5.com.br/insercoes/'+item.id+'" target="_blank" rel="noopener">'+icon('link')+' Abrir no AdOps</a></div></div></div>'+
-      '<section class="evidence-section" aria-label="Evidências da inserção '+item.id+'"><div class="evidence-heading"><strong>Prints, mais recentes primeiro</strong><span>'+approved+' de '+days.length+' capturas conferidas</span></div><div class="thumbs evidence-track">'+days.map((day,index)=>renderEvidenceThumb(item,day,index)).join('')+'</div></section></article>'; };
+      '<section class="evidence-section" aria-label="Evidências da inserção '+item.id+'"><div class="evidence-heading"><strong>Prints, mais recentes primeiro</strong><span>'+approved+' de '+days.length+' capturas conferidas</span></div><div class="thumbs evidence-track">'+days.map((day,index)=>renderEvidenceThumb(item,day,index)).join('')+'</div>'+missingCaptureDiagnosticsMarkup(item)+'</section></article>'; };
+    const missingCaptureDiagnosticsMarkup = (item) => {
+      const missingDays = (item.evidenceDays || []).filter(day => ['missing', 'retroactive_missing'].includes(day.technicalStatus || day.status));
+      if (!missingDays.length) return '';
+      const rows = missingDays.map(day => {
+        const diagnostic = state.captureDiagnostics.get(Number(item.id) + ':' + day.date);
+        const message = diagnostic
+          ? diagnostic.status + (diagnostic.error ? ' — ' + diagnostic.error : '')
+          : state.captureDiagnosticsUnavailable
+            ? 'histórico do cron indisponível; causa não confirmada'
+            : 'causa do cron não confirmada no histórico recente';
+        return '<p class="campaign-meta capture-readiness">' + escapeHtml(day.date + ': ' + message) + '</p>';
+      });
+      return rows.join('');
+    };
+    const loadCaptureDiagnostics = async (items, sequence) => {
+      const dates = new Set(items.flatMap(item => (item.evidenceDays || [])
+        .filter(day => ['missing', 'retroactive_missing'].includes(day.technicalStatus || day.status))
+        .map(day => day.date)));
+      if (!dates.size) return;
+      try {
+        const response = await fetch(API_BASE + '/api/ops/jobs?kind=print-batch&limit=100', { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const payload = await response.json();
+        if (!Array.isArray(payload.items)) throw new Error('Resposta de histórico inválida');
+        if (sequence !== state.requestSequence) return;
+        const diagnostics = new Map();
+        for (const job of payload.items) {
+          const execution = job.result?.execution;
+          const date = execution?.targetDate || job.result?.targetDate || job.payload?.date;
+          if (!dates.has(date)) continue;
+          for (const outcome of [...(execution?.blocked || []), ...(execution?.failed || [])]) {
+            const key = Number(outcome.insertionId) + ':' + date;
+            if (diagnostics.has(key)) continue;
+            const reasons = {
+              drive_media_not_linked: 'mídia do Drive ainda não vinculada ao AdOps',
+              expected_media_not_observed: 'mídia esperada não observada no portal',
+              media_missing: 'mídia ausente no AdOps',
+              creative_not_found: 'criativo esperado não encontrado no espaço do anúncio',
+            };
+            const error = reasons[outcome.error] || 'detalhe técnico não disponível';
+            diagnostics.set(key, { status: outcome.status === 'blocked_upstream' ? 'bloqueada' : 'falhou', error });
+          }
+        }
+        if (sequence !== state.requestSequence) return;
+        state.captureDiagnostics = diagnostics;
+        state.captureDiagnosticsUnavailable = false;
+      } catch {
+        if (sequence !== state.requestSequence) return;
+        state.captureDiagnostics = new Map();
+        state.captureDiagnosticsUnavailable = true;
+      }
+      render();
+    };
     const render = () => { const portals=new Map(); for(const item of state.items){const key=item.siteSigla||'SEM PORTAL';if(!portals.has(key))portals.set(key,new Map());const campaigns=portals.get(key);const campaignKey=item.campanhaId||('i-'+item.id);if(!campaigns.has(campaignKey))campaigns.set(campaignKey,{item,insertions:[]});campaigns.get(campaignKey).insertions.push(item)} const html=[...portals].map(([portal,campaigns])=>{const groups=[...campaigns.values()];const all=groups.flatMap(group=>group.insertions);const first=groups[0]?.item;const logo=siteLogoUrl(first||{});const count=(stateName)=>all.filter(item=>(item.publicationStates||[]).includes(stateName)||(stateName!=='scheduled'&&(item.evidenceStates||[]).includes(stateName))).length;return '<section class="portal"><header class="portal-head"><div class="brand">'+(logo?'<img src="'+escapeHtml(logo)+'" alt="'+escapeHtml(portal)+'" loading="lazy">':'<span>'+escapeHtml(portal)+'</span>')+'<div><h2>'+escapeHtml(first?.siteNome||portal)+'</h2><span>'+escapeHtml(safeUrl(first?.portalUrl)?new URL(first.portalUrl).hostname:portal)+'</span></div></div><div class="portal-stats"><span><b>'+count('active')+'</b> ativas</span><span><b>'+count('scheduled')+'</b> agendadas</span><span><b>'+count('ended')+'</b> encerradas</span><span><b>'+count('complete')+'</b> em dia</span><span><b>'+all.filter(item=>(item.evidenceStates||[]).some(s=>['missing','documentary_pending'].includes(s))).length+'</b> pendentes</span><span><b>'+count('invalid')+'</b> com erro</span><span><b>'+count('not_published')+'</b> sem publicação</span></div></header>'+groups.map(({item,insertions})=>{const days=insertions.flatMap(i=>i.evidenceDays||[]);const approved=days.filter(day=>(day.technicalStatus||day.status).startsWith('audited')).length;return '<article class="campaign"><header class="campaign-head"><div><h3>'+escapeHtml(item.campanhaName||('Campanha '+item.campanhaId))+'</h3><p class="campaign-meta">'+escapeHtml(item.clienteNome||'Cliente não informado')+' · '+escapeHtml(item.agenciaNome||'Agência não informada')+' · '+escapeHtml(item.piCodigo||'PI não informada')+'</p><div class="campaign-downloads"><button class="button campaign-package" type="button" data-pi="'+escapeHtml(item.piCodigo||'')+'" data-site="'+escapeHtml(portal)+'" '+(!item.piCodigo?'disabled title="PI não informada"':'')+'>'+icon('image')+' Baixar ZIP desta campanha</button></div></div><div class="campaign-summary"><span>'+insertions.length+' '+(insertions.length===1?'inserção':'inserções')+'</span><span>'+approved+' de '+days.length+' capturas conferidas</span><strong>'+(insertions.some(i=>(i.publicationStates||[]).includes('not_published'))?'Há publicação pendente':insertions.some(i=>(i.evidenceStates||[]).includes('invalid'))?'Há evidências com erro':insertions.some(i=>(i.evidenceStates||[]).includes('missing'))?'Há prints pendentes':insertions.some(i=>(i.evidenceStates||[]).includes('scheduled'))?'Sem atraso; aguardando horário de captura':insertions.some(i=>(i.evidenceStates||[]).includes('documentary_pending'))?'Há comprovação pendente':'Todas as inserções estão em dia')+'</strong></div></header><div class="insertions">'+insertions.map(insertionMarkup).join('')+'</div></article>'}).join('')+'</section>'}).join(''); byId('reportContent').innerHTML=html||'<div class="empty">Nenhuma campanha encontrada para estes filtros.</div>'; bindDynamicActions(); };
     const openAdrotateAd = async (button) => { button.disabled=true;button.textContent='Localizando anúncio…';try{const response=await fetch(REPORT_API_BASE+'/api/integrations/adrotate/insertions/'+encodeURIComponent(button.dataset.insertion)+'/relation',{credentials:'include'});if(!response.ok)throw new Error('API respondeu HTTP '+response.status);const relation=await response.json();const url=safeUrl(relation.exactLiveMatches?.[0]?.adminEditUrl||relation.historicalAdminMatches?.[0]?.adminEditUrl);if(!url)throw new Error('Anúncio não localizado no AdRotate');const link=document.createElement('a');link.className='button';link.href=url;link.target='_blank';link.rel='noopener';link.textContent='Abrir anúncio no AdRotate';button.replaceWith(link);link.click()}catch(error){button.disabled=false;button.textContent='Tentar abrir anúncio novamente';byId('statusMessage').className='wrap notice bad';byId('statusMessage').textContent=error.message} };
     const bindDynamicActions = () => { document.querySelectorAll('.media-open').forEach((button)=>button.addEventListener('click',()=>openMedia(Number(button.dataset.insertion)))); document.querySelectorAll('.adrotate-ad-open').forEach((button)=>button.addEventListener('click',()=>openAdrotateAd(button))); document.querySelectorAll('.evidence-day').forEach((button)=>button.addEventListener('click',()=>openEvidence(Number(button.dataset.insertion),Number(button.dataset.day)))); document.querySelectorAll('.campaign-package').forEach((button)=>button.addEventListener('click',()=>preparePackage(button))); const observer=new IntersectionObserver((entries)=>entries.forEach(({isIntersecting,target})=>{if(isIntersecting&&target.dataset.src){target.src=target.dataset.src;delete target.dataset.src;observer.unobserve(target)}}),{rootMargin:'120px'});document.querySelectorAll('.thumb img[data-src]').forEach((image)=>observer.observe(image)); };
@@ -160,9 +213,12 @@ export function renderDynamicEvidenceReport() {
         } while (cursor);
         if (sequence !== state.requestSequence) return;
         state.items = [...itemsById.values()];
+        state.captureDiagnostics = new Map();
+        state.captureDiagnosticsUnavailable = false;
         populatePortals(payload.portals || []);
         setSummary();
         render();
+        void loadCaptureDiagnostics(state.items, sequence);
         restoreActiveEvidenceJob();
         const campaignCount = Number(payload.pagination.total) || new Set(state.items.map(item => item.campanhaId || item.id)).size;
         byId('mobileCount').textContent = campaignCount + ' ' + (campaignCount === 1 ? 'campanha' : 'campanhas');
