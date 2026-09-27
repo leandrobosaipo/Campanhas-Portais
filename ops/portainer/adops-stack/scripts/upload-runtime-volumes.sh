@@ -3,13 +3,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STACK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPO_ROOT="$(cd "$STACK_DIR/../../.." && pwd)"
+REPO_ROOT="${ADOPS_RELEASE_SOURCE_ROOT:-$(cd "$STACK_DIR/../../.." && pwd)}"
 
 # shellcheck source=./lib-portainer.sh
 source "$SCRIPT_DIR/lib-portainer.sh"
 
 load_portainer_env
 ENDPOINT_ID="$(portainer_endpoint_id)"
+SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+[[ "$SOURCE_SHA" == "${ADOPS_RELEASE_SHA:-}" ]] || {
+  printf 'Release source HEAD does not match ADOPS_RELEASE_SHA.\n' >&2
+  exit 1
+}
+[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all)" ]] || {
+  printf 'Release source worktree is not clean.\n' >&2
+  exit 1
+}
 STAMP="$(date +%Y%m%d-%H%M%S)"
 APP_TAR="${TMPDIR:-/tmp}/adops-app-source-${STAMP}.tar"
 WEB_TAR="${TMPDIR:-/tmp}/adops-web-public-${STAMP}.tar"
@@ -51,9 +60,8 @@ upload_to_volume() {
   # Portainer may need more than the Cloudflare default timeout while Docker
   # materializes a fresh versioned volume. Keep the request open long enough
   # to receive the container id; the readback below remains the fallback.
-  code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 120 \
+  code="$(portainer_curl -sS -o "$body" -w '%{http_code}' --max-time 120 \
     -X POST \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg name "$container_name" --arg image "$image" --arg volume "$volume" --arg target "$mount_path" --argjson keeper "$keeper_seconds" '{
       Image: $image,
@@ -64,7 +72,7 @@ upload_to_volume() {
     }')" \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/create?name=${container_name}" || true)"
   if [[ "$code" == "000" ]]; then
-    container_id="$(curl -fsS --max-time 30 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    container_id="$(portainer_curl -fsS --max-time 30 \
       "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" \
       | jq -r --arg name "/$container_name" '.[] | select(.Names[]? == $name) | .Id' \
       | head -n 1 || true)"
@@ -83,12 +91,11 @@ upload_to_volume() {
   container_id="$(jq -r '.Id' "$body")"
   rm -f "$body"
 
-  curl -sS --max-time 30 -X POST -H "X-API-Key: ${PORTAINER_API_KEY}" \
+  portainer_curl -sS --max-time 30 -X POST \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start" >/dev/null
 
-  code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 180 \
+  code="$(portainer_curl -sS -o "$body" -w '%{http_code}' --max-time 180 \
     -X PUT \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/x-tar" \
     -H "Expect:" \
     --data-binary "@${tar_path}" \
@@ -96,7 +103,7 @@ upload_to_volume() {
   if [[ ! "$code" =~ ^2 ]]; then
     printf 'Archive upload failed for volume=%s HTTP=%s\n' "$volume" "$code" >&2
     sed -n '1,60p' "$body" >&2
-    curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
+    portainer_curl -sS -X DELETE "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
     rm -f "$body"
     exit 1
   fi
@@ -113,13 +120,13 @@ upload_to_volume() {
     if ! exec_id="$(portainer_run_detached_exec "$container_id" "$payload" \
       "Runtime dependency install for volume=${volume}" "$exec_deadline")"; then
       printf 'Runtime dependency install failed; restricted log is in /app/.runtime-install.log on volume=%s.\n' "$volume" >&2
-      curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
+      portainer_curl -sS -X DELETE \
         "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
       return 1
     fi
   fi
 
-  curl -sS -X DELETE -H "X-API-Key: ${PORTAINER_API_KEY}" \
+  portainer_curl -sS -X DELETE \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}?force=true" >/dev/null || true
   printf 'Uploaded %s into volume %s\n' "$tar_path" "$volume"
 }
@@ -136,8 +143,8 @@ if [[ "${ADOPS_SKIP_LOCAL_BUILD:-false}" == "true" ]]; then
   }
 else
   printf 'Building API and web bundles locally for volume upload\n'
-  pnpm --filter @workspace/api-server run build >/dev/null
-  VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" pnpm --filter @workspace/adops run build >/dev/null
+  pnpm --dir "$REPO_ROOT" --filter @workspace/api-server run build >/dev/null
+  VITE_API_BASE_URL="${VITE_API_BASE_URL:-https://adops-api.codigo5.com.br}" pnpm --dir "$REPO_ROOT" --filter @workspace/adops run build >/dev/null
 fi
 
 printf 'Creating clean app source tar\n'

@@ -41,7 +41,7 @@ PAYLOAD="$(jq -n \
   --argjson env "$(env_json)" \
   '{Name: $name, StackFileContent: $stackFileContent, Env: $env, FromAppTemplate: false, Prune: false, PullImage: true}')"
 
-EXISTING="$(curl -sS --max-time 20 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+EXISTING="$(portainer_curl -sS --max-time 20 \
   "${PORTAINER_API}/stacks" \
   | jq -r --arg name "$STACK_NAME" '.[] | select(.Name == $name) | [.Id, .EndpointId] | @tsv' \
   | head -n 1)"
@@ -51,17 +51,15 @@ if [[ -n "$EXISTING" ]]; then
   STACK_ID="$(printf '%s' "$EXISTING" | awk -F '\t' '{print $1}')"
   STACK_ENDPOINT_ID="$(printf '%s' "$EXISTING" | awk -F '\t' '{print $2}')"
   printf 'Updating stack %s id=%s endpoint=%s\n' "$STACK_NAME" "$STACK_ID" "$STACK_ENDPOINT_ID"
-  CODE="$(curl -sS -o "$BODY" -w '%{http_code}' --max-time 60 \
+  CODE="$(portainer_curl -sS -o "$BODY" -w '%{http_code}' --max-time 60 \
     -X PUT \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$PAYLOAD" \
     "${PORTAINER_API}/stacks/${STACK_ID}?endpointId=${STACK_ENDPOINT_ID}" || true)"
 else
   printf 'Creating stack %s endpoint=%s\n' "$STACK_NAME" "$ENDPOINT_ID"
-  CODE="$(curl -sS -o "$BODY" -w '%{http_code}' --max-time 60 \
+  CODE="$(portainer_curl -sS -o "$BODY" -w '%{http_code}' --max-time 60 \
     -X POST \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$PAYLOAD" \
     "${PORTAINER_API}/stacks/create/standalone/string?endpointId=${ENDPOINT_ID}" || true)"
@@ -72,8 +70,7 @@ if [[ "$CODE" == "000" && -n "${STACK_ID:-}" ]]; then
   # some deployments. Confirm the persisted stack file instead of reporting a
   # false failure or blindly retrying the mutation.
   for verify_attempt in $(seq 1 9); do
-    REMOTE_STACK_CONTENT="$(curl -fsS --max-time 20 \
-      -H "X-API-Key: ${PORTAINER_API_KEY}" \
+    REMOTE_STACK_CONTENT="$(portainer_curl -fsS --max-time 20 \
       "${PORTAINER_API}/stacks/${STACK_ID}/file" \
       | jq -r '.StackFileContent // empty' || true)"
     if [[ "$REMOTE_STACK_CONTENT" == "$STACK_CONTENT" ]]; then
@@ -101,7 +98,7 @@ fi
 rm -f "$BODY"
 
 printf '\nContainers matching %s:\n' "$STACK_NAME"
-CONTAINERS_JSON="$(curl -fsS --max-time 20 -H "X-API-Key: ${PORTAINER_API_KEY}" \
+CONTAINERS_JSON="$(portainer_curl -fsS --max-time 20 \
   "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true" || true)"
 if [[ -n "$CONTAINERS_JSON" ]]; then
   printf '%s' "$CONTAINERS_JSON" \

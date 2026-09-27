@@ -15,8 +15,7 @@ ENDPOINT_ID="$(portainer_endpoint_id)"
 
 portainer_start_container() {
   local container_id="$1"
-  curl -sS --connect-timeout 10 --max-time 30 \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" \
+  portainer_curl -sS --connect-timeout 10 --max-time 30 \
     -X POST \
     "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/${container_id}/start"
 }
