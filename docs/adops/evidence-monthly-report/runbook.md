@@ -107,6 +107,10 @@ Se qualquer gate falhar, o staging é rejeitado.
 - filtro de publicação “Encerradas”, independente do estado das evidências;
 - layout mobile e navegação por teclado.
 
+## Preview e download JPEG individual
+
+O contrato da API para preview de thumbs é `GET /api/insertions/{id}/evidences/{date}/download?variant=web&imageMaxWidth=800&imageQuality=60&preview=1` (JPEG inline, cacheado e condicionado por ETag). Para download use `variant=web&imageMaxWidth=1600&imageQuality=72` (JPEG como anexo). A API seleciona a evidência canônica da data e exige auditoria aprovada e URL pública acessível; ausência retorna 404 e auditoria reprovada ou mídia inacessível retorna 409. O consumidor do relatório pode usar o preview quando configurado; não substitua uma URL canônica por mídia antiga.
+
 ## Cache e desempenho
 
 O hash ordenado inclui as evidências aprovadas. Hash igual produz cache hit; somente campanhas alteradas geram novo ZIP. Exportações executam com concorrência máxima três, enquanto captura continua com concorrência um.

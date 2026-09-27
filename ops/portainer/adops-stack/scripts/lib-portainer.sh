@@ -14,6 +14,8 @@ load_portainer_env() {
 
   : "${PORTAINER_URL:?PORTAINER_URL is required}"
   : "${PORTAINER_API_KEY:?PORTAINER_API_KEY is required}"
+  # Keep the key in this shell only; curl receives it through a mode-0600 config.
+  export -n PORTAINER_API_KEY
   PORTAINER_URL="${PORTAINER_URL%/}"
   PORTAINER_API="${PORTAINER_URL}/api"
 }
@@ -29,9 +31,22 @@ portainer_endpoint_id() {
 }
 
 portainer_curl() {
-  curl -fsS --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
-    --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" "$@"
+  local config_file escaped_key status
+  config_file="$(mktemp "${TMPDIR:-/tmp}/portainer-curl.XXXXXX")"
+  escaped_key="${PORTAINER_API_KEY//\\/\\\\}"
+  escaped_key="${escaped_key//\"/\\\"}"
+  printf 'header = "X-API-Key: %s"\n' "$escaped_key" > "$config_file"
+  chmod 600 "$config_file"
+  unset escaped_key
+  if curl --config "$config_file" -fsS \
+    --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
+    --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$config_file"
+  return "$status"
 }
 
 portainer_get_json() {
@@ -39,10 +54,9 @@ portainer_get_json() {
   local attempt body code
   body="$(mktemp)"
   for attempt in 1 2 3 4; do
-    code="$(curl -sS -o "$body" -w '%{http_code}' \
+    code="$(portainer_curl -sS -o "$body" -w '%{http_code}' \
       --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
-      --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" \
-      -H "X-API-Key: ${PORTAINER_API_KEY}" "$url" || true)"
+      --max-time "${PORTAINER_REQUEST_TIMEOUT_SECONDS:-90}" "$url" || true)"
     if [[ "$code" =~ ^2 ]] && jq -e . "$body" >/dev/null 2>&1; then
       cat "$body"
       rm -f "$body"
@@ -61,10 +75,9 @@ portainer_get_json_once() {
   local max_time_seconds="$2"
   local body code
   body="$(mktemp)"
-  code="$(curl -sS -o "$body" -w '%{http_code}' \
+  code="$(portainer_curl -sS -o "$body" -w '%{http_code}' \
     --connect-timeout "${PORTAINER_CONNECT_TIMEOUT_SECONDS:-12}" \
-    --max-time "$max_time_seconds" \
-    -H "X-API-Key: ${PORTAINER_API_KEY}" "$url" || true)"
+    --max-time "$max_time_seconds" "$url" || true)"
   if [[ "$code" =~ ^2 ]] && jq -e . "$body" >/dev/null 2>&1; then
     cat "$body"
     rm -f "$body"
