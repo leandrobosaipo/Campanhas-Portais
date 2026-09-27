@@ -198,11 +198,18 @@ test("consulta mensal pública funciona sem credenciais quando a API permite ori
 
 test("mostra causa de pendência somente quando lote confirma a mesma data e inserção", async () => {
   const item = {
-    ...monthlyPayload.items[0], id: 1901, evidenceStates: ["missing"],
+    ...monthlyPayload.items[0], id: 1901, mediaUrl: null, bannerPublicadoNoSite: false,
+    statusNormalizado: "rascunho", publicationStates: ["ended"], evidenceStates: ["missing"],
     evidenceDays: [
       { date: "2026-09-01", status: "missing", technicalStatus: "missing" },
       { date: "2026-09-03", status: "missing", technicalStatus: "missing" },
     ],
+  };
+  const secondItem = {
+    ...monthlyPayload.items[0], id: 1902, campanhaId: 1002, campanhaName: "Outra inserção pendente",
+    mediaUrl: "https://example.com/banner.gif", adrotateGroupId: null, bannerPublicadoNoSite: false,
+    publicationStates: ["not_published"], evidenceStates: ["invalid", "documentary_pending"],
+    evidenceDays: [{ date: "2026-09-02", status: "invalid", technicalStatus: "invalid" }],
   };
   let observedJobListQuery = null;
   const server = createServer((request, response) => {
@@ -219,7 +226,7 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
       return;
     }
     if (url.pathname === "/api/reports/evidences/monthly") {
-      response.end(JSON.stringify({ ...monthlyPayload, items: [item], pagination: { total: 1, nextCursor: null } }));
+      response.end(JSON.stringify({ ...monthlyPayload, items: [item, secondItem], pagination: { total: 2, nextCursor: null } }));
       return;
     }
     if (url.pathname === "/api/ops/jobs") {
@@ -251,6 +258,12 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
     );
     assert.match(stdout, /2026-09-01: bloqueada — mídia do Drive ainda não vinculada ao AdOps/);
     assert.doesNotMatch(stdout, /2026-09-01: bloqueada — mídia esperada não observada no portal/);
+    assert.match(stdout, /Mídia não vinculada ao AdOps/);
+    assert.match(stdout, /Grupo AdRotate não resolvido para este formato/);
+    assert.match(stdout, /AdOps não marca publicação confirmada/);
+    assert.match(stdout, /causa do cron não confirmada no histórico recente/);
+    assert.match(stdout, /auditoria reprovada/);
+    assert.match(stdout, /Comprovação documental pendente/);
     assert.match(stdout, /2026-09-03: falhou — detalhe técnico não disponível/);
     assert.doesNotMatch(stdout, /private runtime detail/);
     assert.deepEqual(observedJobListQuery, ["print-batch", "100"]);
