@@ -136,6 +136,47 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
   }
 });
 
+test("usa a URL pública da evidência quando a API não fornece downloadUrl", async () => {
+  const item = {
+    ...monthlyPayload.items[0],
+    evidenceDays: [{ date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.png?v=1" }],
+  };
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll("https://adops-api.codigo5.com.br", `http://127.0.0.1:${server.address().port}`).replaceAll("https://adops-api-public.leandro471.workers.dev", `http://127.0.0.1:${server.address().port}`).replace("</body>", '<script>setTimeout(()=>{const thumb=document.querySelector(".thumb.evidence-day");document.body.dataset.thumbPath=new URL(thumb.querySelector("img").src).pathname;thumb.click();setTimeout(()=>{document.body.dataset.modalPath=new URL(document.querySelector("#evidenceImage").src).pathname;const link=document.querySelector("#evidenceLinks a");document.body.dataset.downloadPath=new URL(link.href).pathname;document.body.dataset.downloadLabel=link.textContent;document.body.dataset.imageLoaded=document.querySelector("#evidenceImage").naturalWidth>0},300)},300)</script></body>'));
+      return;
+    }
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ ...monthlyPayload, items: [item], pagination: { total: 1, limit: 50, nextCursor: null } }).replaceAll("https://example.com", `http://127.0.0.1:${server.address().port}`));
+      return;
+    }
+    if (url.pathname === "/evidence.png") {
+      response.setHeader("content-type", "image/png");
+      response.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pK0AAAAASUVORK5CYII=", "base64"));
+      return;
+    }
+    response.statusCode = 404;
+    response.end("not found");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { stdout } = await execFileAsync("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=5000", "--dump-dom", `http://127.0.0.1:${server.address().port}/`], { timeout: 10_000, maxBuffer: 1_000_000 });
+    assert.ok(stdout.includes("Campanha dinâmica"), "a resposta mensal deve renderizar a inserção antes de validar as URLs de evidência");
+    const imageState = stdout.match(/data-(?:thumb|modal|download)-path="[^"]*"|data-(?:image-loaded|download-label)="[^"]*"/g) || [];
+    assert.ok(imageState.includes('data-thumb-path="/evidence.png"'), `thumb deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-modal-path="/evidence.png"'), `modal deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-download-path="/evidence.png"'), `download deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-download-label="Abrir imagem"'), `link não deve prometer formato JPEG incorreto, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-image-loaded="true"'), `modal deve carregar imagem válida, resultado: ${imageState.join(", ")}`);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");

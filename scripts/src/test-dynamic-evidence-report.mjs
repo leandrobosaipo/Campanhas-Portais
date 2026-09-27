@@ -70,9 +70,7 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "thumb-item",
     "thumb-status",
     "evidenceDownloadUrl",
-    "imageMaxWidth=800",
-    "imageMaxWidth=1600",
-    "preview=1",
+    "Abrir imagem",
   ]) assert.match(html, new RegExp(marker));
   assert.doesNotMatch(html, /<b class="latest-label">|>Mais recente</);
   assert.match(html, /REPORT_LOAD_TIMEOUT_MS = 90_000/);
@@ -95,7 +93,7 @@ test("preserva conteúdo completo do cabeçalho, operação e modal de evidênci
     "Dia anterior",
     "Dia seguinte",
     "Detalhes da evidência",
-    "Baixar JPEG",
+    "Abrir imagem",
     "Ver grupo do anúncio",
     "aria-current=\"date\"",
   ]) assert.match(html, new RegExp(marker));
