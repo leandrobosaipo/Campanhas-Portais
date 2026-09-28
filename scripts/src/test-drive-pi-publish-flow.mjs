@@ -272,6 +272,11 @@ assert.match(runnerSource, /ignoredDraftCampaignIds/,
 const safeDraft = { origem: "google-drive-monitor", insertions: [{ id: 2407, statusNormalizado: "aguardando_publicacao", observacoes: "Criado a partir do Drive: /AFL/AGOSTO", bannerPublicadoNoSite: false, mediaUrl: null, totalEvidencias: 0, printGerado: false }] };
 assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, { plannedSelf: { adrotateGroupId: 2, externalKey: '2407', mediaUrl: null }, exactLiveMatches: [], historicalAdminMatches: [] }]])), true,
   "projeção de slot sem mídia ou anúncio não comprova publicação");
+const canceledDuplicate = { ...safeDraft, insertions: safeDraft.insertions.map((item) => ({ ...item, statusNormalizado: "cancelado" })) };
+assert.equal(runner.isDiscardableDraftCampaign(canceledDuplicate, new Map([[2407, { plannedSelf: null, exactLiveMatches: [], historicalAdminMatches: [] }]])), true,
+  "campanha concorrente já cancelada, sem mídia, evidência ou histórico AdRotate, pode ser preservada e ignorada");
+assert.equal(runner.isDiscardableDraftCampaign(canceledDuplicate, new Map([[2407, { plannedSelf: { mediaUrl: "https://cdn.example/banner.gif" }, exactLiveMatches: [], historicalAdminMatches: [] }]])), false,
+  "campanha cancelada com mídia AdRotate ainda deve bloquear a aplicação");
 for (const relation of [{plannedSelf:{mediaUrl:'https://example.com/banner.gif'}}, {publicationConfirmation:{jobId:'confirmed'}}, {exactLiveMatches:[{adId:1}]}, {historicalAdminMatches:[{adId:1}]}]) {
   assert.equal(runner.isDiscardableDraftCampaign(safeDraft, new Map([[2407, relation]])), false);
 }

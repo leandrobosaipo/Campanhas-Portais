@@ -3136,7 +3136,7 @@ function isDiscardableDraftCampaign(detail, relationsByInsertionId = new Map()) 
       || (Array.isArray(relation?.historicalAdminMatches) && relation.historicalAdminMatches.length),
     );
     return knownDraftOrigin
-      && ["rascunho", "aguardando_publicacao"].includes(status)
+      && ["rascunho", "aguardando_publicacao", "cancelado"].includes(status)
       && insertion?.bannerPublicadoNoSite !== true
       && !firstNonEmptyString(insertion?.mediaUrl)
       && Number(insertion?.totalEvidencias || 0) === 0
