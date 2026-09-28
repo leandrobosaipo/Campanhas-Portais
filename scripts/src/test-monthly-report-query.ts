@@ -10,6 +10,7 @@ import {
   publicMonthlyInsertion,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
+  monthlyReportInsertionMatches,
   monthlyEvidenceProvenance,
   selectMonthlyEvidenceProof,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
@@ -147,6 +148,15 @@ test("remove duplicata logica mesmo quando a chave canonica ou a campanha diverg
   ];
 
   assert.deepEqual(selectCanonicalMonthlyInsertions(rows).map((row) => row.id), [1839, 1840]);
+});
+
+test("PI 0000 sobreposta mantém a inserção publicada e elegível ao mês por período", () => {
+  const rows = [
+    { id: 3047, campanhaId: 1049, campanhaName: "SORTE NA CONTA", piCodigo: "0000", siteId: 33, localFormatoNormalizado: "HOME 2", periodoInicio: "2026-09-18", periodoFim: "2026-10-31", mediaUrl: "https://cdn.example/full-banner.gif", bannerPublicadoNoSite: true, statusNormalizado: "publicado", competencia: "OUTUBRO/2025" },
+    { id: 3077, campanhaId: 1064, campanhaName: "SORTE NA CONTA", piCodigo: "PI 0000 - AGUAS CBA", siteId: 33, localFormatoNormalizado: "HOME 2", periodoInicio: "2026-09-18", periodoFim: "2026-10-31", mediaUrl: null, bannerPublicadoNoSite: false, statusNormalizado: "rascunho", competencia: "OUTUBRO/2025" },
+  ];
+  assert.equal(monthlyReportInsertionMatches(rows[0]!, { start: "2026-09-01", end: "2026-09-30" }), true);
+  assert.deepEqual(selectCanonicalMonthlyInsertions(rows).map((row) => row.id), [3047]);
 });
 
 test("mantem voos separados quando os periodos da mesma PI nao se sobrepoem", () => {

@@ -46,6 +46,18 @@ export function campaignChecklistDefaults(item) {
 }
 
 export function buildCampaignGuidance(item, selected) {
+  const actions = new Set(item?.requiredActions ?? []);
+  if (actions.has("review_adops_ambiguity") || item?.adops?.status === "ambiguous") {
+    const candidates = item?.canonicalSelection?.compatibleInsertionIds ?? [];
+    const details = item?.blockingIssues?.[0] || "Mais de uma inserção AdOps pode corresponder a esta campanha.";
+    return [
+      `${item?.campaignName || "Campanha"} · ${item?.piCodigo || "PI não informada"} · ${item?.siteSigla || "Portal não informado"}`,
+      "Bloqueio: Resolver a ambiguidade AdOps antes de criar, vincular mídia, publicar ou gerar evidências.",
+      details,
+      candidates.length ? `Inserções candidatas: ${candidates.join(", ")}.` : "Inserções candidatas: não informadas; revisar AdOps e a identidade da PI/portal/formato/período.",
+      "Orientação gerada sem alterar planilha, Drive, AdOps ou AdRotate.",
+    ].join("\n\n");
+  }
   const labels = Object.fromEntries(checklistFields.map(([key, label]) => [key, label]));
   const factualKeys = ["piConfirmed", "portalCorrect", "periodCorrect", "formatCorrect", "mediaReceived", "driveFileCorrect"];
   const confirmed = factualKeys.filter((key) => selected[key]).map((key) => labels[key]);
@@ -53,7 +65,6 @@ export function buildCampaignGuidance(item, selected) {
     ? ["Revisar e corrigir na planilha os campos divergentes de PI, portal, período ou formato antes de sincronizar novamente."]
     : [];
   const adops = [];
-  const actions = new Set(item?.requiredActions ?? []);
   if (selected.fixAdops || actions.has("create_campaign_or_insertion")) adops.push("Criar ou corrigir a campanha e a inserção no AdOps.");
   if (!selected.mediaReceived || actions.has("locate_or_upload_media")) adops.push("Confirmar a mídia correta e vinculá-la à inserção no AdOps.");
   if (actions.has("publish_on_site")) adops.push("Depois da conferência, publicar no grupo AdRotate indicado pelo AdOps.");

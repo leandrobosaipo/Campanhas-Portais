@@ -41,6 +41,22 @@ test("gera orientacao para midia ausente sem afirmar que corrigiu", () => {
   assert.doesNotMatch(text, /foi corrigid[ao]/i);
 });
 
+test("ambiguidade AdOps bloqueia orientação de criar, publicar e gerar evidência", () => {
+  const ambiguous = {
+    ...base,
+    adops: { status: "ambiguous", mediaUrl: null },
+    requiredActions: ["review_adops_ambiguity", "locate_or_upload_media", "publish_on_site", "generate_evidence"],
+    blockingIssues: ["Mais de uma inserção AdOps corresponde a PI + portal e formato."],
+  };
+  const text = buildCampaignGuidance(ambiguous, {
+    ...campaignChecklistDefaults(ambiguous),
+    fixAdops: true,
+    mediaReceived: true,
+  });
+  assert.match(text, /Resolver a ambiguidade.*antes de criar, vincular mídia, publicar ou gerar evidências/);
+  assert.doesNotMatch(text, /Criar ou corrigir a campanha|vinculá-la à inserção|publicar no grupo|gerar e auditar as evidências/);
+});
+
 test("mantem bloqueio quando pronta para publicar contradiz o checklist", () => {
   const selected = { ...campaignChecklistDefaults(base), readyToPublish: true };
   const text = buildCampaignGuidance(base, selected);

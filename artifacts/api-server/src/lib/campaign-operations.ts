@@ -98,11 +98,13 @@ type RequiredAction =
   | "review_period_divergence"
   | "review_format_divergence"
   | "review_drive_ambiguity"
+  | "review_adops_ambiguity"
   | "confirm_source_identity"
   | "review_live_slot_conflict";
 
-export function campaignCreationRequiredAction(hasCanonicalInsertion: boolean, compatibleCandidateCount: number): RequiredAction | null {
-  if (hasCanonicalInsertion || compatibleCandidateCount > 1) return null;
+export function campaignAdOpsSelectionAction(hasCanonicalInsertion: boolean, compatibleCandidateCount: number): RequiredAction | null {
+  if (hasCanonicalInsertion) return null;
+  if (compatibleCandidateCount > 1) return "review_adops_ambiguity";
   return "create_campaign_or_insertion";
 }
 
@@ -112,6 +114,7 @@ type OperationStatus =
   | "needs_media"
   | "needs_publication"
   | "needs_evidence"
+  | "ambiguous_adops_match"
   | "divergent_period"
   | "divergent_format"
   | "drive_missing"
@@ -826,10 +829,11 @@ export async function getActiveCampaignOperations(options: {
     // An approved per-insertion proof is stronger than one random response from a rotating group.
     const liveSlotIssues = evidence.status === "approved" ? [] : observedLiveSlotIssues;
 
-    const createAction = campaignCreationRequiredAction(Boolean(insertion), compatible.length);
-    if (createAction) requiredActions.push(createAction);
-    if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
-    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
+    const adopsSelectionAction = campaignAdOpsSelectionAction(Boolean(insertion), compatible.length);
+    const adopsAmbiguous = adopsSelectionAction === "review_adops_ambiguity";
+    if (adopsSelectionAction) requiredActions.push(adopsSelectionAction);
+    if (adopsAmbiguous) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
+    if (!adopsAmbiguous && (drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push(driveAmbiguityMessage(drive));
@@ -844,13 +848,13 @@ export async function getActiveCampaignOperations(options: {
         ? "A posição da planilha corresponde a mais de uma regra do portal. Confirme o grupo antes de publicar."
         : "A posição da planilha não corresponde a nenhuma regra conhecida do portal.");
     }
-    if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
+    if (!adopsAmbiguous && drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
     if (insertion && !insertion.mediaUrl) requiredActions.push("locate_or_upload_media");
-    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) requiredActions.push("publish_on_site");
-    if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) requiredActions.push("generate_evidence");
+    if (!adopsAmbiguous && (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot))) requiredActions.push("publish_on_site");
+    if (!adopsAmbiguous && (evidence.status === "missing" || evidence.status === "invalid" || !insertion)) requiredActions.push("generate_evidence");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
     const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
@@ -862,13 +866,14 @@ export async function getActiveCampaignOperations(options: {
     }
 
     const statuses: OperationStatus[] = [];
-    if (!insertion) statuses.push("needs_create_in_adops");
-    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) statuses.push("drive_missing");
+    if (adopsAmbiguous) statuses.push("ambiguous_adops_match");
+    else if (!insertion) statuses.push("needs_create_in_adops");
+    if (!adopsAmbiguous && (drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) statuses.push("drive_missing");
     if (drive.status === "ambiguous") statuses.push("ambiguous_drive_match");
     if (sourceIdentity.decision === "needs_confirmation") statuses.push("source_conflict");
     if (insertion && (!insertion.mediaUrl || (drive.mediaFiles.length > 0 && !mediaMatchesFormat && !hasAdopsMedia))) statuses.push("needs_media");
-    if (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot)) statuses.push("needs_publication");
-    if (evidence.status === "missing" || evidence.status === "invalid" || !insertion) statuses.push("needs_evidence");
+    if (!adopsAmbiguous && (!insertion || (insertion.bannerPublicadoNoSite !== true && !exactPublicSlot))) statuses.push("needs_publication");
+    if (!adopsAmbiguous && (evidence.status === "missing" || evidence.status === "invalid" || !insertion)) statuses.push("needs_evidence");
     if (periodDivergent) statuses.push("divergent_period");
     if (formatDivergent) statuses.push("divergent_format");
     if (blockingIssues.length && statuses.length === 0) statuses.push("blocked");
@@ -957,10 +962,11 @@ export async function getActiveCampaignOperations(options: {
     // Future ads are intentionally not required to appear in public HTML before their start date.
     const liveSlotIssues: string[] = [];
 
-    const createAction = campaignCreationRequiredAction(Boolean(insertion), compatible.length);
-    if (createAction) requiredActions.push(createAction);
-    if (!insertion && compatible.length > 1) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
-    if ((drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
+    const adopsSelectionAction = campaignAdOpsSelectionAction(Boolean(insertion), compatible.length);
+    const adopsAmbiguous = adopsSelectionAction === "review_adops_ambiguity";
+    if (adopsSelectionAction) requiredActions.push(adopsSelectionAction);
+    if (adopsAmbiguous) blockingIssues.push("Mais de uma inserção AdOps corresponde a PI + portal e formato.");
+    if (!adopsAmbiguous && (drive.status === "not_found" || drive.status === "unavailable") && !hasAdopsMedia) requiredActions.push("locate_or_upload_media");
     if (drive.status === "ambiguous") {
       requiredActions.push("review_drive_ambiguity");
       blockingIssues.push(driveAmbiguityMessage(drive));
@@ -975,12 +981,12 @@ export async function getActiveCampaignOperations(options: {
         ? "A posição da planilha corresponde a mais de uma regra do portal. Confirme o grupo antes de publicar."
         : "A posição da planilha não corresponde a nenhuma regra conhecida do portal.");
     }
-    if (drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
+    if (!adopsAmbiguous && drive.mediaFiles.length && !mediaMatchesFormat && !hasAdopsMedia) {
       requiredActions.push("locate_or_upload_media");
       blockingIssues.push("Mídia encontrada no Drive não corresponde ao formato da planilha.");
     }
     if (insertion && !insertion.mediaUrl) requiredActions.push("locate_or_upload_media");
-    if (!insertion || insertion.bannerPublicadoNoSite !== true) requiredActions.push("publish_on_site");
+    if (!adopsAmbiguous && (!insertion || insertion.bannerPublicadoNoSite !== true)) requiredActions.push("publish_on_site");
 
     const periodDivergent = Boolean(insertion && (insertion.periodoInicio !== row.periodoInicio || insertion.periodoFim !== row.periodoFim));
     const formatDivergent = Boolean(insertion && !isFormatCompatible(row.localFormato, insertion.localFormatoNormalizado ?? insertion.localFormato));
