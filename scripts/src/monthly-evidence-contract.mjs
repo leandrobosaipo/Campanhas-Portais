@@ -323,6 +323,88 @@ export function findHistoricalAuditRegressions(previousData, nextData) {
   return regressions;
 }
 
+export function findHistoricalAuditRestoreCandidates(currentItems, previousData) {
+  const currentById = new Map((currentItems || []).map((item) => [String(item.id), item]));
+  const auditedStatuses = new Set(["audited", "audited_best_effort"]);
+  const candidates = [];
+  for (const previousInsertion of previousData?.insertions ?? []) {
+    const currentInsertion = currentById.get(String(previousInsertion.id));
+    const currentDays = new Map((currentInsertion?.evidenceDays ?? []).map((day) => [day.date, day]));
+    for (const previousDay of previousInsertion.evidenceDays ?? []) {
+      if (!auditedStatuses.has(previousDay.status)) continue;
+      if (auditedStatuses.has(currentDays.get(previousDay.date)?.status)) continue;
+      candidates.push({ insertionId: previousInsertion.id, date: previousDay.date });
+    }
+  }
+  return candidates;
+}
+
+export function restoreVerifiedHistoricalAuditDays(currentItems, previousData, verifiedStatuses) {
+  const auditedStatuses = new Set(["audited", "audited_best_effort"]);
+  const result = (currentItems || []).map((item) => ({ ...item, evidenceDays: [...(item.evidenceDays || [])] }));
+  const currentById = new Map(result.map((item) => [String(item.id), item]));
+  const previousById = new Map((previousData?.insertions ?? []).map((item) => [String(item.id), item]));
+
+  for (const [key, status] of verifiedStatuses || []) {
+    const [insertionId, date] = String(key).split(":");
+    if (Number(status?.insertionId) !== Number(insertionId)
+      || status?.date !== date
+      || !auditedStatuses.has(status?.status)
+      || status?.checklistValidation?.approved !== true
+      || status?.isReachable !== true
+      || status?.urlStatus !== 200
+      || !status?.arquivoUrl) continue;
+    const previousInsertion = previousById.get(insertionId);
+    const previousDay = previousInsertion?.evidenceDays?.find((day) => day.date === date);
+    if (!previousDay || !auditedStatuses.has(previousDay.status)) continue;
+    let item = currentById.get(insertionId);
+    if (!item) {
+      item = {
+        ...previousInsertion,
+        requiredDays: [],
+        evidenceDays: [],
+        auditedDays: 0,
+        missingDates: [],
+        retroactiveMissingDates: [],
+        invalidDates: [],
+        historicalEvidenceOnly: true,
+      };
+      result.push(item);
+      currentById.set(insertionId, item);
+    }
+    const day = {
+      ...previousDay,
+      status: status.status,
+      url: status.arquivoUrl,
+      historicalOnly: !item.requiredDays?.includes(date),
+      issues: [],
+      statusDetail: "Histórico preservado após confirmação da auditoria canônica atual.",
+    };
+    item.evidenceDays = [...new Map([...item.evidenceDays, day].map((entry) => [entry.date, entry])).values()]
+      .sort((left, right) => left.date.localeCompare(right.date));
+    item.auditedDays = item.evidenceDays.filter((entry) => auditedStatuses.has(entry.status) && entry.url).length;
+    item.missingDates = (item.missingDates || []).filter((entry) => entry !== date);
+    item.retroactiveMissingDates = (item.retroactiveMissingDates || []).filter((entry) => entry !== date);
+    item.invalidDates = (item.invalidDates || []).filter((entry) => entry !== date);
+    const note = item.historicalEvidenceOnly
+      ? "Linha ausente na fonte mensal; somente evidências históricas aprovadas foram preservadas."
+      : "Parte do histórico foi preservada após confirmação da auditoria canônica atual.";
+    if (!String(item.statusDetail || "").includes(note)) item.statusDetail = [note, item.statusDetail].filter(Boolean).join(" ");
+  }
+  return result.sort((left, right) => String(left.siteSigla || "").localeCompare(String(right.siteSigla || ""))
+    || String(left.campanhaName || "").localeCompare(String(right.campanhaName || ""))
+    || Number(left.id) - Number(right.id));
+}
+
+export function selectMonthlyCommercialItems(items) {
+  return (items || [])
+    .filter((item) => !item.historicalEvidenceOnly)
+    .map((item) => ({
+      ...item,
+      evidenceDays: (item.evidenceDays || []).filter((day) => !day.historicalOnly),
+    }));
+}
+
 export function adaptAggregatedEvidenceDay(day) {
   const approved = day?.status === "audited" || day?.status === "audited_best_effort";
   return {
@@ -394,7 +476,7 @@ export function buildMonthlyDeliveryFingerprint(item) {
     piCodigo: canonicalPi,
     siteSigla: item.siteSigla,
     competencia: item.competencia,
-    evidences: (item.evidenceDays || []).filter((day) => String(day.status || "").startsWith("audited") && day.url),
+    evidences: (item.evidenceDays || []).filter((day) => !day.historicalOnly && String(day.status || "").startsWith("audited") && day.url),
   });
 }
 
@@ -418,6 +500,7 @@ function monthlyDeliveryKey(item, includePortal = true) {
 function groupMonthlyDeliveries(items, includePortal) {
   const groups = new Map();
   for (const item of items || []) {
+    if (item?.historicalEvidenceOnly) continue;
     const key = monthlyDeliveryKey(item, includePortal);
     if (!key) continue;
     const group = groups.get(key) || { key, item: { ...item, evidenceDays: [] }, items: [] };

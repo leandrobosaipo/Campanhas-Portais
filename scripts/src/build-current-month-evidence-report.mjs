@@ -21,6 +21,7 @@ import {
   buildUpcomingForecast,
   classifyEvidenceStatus,
   findHistoricalAuditRegressions,
+  findHistoricalAuditRestoreCandidates,
   findReportsMountSource,
   isMonthlyReportPublishable,
   MONTHLY_REPORT_SOURCE_TIMEOUT_MS,
@@ -39,7 +40,9 @@ import {
   resolveReportsPublishMount,
   resolveEvidenceWindow,
   resolveMonthlyReportApiBases,
+  selectMonthlyCommercialItems,
   selectReportEvidenceDates,
+  restoreVerifiedHistoricalAuditDays,
   isJsonContentType,
   selectCanonicalInsertions,
   shouldMaterializeOptionalMonthlyExports,
@@ -596,6 +599,7 @@ async function materializeCampaignExports(items, asOfDate) {
   })();
   const groups = new Map();
   for (const item of items) {
+    if (item.historicalEvidenceOnly) continue;
     const canonicalPi = canonicalCommercialPi(item.piCodigo);
     if (!canonicalPi || !item.siteSigla) continue;
     const key = portalExportGroupKey(item);
@@ -612,7 +616,9 @@ async function materializeCampaignExports(items, asOfDate) {
       results.set(group.key, publicJobDownloadUrl(reusableUrl));
       return;
     }
-    const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
+    const evidenceDays = group.items.flatMap((item) => item.evidenceDays.filter((day) => (
+      !day.historicalOnly && item.requiredDays.includes(day.date) && day.status.startsWith("audited") && day.url
+    )));
     if (preloaded[group.key]) {
       results.set(group.key, preloaded[group.key]);
       return;
@@ -661,6 +667,7 @@ async function materializeCampaignExports(items, asOfDate) {
 async function materializeCompleteCampaignExports(items, asOfDate) {
   const groups = new Map();
   for (const item of items) {
+    if (item.historicalEvidenceOnly) continue;
     const piCodigo = canonicalCommercialPi(item.piCodigo);
     if (!piCodigo || !item.competencia) continue;
     const key = completeCampaignExportGroupKey(item);
@@ -778,21 +785,22 @@ async function validateGeneratedReport({ data, reportManifest, insertions }) {
   JSON.parse(await readFile(path.join(latestDir, "report.json"), "utf8"));
 
   if (process.env.ADOPS_REPORT_SKIP_PUBLISH === "1") return;
-  const completePortalGroups = completeExportGroupKeys(insertions, portalExportGroupKey);
-  const missingPortalZips = insertions
+  const commercialInsertions = selectMonthlyCommercialItems(insertions);
+  const completePortalGroups = completeExportGroupKeys(commercialInsertions, portalExportGroupKey);
+  const missingPortalZips = commercialInsertions
     .filter((item) => completePortalGroups.has(portalExportGroupKey(item)) && !item.batchDownloadUrl)
     .map((item) => item.id);
   if (missingPortalZips.length) throw new Error(`Relatório sem ZIP por portal para inserções: ${missingPortalZips.join(", ")}.`);
-  validateCompleteCampaignExportLinks(insertions);
+  validateCompleteCampaignExportLinks(commercialInsertions);
   const individualSamples = takeDeliverySamples(insertions.flatMap((item) => item.evidenceDays.map((day) => day.downloadUrl)));
-  const batchSamples = takeDeliverySamples(insertions.map((item) => item.batchDownloadUrl));
-  const completeSamples = takeDeliverySamples(insertions.map((item) => item.completeCampaignDownloadUrl));
+  const batchSamples = takeDeliverySamples(commercialInsertions.map((item) => item.batchDownloadUrl));
+  const completeSamples = takeDeliverySamples(commercialInsertions.map((item) => item.completeCampaignDownloadUrl));
   for (const [index, url] of individualSamples.entries()) await validateDeliveryUrl(url, `JPEG individual ${index + 1}`);
   for (const [index, url] of batchSamples.entries()) await validateDeliveryUrl(url, `ZIP de campanha ${index + 1}`);
   for (const [index, url] of completeSamples.entries()) await validateDeliveryUrl(url, `ZIP completo da campanha ${index + 1}`);
   if (batchSamples[0]) await validateZipDelivery(batchSamples[0]);
   if (completeSamples[0]) {
-    const expectedImages = insertions
+    const expectedImages = commercialInsertions
       .filter((item) => item.completeCampaignDownloadUrl === completeSamples[0])
       .reduce((total, item) => total + item.evidenceDays.filter((day) => day.status.startsWith("audited")).length, 0);
     await validateZipDelivery(completeSamples[0], { complete: true, expectedImages });
@@ -2259,15 +2267,42 @@ async function main() {
     };
   });
 
-  const previousPublicData = refreshMode === "incremental" ? await readPreviousPublicData() : null;
+  const previousPublicData = await readPreviousPublicData();
+  const historicalAuditCandidates = findHistoricalAuditRestoreCandidates(enriched, previousPublicData);
+  // ponytail: cap status reads at 100; larger recoveries need a batch audit-status API.
+  if (historicalAuditCandidates.length <= 100) {
+    const verifiedHistoricalStatuses = new Map();
+    for (let offset = 0; offset < historicalAuditCandidates.length; offset += 5) {
+      const batch = historicalAuditCandidates.slice(offset, offset + 5);
+      const results = await Promise.all(batch.map(async ({ insertionId, date }) => {
+        const key = `${insertionId}:${date}`;
+        try {
+          const status = await api(`/api/insertions/${encodeURIComponent(insertionId)}/capture-proof/status?date=${encodeURIComponent(date)}`, { attempts: 1, timeoutMs: 30_000 });
+          return [key, status];
+        } catch {
+          return [key, null];
+        }
+      }));
+      for (const [key, status] of results) if (status) verifiedHistoricalStatuses.set(key, status);
+    }
+    enriched = restoreVerifiedHistoricalAuditDays(enriched, previousPublicData, verifiedHistoricalStatuses);
+  }
   enriched = refreshMode === "incremental" ? reuseMonthlyDownloadUrls(enriched, previousPublicData) : enriched;
+  const commercialItems = selectMonthlyCommercialItems(enriched);
   const exportsStartedAtMs = Date.now();
-  const exportLinks = await materializeCampaignExports(enriched, monthEndForEvidence);
-  const completeExportLinks = await materializeCompleteCampaignExports(enriched, monthEndForEvidence);
+  const exportLinks = await materializeCampaignExports(commercialItems, monthEndForEvidence);
+  const completeExportLinks = await materializeCompleteCampaignExports(commercialItems, monthEndForEvidence);
   timings.exportsMs = Date.now() - exportsStartedAtMs;
-  const completePortalGroups = completeExportGroupKeys(enriched, portalExportGroupKey);
-  const completeCampaignGroups = completeExportGroupKeys(enriched, completeCampaignExportGroupKey);
+  const completePortalGroups = completeExportGroupKeys(commercialItems, portalExportGroupKey);
+  const completeCampaignGroups = completeExportGroupKeys(commercialItems, completeCampaignExportGroupKey);
   for (const item of enriched) {
+    if (item.historicalEvidenceOnly) {
+      item.batchDownloadUrl = "";
+      item.completeCampaignDownloadUrl = "";
+      item.completeCampaignExportStatus = "unavailable";
+      item.commercialExportBlocker = "Linha histórica fora da fonte mensal; ZIP não materializado.";
+      continue;
+    }
     const canonicalPi = canonicalCommercialPi(item.piCodigo);
     item.batchDownloadUrl = canonicalPi
       ? materializeOptionalExports ? exportLinks.get(`${normalize(item.siteSigla)}:${normalize(canonicalPi)}`) || "" : item.batchDownloadUrl || ""
