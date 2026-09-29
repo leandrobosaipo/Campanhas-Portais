@@ -8493,7 +8493,7 @@ async function executePiSiteExport(job) {
     const requiredDates = Array.isArray(requiredDatesByInsertion[String(insertion.id)])
       ? requiredDatesByInsertion[String(insertion.id)]
       : null;
-    const capture = await ensureInsertionCaptureCoverage(insertion, requiredDates, { allowRecovery: requiredDates === null });
+    const capture = await ensureInsertionCaptureCoverage(insertion, requiredDates, { allowRecovery: false });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
