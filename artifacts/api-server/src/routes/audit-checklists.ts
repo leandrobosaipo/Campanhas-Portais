@@ -28,7 +28,7 @@ export function validatePreUploadReconstructionClock(
   if (!validation.preliminary || !suppliedMetadata || typeof suppliedMetadata !== "object" || Array.isArray(suppliedMetadata)) return validation;
   const metadata = suppliedMetadata as Record<string, unknown>;
   const reconstruction = metadata.reconstruction as Record<string, unknown> | null;
-  if (!reconstruction || reconstruction.provenanceVersion !== 2) return validation;
+  if (!reconstruction || (reconstruction.provenanceVersion !== 2 && reconstruction.provenanceVersion !== 3)) return validation;
 
   // The entire request is untrusted. This checks a preliminary desktop clock,
   // never immutable provenance: only the server receipt time anchors freshness.
@@ -36,6 +36,17 @@ export function validatePreUploadReconstructionClock(
   const instant = /(?:Z|[+-]\d{2}:\d{2})$/.test(declaredAt) ? new Date(declaredAt) : new Date(NaN);
   const recent = Number.isFinite(instant.getTime()) && Math.abs(instant.getTime() - receivedAt.getTime()) <= 15 * 60 * 1000;
   const requestedCaptureAt = typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : "";
+  const expectedDesktopAt = reconstruction.provenanceVersion === 3 && recent
+    ? new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "America/Cuiaba",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(instant).replace(" ", "T")
+    : requestedCaptureAt;
   const valid = validation.contract.ok
     && validation.contract.resolvedRule.auditConfig.allowAuditedReconstruction === true
     && validation.contract.period.inPeriod
@@ -46,9 +57,7 @@ export function validatePreUploadReconstructionClock(
     && reconstruction.mediaUrl === validation.contract.expectedMedia.mediaUrl
     && recent
     && typeof metadata.systemDateTime === "string"
-    // The screenshot clock represents the contracted historical instant. The
-    // reconstruction timestamp remains a separate, server-correlated proof.
-    && pageTextMatchesRequestedCaptureAt(metadata.systemDateTime, requestedCaptureAt);
+    && pageTextMatchesRequestedCaptureAt(metadata.systemDateTime, expectedDesktopAt);
   const clockIssue = {
     code: valid ? "preupload_reconstruction_clock_checked" : "preupload_reconstruction_clock_invalid",
     gate: "preUploadReconstructionClock",

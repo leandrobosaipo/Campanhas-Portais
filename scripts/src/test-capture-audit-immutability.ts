@@ -229,7 +229,7 @@ test("reconstrução tardia autorizada aceita timeline vazia sem fingir snapshot
     captureClass: "historical_recovery",
     targetDate,
     requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
-    captureTime: "2026-08-24T15:00:00.000Z",
+    captureTime: `${targetDate}T20:40:00-04:00`,
     capturedAt: "2026-08-24T15:00:00.000Z",
     contentDateSamples: [],
     reconstruction: {
@@ -269,13 +269,13 @@ test("reconstrução tardia exige relógio real e timestamp coerente com a captu
   assert.equal(result.issues.some((issue) => issue.code === "reconstruction_provenance_invalid"), true);
 });
 
-test("reconstrução histórica não tardia também compara moldura ao instante real", () => {
+test("reconstrução histórica v2 preserva relógio contratado", () => {
   const targetDate = "2026-08-23";
   const metadata = buildMetadata({
     captureClass: "historical_recovery",
     targetDate,
     requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
-    captureTime: "2026-08-24T15:00:00.000Z",
+    captureTime: `${targetDate}T20:40:00-04:00`,
     capturedAt: "2026-08-24T15:00:00.000Z",
     contentDateSamples: [`${targetDate}T18:00:00-04:00`],
     reconstruction: {
@@ -292,13 +292,13 @@ test("reconstrução histórica não tardia também compara moldura ao instante 
   assert.equal(result.issues.some((issue) => issue.code === "desktop_time_mismatch"), false);
 });
 
-test("auditoria rejeita moldura histórica quando a reconstrução declara captura atual", () => {
+test("reconstrução histórica v2 continua rejeitando relógio real no lugar do contratado", () => {
   const targetDate = "2026-08-23";
   const metadata = buildMetadata({
     captureClass: "historical_recovery",
     targetDate,
     requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
-    captureTime: `${targetDate}T20:40:00-04:00`,
+    captureTime: "segunda-feira, 24/08/2026, 11:00",
     capturedAt: "2026-08-24T15:00:00.000Z",
     contentDateSamples: [],
     reconstruction: {
@@ -314,6 +314,79 @@ test("auditoria rejeita moldura histórica quando a reconstrução declara captu
   const result = evaluateCaptureMetadata(metadata, targetDate, new Date("2026-08-24T16:00:00.000Z"));
   assert.equal(result.ok, false);
   assert.equal(result.issues.some((issue) => issue.code === "desktop_time_mismatch"), true);
+});
+
+test("versão 2 mantém exatamente a classificação histórica do relógio", () => {
+  const targetDate = "2026-08-23";
+  const base = {
+    captureClass: "historical_recovery",
+    targetDate,
+    requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
+    capturedAt: "2026-08-24T15:00:00.000Z",
+    contentDateSamples: [],
+    reconstruction: {
+      reason: "historical_recovery",
+      provenanceVersion: 2,
+      contractedDate: targetDate,
+      reconstructedAt: "2026-08-24T15:00:00.000Z",
+      mediaUrl: "https://cdn.example.com/creative.jpg",
+    },
+  };
+  const contracted = buildMetadata({ ...base, captureTime: `${targetDate}T20:40:00-04:00` });
+  const actual = buildMetadata({ ...base, captureTime: "segunda-feira, 24/08/2026, 11:00" });
+  for (const metadata of [contracted, actual]) {
+    metadata.pageDateText = `${targetDate}T20:40:00-04:00`;
+    metadata.pageDateObserved = `${targetDate}T20:40:00-04:00`;
+  }
+  const now = new Date("2026-08-24T15:01:00.000Z");
+  const contractedAudit = evaluateCaptureMetadata(contracted, targetDate, now);
+  const actualAudit = evaluateCaptureMetadata(actual, targetDate, now);
+  assert.equal(contractedAudit.captureClass, "historical_recovery");
+  assert.equal(actualAudit.captureClass, contractedAudit.captureClass);
+  assert.equal(contractedAudit.issues.some((issue) => issue.code === "desktop_time_mismatch"), false);
+  assert.equal(actualAudit.issues.some((issue) => issue.code === "desktop_time_mismatch"), true);
+});
+
+test("proveniência v3 audita relógio real e preserva a data editorial histórica", () => {
+  const targetDate = "2026-08-23";
+  const capturedAt = "2026-08-24T15:00:00.000Z";
+  const metadata = buildMetadata({
+    captureClass: "historical_recovery",
+    targetDate,
+    requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
+    captureTime: "segunda-feira, 24/08/2026, 11:00",
+    capturedAt,
+    contentDateSamples: [],
+    reconstruction: {
+      reason: "late_publication_recovery",
+      provenanceVersion: 3,
+      contractedDate: targetDate,
+      reconstructedAt: capturedAt,
+      mediaUrl: "https://cdn.example.com/creative.jpg",
+    },
+  });
+  metadata.pageDateText = `${targetDate}T20:40:00-04:00`;
+  metadata.pageDateObserved = `${targetDate}T20:40:00-04:00`;
+  const result = evaluateCaptureMetadata(metadata, targetDate, new Date("2026-08-24T15:01:00.000Z"));
+  assert.equal(result.issues.some((issue) => issue.code === "desktop_time_mismatch"), false);
+  assert.equal(result.issues.some((issue) => issue.code === "page_time_mismatch"), false);
+  assert.equal(result.ok, true);
+
+  const wrongClock = evaluateCaptureMetadata({ ...metadata, systemDateTime: "domingo, 23/08/2026, 20:40" }, targetDate, new Date("2026-08-24T15:01:00.000Z"));
+  assert.equal(wrongClock.issues.some((issue) => issue.code === "desktop_time_mismatch"), true);
+  const wrongProvenanceMetadata = buildMetadata({
+    captureClass: "historical_recovery",
+    targetDate,
+    requestedCaptureAt: `${targetDate}T20:40:00-04:00`,
+    captureTime: "segunda-feira, 24/08/2026, 11:00",
+    capturedAt,
+    contentDateSamples: [],
+    reconstruction: { ...(metadata.reconstruction as Record<string, unknown>), reconstructedAt: "2026-08-23T20:40:00-04:00" },
+  });
+  wrongProvenanceMetadata.pageDateText = `${targetDate}T20:40:00-04:00`;
+  wrongProvenanceMetadata.pageDateObserved = `${targetDate}T20:40:00-04:00`;
+  const wrongProvenance = evaluateCaptureMetadata(wrongProvenanceMetadata, targetDate, new Date("2026-08-24T15:01:00.000Z"));
+  assert.equal(wrongProvenance.issues.some((issue) => issue.code === "reconstruction_provenance_invalid"), true);
 });
 
 test("reconstrução legada aprovada preserva o contrato histórico", () => {

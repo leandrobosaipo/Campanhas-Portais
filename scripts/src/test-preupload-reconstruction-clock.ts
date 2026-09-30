@@ -27,7 +27,7 @@ const metadata = {
 };
 const audit = evaluateCaptureMetadata({
   requestedCaptureAt: metadata.requestedCaptureAt,
-  systemDateTime: metadata.systemDateTime,
+  systemDateTime: "terça-feira, 15/09/2026, 03:59",
   pageDateText: metadata.pageDateText,
 }, targetDate, now);
 assert(audit.issues.some((issue) => issue.code === "desktop_time_mismatch"));
@@ -62,6 +62,32 @@ test("historical screenshot clock clears only its preliminary mismatch, without 
   assert.equal(result.warnings[0]?.code, "preupload_reconstruction_clock_checked");
   assert.equal(baseline.approved, false, "input validation is preserved");
   assert.equal(evaluateCaptureMetadata(metadata, targetDate, now).ok, false, "the same raw request still fails final persisted provenance");
+});
+
+test("proveniência v3 aceita o relógio real preliminar e mantém a hora histórica da página", () => {
+  const metadataV3 = {
+    ...metadata,
+    systemDateTime: "segunda-feira, 14/09/2026, 23:59",
+    reconstruction: { ...metadata.reconstruction, provenanceVersion: 3 },
+  };
+  const validationV3 = {
+    ...baseline,
+    audit: evaluateCaptureMetadata({
+      requestedCaptureAt: metadataV3.requestedCaptureAt,
+      systemDateTime: metadataV3.systemDateTime,
+      pageDateText: metadataV3.pageDateText,
+    }, targetDate, now),
+  };
+  const result = validatePreUploadReconstructionClock(validationV3, metadataV3, now);
+  assert.equal(result.approved, true);
+  assert.equal(result.audit, validationV3.audit);
+  assert.equal(result.audit?.issues.some((issue) => issue.code === "desktop_time_mismatch"), true, "pre-upload must not rewrite the raw audit");
+  assert.equal(validatePreUploadReconstructionClock(validationV3, { ...metadataV3, systemDateTime: "terça-feira, 15/09/2026, 03:59" }, now).approved, false);
+  assert.equal(validatePreUploadReconstructionClock(baseline, {
+    ...metadataV3,
+    systemDateTime: metadata.systemDateTime,
+    reconstruction: { ...metadataV3.reconstruction, reconstructedAt: "2026-09-12T21:53:00-04:00" },
+  }, now).approved, false);
 });
 
 test("untrusted timestamps, wrong historical desktop clock and invalid reconstruction identity remain blocked", () => {

@@ -3671,13 +3671,14 @@ function evaluateRetroCaptureGate(payload) {
       detail: "reconstruction.reconstructedAt is missing or invalid",
     });
   }
-  // The page and desktop frame represent the contracted historical instant.
-  // The real reconstruction instant remains in metadata for provenance.
-  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", requestedCaptureAt);
+  const desktopExpectedAt = reconstruction?.provenanceVersion === 3 && reconstructionAt
+    ? formatCaptureAtForPreview(new Date(reconstructionAt))
+    : requestedCaptureAt;
+  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", desktopExpectedAt);
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
-      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${requestedCaptureAt}`,
+      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${desktopExpectedAt}`,
     });
   }
   const pageReference = payload.pageDateObserved || payload.pageDateText || "";
@@ -3755,6 +3756,25 @@ function evaluateRetroCaptureGate(payload) {
     relativeContentTimeline,
     retroContentProof: payload.retroContentProof || null,
   };
+}
+
+function formatDesktopClock(date) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Cuiaba",
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function resolveDesktopFrameDateTime(fallback, reconstruction) {
+  if (reconstruction?.provenanceVersion !== 3 || typeof reconstruction.reconstructedAt !== "string") return fallback;
+  const reconstructedAt = new Date(reconstruction.reconstructedAt);
+  return Number.isNaN(reconstructedAt.getTime()) ? fallback : formatDesktopClock(reconstructedAt);
 }
 
 function sha256Buffer(buffer) {
@@ -7371,7 +7391,7 @@ async function main() {
   const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
-  const capturedAt = new Date().toISOString();
+  let capturedAt = null;
   const captureClass = isoDate < currentDateInCuiaba()
     ? "historical_recovery"
     : (args.reconstructionReason === "late_publication_recovery"
@@ -7396,13 +7416,17 @@ async function main() {
   const reconstruction = captureClass === "historical_recovery"
     ? {
         reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
-        provenanceVersion: 2,
+        provenanceVersion: 3,
         contractedDate: isoDate,
-        reconstructedAt: capturedAt,
+        reconstructedAt: null,
         mediaUrl: insertion.mediaUrl,
         mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
       }
     : null;
+  const stampCaptureInstant = () => {
+    capturedAt = new Date().toISOString();
+    if (reconstruction) reconstruction.reconstructedAt = capturedAt;
+  };
 
   const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
   const outDir = args.candidateOnly
@@ -7961,6 +7985,7 @@ async function main() {
       throw new Error(`${code}: ${failedSource}`);
     }
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
+    if (readinessAudit) stampCaptureInstant();
     await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
@@ -7979,6 +8004,7 @@ async function main() {
     }
     if (!readinessAudit) {
       await page.screenshot({ path: viewportPng });
+      stampCaptureInstant();
     }
     trace.finish(slotCapturedStage, "ok", {
       slotVisibility,
@@ -8055,22 +8081,14 @@ async function main() {
     retroContentManifest = retroContentEvidence.manifest;
     retroContentProof = retroContentEvidence.retroContentProof;
 
-    systemDateTime = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Cuiaba",
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(captureDate);
-    const frameSystemDateTime = systemDateTime;
+    systemDateTime = formatDesktopClock(captureDate);
+    const frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction);
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
       systemDateTime: frameSystemDateTime,
+      reconstruction,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
@@ -8878,6 +8896,7 @@ if (require.main === module) {
     normalizeVerifiedPnmtHeroRelativeDates,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    resolveDesktopFrameDateTime,
     compactMetadataForPersistence,
     requiresRetroEditorialProof,
     buildEvidenceReplacementArchivePlan,
