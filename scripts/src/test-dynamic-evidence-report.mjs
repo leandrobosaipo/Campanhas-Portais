@@ -21,7 +21,8 @@ test('mantém reconstrução e data real sem exigir aceite externo', () => {
 });
 
 test("gera uma casca pequena sem registros incorporados", () => {
-  assert.ok(html.length < 93_000, `HTML inicial inesperadamente grande: ${html.length}`);
+  // Mobile competence/history and exact-period download scope add a bounded inline runtime.
+  assert.ok(html.length < 97_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);
   assert.match(html, /\/api\/reports\/evidences\/monthly/);
 });
@@ -56,7 +57,7 @@ test("preserva filtros, URL, modais, acessibilidade e paginação", () => {
     'nextCursor',
     "history.replaceState",
     "aria-live=\"polite\"",
-    "@media \\(max-width:760px\\)",
+    "@media\\s*\\(max-width:768px\\)",
   ]) assert.match(html, new RegExp(marker));
 });
 
@@ -67,7 +68,7 @@ test("preserva o layout antigo com logos, miniaturas e ZIP por campanha", () => 
     "class=\"brand\"",
     "siteLogoUrl",
     "campaign-downloads",
-    "Baixar ZIP desta campanha",
+    "Baixar ZIP do período",
     "evidence-section",
     "thumbs evidence-track",
     "thumb-item",
@@ -186,7 +187,11 @@ test("reaproveita o ZIP da campanha e mostra o andamento real", () => {
   assert.match(html, /adrotate-ad-open/);
   assert.ok(html.includes("REPORT_API_BASE+'/api/pi-site-exports/jobs'"));
   assert.doesNotMatch(html, /dynamic-report:'\+crypto\.randomUUID\(\)/);
-  assert.match(html, /replace\(\/\[\^A-Za-z0-9\._:-\]\+\/g,'-'\)/);
+  assert.match(html, /dynamic-period-v2:/);
+  assert.match(html, /crypto\.subtle\.digest\('SHA-256'/);
+  assert.match(html, /month:state\.month,body,evidences:scope\.evidenceManifest/);
+  assert.match(html, /requiredDatesByInsertion:scope\.requiredDatesByInsertion/);
+  assert.match(html, /Pacote existente reaproveitado/);
   assert.match(html, /Aguardando runner|Montando ZIP|Pacote pronto/);
 });
 

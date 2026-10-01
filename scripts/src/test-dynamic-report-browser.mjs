@@ -186,7 +186,7 @@ test("usa a URL pública da evidência quando a API não fornece downloadUrl", a
     assert.ok(imageState.includes('data-thumb-path="/evidence.png"'), `thumb deve usar a URL pública, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-modal-path="/evidence.png"'), `modal deve usar a URL pública, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-download-path="/evidence.png"'), `download deve usar a URL pública, resultado: ${imageState.join(", ")}`);
-    assert.ok(imageState.includes('data-download-label="Abrir imagem"'), `link não deve prometer formato JPEG incorreto, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.some(value => value.startsWith('data-download-label="Abrir imagem · ') && value.includes(' · 1 captura')), `link deve identificar a data e uma captura sem prometer outro formato, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-image-loaded="true"'), `modal deve carregar imagem válida, resultado: ${imageState.join(", ")}`);
   } finally {
     server.closeAllConnections();
