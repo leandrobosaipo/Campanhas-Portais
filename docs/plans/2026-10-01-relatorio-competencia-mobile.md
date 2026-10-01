@@ -22,6 +22,11 @@ a release `a1e66fe007f878a9153a4c82260ca217f6d78e3d` e seus sete commits anterio
    v2 usa SHA-256 do mês, corte, parâmetros e manifesto ordenado de evidências.
    O corte de meses encerrados é estável no último dia do mês; a resposta do job
    precisa corresponder às inserções solicitadas antes de oferecer o download.
+6. A consulta completa viva de Setembro retornou HTTP 200 com 39 inserções em
+   27 s, acima do limite anterior de 20 s. O HTML usa prazo limitado de 45 s;
+   testes com relógio simulado confirmam sucesso em 27 s e aborto em 45 s,
+   sem lista parcial e com Atualizar liberado. A latência da API permanece
+   observada, não é apresentada como corrigida pelo ajuste da interface.
 
 ## Reutilização e proveniência
 

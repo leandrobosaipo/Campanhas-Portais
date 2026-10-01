@@ -87,7 +87,7 @@ jobs:
       - run: pnpm --dir scripts exec tsx src/test-monthly-report-query.ts
       - name: Reconstruction technical acceptance contract
         run: |
-          node --test scripts/src/test-dynamic-evidence-report.mjs scripts/src/test-monthly-evidence-contract.mjs scripts/src/test-report-period-export.mjs scripts/src/test-report-period-download-vm.mjs
+          node --test scripts/src/test-dynamic-evidence-report.mjs scripts/src/test-monthly-evidence-contract.mjs scripts/src/test-report-period-export.mjs scripts/src/test-report-period-download-vm.mjs scripts/src/test-report-load-deadline-vm.mjs
           node --test --test-name-pattern='organiza a agenda' scripts/src/test-monthly-report-mobile-ui.mjs
           pnpm --dir scripts exec tsx --test src/test-capture-audit-immutability.ts
       - run: pnpm --dir scripts exec tsx src/test-evidence-date-serialization.ts
