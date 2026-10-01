@@ -186,7 +186,7 @@ test("usa a URL pública da evidência quando a API não fornece downloadUrl", a
     assert.ok(imageState.includes('data-thumb-path="/evidence.png"'), `thumb deve usar a URL pública, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-modal-path="/evidence.png"'), `modal deve usar a URL pública, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-download-path="/evidence.png"'), `download deve usar a URL pública, resultado: ${imageState.join(", ")}`);
-    assert.ok(imageState.includes('data-download-label="Abrir imagem"'), `link não deve prometer formato JPEG incorreto, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.some(value => value.startsWith('data-download-label="Abrir imagem · ') && value.includes(' · 1 captura')), `link deve identificar a data e uma captura sem prometer outro formato, resultado: ${imageState.join(", ")}`);
     assert.ok(imageState.includes('data-image-loaded="true"'), `modal deve carregar imagem válida, resultado: ${imageState.join(", ")}`);
   } finally {
     server.closeAllConnections();
@@ -398,11 +398,11 @@ test("encerra consulta pendurada, não mostra resultado parcial e libera Atualiz
         "https://adops-api.codigo5.com.br",
         `http://127.0.0.1:${server.address().port}`,
       ).replace(
-        "const REPORT_LOAD_TIMEOUT_MS = 20_000;",
+        "const REPORT_LOAD_TIMEOUT_MS = 45_000;",
         "const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{if(new URL(input,location.href).pathname==='/api/reports/evidences/monthly')return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));return nativeFetch(input,init)};const REPORT_LOAD_TIMEOUT_MS = 50;",
       ).replace(
         "</body>",
-        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("excedeu 20 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
+        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("excedeu 45 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
       ));
       return;
     }
@@ -413,7 +413,7 @@ test("encerra consulta pendurada, não mostra resultado parcial e libera Atualiz
   try {
     const port = server.address().port;
     const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active`, { virtualTimeBudget: 1000 });
-    assert.match(stdout, /consulta completa excedeu 20 segundos/);
+    assert.match(stdout, /consulta completa excedeu 45 segundos/);
     assert.match(stdout, /data-refresh-enabled="true"/);
     assert.match(stdout, /data-partial-campaign-count="0"/);
     assert.match(stdout, /A lista não foi carregada por completo/);

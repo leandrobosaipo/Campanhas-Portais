@@ -19,7 +19,17 @@ const importSafeSource = source.replace(
   "export { renderHtml };\n",
 );
 await writeFile(modulePath, importSafeSource, "utf8");
-const { renderHtml } = await import(`${pathToFileURL(modulePath).href}?v=${Date.now()}`);
+// This fixture's September agenda is measured from 04/09 (12/09 is eight days
+// later). Use the renderer's existing report-date input, never the wall clock.
+const previousReportDate = process.env.ADOPS_REPORT_DATE;
+process.env.ADOPS_REPORT_DATE = "2026-09-04";
+let renderHtml;
+try {
+  ({ renderHtml } = await import(`${pathToFileURL(modulePath).href}?v=${Date.now()}`));
+} finally {
+  if (previousReportDate === undefined) delete process.env.ADOPS_REPORT_DATE;
+  else process.env.ADOPS_REPORT_DATE = previousReportDate;
+}
 after(async () => {
   await Promise.all([
     rm(modulePath, { force: true }),
