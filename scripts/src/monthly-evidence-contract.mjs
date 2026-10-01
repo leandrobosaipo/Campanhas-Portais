@@ -217,7 +217,7 @@ export function buildCampaignFilterMetadata(campaign, targetDate) {
     const auditedCount = Number.isFinite(Number(item?.auditedDays))
       ? Number(item.auditedDays)
       : Array.isArray(item?.evidenceDays)
-        ? item.evidenceDays.filter((day) => String(day?.status || "").startsWith("audited") && day?.url).length
+        ? item.evidenceDays.filter((day) => isTechnicallyAcceptedEvidenceDay(day) && day?.url).length
         : 0;
     if (requiredCount > 0
       && auditedCount >= requiredCount
@@ -405,8 +405,14 @@ export function selectMonthlyCommercialItems(items) {
     }));
 }
 
+export function isTechnicallyAcceptedEvidenceDay(day) {
+  return day?.status === "reconstruction"
+    ? day.technicalAccepted === true && day.technicalStatus === "audited" && day.checklistApproved === true && Boolean(day.url) && !(day.issues || []).length
+    : day?.status === "audited" || day?.status === "audited_best_effort";
+}
+
 export function adaptAggregatedEvidenceDay(day) {
-  const approved = day?.status === "audited" || day?.status === "audited_best_effort";
+  const approved = isTechnicallyAcceptedEvidenceDay(day);
   return {
     ...day,
     arquivoUrl: day?.url || null,
@@ -476,7 +482,7 @@ export function buildMonthlyDeliveryFingerprint(item) {
     piCodigo: canonicalPi,
     siteSigla: item.siteSigla,
     competencia: item.competencia,
-    evidences: (item.evidenceDays || []).filter((day) => !day.historicalOnly && String(day.status || "").startsWith("audited") && day.url),
+    evidences: (item.evidenceDays || []).filter((day) => !day.historicalOnly && isTechnicallyAcceptedEvidenceDay(day) && day.url),
   });
 }
 

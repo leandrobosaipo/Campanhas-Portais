@@ -13,6 +13,9 @@ export type GetMonthlyEvidenceReportParams = {
   month: string;
   portal?: string;
   publication?: string;
+  /**
+   * documentary_pending permanece disponível como filtro legado; reconstruções tecnicamente aceitas aparecem completas e continuam identificadas como reconstruction.
+   */
   evidence?: string;
   search?: string;
   cursor?: string;

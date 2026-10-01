@@ -1796,10 +1796,10 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
             capturedAt: correlation.capturedAt,
             auditPolicyVersion: typeof proof?.metadata.auditPolicyVersion === 'string' ? proof.metadata.auditPolicyVersion : null,
           }).trusted;
-          const provenance = monthlyEvidenceProvenance(evidence?.arquivoUrl, proof, Boolean(trustedCapture));
+          const provenance = monthlyEvidenceProvenance(evidence?.arquivoUrl, proof, Boolean(trustedCapture), status);
           const displayStatus = status.startsWith('audited')
-            ? provenance.documentaryStatus === 'reconstruction_requires_acceptance' ? 'reconstruction'
-              : provenance.documentaryStatus === 'provenance_unverified' ? 'provenance_unverified' : status
+            ? provenance.provenanceStatus === 'reconstruction_recorded' ? 'reconstruction'
+              : provenance.provenanceStatus === 'unknown' ? 'provenance_unverified' : status
             : status;
           return {
             date,

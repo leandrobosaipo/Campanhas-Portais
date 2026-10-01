@@ -1,4 +1,4 @@
-import { canonicalCommercialPi, competenciaMonthKey } from "./monthly-evidence-contract.mjs";
+import { canonicalCommercialPi, competenciaMonthKey, isTechnicallyAcceptedEvidenceDay } from "./monthly-evidence-contract.mjs";
 
 const normalize = (value) => String(value ?? "")
   .normalize("NFD")
@@ -20,7 +20,7 @@ export function completeCampaignExportGroupKey(item) {
 }
 
 export function hasCompleteEvidenceGroup(items) {
-  const evidenceDays = items.flatMap((item) => item.evidenceDays.filter((day) => day.status.startsWith("audited") && day.url));
+  const evidenceDays = items.flatMap((item) => item.evidenceDays.filter((day) => isTechnicallyAcceptedEvidenceDay(day) && day.url));
   const required = items.reduce((sum, item) => sum + item.requiredDays.length, 0);
   return required > 0 && evidenceDays.length === required;
 }

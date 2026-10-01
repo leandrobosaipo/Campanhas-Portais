@@ -5,5 +5,9 @@
  * AdOps Manager API
  * OpenAPI spec version: 0.1.0
  */
+import type { GetMonthlyEvidenceReport200ItemsItem } from "./getMonthlyEvidenceReport200ItemsItem";
 
-export type GetMonthlyEvidenceReport200 = { [key: string]: unknown };
+export type GetMonthlyEvidenceReport200 = {
+  items?: GetMonthlyEvidenceReport200ItemsItem[];
+  [key: string]: unknown;
+};

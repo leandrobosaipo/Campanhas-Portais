@@ -576,3 +576,17 @@ test("polling vivo usa intervalos finitos", () => {
   assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 3 }), 120_000);
   assert.equal(contract.liveReportPollingDelay({ terminal: true, nextRecoveryAt: null, consecutiveErrors: 0 }), null);
 });
+
+test('reconstrução tecnicamente aceita integra entrega sem mudar origem ou timestamps', () => {
+  const day = { date: '2026-09-23', status: 'reconstruction', technicalStatus: 'audited', technicalAccepted: true, checklistApproved: true, captureClass: 'historical_recovery', capturedAt: '2026-09-29T18:31:38Z', url: 'https://example.test/retro.png', issues: [] };
+  const adapted = contract.adaptAggregatedEvidenceDay(day);
+  assert.equal(adapted.checklistValidation.approved, true);
+  assert.equal(adapted.status, 'reconstruction');
+  assert.equal(adapted.captureClass, 'historical_recovery');
+  assert.equal(adapted.capturedAt, day.capturedAt);
+  const item = { piCodigo: 'PI 9783', siteSigla: 'OMT', competencia: '09/2026', evidenceDays: [day] };
+  assert.notEqual(contract.buildMonthlyDeliveryFingerprint(item), contract.buildMonthlyDeliveryFingerprint({ ...item, evidenceDays: [] }));
+  for (const change of [{ technicalAccepted: false }, { technicalStatus: 'invalid_audit' }, { checklistApproved: false }, { issues: ['future_sample'] }, { url: null }]) {
+    assert.equal(contract.adaptAggregatedEvidenceDay({ ...day, ...change }).checklistValidation.approved, false);
+  }
+});

@@ -15,20 +15,44 @@ import {
   selectMonthlyEvidenceProof,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
 
-test('reconstrucao nunca vira original pelo resultado da auditoria tecnica', () => {
-  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z' } };
-  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png?v=1', proof).documentaryStatus, 'reconstruction_requires_acceptance');
-  assert.equal(monthlyEvidenceProvenance('https://example.test/b.png', proof).documentaryStatus, 'provenance_unverified');
-  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', null).documentaryStatus, 'provenance_unverified');
-  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled' } }).documentaryStatus, 'provenance_unverified');
-  const trusted = monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled', capturedAt: 'not-a-date' } }, true);
-  assert.equal(trusted.documentaryStatus, 'capture_recorded');
-  assert.equal('capturedAt' in trusted, false, 'horário deve vir apenas da correlação canônica da rota');
+test('proveniência histórica correlacionada é aceita tecnicamente e mantém o marcador histórico', () => {
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 } } };
+  const accepted = monthlyEvidenceProvenance('https://example.test/a.png?v=1', proof, true, 'audited');
+  assert.equal(accepted.captureClass, 'historical_recovery');
+  assert.equal(accepted.acceptancePolicy, 'technical-audit-v1');
+  assert.equal(accepted.technicalAccepted, true);
+  assert.equal(accepted.requiresDocumentaryAcceptance, false);
+  assert.equal(accepted.provenanceStatus, 'reconstruction_recorded');
+  assert.equal(accepted.documentaryStatus, 'reconstruction_requires_acceptance', 'alias legado não deve apagar a origem');
+  assert.equal('capturedAt' in accepted, false, 'horário vem apenas da correlação canônica da rota');
 });
 
-test('reconstrucao exige conferência documental mesmo sem erro técnico', () => {
-  const result = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [{ date: '2026-09-18', status: 'reconstruction' }] });
+test('proveniência sem correlação e auditoria não aprovada seguem bloqueadas', () => {
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 } } };
+  const untrusted = monthlyEvidenceProvenance('https://example.test/a.png', proof, false, 'audited');
+  assert.equal(untrusted.technicalAccepted, false);
+  assert.equal(untrusted.provenanceStatus, 'unknown');
+  assert.equal(untrusted.documentaryStatus, 'reconstruction_requires_acceptance');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/b.png', proof, true, 'audited').provenanceStatus, 'unknown');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', null, true, 'audited').provenanceStatus, 'unknown');
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', proof, true, 'invalid_audit').technicalAccepted, false);
+  assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled' } }).documentaryStatus, 'provenance_unverified');
+});
+
+test('reconstrucao tecnicamente aceita completa o mês sem perder seu status de origem', () => {
+  const result = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [{ date: '2026-09-18', status: 'reconstruction', technicalAccepted: true }] });
+  assert.deepEqual(result.evidenceStates, ['complete']);
+});
+
+test('reconstrucao sem aceite técnico e proveniência desconhecida seguem pendentes', () => {
+  const result = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [
+    { date: '2026-09-18', status: 'reconstruction', technicalAccepted: false },
+  ] });
   assert.deepEqual(result.evidenceStates, ['documentary_pending']);
+  const unknown = classifyMonthlyInsertion({ published: true, periodStart: '2026-09-01', periodEnd: '2026-09-18', today: '2026-09-21', evidenceDays: [
+    { date: '2026-09-18', status: 'provenance_unverified', technicalAccepted: false },
+  ] });
+  assert.deepEqual(unknown.evidenceStates, ['documentary_pending']);
 });
 
 test('tentativa nova não promovida não oculta a prova do arquivo preservado', () => {

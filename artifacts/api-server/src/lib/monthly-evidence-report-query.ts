@@ -21,15 +21,25 @@ export function monthlyEvidenceProvenance(url: string | null | undefined, proof:
   uploadedUrl?: string | null;
   cacheBustedUrl?: string | null;
   metadata?: Record<string, unknown>;
-} | null, trustedCapture = false) {
+} | null, trustedCapture = false, technicalStatus?: string | null) {
   const matches = Boolean(monthlyArtifact(url) && [proof?.uploadedUrl, proof?.cacheBustedUrl].some(value => monthlyArtifact(value) === monthlyArtifact(url)));
   const metadata = matches ? proof?.metadata ?? {} : {};
   const captureClass = typeof metadata.captureClass === 'string' ? metadata.captureClass : null;
   const reconstructed = captureClass === 'historical_recovery' || Boolean(metadata.reconstruction);
+  const technicallyAudited = technicalStatus === 'audited';
+  const trustedHistoricalReconstruction = reconstructed && captureClass === 'historical_recovery' && trustedCapture;
+  const trustedDailyCapture = !reconstructed && trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '');
+  const technicalAccepted = technicallyAudited && (trustedHistoricalReconstruction || trustedDailyCapture);
   return {
     captureClass,
+    acceptancePolicy: 'technical-audit-v1',
+    technicalAccepted,
+    requiresDocumentaryAcceptance: false,
+    provenanceStatus: trustedHistoricalReconstruction ? 'reconstruction_recorded'
+      : trustedDailyCapture ? 'capture_recorded' : 'unknown',
+    /** @deprecated Retained as a compatibility alias; consult technicalAccepted and provenanceStatus. */
     documentaryStatus: reconstructed ? 'reconstruction_requires_acceptance'
-      : trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '') ? 'capture_recorded' : 'provenance_unverified',
+      : trustedDailyCapture ? 'capture_recorded' : 'provenance_unverified',
   };
 }
 
@@ -71,7 +81,7 @@ export function classifyMonthlyInsertion(options: {
   periodStart: string;
   periodEnd: string;
   today: string;
-  evidenceDays: Array<{ date: string; status: string }>;
+  evidenceDays: Array<{ date: string; status: string; technicalAccepted?: boolean }>;
   currentHour?: number;
 }) {
   const publicationStates: string[] = [];
@@ -84,7 +94,8 @@ export function classifyMonthlyInsertion(options: {
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
   const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled", "reconstruction", "provenance_unverified"].includes(day.status));
-  const documentaryPending = options.evidenceDays.some(day => ["reconstruction", "provenance_unverified"].includes(day.status));
+  const documentaryPending = options.evidenceDays.some(day => day.status === "provenance_unverified"
+    || (day.status === "reconstruction" && day.technicalAccepted !== true));
   const awaitingToday = options.currentHour != null && options.currentHour < 18
     && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
     && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
