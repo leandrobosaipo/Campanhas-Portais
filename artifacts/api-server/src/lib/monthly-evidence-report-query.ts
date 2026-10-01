@@ -27,7 +27,25 @@ export function monthlyEvidenceProvenance(url: string | null | undefined, proof:
   const captureClass = typeof metadata.captureClass === 'string' ? metadata.captureClass : null;
   const reconstructed = captureClass === 'historical_recovery' || Boolean(metadata.reconstruction);
   const technicallyAudited = technicalStatus === 'audited';
-  const trustedHistoricalReconstruction = reconstructed && captureClass === 'historical_recovery' && trustedCapture;
+  const checklistValidation = metadata.checklistValidation && typeof metadata.checklistValidation === 'object'
+    ? metadata.checklistValidation as Record<string, unknown>
+    : {};
+  const blockingIssues = Array.isArray(checklistValidation.blockingIssues) ? checklistValidation.blockingIssues : null;
+  const checklistAudit = checklistValidation.audit && typeof checklistValidation.audit === 'object'
+    ? checklistValidation.audit as Record<string, unknown>
+    : {};
+  const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === 'object'
+    ? metadata.retroContentProof as Record<string, unknown>
+    : {};
+  const manifestHash = typeof retroContentProof.manifestHash === 'string' ? retroContentProof.manifestHash.trim() : '';
+  const historicalTechnicalProofValid = checklistValidation.approved === true
+    && blockingIssues?.length === 0
+    && checklistAudit.ok !== false
+    && retroContentProof.status === 'approved'
+    && retroContentProof.futureCount === 0
+    && manifestHash.length > 0;
+  const trustedHistoricalReconstruction = reconstructed && captureClass === 'historical_recovery'
+    && trustedCapture && historicalTechnicalProofValid;
   const trustedDailyCapture = !reconstructed && trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '');
   const technicalAccepted = technicallyAudited && (trustedHistoricalReconstruction || trustedDailyCapture);
   return {

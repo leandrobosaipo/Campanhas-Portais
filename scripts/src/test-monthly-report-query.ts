@@ -16,7 +16,11 @@ import {
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
 
 test('proveniência histórica correlacionada é aceita tecnicamente e mantém o marcador histórico', () => {
-  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 } } };
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: {
+    captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 },
+    checklistValidation: { approved: true, blockingIssues: [], audit: { ok: true } },
+    retroContentProof: { status: 'approved', futureCount: 0, manifestHash: 'verified-manifest-hash' },
+  } };
   const accepted = monthlyEvidenceProvenance('https://example.test/a.png?v=1', proof, true, 'audited');
   assert.equal(accepted.captureClass, 'historical_recovery');
   assert.equal(accepted.acceptancePolicy, 'technical-audit-v1');
@@ -28,7 +32,11 @@ test('proveniência histórica correlacionada é aceita tecnicamente e mantém o
 });
 
 test('proveniência sem correlação e auditoria não aprovada seguem bloqueadas', () => {
-  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 } } };
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: {
+    captureClass: 'historical_recovery', capturedAt: '2026-09-20T03:00:00Z', reconstruction: { provenanceVersion: 3 },
+    checklistValidation: { approved: true, blockingIssues: [], audit: { ok: true } },
+    retroContentProof: { status: 'approved', futureCount: 0, manifestHash: 'verified-manifest-hash' },
+  } };
   const untrusted = monthlyEvidenceProvenance('https://example.test/a.png', proof, false, 'audited');
   assert.equal(untrusted.technicalAccepted, false);
   assert.equal(untrusted.provenanceStatus, 'unknown');
@@ -36,7 +44,24 @@ test('proveniência sem correlação e auditoria não aprovada seguem bloqueadas
   assert.equal(monthlyEvidenceProvenance('https://example.test/b.png', proof, true, 'audited').provenanceStatus, 'unknown');
   assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', null, true, 'audited').provenanceStatus, 'unknown');
   assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', proof, true, 'invalid_audit').technicalAccepted, false);
+  for (const metadata of [
+    { ...proof.metadata, checklistValidation: { ...proof.metadata.checklistValidation, approved: false } },
+    { ...proof.metadata, checklistValidation: { ...proof.metadata.checklistValidation, blockingIssues: ['visual_mismatch'] } },
+    { ...proof.metadata, checklistValidation: { ...proof.metadata.checklistValidation, audit: { ok: false } } },
+    { ...proof.metadata, retroContentProof: { ...proof.metadata.retroContentProof, futureCount: 1 } },
+    { ...proof.metadata, retroContentProof: { ...proof.metadata.retroContentProof, manifestHash: '' } },
+    { ...proof.metadata, retroContentProof: { ...proof.metadata.retroContentProof, status: 'missing' } },
+  ]) {
+    assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata }, true, 'audited').technicalAccepted, false);
+  }
   assert.equal(monthlyEvidenceProvenance('https://example.test/a.png', { ...proof, metadata: { captureClass: 'scheduled' } }).documentaryStatus, 'provenance_unverified');
+});
+
+test('captura agendada mantém a política existente sem exigir prova editorial retroativa', () => {
+  const proof = { uploadedUrl: 'https://example.test/a.png', metadata: { captureClass: 'scheduled' } };
+  const result = monthlyEvidenceProvenance('https://example.test/a.png', proof, true, 'audited');
+  assert.equal(result.technicalAccepted, true);
+  assert.equal(result.provenanceStatus, 'capture_recorded');
 });
 
 test('reconstrucao tecnicamente aceita completa o mês sem perder seu status de origem', () => {
