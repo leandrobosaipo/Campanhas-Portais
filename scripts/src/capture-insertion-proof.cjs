@@ -1,7 +1,8 @@
 const { execFileSync } = require("node:child_process");
-const { mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync } = require("node:fs");
 const crypto = require("node:crypto");
 const path = require("node:path");
+const os = require("node:os");
 const { createRequire } = require("node:module");
 const { getSiteIntegration, getFormatMapping, normalizeFormat } = require("./adrotate-sites.cjs");
 
@@ -1745,25 +1746,163 @@ function buildEvidenceReplacementArchivePlan({ evidenceUrl, bucket, competencia,
 }
 
 function archiveEvidenceBeforeReplacement(env, bucket, plan) {
-  execFileSync("aws", [
-    "--endpoint-url",
-    env.endpoint,
-    "s3",
-    "cp",
-    `s3://${bucket}/${plan.sourceKey}`,
-    `s3://${bucket}/${plan.archiveKey}`,
-    "--acl",
-    "private",
-  ], {
-    env: {
-      ...process.env,
-      AWS_ACCESS_KEY_ID: env.accessKeyId,
-      AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
-      AWS_DEFAULT_REGION: env.region,
-    },
-    stdio: "pipe",
-  });
+  const awsEnv = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: env.accessKeyId,
+    AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
+    AWS_DEFAULT_REGION: env.region,
+  };
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "adops-evidence-replacement-"));
+  try {
+    const sourcePath = path.join(tempDir, "source");
+    const archivePath = path.join(tempDir, "archive");
+    try {
+      execFileSync("aws", [
+        "--endpoint-url",
+        env.endpoint,
+        "s3",
+        "cp",
+        `s3://${bucket}/${plan.sourceKey}`,
+        sourcePath,
+      ], { env: awsEnv, stdio: "pipe" });
+    } catch {
+      throw new Error("evidence_replacement_archive_failed: não foi possível ler o objeto canônico.");
+    }
+
+    const sourceBytes = readFileSync(sourcePath);
+    const contentHash = crypto.createHash("sha256").update(sourceBytes).digest("hex");
+    plan.sha256 = contentHash;
+    plan.bytes = sourceBytes.length;
+    const archiveName = path.basename(plan.archiveKey).replace(/^[a-f0-9]{64}-/, "");
+    plan.archiveKey = `${path.dirname(plan.archiveKey)}/${contentHash}-${archiveName}`;
+
+    execFileSync("aws", [
+      "--endpoint-url",
+      env.endpoint,
+      "s3",
+      "cp",
+      `s3://${bucket}/${plan.sourceKey}`,
+      `s3://${bucket}/${plan.archiveKey}`,
+      "--acl",
+      "private",
+    ], { env: awsEnv, stdio: "pipe" });
+
+    try {
+      execFileSync("aws", [
+        "--endpoint-url",
+        env.endpoint,
+        "s3",
+        "cp",
+        `s3://${bucket}/${plan.archiveKey}`,
+        archivePath,
+      ], { env: awsEnv, stdio: "pipe" });
+    } catch {
+      throw new Error("evidence_replacement_archive_failed: não foi possível ler de volta os objetos para validação.");
+    }
+
+    const archiveBytes = readFileSync(archivePath);
+    const sourceSha256 = crypto.createHash("sha256").update(sourceBytes).digest("hex");
+    const archiveSha256 = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    if (sourceBytes.length !== archiveBytes.length || sourceSha256 !== archiveSha256) {
+      throw new Error("evidence_replacement_archive_failed: SHA-256 ou tamanho diverge entre a evidência canônica e o arquivo privado.");
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
   return plan;
+}
+
+function restoreEvidenceFromArchive(env, bucket, plan) {
+  if (!env?.endpoint || !env?.accessKeyId || !env?.secretAccessKey || !env?.region) {
+    throw new Error("evidence_restore_failed: configuração de storage incompleta.");
+  }
+  const safeKey = (value) => typeof value === "string" && value.length > 0 && !value.includes("..") && !value.startsWith("/");
+  if (!safeKey(plan?.sourceKey) || !safeKey(plan?.archiveKey) || plan.sourceKey === plan.archiveKey
+    || !plan.archiveKey.startsWith("adops-evidence-originals/")
+    || !/^[a-f0-9]{64}$/.test(plan.sha256 || "")
+    || !Number.isSafeInteger(plan.bytes) || plan.bytes < 1) {
+    throw new Error("evidence_restore_failed: alvo, arquivo ou checksum inválido.");
+  }
+
+  const awsEnv = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: env.accessKeyId,
+    AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
+    AWS_DEFAULT_REGION: env.region,
+  };
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "adops-evidence-restore-"));
+  const archivePath = path.join(tempDir, "archive");
+  const currentPath = path.join(tempDir, "current");
+  const restoredPath = path.join(tempDir, "restored");
+  const objectUri = (key) => `s3://${bucket}/${key}`;
+  const digest = (filePath) => {
+    const bytes = readFileSync(filePath);
+    return { bytes: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
+  };
+  const copy = (source, destination, options = []) => execFileSync("aws", [
+    "--endpoint-url", env.endpoint, "s3", "cp", source, destination, ...options,
+  ], { env: awsEnv, stdio: "pipe" });
+
+  try {
+    try {
+      copy(objectUri(plan.archiveKey), archivePath);
+    } catch {
+      throw new Error("evidence_restore_failed: não foi possível ler o arquivo privado.");
+    }
+    const archived = digest(archivePath);
+    if (archived.sha256 !== plan.sha256 || archived.bytes !== plan.bytes) {
+      throw new Error("evidence_restore_failed: SHA-256 ou tamanho do arquivo privado diverge do manifesto.");
+    }
+    try {
+      copy(objectUri(plan.sourceKey), currentPath);
+    } catch {
+      throw new Error("evidence_restore_failed: alvo canônico não existe para permitir rollback seguro.");
+    }
+    const previous = digest(currentPath);
+    const extension = path.extname(plan.sourceKey).toLowerCase();
+    const contentType = extension === ".png" ? "image/png"
+      : [".jpg", ".jpeg"].includes(extension) ? "image/jpeg"
+        : extension === ".webp" ? "image/webp" : "application/octet-stream";
+
+    const readTarget = () => {
+      try {
+        copy(objectUri(plan.sourceKey), restoredPath);
+        return digest(restoredPath);
+      } catch {
+        return null;
+      }
+    };
+    const rollback = () => {
+      copy(currentPath, objectUri(plan.sourceKey), ["--acl", "public-read", "--content-type", contentType]);
+      const readback = readTarget();
+      if (!readback || readback.sha256 !== previous.sha256 || readback.bytes !== previous.bytes) {
+        throw new Error("evidence_restore_rollback_failed: readback do objeto anterior diverge.");
+      }
+    };
+
+    try {
+      copy(archivePath, objectUri(plan.sourceKey), ["--acl", "public-read", "--content-type", contentType]);
+      const readback = readTarget();
+      if (!readback || readback.sha256 !== plan.sha256 || readback.bytes !== plan.bytes) {
+        throw new Error("evidence_restore_failed: readback do alvo diverge do arquivo original.");
+      }
+      return {
+        sourceKey: plan.sourceKey,
+        archiveKey: plan.archiveKey,
+        sha256: readback.sha256,
+        bytes: readback.bytes,
+        previousTargetSha256: previous.sha256,
+        previousTargetBytes: previous.bytes,
+        restoredVerified: true,
+      };
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function persistCaptureLog(apiBase, insertionId, payload) {
@@ -1869,16 +2008,24 @@ async function fetchCaptureAuditStatus(apiBase, insertionId, targetDate) {
   return response.json().catch(() => null);
 }
 
-async function validateCaptureChecklist(apiBase, insertionId, targetDate, metadata) {
+function sanitizeChecklistErrorCodes(details) {
+  const issues = Array.isArray(details) ? details : [details];
+  const codes = issues
+    .map((issue) => typeof issue === "string" ? issue : issue?.code)
+    .filter((code) => typeof code === "string" && /^[a-z0-9][a-z0-9_.:-]{0,99}$/i.test(code));
+  return codes.length ? codes.join(",") : "checklist_rejected";
+}
+
+async function validateCaptureChecklist(apiBase, insertionId, targetDate, metadata, allowRejected = false) {
   const response = await fetch(`${apiBase}/audit-checklists/validate-proof`, {
     method: "POST",
     headers: buildApiHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ insertionId, date: targetDate, metadata, phase: "pre_upload" }),
   });
   const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.approved !== true) {
+  if (!response.ok || (!allowRejected && payload?.approved !== true)) {
     const details = payload?.blockingIssues || payload?.issues || payload?.error || `HTTP ${response.status}`;
-    throw new Error(`capture_audit_failed: checklist_pre_upload_failed: ${JSON.stringify(details)}`);
+    throw new Error(`capture_audit_failed: checklist_pre_upload_failed: ${sanitizeChecklistErrorCodes(details)}`);
   }
   return payload;
 }
@@ -3524,13 +3671,14 @@ function evaluateRetroCaptureGate(payload) {
       detail: "reconstruction.reconstructedAt is missing or invalid",
     });
   }
-  // The page and desktop frame represent the contracted historical instant.
-  // The real reconstruction instant remains in metadata for provenance.
-  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", requestedCaptureAt);
+  const desktopExpectedAt = reconstruction?.provenanceVersion === 3 && reconstructionAt
+    ? formatCaptureAtForPreview(new Date(reconstructionAt))
+    : requestedCaptureAt;
+  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", desktopExpectedAt);
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
-      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${requestedCaptureAt}`,
+      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${desktopExpectedAt}`,
     });
   }
   const pageReference = payload.pageDateObserved || payload.pageDateText || "";
@@ -3608,6 +3756,25 @@ function evaluateRetroCaptureGate(payload) {
     relativeContentTimeline,
     retroContentProof: payload.retroContentProof || null,
   };
+}
+
+function formatDesktopClock(date) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Cuiaba",
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function resolveDesktopFrameDateTime(fallback, reconstruction) {
+  if (reconstruction?.provenanceVersion !== 3 || typeof reconstruction.reconstructedAt !== "string") return fallback;
+  const reconstructedAt = new Date(reconstruction.reconstructedAt);
+  return Number.isNaN(reconstructedAt.getTime()) ? fallback : formatDesktopClock(reconstructedAt);
 }
 
 function sha256Buffer(buffer) {
@@ -7224,7 +7391,7 @@ async function main() {
   const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
-  const capturedAt = new Date().toISOString();
+  let capturedAt = null;
   const captureClass = isoDate < currentDateInCuiaba()
     ? "historical_recovery"
     : (args.reconstructionReason === "late_publication_recovery"
@@ -7249,13 +7416,17 @@ async function main() {
   const reconstruction = captureClass === "historical_recovery"
     ? {
         reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
-        provenanceVersion: 2,
+        provenanceVersion: 3,
         contractedDate: isoDate,
-        reconstructedAt: capturedAt,
+        reconstructedAt: null,
         mediaUrl: insertion.mediaUrl,
         mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
       }
     : null;
+  const stampCaptureInstant = () => {
+    capturedAt = new Date().toISOString();
+    if (reconstruction) reconstruction.reconstructedAt = capturedAt;
+  };
 
   const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
   const outDir = args.candidateOnly
@@ -7814,6 +7985,7 @@ async function main() {
       throw new Error(`${code}: ${failedSource}`);
     }
     trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
+    if (readinessAudit) stampCaptureInstant();
     await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
@@ -7832,6 +8004,7 @@ async function main() {
     }
     if (!readinessAudit) {
       await page.screenshot({ path: viewportPng });
+      stampCaptureInstant();
     }
     trace.finish(slotCapturedStage, "ok", {
       slotVisibility,
@@ -7908,22 +8081,14 @@ async function main() {
     retroContentManifest = retroContentEvidence.manifest;
     retroContentProof = retroContentEvidence.retroContentProof;
 
-    systemDateTime = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Cuiaba",
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(captureDate);
-    const frameSystemDateTime = systemDateTime;
+    systemDateTime = formatDesktopClock(captureDate);
+    const frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction);
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
       systemDateTime: frameSystemDateTime,
+      reconstruction,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
@@ -8237,8 +8402,17 @@ async function main() {
     };
     writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
 
-    if (args.saveEvidence && args.apiBase && internalCaptureToken) {
-      metadata.checklistValidation = await validateCaptureChecklist(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
+    if (args.candidateOnly && (!args.apiBase || !internalCaptureToken)) {
+      throw new Error("candidate_checklist_unavailable: credencial interna da API ausente.");
+    }
+    if ((args.saveEvidence || args.candidateOnly) && args.apiBase && internalCaptureToken) {
+      metadata.checklistValidation = await validateCaptureChecklist(
+        args.apiBase,
+        insertion.id,
+        isoDate,
+        compactMetadataForPersistence(metadata),
+        args.candidateOnly && !args.saveEvidence,
+      );
       writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
     }
 
@@ -8281,7 +8455,7 @@ async function main() {
       await upsertEvidence(args.apiBase, insertion, publicUrl, title, args.replaceExisting);
     }
     metadata.evidenceUrl = publicUrl;
-    if (args.apiBase && internalCaptureToken) {
+    if (args.apiBase && internalCaptureToken && (!args.candidateOnly || args.saveEvidence)) {
       await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
     }
 
@@ -8477,6 +8651,7 @@ async function main() {
       pendingLogFlush,
       retroGate,
       retroContentProof,
+      ...(args.candidateOnly ? { checklistValidation: metadata.checklistValidation ?? null } : {}),
       reconstruction,
       manifestHash: retroContentManifest ? crypto.createHash("sha256").update(JSON.stringify(retroContentManifest)).digest("hex") : null,
       probableCause: analysis.probableCause,
@@ -8682,6 +8857,7 @@ if (require.main === module) {
   });
 } else {
   module.exports = {
+    validateCaptureChecklist,
     applyAflRetroPreview,
     stabilizeVisibleRetroDatesBeforeCapture,
     applyOmtRetroPreview,
@@ -8720,9 +8896,13 @@ if (require.main === module) {
     normalizeVerifiedPnmtHeroRelativeDates,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    resolveDesktopFrameDateTime,
     compactMetadataForPersistence,
     requiresRetroEditorialProof,
     buildEvidenceReplacementArchivePlan,
+    archiveEvidenceBeforeReplacement,
+    restoreEvidenceFromArchive,
+    parseSpacesEnv: parseEnvFile,
     composeDesktopProof,
   };
 }

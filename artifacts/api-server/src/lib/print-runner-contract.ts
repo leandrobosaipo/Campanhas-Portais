@@ -38,6 +38,8 @@ export type PrintRunnerJobResultItem = {
   uploadedUrl?: string | null;
   captureLogId?: string | null;
   probableCause?: string | null;
+  candidateOnly?: boolean;
+  checklistValidation?: Record<string, unknown> | null;
   readinessAudit?: Record<string, unknown> | null;
   retroContentProof?: Record<string, unknown> | null;
   manifestHash?: string | null;

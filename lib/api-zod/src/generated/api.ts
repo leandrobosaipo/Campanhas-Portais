@@ -1452,10 +1452,55 @@ export const GetMonthlyEvidenceReportQueryParams = zod.object({
     .optional(),
 });
 
-export const GetMonthlyEvidenceReportResponse = zod.record(
-  zod.string(),
-  zod.unknown(),
-);
+export const GetMonthlyEvidenceReportResponse = zod.object({
+  items: zod
+    .array(
+      zod.object({
+        evidenceDays: zod
+          .array(
+            zod.object({
+              status: zod
+                .string()
+                .optional()
+                .describe(
+                  "reconstruction preserva o rótulo de origem; provenance_unverified indica proveniência sem correlação canônica.",
+                ),
+              captureClass: zod
+                .union([
+                  zod.literal("scheduled"),
+                  zod.literal("same_day_retry"),
+                  zod.literal("historical_recovery"),
+                  zod.literal(null),
+                ])
+                .nullish(),
+              acceptancePolicy: zod.enum(["technical-audit-v1"]).optional(),
+              technicalAccepted: zod
+                .boolean()
+                .optional()
+                .describe(
+                  "true somente quando auditoria técnica e proveniência correlacionada forem válidas.",
+                ),
+              requiresDocumentaryAcceptance: zod.literal(false).optional(),
+              provenanceStatus: zod
+                .enum([
+                  "reconstruction_recorded",
+                  "capture_recorded",
+                  "unknown",
+                ])
+                .optional(),
+              documentaryStatus: zod
+                .string()
+                .optional()
+                .describe(
+                  "Alias de compatibilidade; usar provenanceStatus, technicalAccepted e requiresDocumentaryAcceptance.",
+                ),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+});
 
 export const ListEvidencesParams = zod.object({
   insertionId: zod.coerce.number(),

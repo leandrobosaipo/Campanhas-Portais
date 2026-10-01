@@ -590,6 +590,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     ? reconstruction.reconstructedAt
     : null;
   const reconstructionProvenanceV2 = reconstruction?.provenanceVersion === 2;
+  const reconstructionProvenanceV3 = reconstruction?.provenanceVersion === 3;
+  const versionedReconstruction = reconstructionProvenanceV2 || reconstructionProvenanceV3;
   // `capturedAt` comes from the persisted capture log, not the runner request.
   // Keep a small allowance for upload/audit latency, but never let a supplied
   // historical timestamp stand in for the actual desktop clock.
@@ -601,14 +603,24 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     typeof reconstruction?.mediaUrl === "string" &&
     reconstruction.mediaUrl.trim().length > 0;
   const auditedLatePublicationRecovery = declaredLatePublicationRecovery &&
-    (!reconstructionProvenanceV2 || reconstructionTimestampMatchesServerCapture);
-  // Keep the contracted historical instant in the visible frame. The actual
-  // reconstruction instant remains separately validated as provenance.
-  const declaredHistoricalReconstruction = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY && reconstructionProvenanceV2;
+    (!versionedReconstruction || reconstructionTimestampMatchesServerCapture);
+  const declaredHistoricalReconstruction = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY && versionedReconstruction;
   const expectedEvaluationDate = canonicalTargetDate ? canonicalTargetDate.split("-").reverse().join("/") : "";
-  const desktopExpectedAt = requestedCaptureAt;
-  const desktopMatches = requestedCaptureAt
-    ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt!)
+  const reconstructionLocalTime = reconstructionProvenanceV3 && reconstructionAt
+    ? new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "America/Cuiaba",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(reconstructionAt)).replace(" ", "T")
+    : null;
+  const desktopExpectedAt = reconstructionLocalTime || requestedCaptureAt;
+  const desktopMatches = desktopExpectedAt
+    ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt)
+      || Boolean(reconstructionProvenanceV3 && reconstructionAt && pageTextMatchesRequestedCaptureAt(systemDateTime, reconstructionAt))
     : Boolean(expectedEvaluationDate) && systemDateTime.includes(expectedEvaluationDate);
   const pageMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(pageDateReference, requestedCaptureAt)

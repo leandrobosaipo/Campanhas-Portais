@@ -113,6 +113,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const reportProtected = req.path === "/api/reports/evidences/monthly"
     || (req.method === "POST" && req.path === "/api/pi-site-exports/jobs")
     || (req.method === "POST" && /^\/api\/insertions\/\d+\/capture-proof\/jobs$/.test(req.path))
+    || (req.method === "GET" && /^\/api\/insertions\/\d+\/capture-proof\/jobs\/[^/]+$/.test(req.path))
     || (req.method === "DELETE" && /^\/api\/evidences\/\d+$/.test(req.path));
   if (!reportProtected) {
     next();

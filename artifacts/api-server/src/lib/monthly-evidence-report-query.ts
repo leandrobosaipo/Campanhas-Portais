@@ -21,15 +21,43 @@ export function monthlyEvidenceProvenance(url: string | null | undefined, proof:
   uploadedUrl?: string | null;
   cacheBustedUrl?: string | null;
   metadata?: Record<string, unknown>;
-} | null, trustedCapture = false) {
+} | null, trustedCapture = false, technicalStatus?: string | null) {
   const matches = Boolean(monthlyArtifact(url) && [proof?.uploadedUrl, proof?.cacheBustedUrl].some(value => monthlyArtifact(value) === monthlyArtifact(url)));
   const metadata = matches ? proof?.metadata ?? {} : {};
   const captureClass = typeof metadata.captureClass === 'string' ? metadata.captureClass : null;
   const reconstructed = captureClass === 'historical_recovery' || Boolean(metadata.reconstruction);
+  const technicallyAudited = technicalStatus === 'audited';
+  const checklistValidation = metadata.checklistValidation && typeof metadata.checklistValidation === 'object'
+    ? metadata.checklistValidation as Record<string, unknown>
+    : {};
+  const blockingIssues = Array.isArray(checklistValidation.blockingIssues) ? checklistValidation.blockingIssues : null;
+  const checklistAudit = checklistValidation.audit && typeof checklistValidation.audit === 'object'
+    ? checklistValidation.audit as Record<string, unknown>
+    : {};
+  const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === 'object'
+    ? metadata.retroContentProof as Record<string, unknown>
+    : {};
+  const manifestHash = typeof retroContentProof.manifestHash === 'string' ? retroContentProof.manifestHash.trim() : '';
+  const historicalTechnicalProofValid = checklistValidation.approved === true
+    && blockingIssues?.length === 0
+    && checklistAudit.ok !== false
+    && retroContentProof.status === 'approved'
+    && retroContentProof.futureCount === 0
+    && manifestHash.length > 0;
+  const trustedHistoricalReconstruction = reconstructed && captureClass === 'historical_recovery'
+    && trustedCapture && historicalTechnicalProofValid;
+  const trustedDailyCapture = !reconstructed && trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '');
+  const technicalAccepted = technicallyAudited && (trustedHistoricalReconstruction || trustedDailyCapture);
   return {
     captureClass,
+    acceptancePolicy: 'technical-audit-v1',
+    technicalAccepted,
+    requiresDocumentaryAcceptance: false,
+    provenanceStatus: trustedHistoricalReconstruction ? 'reconstruction_recorded'
+      : trustedDailyCapture ? 'capture_recorded' : 'unknown',
+    /** @deprecated Retained as a compatibility alias; consult technicalAccepted and provenanceStatus. */
     documentaryStatus: reconstructed ? 'reconstruction_requires_acceptance'
-      : trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '') ? 'capture_recorded' : 'provenance_unverified',
+      : trustedDailyCapture ? 'capture_recorded' : 'provenance_unverified',
   };
 }
 
@@ -71,7 +99,7 @@ export function classifyMonthlyInsertion(options: {
   periodStart: string;
   periodEnd: string;
   today: string;
-  evidenceDays: Array<{ date: string; status: string }>;
+  evidenceDays: Array<{ date: string; status: string; technicalAccepted?: boolean }>;
   currentHour?: number;
 }) {
   const publicationStates: string[] = [];
@@ -84,7 +112,8 @@ export function classifyMonthlyInsertion(options: {
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
   const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled", "reconstruction", "provenance_unverified"].includes(day.status));
-  const documentaryPending = options.evidenceDays.some(day => ["reconstruction", "provenance_unverified"].includes(day.status));
+  const documentaryPending = options.evidenceDays.some(day => day.status === "provenance_unverified"
+    || (day.status === "reconstruction" && day.technicalAccepted !== true));
   const awaitingToday = options.currentHour != null && options.currentHour < 18
     && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
     && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");

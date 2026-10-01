@@ -152,6 +152,12 @@ class LocalPrintRunner implements PrintRunnerPort {
           uploadedUrl: capture.uploadedUrl ?? null,
           captureLogId: capture.captureLogId ?? null,
           probableCause: capture.probableCause ?? null,
+          ...(target.candidateOnly === true ? {
+            candidateOnly: true,
+            checklistValidation: capture.checklistValidation && typeof capture.checklistValidation === "object"
+              ? capture.checklistValidation as Record<string, unknown>
+              : null,
+          } : {}),
           readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
             ? capture.readinessAudit as Record<string, unknown>
             : null,

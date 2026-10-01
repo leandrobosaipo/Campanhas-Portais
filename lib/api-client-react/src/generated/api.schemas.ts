@@ -1758,6 +1758,9 @@ export type GetMonthlyEvidenceReportParams = {
   month: string;
   portal?: string;
   publication?: string;
+  /**
+   * documentary_pending permanece disponível como filtro legado; reconstruções tecnicamente aceitas aparecem completas e continuam identificadas como reconstruction.
+   */
   evidence?: string;
   search?: string;
   cursor?: string;
@@ -1768,7 +1771,65 @@ export type GetMonthlyEvidenceReportParams = {
   limit?: number;
 };
 
-export type GetMonthlyEvidenceReport200 = { [key: string]: unknown };
+/**
+ * @nullable
+ */
+export type GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass =
+  | (typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass)[keyof typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass]
+  | null;
+
+export const GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass =
+  {
+    scheduled: "scheduled",
+    same_day_retry: "same_day_retry",
+    historical_recovery: "historical_recovery",
+  } as const;
+
+export type GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy =
+  (typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy)[keyof typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy];
+
+export const GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy =
+  {
+    "technical-audit-v1": "technical-audit-v1",
+  } as const;
+
+export type GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemProvenanceStatus =
+  (typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemProvenanceStatus)[keyof typeof GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemProvenanceStatus];
+
+export const GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemProvenanceStatus =
+  {
+    reconstruction_recorded: "reconstruction_recorded",
+    capture_recorded: "capture_recorded",
+    unknown: "unknown",
+  } as const;
+
+export type GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItem = {
+  /** reconstruction preserva o rótulo de origem; provenance_unverified indica proveniência sem correlação canônica. */
+  status?: string;
+  /** @nullable */
+  captureClass?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass;
+  acceptancePolicy?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy;
+  /** true somente quando auditoria técnica e proveniência correlacionada forem válidas. */
+  technicalAccepted?: boolean;
+  requiresDocumentaryAcceptance?: boolean;
+  provenanceStatus?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemProvenanceStatus;
+  /**
+   * Alias de compatibilidade; usar provenanceStatus, technicalAccepted e requiresDocumentaryAcceptance.
+   * @deprecated
+   */
+  documentaryStatus?: string;
+  [key: string]: unknown;
+};
+
+export type GetMonthlyEvidenceReport200ItemsItem = {
+  evidenceDays?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItem[];
+  [key: string]: unknown;
+};
+
+export type GetMonthlyEvidenceReport200 = {
+  items?: GetMonthlyEvidenceReport200ItemsItem[];
+  [key: string]: unknown;
+};
 
 export type ExportInsertionEvidencesParams = {
   mode?: ExportInsertionEvidencesMode;

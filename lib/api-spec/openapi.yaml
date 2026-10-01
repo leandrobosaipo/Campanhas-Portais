@@ -1118,6 +1118,7 @@ paths:
           in: query
           schema:
             type: string
+            description: documentary_pending permanece disponível como filtro legado; reconstruções tecnicamente aceitas aparecem completas e continuam identificadas como reconstruction.
         - name: search
           in: query
           schema:
@@ -1140,6 +1141,41 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        evidenceDays:
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: true
+                            properties:
+                              status:
+                                type: string
+                                description: reconstruction preserva o rótulo de origem; provenance_unverified indica proveniência sem correlação canônica.
+                              captureClass:
+                                type: [string, "null"]
+                                enum: [scheduled, same_day_retry, historical_recovery, null]
+                              acceptancePolicy:
+                                type: string
+                                enum: [technical-audit-v1]
+                              technicalAccepted:
+                                type: boolean
+                                description: true somente quando auditoria técnica e proveniência correlacionada forem válidas.
+                              requiresDocumentaryAcceptance:
+                                type: boolean
+                                enum: [false]
+                              provenanceStatus:
+                                type: string
+                                enum: [reconstruction_recorded, capture_recorded, unknown]
+                              documentaryStatus:
+                                type: string
+                                deprecated: true
+                                description: Alias de compatibilidade; usar provenanceStatus, technicalAccepted e requiresDocumentaryAcceptance.
         "400":
           description: Mês ou filtros inválidos
 

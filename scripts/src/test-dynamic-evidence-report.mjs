@@ -6,15 +6,18 @@ import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs
 
 const html = renderDynamicEvidenceReport();
 
-test('separa reconstrução de aceite e mostra a data real da captura', () => {
-  assert.match(html, /Reconstrução — precisa de aceite/);
+test('mantém reconstrução e data real sem exigir aceite externo', () => {
+  assert.match(html, /Reconstrução histórica/);
+  assert.doesNotMatch(html, /precisa de aceite|aceite pendente|Precisa de aceite de quem recebe/);
+  assert.match(html, /não registra aceite externo/);
   assert.match(html, /Capturada em/);
   assert.match(html, /Não comprova sozinha a veiculação no passado/);
   assert.match(html, /documentary_pending/);
   assert.doesNotMatch(html, /prints aprovados/);
   assert.match(html, /\['complete','missing','retroactive_missing','invalid','documentary_pending'\]\.includes/);
   assert.match(html, /Há comprovação pendente/);
-  assert.match(html, /day\.technicalStatus\|\|day\.status/);
+  assert.match(html, /evidenceTechnicallyAccepted\(day\)/);
+  assert.match(html, /typeof day\.technicalAccepted === 'boolean'/);
 });
 
 test("gera uma casca pequena sem registros incorporados", () => {
@@ -194,4 +197,15 @@ test("reutiliza o JPEG preparado das miniaturas no servidor", async () => {
   const source = await readFile(new URL("../../artifacts/api-server/src/routes/insertions.ts", import.meta.url), "utf8");
   assert.match(source, /adops-evidence-preview-cache/);
   assert.match(source, /cod5_cachedOutput/);
+});
+
+
+test('UI exige flag explícita para reconstrução e preserva audited legado', () => {
+  const expression = html.match(/const evidenceTechnicallyAccepted = (.*);/)[1];
+  const accepted = vm.runInNewContext(expression);
+  assert.equal(accepted({ status: 'reconstruction', technicalStatus: 'audited' }), false);
+  assert.equal(accepted({ status: 'reconstruction', technicalStatus: 'audited', technicalAccepted: true }), true);
+  assert.equal(accepted({ status: 'reconstruction', technicalStatus: 'audited', technicalAccepted: false }), false);
+  assert.equal(accepted({ status: 'provenance_unverified', technicalStatus: 'audited' }), false);
+  assert.equal(accepted({ status: 'audited' }), true);
 });

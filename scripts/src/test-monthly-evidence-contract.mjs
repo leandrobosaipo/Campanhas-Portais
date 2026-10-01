@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as contract from "./monthly-evidence-contract.mjs";
+import { hasCompleteEvidenceGroup } from "./monthly-report-export-eligibility.mjs";
 
 test("relatorio completo preserva pacotes mesmo quando agendado", () => {
   assert.equal(contract.shouldMaterializeOptionalMonthlyExports({ scheduled: true, skipRequested: false }), true);
@@ -87,6 +88,109 @@ test("bloqueia regressao de evidencia historica ja auditada", () => {
       { date: "2026-08-25", status: "audited" },
     ] }],
   }), []);
+});
+
+test("restaura somente evidencia historica aprovada pela auditoria canonica", () => {
+  const dates = ["2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21"];
+  const previous = {
+    insertions: [{
+      id: 3024,
+      periodoInicio: "2026-09-08",
+      periodoFim: "2026-09-21",
+      evidenceDays: dates.map((date) => ({ date, status: "audited", url: "https://old.example/evidence.png" })),
+    }],
+  };
+  const candidates = contract.findHistoricalAuditRestoreCandidates([], previous);
+  const verified = new Map(dates.map((date) => [`3024:${date}`, {
+    insertionId: 3024,
+    date,
+    status: "audited",
+    checklistValidation: { approved: true },
+    isReachable: true,
+    urlStatus: 200,
+    arquivoUrl: "https://current.example/evidence.png",
+  }]));
+  const restored = contract.restoreVerifiedHistoricalAuditDays([], previous, verified);
+
+  assert.deepEqual(candidates, dates.map((date) => ({ insertionId: 3024, date })));
+  assert.equal(restored[0].historicalEvidenceOnly, true);
+  assert.deepEqual(restored[0].evidenceDays.map(({ date, status, url }) => ({ date, status, url })), [{
+    date: dates[0],
+    status: "audited",
+    url: "https://current.example/evidence.png",
+  }, ...dates.slice(1).map((date) => ({ date, status: "audited", url: "https://current.example/evidence.png" }))]);
+  assert.deepEqual(contract.findHistoricalAuditRegressions(previous, { insertions: restored }), []);
+});
+
+test("nao restaura historico quando a auditoria canonica reprova", () => {
+  const previous = {
+    insertions: [{ id: 3024, evidenceDays: [{ date: "2026-09-17", status: "audited" }] }],
+  };
+  const verified = new Map([["3024:2026-09-17", {
+    insertionId: 3024,
+    date: "2026-09-17",
+    status: "invalid_audit",
+    checklistValidation: { approved: false },
+    isReachable: true,
+    urlStatus: 200,
+    arquivoUrl: "https://current.example/evidence.png",
+  }]]);
+  const restored = contract.restoreVerifiedHistoricalAuditDays([], previous, verified);
+
+  assert.deepEqual(restored, []);
+  assert.deepEqual(contract.findHistoricalAuditRegressions(previous, { insertions: restored }), [{
+    insertionId: 3024,
+    date: "2026-09-17",
+    previousStatus: "audited",
+    nextStatus: "missing",
+  }]);
+});
+
+test("auditoria historica preservada nao altera fingerprint comercial", () => {
+  const current = {
+    piCodigo: "91381",
+    siteSigla: "AFL",
+    competencia: "SETEMBRO/2026",
+    evidenceDays: [{ date: "2026-09-21", status: "audited", url: "https://proof.example/current.png" }],
+  };
+  const withHistory = {
+    ...current,
+    evidenceDays: [...current.evidenceDays, {
+      date: "2026-09-17",
+      status: "audited",
+      url: "https://proof.example/history.png",
+      historicalOnly: true,
+    }],
+  };
+
+  assert.equal(contract.buildMonthlyDeliveryFingerprint(withHistory), contract.buildMonthlyDeliveryFingerprint(current));
+});
+
+test("itens e dias historicos ficam fora dos exports comerciais", () => {
+  const current = {
+    id: 3025,
+    piCodigo: "91381",
+    siteSigla: "AFL",
+    competencia: "SETEMBRO/2026",
+    requiredDays: ["2026-09-21"],
+    evidenceDays: [
+      { date: "2026-09-21", status: "audited", url: "https://proof.example/current.png" },
+      { date: "2026-09-17", status: "audited", url: "https://proof.example/history.png", historicalOnly: true },
+    ],
+  };
+  const historical = {
+    ...current,
+    id: 3024,
+    requiredDays: [],
+    historicalEvidenceOnly: true,
+  };
+  const commercial = contract.selectMonthlyCommercialItems([current, historical]);
+
+  assert.deepEqual(commercial.map((item) => item.id), [3025]);
+  assert.deepEqual(commercial[0].requiredDays, ["2026-09-21"]);
+  assert.deepEqual(commercial[0].evidenceDays.map((day) => day.date), ["2026-09-21"]);
+  assert.equal(hasCompleteEvidenceGroup(commercial), true);
+  assert.deepEqual(contract.selectMonthlyCommercialItems([historical]), []);
 });
 
 test("calcula todas as próximas entradas e vencimentos sem esvaziar a agenda", () => {
@@ -471,4 +575,18 @@ test("polling vivo usa intervalos finitos", () => {
   assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 2 }), 60_000);
   assert.equal(contract.liveReportPollingDelay({ active: false, consecutiveErrors: 3 }), 120_000);
   assert.equal(contract.liveReportPollingDelay({ terminal: true, nextRecoveryAt: null, consecutiveErrors: 0 }), null);
+});
+
+test('reconstrução tecnicamente aceita integra entrega sem mudar origem ou timestamps', () => {
+  const day = { date: '2026-09-23', status: 'reconstruction', technicalStatus: 'audited', technicalAccepted: true, checklistApproved: true, captureClass: 'historical_recovery', capturedAt: '2026-09-29T18:31:38Z', url: 'https://example.test/retro.png', issues: [] };
+  const adapted = contract.adaptAggregatedEvidenceDay(day);
+  assert.equal(adapted.checklistValidation.approved, true);
+  assert.equal(adapted.status, 'reconstruction');
+  assert.equal(adapted.captureClass, 'historical_recovery');
+  assert.equal(adapted.capturedAt, day.capturedAt);
+  const item = { piCodigo: 'PI 9783', siteSigla: 'OMT', competencia: '09/2026', evidenceDays: [day] };
+  assert.notEqual(contract.buildMonthlyDeliveryFingerprint(item), contract.buildMonthlyDeliveryFingerprint({ ...item, evidenceDays: [] }));
+  for (const change of [{ technicalAccepted: false }, { technicalStatus: 'invalid_audit' }, { checklistApproved: false }, { issues: ['future_sample'] }, { url: null }]) {
+    assert.equal(contract.adaptAggregatedEvidenceDay({ ...day, ...change }).checklistValidation.approved, false);
+  }
 });
