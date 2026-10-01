@@ -1,11 +1,32 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs";
 
 const execFileAsync = promisify(execFile);
+const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+async function dumpDom(url, { virtualTimeBudget = 5000, timeout = 30_000, maxBuffer = 2_000_000 } = {}) {
+  const profileDir = await mkdtemp(join(tmpdir(), "adops-report-chrome-"));
+  try {
+    return await execFileAsync(chromePath, [
+      `--user-data-dir=${profileDir}`,
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      `--virtual-time-budget=${virtualTimeBudget}`,
+      "--dump-dom",
+      url,
+    ], { timeout, maxBuffer });
+  } finally {
+    await rm(profileDir, { recursive: true, force: true });
+  }
+}
 const monthlyPayload = {
   generatedAt: "2026-09-01T12:00:00.000Z",
   summary: { campaigns: 1, insertions: 1, active: 1, notPublished: 0, pending: 0, invalid: 0 },
@@ -18,7 +39,7 @@ const monthlyPayload = {
     bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["complete"],
     evidenceDays: [
       { date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.jpg?v=1" },
-      { date: "2026-09-02", status: "reconstruction", technicalStatus: "audited", evidenceId: 45, verifiedAt: "2026-09-02T13:00:00.000Z", url: "https://example.com/reconstruction.jpg?v=2" },
+      { date: "2026-09-02", status: "reconstruction", technicalStatus: "audited", technicalAccepted: true, requiresDocumentaryAcceptance: false, captureClass: "historical_recovery", capturedAt: "2026-09-03T13:00:00.000Z", evidenceId: 45, verifiedAt: "2026-09-02T13:00:00.000Z", url: "https://example.com/reconstruction.jpg?v=2" },
     ],
   }],
 };
@@ -101,11 +122,7 @@ test("Chrome real renderiza a resposta dinâmica da API", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const port = server.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=8000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 8000 });
     assert.match(stdout, /Campanha dinâmica/);
     assert.match(stdout, /Campanha 3217/);
     assert.match(stdout, /id="metricCampaigns">25</);
@@ -163,7 +180,7 @@ test("usa a URL pública da evidência quando a API não fornece downloadUrl", a
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    const { stdout } = await execFileAsync("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=5000", "--dump-dom", `http://127.0.0.1:${server.address().port}/`], { timeout: 10_000, maxBuffer: 1_000_000 });
+    const { stdout } = await dumpDom(`http://127.0.0.1:${server.address().port}/`, { virtualTimeBudget: 5000, timeout: 10_000, maxBuffer: 1_000_000 });
     assert.ok(stdout.includes("Campanha dinâmica"), "a resposta mensal deve renderizar a inserção antes de validar as URLs de evidência");
     const imageState = stdout.match(/data-(?:thumb|modal|download)-path="[^"]*"|data-(?:image-loaded|download-label)="[^"]*"/g) || [];
     assert.ok(imageState.includes('data-thumb-path="/evidence.png"'), `thumb deve usar a URL pública, resultado: ${imageState.join(", ")}`);
@@ -195,11 +212,7 @@ test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const port = server.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 2000 });
     assert.match(stdout, /Sessão AdOps necessária/);
     assert.match(stdout, /id="reportLoginLink"/);
     const href = stdout.match(/id="reportLoginLink" href="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
@@ -216,11 +229,59 @@ test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
   }
 });
 
-test("consulta mensal pública funciona sem credenciais quando a API permite origem wildcard", async () => {
+test("API mensal cross-origin envia cookie após 401, callback e refresh; sessão expirada permite relogin", async () => {
+  const monthlyCookies = [];
+  let loginCount = 0;
+  let pageOrigin = "";
   const apiServer = createServer((request, response) => {
-    response.setHeader("access-control-allow-origin", "*");
+    const origin = request.headers.origin;
+    if (origin === pageOrigin) {
+      response.setHeader("access-control-allow-origin", pageOrigin);
+      response.setHeader("access-control-allow-credentials", "true");
+      response.setHeader("vary", "Origin");
+    }
+    if (request.method === "OPTIONS") {
+      response.setHeader("access-control-allow-methods", "GET, OPTIONS");
+      response.setHeader("access-control-allow-headers", "accept, content-type");
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/api/auth/google/login") {
+      const callback = new URL("/api/auth/google/callback", `http://127.0.0.1:${apiServer.address().port}`);
+      callback.searchParams.set("next", url.searchParams.get("next") || `${pageOrigin}/`);
+      response.statusCode = 302;
+      response.setHeader("location", callback.href);
+      response.end();
+      return;
+    }
+    if (url.pathname === "/api/auth/google/callback") {
+      loginCount += 1;
+      response.statusCode = 302;
+      response.setHeader("set-cookie", `adops_session=mock-${loginCount}; Path=/; HttpOnly; SameSite=Lax`);
+      response.setHeader("location", url.searchParams.get("next") || `${pageOrigin}/`);
+      response.end();
+      return;
+    }
+
     response.setHeader("content-type", "application/json");
-    if (new URL(request.url, "http://localhost").pathname === "/api/reports/evidences/monthly") {
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      const cookie = request.headers.cookie || "";
+      monthlyCookies.push(cookie.match(/(?:^|;\s*)adops_session=([^;]+)/)?.[1] || null);
+      const currentSession = `mock-${loginCount}`;
+      if (monthlyCookies.length === 1 || !loginCount || !cookie.includes(`adops_session=${currentSession}`)) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "authentication_required" }));
+        return;
+      }
+      if (monthlyCookies.length === 3) {
+        response.setHeader("set-cookie", "adops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "authentication_required" }));
+        return;
+      }
       response.end(JSON.stringify(monthlyPayload));
       return;
     }
@@ -228,25 +289,21 @@ test("consulta mensal pública funciona sem credenciais quando a API permite ori
   });
   await new Promise((resolve) => apiServer.listen(0, "127.0.0.1", resolve));
   const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
-  const pageServer = createServer((request, response) => {
+  const pageServer = createServer((_request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(renderDynamicEvidenceReport().replaceAll(
-      "https://adops-api.codigo5.com.br", apiBase,
-    ).replaceAll("https://adops-api-public.leandro471.workers.dev", apiBase));
+    const authScript = `<script>(()=>{const key='mockAuthPhase';const phase=sessionStorage.getItem(key);const waitFor=(selector,fn)=>{const timer=setInterval(()=>{const node=document.querySelector(selector);if(node){clearInterval(timer);fn(node)}},50)};const startLogin=(nextPhase)=>waitFor('#reportLoginLink',link=>{sessionStorage.setItem(key,nextPhase);link.click()});if(!phase){startLogin('first-login')}else if(phase==='first-login'){waitFor('#reportContent .campaign',()=>{sessionStorage.setItem(key,'refresh-first-session');document.body.dataset.loginCallbackReturned='true';const observer=new MutationObserver(()=>{const link=document.querySelector('#reportLoginLink');if(link){observer.disconnect();sessionStorage.setItem(key,'relogin');link.click()}});observer.observe(document.querySelector('#reportContent'),{childList:true,subtree:true});setTimeout(()=>document.querySelector('#refreshButton').click(),100)})}else if(phase==='relogin'){waitFor('#reportContent .campaign',()=>{sessionStorage.setItem(key,'complete');document.body.dataset.reloginRecovered='true';setTimeout(()=>document.querySelector('#refreshButton').click(),100)})}})()</script>`;
+    response.end(renderDynamicEvidenceReport()
+      .replaceAll("https://adops-api.codigo5.com.br", apiBase)
+      .replaceAll("https://adops-api-public.leandro471.workers.dev", apiBase)
+      .replace("</body>", `${authScript}</body>`));
   });
   await new Promise((resolve) => pageServer.listen(0, "127.0.0.1", resolve));
+  pageOrigin = `http://127.0.0.1:${pageServer.address().port}`;
   try {
-    const port = pageServer.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", `http://127.0.0.1:${port}/`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
-    assert.ok(
-      stdout.includes("Campanha dinâmica"),
-      `a lista pública deve carregar; erro observado: ${stdout.match(/Consulta incompleta[^<]*/)?.[0] ?? "nenhum texto de erro"}`,
-    );
-    assert.match(stdout, /Dados completos consultados diretamente da API AdOps/);
+    const { stdout } = await dumpDom(`${pageOrigin}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 10_000 });
+    assert.ok(stdout.includes("Campanha dinâmica"), `a lista autenticada deve carregar; status=${stdout.match(/data-auth-required="[^"]*"|Sessão AdOps necessária|Consulta incompleta[^<]*/)?.[0] ?? "sem estado"}; logins=${loginCount}; cookies=${JSON.stringify(monthlyCookies)}`);
+    assert.equal(loginCount, 2, "o callback mock deve abrir sessão inicial e permitir novo login após expiração");
+    assert.deepEqual(monthlyCookies, [null, "mock-1", "mock-1", "mock-2", "mock-2"], "401 inicial, sessão, refresh, expiração e relogin devem preservar/renovar o cookie por credentials: include");
   } finally {
     pageServer.closeAllConnections();
     apiServer.closeAllConnections();
@@ -314,18 +371,14 @@ test("mostra causa de pendência somente quando lote confirma a mesma data e ins
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const port = server.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=2500", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09`, { virtualTimeBudget: 2500 });
     assert.match(stdout, /2026-09-01: bloqueado — mídia encontrada no Drive, mas não vinculada no AdOps/);
     assert.match(stdout, /Mídia não vinculada ao AdOps/);
     assert.match(stdout, /Grupo AdRotate não resolvido para este formato/);
     assert.match(stdout, /AdOps não marca publicação confirmada/);
     assert.match(stdout, /causa do cron não confirmada no histórico recente/);
     assert.match(stdout, /auditoria reprovada/);
-    assert.match(stdout, /Comprovação documental pendente/);
+    assert.match(stdout, /Proveniência ou validação técnica pendente/);
     assert.match(stdout, /2026-09-03: bloqueado — mídia esperada não observada no portal/);
     assert.doesNotMatch(stdout, /private runtime detail/);
     assert.equal(rawJobListRequested, false, "o relatório não deve baixar payload/result brutos de jobs");
@@ -359,11 +412,7 @@ test("encerra consulta pendurada, não mostra resultado parcial e libera Atualiz
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const port = server.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=1000", "--dump-dom", `http://127.0.0.1:${port}/?mes=2026-09&publication=active`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active`, { virtualTimeBudget: 1000 });
     assert.match(stdout, /consulta completa excedeu 20 segundos/);
     assert.match(stdout, /data-refresh-enabled="true"/);
     assert.match(stdout, /data-partial-campaign-count="0"/);

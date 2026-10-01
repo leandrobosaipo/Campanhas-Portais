@@ -152,6 +152,9 @@ test("cancela resposta antiga e carrega imagens somente quando necessário", () 
 test("consulta dados protegidos pela sessao Google sem guardar token no HTML", () => {
   assert.match(html, /https:\/\/adops-api\.codigo5\.com\.br/);
   assert.match(html, /credentials:\s*['"]include['"]/);
+  // The monthly request crosses origins (Sites -> API); other authenticated
+  // actions having credentials cannot compensate for omitting it here.
+  assert.match(html, /fetch\(REPORT_API_BASE \+ API_PATH \+ '\?' \+ query,\s*\{\s*credentials:\s*['"]include['"]/);
   assert.match(html, /\/api\/auth\/google\/login\?next=/);
   assert.doesNotMatch(html, /OPS_API_TOKEN|GOOGLE_CLIENT_SECRET|localStorage/);
 });
