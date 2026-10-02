@@ -63,6 +63,9 @@ export type LocalCaptureOptions = {
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
+  if (options?.promoteCandidate) {
+    throw new Error("candidate_promotion_requires_persisted_approval: use the approved candidate promotion endpoint; capture never promotes an unreviewed candidate.");
+  }
   const runtime = getLocalCaptureRuntime();
   const args = [
     "./scripts/src/capture-insertion-proof.cjs",
@@ -98,11 +101,8 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
       "--candidateOnly",
       "true",
       "--saveEvidence",
-      options.promoteCandidate ? "true" : "false",
+      "false",
     );
-    if (options.promoteCandidate && !options.replaceExisting) {
-      args.push("--replaceExisting", "true");
-    }
   }
   const cleanContextRetries = Math.min(2, Math.max(0, Number(process.env.ADOPS_CAPTURE_CLEAN_CONTEXT_RETRIES ?? 2)));
   const timeoutMs = Math.max(30_000, Number(process.env.ADOPS_CAPTURE_TIMEOUT_MS ?? 300_000));

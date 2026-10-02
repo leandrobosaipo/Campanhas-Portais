@@ -54,6 +54,7 @@ jobs:
           node --test ops/cloudflare-remote-runner/test/pi-layout-identity.test.mjs
           pnpm --dir scripts exec tsx src/test-campaign-evidence-fingerprint.ts
           pnpm --dir scripts exec tsx src/test-preupload-reconstruction-clock.ts
+          pnpm --dir scripts exec node --import tsx --test src/test-capture-proof-candidates.ts src/test-candidate-promotion-capture-guard.ts
           pnpm --dir scripts exec tsx src/test-export-audit-capture-class.mjs
       - name: Install capture browser
         run: pnpm --dir scripts exec playwright install --with-deps chromium
@@ -92,6 +93,17 @@ jobs:
           pnpm --dir scripts exec tsx --test src/test-capture-audit-immutability.ts
       - run: pnpm --dir scripts exec tsx src/test-evidence-date-serialization.ts
       - run: pnpm --dir scripts run test:drive-source-conflicts
+      - name: Candidate promotion transaction and rollback
+        env:
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/adops_source_conflict_test
+          ADOPS_PROMOTION_TEST: "1"
+          ADOPS_CANDIDATE_REGISTRY_TEST: "1"
+        run: |
+          pnpm --filter @workspace/db run push-force
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ops/portainer/adops-stack/migrations/2026-10-02-capture-proof-candidates.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ops/portainer/adops-stack/migrations/2026-10-02-candidate-promotions.sql
+          pnpm --dir scripts exec node --import tsx --test src/test-capture-candidate-promotion.integration.ts
+          pnpm --dir scripts exec node --import tsx --test src/test-capture-proof-candidate-registry.integration.ts
       - run: pnpm --dir scripts run test:adrotate-format-aliases
       - run: pnpm --dir scripts run test:media-consistency
       - run: pnpm --dir scripts run test:drive-inventory-flow

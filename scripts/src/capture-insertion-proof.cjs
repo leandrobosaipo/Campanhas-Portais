@@ -7379,6 +7379,9 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
 async function main() {
   const { chromium } = loadPlaywright();
   const args = parseArgs(process.argv.slice(2));
+  if (args.candidateOnly && args.saveEvidence) {
+    throw new Error("candidate_promotion_requires_persisted_approval: candidate capture must use --saveEvidence false; promote only the audited stored artifact.");
+  }
   const insertion = await fetchInsertion(args.apiBase, args.insertionId);
   const captureDate = parseCaptureDate(args.captureAt) ?? new Date();
 

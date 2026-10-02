@@ -4719,6 +4719,10 @@ router.post("/insertions/:id/capture-proof/jobs", async (req, res): Promise<void
 
   const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
   const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
+  if (promoteCandidate) {
+    res.status(409).json({ error: "candidate_promotion_requires_persisted_approval", details: "Gere o candidato sem promote; a promoção exige auditoria separada aprovada e os mesmos bytes, sem nova captura." });
+    return;
+  }
   const forceCapture = req.body?.force === true || req.body?.force === "true";
   const reconstructionReason = req.body?.reconstructionReason === "late_publication_recovery"
     ? "late_publication_recovery" as const
@@ -4815,6 +4819,10 @@ router.post("/insertions/:id/capture-proof", async (req, res): Promise<void> => 
   const replaceExisting = req.body?.replace === true || req.body?.replace === "true";
   const candidateOnly = req.body?.candidate === true || req.body?.candidate === "true";
   const promoteCandidate = candidateOnly && (req.body?.promote === true || req.body?.promote === "true");
+  if (promoteCandidate) {
+    res.status(409).json({ error: "candidate_promotion_requires_persisted_approval", details: "Gere o candidato sem promote; a promoção exige auditoria separada aprovada e os mesmos bytes, sem nova captura." });
+    return;
+  }
   const evidences = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, params.data.id));
   const existingEvidence = evidences.find((row) => getEvidenceDateKey(row.titulo) === targetDate && isValidHttpUrl(row.arquivoUrl)) ?? null;
   if (existingEvidence && !replaceExisting && !candidateOnly) {

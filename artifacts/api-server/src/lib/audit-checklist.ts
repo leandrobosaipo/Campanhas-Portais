@@ -19,6 +19,7 @@ import {
   attachServerCaptureProvenance,
   correlateCaptureLogProvenance,
   evaluateCaptureMetadata,
+  getEvidenceDateKey,
   isCaptureAtInRetroWindow,
   parseDateOnly,
 } from "./capture-audit";
@@ -26,6 +27,7 @@ import {
   requiresPerrengueHomeEditorialAudit,
   resolveChecklistFinalProofStyle,
 } from "./proof-style-contract";
+import { selectCanonicalEvidencePerDate } from "./evidence-export";
 
 export const AUDIT_CHECKLIST_VERSION = "audit-checklist-v1" as const;
 const REQUIRED_FRAME_TEMPLATE = "windows11-chrome-light-similar-v4";
@@ -293,7 +295,8 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
     ),
   ).orderBy(desc(captureProofLogsTable.createdAt)).limit(50);
   const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
-  const evidenceUrl = evidenceRows.find((row) => String(row.titulo || "").includes(dateKey))?.arquivoUrl ?? null;
+  const evidenceUrl = selectCanonicalEvidencePerDate(evidenceRows, (row) => getEvidenceDateKey(row.titulo))
+    .find((row) => getEvidenceDateKey(row.titulo) === dateKey)?.arquivoUrl ?? null;
   const latestLog = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? logs[0];
   if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
   const metadata = { ...latestLog.metadata };
