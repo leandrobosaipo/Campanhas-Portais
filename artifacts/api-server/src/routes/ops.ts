@@ -1046,6 +1046,12 @@ async function cod5_criarAtualizacaoMensalNaTransacao(
   return { jobId: cod5_id, status: "ready_for_runner" as const, refreshRevision: cod5_revisao, notBefore: cod5_agendamento };
 }
 
+export async function queueMonthlyEvidenceRefreshForDate(targetDate: string, requestedBy: string) {
+  const competencia = competenciaForDate(targetDate);
+  if (!competencia) throw new Error("monthly_refresh_date_invalid");
+  return cod5_marcarRelatorioMensalPendente({ competencia, targetDate, requestedBy });
+}
+
 async function cod5_marcarRelatorioMensalPendente(input: { competencia: string; targetDate: string; requestedBy: string }) {
   const cod5_cliente = await pool.connect();
   try {

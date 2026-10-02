@@ -15,6 +15,8 @@ import campaignFulfillmentsRouter from "./campaign-fulfillments";
 import opsRouter from "./ops";
 import reportAuthRouter from "./report-auth";
 import analyticsRouter from "./analytics";
+import captureProofCandidatesRouter from "./capture-proof-candidates";
+import captureProofCandidatePromotionsRouter from "./capture-proof-candidate-promotions";
 
 const router: IRouter = Router();
 
@@ -26,6 +28,8 @@ router.use(agenciesRouter);
 router.use(campaignsRouter);
 router.use(analyticsRouter);
 router.use(insertionsRouter);
+router.use(captureProofCandidatesRouter);
+router.use(captureProofCandidatePromotionsRouter);
 router.use(evidencesRouter);
 router.use(dashboardRouter);
 router.use(syncRouter);
