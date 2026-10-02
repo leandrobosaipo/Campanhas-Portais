@@ -1,6 +1,6 @@
 # PI 91381 / AFL — auditoria separada de candidatos
 
-Base: main 29a1e3a32bea9a42374ec9f070d14908ec1bcea2. Produção API observada: d2c2796184b25ddd3b0e98eea5c50ade651215b2. Worktree isolada; patches da raiz oficial não incorporados.
+Base: main 29a1e3a32bea9a42374ec9f070d14908ec1bcea2. Release observado: d2c2796184b25ddd3b0e98eea5c50ade651215b2. Worktree isolada; patches da raiz oficial não incorporados.
 
 ## Escopo autorizado
 
