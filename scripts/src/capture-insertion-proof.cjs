@@ -4673,8 +4673,14 @@ function isAllowedFaviconUrl(pageOrigin, url, allowedExternalHosts = []) {
   }
 }
 
-async function captureObservedTabFavicon(page, configuredDomain = "") {
+async function captureObservedTabFavicon(page, configuredDomain = "", captureHeaders = null) {
+  const originalHeaders = captureHeaders && typeof captureHeaders === "object" && !Array.isArray(captureHeaders)
+    ? captureHeaders
+    : null;
+  const faviconHeaders = Object.fromEntries(Object.entries(originalHeaders || {})
+    .filter(([name]) => !["cache-control", "pragma"].includes(name.toLowerCase())));
   try {
+    if (originalHeaders) await page.setExtraHTTPHeaders(faviconHeaders);
     const pageHostname = new URL(page.url()).hostname;
     const allowedExternalHosts = resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname);
     return await page.evaluate(async (trustedExternalHosts) => {
@@ -4733,6 +4739,10 @@ async function captureObservedTabFavicon(page, configuredDomain = "") {
     }, allowedExternalHosts);
   } catch {
     return null;
+  } finally {
+    if (originalHeaders) {
+      await page.setExtraHTTPHeaders(originalHeaders);
+    }
   }
 }
 
@@ -7677,10 +7687,11 @@ async function main() {
       previewSupported,
       signedPreviewRequired: signedRetroPreviewRequired,
     });
-    await page.setExtraHTTPHeaders({
+    const captureRequestHeaders = {
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
-    });
+    };
+    await page.setExtraHTTPHeaders(captureRequestHeaders);
 
     for (const originalCandidateUrl of candidateUrls) {
       const candidateUrl = appendCaptureRetryQuery(originalCandidateUrl, args.captureAttempt);
@@ -8274,12 +8285,13 @@ async function main() {
       reconstruction.slotReconstructed = await page.locator("[data-adops-reconstructed-slot]").count() > 0;
       reconstruction.historicalDisplayConfirmed = false;
     }
-    const observedTabFavicon = await captureObservedTabFavicon(page, mapping.domain);
+    const observedTabFavicon = await captureObservedTabFavicon(page, mapping.domain, captureRequestHeaders);
+    const actualPageTitle = String(await page.title()).trim();
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
       systemDateTime: frameSystemDateTime,
       siteSigla: insertion.siteSigla,
-      tabTitle: mapping.browserTitle,
+      tabTitle: actualPageTitle || mapping.browserTitle,
       hostLabel: mapping.hostLabel,
       addressText: buildAddressText(finalPageUrl, mapping.hostLabel),
       tabIconDataUrl: observedTabFavicon?.dataUrl || null,

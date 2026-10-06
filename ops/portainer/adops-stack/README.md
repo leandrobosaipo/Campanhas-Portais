@@ -102,7 +102,9 @@ TARGET_DATABASE_URL=...
 
 `scripts/deploy-production.sh` cria volumes identificados pelo SHA da release. O upload usa containers auxiliares com nome determinístico por volume.
 
-O backup PostgreSQL é iniciado em modo destacado pela API Docker e acompanhado pelo mesmo `execId` até terminar, com limite de 150 segundos. O stack não é trocado se o backup falhar ou exceder esse limite; não volte a usar a chamada síncrona sujeita ao timeout HTTP do Portainer.
+O backup PostgreSQL é iniciado em modo destacado pela API Docker e acompanhado pelo mesmo `execId` até terminar. O script oficial limita o polling do backup e da restauração de teste completa a 300 segundos cada. Exceder esse prazo encerra a espera local; não cancela o exec remoto e não comprova falha do dump. O stack não é trocado nessa execução. Antes de retomar, consultar o mesmo exec e seus logs; não repetir o deploy inteiro nem iniciar outro backup cegamente. Se o container anterior já foi substituído, o exec pode retornar 404: exigir prova persistida correlacionada de conclusão, archive válido, restauração completa e metadata da mesma release/baseline antes de uma continuação revisada. Não ignorar o gate de restauração nem sobrescrever sua metadata original.
+
+Os artefatos privados de operação permanecem com modo 600. A geração do runtime público exige arquivos legíveis pelo worker nginx e diretórios atravessáveis (arquivos 644, diretórios 755); não herdar `umask 077` de um wrapper privado no build/upload. Uma correção de permissões deve atingir somente o volume web novo identificado pelo SHA, seguido de conferência de todos os hashes, manifesto e modos; nunca envs, fontes privadas ou volumes anteriores. `ADOPS_SKIP_RUNTIME_UPLOAD=true` exige esses volumes já validados.
 
 Se Cloudflare/Portainer devolver timeout ou `524` depois de criar o container, a repetição consulta o nome existente e retoma o mesmo volume. Respostas não JSON nunca são enviadas diretamente ao `jq`.
 

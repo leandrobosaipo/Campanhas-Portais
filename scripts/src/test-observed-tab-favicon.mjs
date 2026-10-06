@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
-const { captureObservedTabFavicon, resolveAllowedExternalFaviconHosts, isAllowedFaviconUrl } = require("./capture-insertion-proof.cjs");
+const { captureObservedTabFavicon, resolveAllowedExternalFaviconHosts, isAllowedFaviconUrl, composeDesktopProof } = require("./capture-insertion-proof.cjs");
 const python = process.env.ADOPS_CAPTURE_PYTHON || "python3";
 const tempDir = mkdtempSync(path.join(os.tmpdir(), "adops-observed-favicon-"));
 const faviconPath = path.join(tempDir, "favicon.png");
@@ -18,11 +18,23 @@ const faviconBytes = readFileSync(faviconPath);
 let firstPort = 0;
 let secondPort = 0;
 let faviconFetchCookieHeader = null;
+let faviconFetchHeaders = null;
 let externalRequests = 0;
 let cdnFetchCookieHeader = null;
+let cdnFetchHeaders = null;
 
 const external = createServer((req, res) => { externalRequests += 1; res.writeHead(200, { "content-type": "image/png" }); res.end(faviconBytes); });
 const server = createServer((req, res) => {
+  if (req.url === "/header-echo") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ cacheControl: req.headers["cache-control"] || null, pragma: req.headers.pragma || null, acceptLanguage: req.headers["accept-language"] || null }));
+    return;
+  }
+  if (req.url === "/empty-title") {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<!doctype html><title>   </title><p>empty title fixture</p>");
+    return;
+  }
   if (req.url === "/perrengue-cdn") {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(`<!doctype html><link rel="icon" href="https://cdn.perrenguematogrosso.com/app/uploads/favicon.png"><title>Perrengue</title>`);
@@ -39,7 +51,8 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.url === "/favicon.png?tracking=discard-me") {
-    if (req.headers["sec-fetch-dest"] === "empty") faviconFetchCookieHeader = req.headers.cookie || null;
+    faviconFetchCookieHeader = req.headers.cookie || null;
+    faviconFetchHeaders = { cacheControl: req.headers["cache-control"] || null, pragma: req.headers.pragma || null, acceptLanguage: req.headers["accept-language"] || null };
     res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
     res.end(faviconBytes);
     return;
@@ -62,10 +75,15 @@ try {
   const page = await context.newPage();
   await page.route("https://cdn.perrenguematogrosso.com/**", async (route) => {
     cdnFetchCookieHeader = route.request().headers().cookie || null;
-    await route.fulfill({ status: 200, contentType: "image/png", headers: { "access-control-allow-origin": `http://perrenguematogrosso.com:${firstPort}` }, body: faviconBytes });
+    const headers = route.request().headers();
+    cdnFetchHeaders = { cacheControl: headers["cache-control"] || null, pragma: headers.pragma || null, acceptLanguage: headers["accept-language"] || null };
+    const carriesCaptureCacheHeaders = Boolean(cdnFetchHeaders.cacheControl || cdnFetchHeaders.pragma);
+    await route.fulfill({ status: carriesCaptureCacheHeaders ? 403 : 200, contentType: "image/png", headers: { "access-control-allow-origin": `http://perrenguematogrosso.com:${firstPort}` }, body: faviconBytes });
   });
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/`, { waitUntil: "domcontentloaded" });
-  const observed = await captureObservedTabFavicon(page, "perrenguematogrosso.com");
+  const captureHeaders = { "Cache-Control": "no-cache", Pragma: "no-cache", "Accept-Language": "pt-BR" };
+  await page.setExtraHTTPHeaders(captureHeaders);
+  const observed = await captureObservedTabFavicon(page, "perrenguematogrosso.com", captureHeaders);
   assert.equal(observed?.source, "observed_page_icon_link");
   assert.equal(observed?.sourceUrl, `http://perrenguematogrosso.com:${firstPort}/favicon.png`);
   assert.match(observed?.dataUrl || "", /^data:image\/png;base64,/);
@@ -77,10 +95,39 @@ try {
   assert.equal(isAllowedFaviconUrl("https://perrenguematogrosso.com", "https://evil-cdn.perrenguematogrosso.com/app/uploads/favicon.png", allowedHosts), false);
   assert.deepEqual(resolveAllowedExternalFaviconHosts("evil-perrenguematogrosso.com", "evil-perrenguematogrosso.com"), []);
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/perrengue-cdn`, { waitUntil: "domcontentloaded" });
-  const cdnObserved = await captureObservedTabFavicon(page, "perrenguematogrosso.com");
+  const configuredTitle = "Título do mapping";
+  const actualPageTitle = (await page.title()).trim();
+  assert.equal(actualPageTitle, "Perrengue");
+  const unfiltered = await page.evaluate(async () => {
+    try { return (await fetch(document.querySelector('link[rel="icon"]').href, { credentials: "omit", cache: "no-store" })).ok; }
+    catch { return false; }
+  });
+  assert.equal(unfiltered, false, "fixture CDN rejects favicon GET carrying the global capture cache headers");
+  const cdnObserved = await captureObservedTabFavicon(page, "perrenguematogrosso.com", captureHeaders);
   assert.equal(cdnObserved?.sourceUrl, "https://cdn.perrenguematogrosso.com/app/uploads/favicon.png");
   assert.match(cdnObserved?.dataUrl || "", /^data:image\/png;base64,/);
   assert.equal(cdnFetchCookieHeader, null, "approved CDN fetch must omit page cookies");
+  assert.deepEqual(cdnFetchHeaders, { cacheControl: null, pragma: null, acceptLanguage: "pt-BR" });
+  const restoredHeaders = await page.evaluate(async () => fetch("/header-echo").then((response) => response.json()));
+  assert.deepEqual(restoredHeaders, { cacheControl: "no-cache", pragma: "no-cache", acceptLanguage: "pt-BR" }, "capture headers are restored after favicon fetch");
+
+  execFileSync(python, ["-c", "from PIL import Image; import sys; Image.new('RGB',(1280,720),(250,251,253)).save(sys.argv[1])", path.join(tempDir, "title-viewport.png")]);
+  const titleActualPng = path.join(tempDir, "title-actual.png");
+  const titleFallbackPng = path.join(tempDir, "title-fallback.png");
+  const titleOpts = { siteSigla: "PERRENGUE", hostLabel: "perrenguematogrosso.com", systemDateTime: "terça-feira, 06/10/2026, 14:22", addressText: "https://perrenguematogrosso.com/" };
+  assert.equal(composeDesktopProof(path.join(tempDir, "title-viewport.png"), titleActualPng, { ...titleOpts, tabTitle: actualPageTitle }).tabTitleRendered, true);
+  composeDesktopProof(path.join(tempDir, "title-viewport.png"), titleFallbackPng, { ...titleOpts, tabTitle: configuredTitle });
+  assert.notDeepEqual(readFileSync(titleActualPng), readFileSync(titleFallbackPng), "actual page title reaches the composed tab instead of configured fallback");
+  const longTitlePng = path.join(tempDir, "title-long.png");
+  composeDesktopProof(path.join(tempDir, "title-viewport.png"), longTitlePng, { ...titleOpts, tabTitle: "Título muito comprido ".repeat(20) });
+  const clippedCropCheck = `from PIL import Image,ImageChops; import sys; a=Image.open(sys.argv[1]).convert('RGB').crop((288,77,326,106)); b=Image.open(sys.argv[2]).convert('RGB').crop((288,77,326,106)); assert ImageChops.difference(a,b).getbbox() is None`;
+  execFileSync(python, ["-c", clippedCropCheck, titleFallbackPng, longTitlePng], { stdio: "pipe" });
+  await page.goto(`http://perrenguematogrosso.com:${firstPort}/empty-title`, { waitUntil: "domcontentloaded" });
+  const emptyActualTitle = (await page.title()).trim();
+  assert.equal(emptyActualTitle, "");
+  const emptyFallbackPng = path.join(tempDir, "title-empty-fallback.png");
+  composeDesktopProof(path.join(tempDir, "title-viewport.png"), emptyFallbackPng, { ...titleOpts, tabTitle: emptyActualTitle || configuredTitle });
+  assert.deepEqual(readFileSync(emptyFallbackPng), readFileSync(titleFallbackPng), "empty actual title falls back to mapping title");
 
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/cross`, { waitUntil: "domcontentloaded" });
   assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com"), null, "arbitrary cross-origin favicon must use explicit fallback");
@@ -91,8 +138,32 @@ try {
   assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com"), null, "oversized data URI must be rejected before fetch/decode");
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/wrong-type-page`, { waitUntil: "domcontentloaded" });
   assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com"), null, "non-image response must be rejected");
+  const timeoutHeaderCalls = [];
+  const timedOutPage = {
+    url: () => "https://perrenguematogrosso.com/timeout",
+    setExtraHTTPHeaders: async (headers) => timeoutHeaderCalls.push({ ...headers }),
+    evaluate: async () => { const error = new Error("fixture fetch timeout"); error.name = "TimeoutError"; throw error; },
+  };
+  assert.equal(await captureObservedTabFavicon(timedOutPage, "perrenguematogrosso.com", captureHeaders), null);
+  assert.deepEqual(timeoutHeaderCalls, [{ "Accept-Language": "pt-BR" }, captureHeaders], "headers restore in finally after timeout/error");
+  let restoreAttempts = 0;
+  const restoreFailurePage = {
+    url: () => "https://perrenguematogrosso.com/restore-failure",
+    setExtraHTTPHeaders: async () => { restoreAttempts += 1; if (restoreAttempts === 2) throw new Error("restore failed"); },
+    evaluate: async () => null,
+  };
+  await assert.rejects(captureObservedTabFavicon(restoreFailurePage, "perrenguematogrosso.com", captureHeaders), /restore failed/);
+  assert.equal(restoreAttempts, 2, "a failed header restore is surfaced instead of swallowed");
+  let omittedArgHeaderCalls = 0;
+  const omittedArgPage = {
+    url: () => "https://perrenguematogrosso.com/omitted-headers",
+    setExtraHTTPHeaders: async () => { omittedArgHeaderCalls += 1; },
+    evaluate: async () => null,
+  };
+  await captureObservedTabFavicon(omittedArgPage, "perrenguematogrosso.com");
+  assert.equal(omittedArgHeaderCalls, 0, "two-argument calls leave unknown preexisting page headers untouched");
   await context.close();
-  console.log(JSON.stringify({ ok: true, sameOriginObserved: true, perrengueCdnAllowed: true, credentialsOmitted: true, arbitraryCrossOriginBlocked: true, oversizedDataAndNetworkImagesRejected: true }));
+  console.log(JSON.stringify({ ok: true, sameOriginObserved: true, perrengueCdnAllowed: true, captureCacheHeadersScoped: true, innocentHeaderPreserved: true, headersRestored: true, actualPageTitleComposed: true, credentialsOmitted: true, arbitraryCrossOriginBlocked: true, oversizedDataAndNetworkImagesRejected: true }));
 } finally {
   if (browser) await browser.close();
   await new Promise((resolve) => server.close(resolve));

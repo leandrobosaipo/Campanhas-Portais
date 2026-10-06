@@ -88,7 +88,7 @@ Identidade correta da metadata final; negação por hash/job/data; v2/v3 e daily
 - [x] Portar somente correções revisadas do relatório: thumb por technicalStatus, aviso origem, promote=false, término aguardando revisão, HTTP erro claro e captura/data real disponíveis. Jobs comuns omitem reconstructionReason especial sem fonte de publicação tardia; canário preserva captureAt original. Sol rerun do teste VM sob UTC/NewYork PASS.
 - [x] Documentar versão4 e precedência sobre instrução antiga; preservar histórico v2/v3 e significado de historicalDisplayConfirmed=false. PRD/SPEC/HARNESS do mensal linkam novo consumidor API+UI; snapshots antigos ficam como registros históricos.
 - [x] Revisão local concluída: builds API/painel e typecheck completo passaram; API 49/49, consumidor 69/69, PostgreSQL isolado final 18/18 sem skips com SQL oficial. OpenAPI Python/TS e regras 41/41 passaram. Manifest exclui outputs privados e caches; release e consumer readback vivo permanecem na Task7.
-- [ ] Commits por escopo após revisão, registrar SHA exato; original dirty permanece intacto.
+- [x] Commit revisado `06bd3cc`, PR111/CI aprovados e main integrada como `39ff4a1b38a8ec21e5eefb5495e12f23a23d0997`; original dirty preservado. Hotfix posterior tem gates próprios na Task9.
 
 ### Task 7: Release, recuperação via API e consumer readback
 
@@ -96,12 +96,26 @@ Identidade correta da metadata final; negação por hash/job/data; v2/v3 e daily
 
 **Consumes:** SHA aprovado, inventário paginado, backup/restauração; **Produces:** main publicada e evidências corrigidas conferidas pelo consumidor.
 
-- [ ] Antes de deploy guardar SHA/volumes/HTML/hash, dump oficial e restore-test segundo runbook; gates/build/CI do SHA.
-- [ ] Deploy oficial API/runner/painel/assets do mesmo SHA; health/release/worker readback. Troca atômica do relatório com backup/hash.
+- [x] Guardar SHA/volumes/HTML/hash, dump oficial e restauração completa comprovada; gates/build/CI de main39 aprovados. Timeout do polling não cancelou o backup; continuação revisada reutilizou a mesma prova após rollback, sem repetir dump/restore.
+- [x] Publicar main39 em API/runner/painel/assets e conferir SHA/mounts/health. Relatório canônico publicado com backup/hash. Recibos privados `release-final39.json` e `report-deploy-receipt.json`.
 - [ ] Inventário completo por API; canário candidato→audit→approval→promote→readback da mesma data/hash. Não repetir delivery_unknown.
 - [ ] Após Task8 e canário executar serialmente os alvos retroativos errados autorizados, preservando originais e registro de rollback. Usar replaceHistoricalPresentation com identidade/hash/bytes esperados; nunca invalidar/delete aprovado para substituir. Sem regenerar rotina do dia ou correto já aprovado.
 - [ ] Conferir API status/mensal, abrir PNG e relatório canônico, fonte/data real e os dois relógios. Pacote final só via API assíncrona obrigatória se solicitado.
-- [ ] Integração main do commit validado, publicação/readback comprovados. Se falhar, volumes+HTML anteriores; compensação automática cobre falha de promote. Rollback de aprovado usa PATCH /api/evidences/{id} com ponteiro/tipo/titulo originais, após checkcanônico+hash/bytes do original intacto e readback final; não inventar restoreAPI dedicada. Listar pendências sem declarar concluído.
+- [x] Integrar main39 validada e conferir publicação da release; o aceite das evidências continua pendente. Se falhar, volumes+HTML anteriores; compensação automática cobre falha de promote. Rollback de aprovado usa PATCH /api/evidences/{id} com ponteiro/tipo/titulo originais, após checkcanônico+hash/bytes do original intacto e readback final; não inventar restoreAPI dedicada.
+
+Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (250 pendentes, 13 aprovados), 1157 unknown separados. Canário #3047/job `1791303736001-f5yuyn` falhou com `tab_icon_fallback`, sem promoção nem alteração do original. O lote continua bloqueado pelo canário. OpenAPI vivo main39: catálogo v4, 174 operações/157 paths; contagem separada dos gates locais de contrato.
+
+### Task 9: Hotfix do favicon observado e título da aba
+
+**Owner:** Luna (somente `scripts/src/capture-insertion-proof.cjs` e `scripts/src/test-observed-tab-favicon.mjs`); Sol (docs/plano/harness/README); root (PR/CI/main/deploy e canário). **Base:** branch isolada `codex/adops-retroativos-favicon-20261006`, main39; nenhuma edição nos checkouts dirty ou mutação de produção pelo worker.
+
+**Consumes:** prova pareada no Chromium real `favicon-paired-diagnostic-result.json`: mesmos browser/DOM/source, headers presentes falham, retirados passam, restaurados falham. **Produces:** coleta do favicon sem os dois headers de cache e política original restaurada, título real observado; gate de fallback preservado.
+
+- [x] Reproduzir em fixture a falha sob `Cache-Control`/`Pragma`, sem rede externa; corrigir somente durante a coleta, preservando demais headers e restaurando o objeto original em `finally` mesmo na falha. `no-store`/credenciais omitidas/redirect bloqueado/allowlist/limites ficam intactos. Chamadas antigas não alteram headers desconhecidos; falha de restauração propaga e reprova.
+- [x] Usar título real de `page.title()`, fallback somente se vazio e clipping existente; testes comportamentais para título diferente da configuração e retorno à política de headers nas requisições seguintes.
+- [x] Revisão Sol e testes afetados favicon/moldura/histórico/sintaxe/diff-check aprovados; integridade viva 41/41, zero erros, dois avisos conhecidos não publicados. Fonte 39 e artefatos originais preservados.
+- [ ] PR/CI/main novo SHA e readback de release por root.
+- [ ] Root: backup/restauração/readback do novo release, novo canário revisado e aprovado antes de retomar Task7. O job reprovado não é reclassificado como sucesso nem repetido cegamente.
 
 ### Task 8: Substituição explícita de apresentação histórica aprovada
 
