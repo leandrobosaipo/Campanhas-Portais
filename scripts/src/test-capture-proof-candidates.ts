@@ -59,6 +59,17 @@ test("correlates candidate to persisted local print job, slot timestamp and exac
   assert.equal(validateCandidateMetadata(metadata, { jobId, insertionId, targetDate, captureStageStartedAt, captureStageFinishedAt, requestedCaptureAt: "2026-09-08T18:40:00-04:00" }).ok, true);
 });
 
+test("accepts v4 candidate provenance without weakening job, slot, or requested-clock identity", () => {
+  const identity = { jobId, insertionId, targetDate, captureStageStartedAt, captureStageFinishedAt, requestedCaptureAt: metadata.requestedCaptureAt };
+  const v4 = {
+    ...metadata,
+    reconstruction: { ...metadata.reconstruction, provenanceVersion: 4 },
+  };
+  assert.equal(validateCandidateMetadata(v4, identity).ok, true);
+  assert.equal(validateCandidateMetadata({ ...v4, requestedCaptureAt: "2026-09-08T18:41:00-04:00" }, identity).ok, false);
+  assert.equal(validateCandidateMetadata({ ...v4, sourceJobId: "another-job" }, identity).ok, false);
+});
+
 test("blocks forged job identity, timestamps, non-candidate paths and metadata provenance", () => {
   const wrongTarget = inspectCandidateJob(fixture(), insertionId + 1, targetDate);
   assert.equal(wrongTarget.ok, false);

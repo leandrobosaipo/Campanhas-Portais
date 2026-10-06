@@ -13,7 +13,6 @@ const WINDOWS_FRAME_KIT_DIR = process.env.ADOPS_WINDOWS_FRAME_TEMPLATE_DIR
 const WINDOWS_FRAME_FONT = process.env.ADOPS_WINDOWS_FRAME_FONT
   ? path.resolve(process.env.ADOPS_WINDOWS_FRAME_FONT)
   : path.resolve(__dirname, "../assets/desktop-frame/fonts/selawik.ttf");
-const SITE_LOGOS_DIR = path.resolve(__dirname, "../../artifacts/adops/public/site-logos");
 const runtimeRuleL1Cache = new Map();
 const runtimeRuleL1TtlMs = Number(process.env.ADOPS_CAPTURE_RULE_L1_TTL_MS || 45_000);
 
@@ -3771,7 +3770,11 @@ function formatDesktopClock(date) {
   }).format(date);
 }
 
-function resolveDesktopFrameDateTime(fallback, reconstruction) {
+function resolveDesktopFrameDateTime(fallback, reconstruction, requestedCaptureAt = null) {
+  if (reconstruction?.provenanceVersion === 4) {
+    const requestedAt = parseCaptureDate(requestedCaptureAt);
+    return requestedAt ? formatDesktopClock(requestedAt) : fallback;
+  }
   if (reconstruction?.provenanceVersion !== 3 || typeof reconstruction.reconstructedAt !== "string") return fallback;
   const reconstructedAt = new Date(reconstruction.reconstructedAt);
   return Number.isNaN(reconstructedAt.getTime()) ? fallback : formatDesktopClock(reconstructedAt);
@@ -4648,6 +4651,91 @@ function detectErrorCode(error) {
   return "capture_failed";
 }
 
+const FAVICON_CDN_HOSTS_BY_SITE = Object.freeze({
+  "perrenguematogrosso.com": Object.freeze(["cdn.perrenguematogrosso.com"]),
+});
+
+function resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname) {
+  const configured = String(configuredDomain || "").toLowerCase().replace(/\.$/, "");
+  const current = String(pageHostname || "").toLowerCase().replace(/\.$/, "");
+  if (!configured || (current !== configured && current !== `www.${configured}`)) return [];
+  return [...(FAVICON_CDN_HOSTS_BY_SITE[configured] || [])];
+}
+
+function isAllowedFaviconUrl(pageOrigin, url, allowedExternalHosts = []) {
+  try {
+    const page = new URL(pageOrigin);
+    const target = new URL(url, pageOrigin);
+    if (target.origin === page.origin) return target.protocol === "https:" || target.protocol === "http:";
+    return target.protocol === "https:" && target.port === "" && allowedExternalHosts.includes(target.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+async function captureObservedTabFavicon(page, configuredDomain = "") {
+  try {
+    const pageHostname = new URL(page.url()).hostname;
+    const allowedExternalHosts = resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname);
+    return await page.evaluate(async (trustedExternalHosts) => {
+      const links = Array.from(document.querySelectorAll('link[rel]'));
+      const link = links.find((item) => /(?:^|\s)(?:shortcut\s+)?icon(?:\s|$)/i.test(item.rel || ""))
+        || links.find((item) => /icon/i.test(item.rel || ""));
+      if (!link?.href) return null;
+      const href = link.href;
+      const parsed = new URL(href, location.href);
+      const dataHref = parsed.protocol === "data:" && /^data:image\//i.test(href);
+      if (dataHref && href.length > 1400000) return null;
+      if (!dataHref && !(
+        parsed.origin === location.origin
+          ? parsed.protocol === "https:" || parsed.protocol === "http:"
+          : parsed.protocol === "https:" && parsed.port === "" && trustedExternalHosts.includes(parsed.hostname.toLowerCase())
+      )) return null;
+      let blob;
+      if (dataHref) {
+        const response = await fetch(href);
+        blob = await response.blob();
+      } else {
+        const response = await fetch(href, { credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(3000) });
+        if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) return null;
+        const contentLength = Number(response.headers.get("content-length") || 0);
+        if (contentLength > 1024 * 1024) return null;
+        const reader = response.body?.getReader();
+        if (!reader) return null;
+        const chunks = [];
+        let total = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > 1024 * 1024) { await reader.cancel(); return null; }
+          chunks.push(value);
+        }
+        blob = new Blob(chunks, { type: response.headers.get("content-type") || "" });
+      }
+      if (!blob.type.startsWith("image/") || blob.size < 1 || blob.size > 1024 * 1024) return null;
+      const bitmap = await createImageBitmap(blob);
+      if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 512 || bitmap.height > 512 || bitmap.width * bitmap.height > 262144) {
+        bitmap.close();
+        return null;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      const scale = Math.min(56 / bitmap.width, 56 / bitmap.height);
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      context.drawImage(bitmap, Math.round((64-width)/2), Math.round((64-height)/2), width, height);
+      bitmap.close();
+      const sourceUrl = dataHref ? "page-declared-data-favicon" : `${parsed.origin}${parsed.pathname}`;
+      return { dataUrl: canvas.toDataURL("image/png"), sourceUrl, source: "observed_page_icon_link" };
+    }, allowedExternalHosts);
+  } catch {
+    return null;
+  }
+}
+
 function composeDesktopProof(viewportPng, finalPng, opts) {
   const payload = Buffer.from(JSON.stringify({
     viewportPng,
@@ -4655,10 +4743,9 @@ function composeDesktopProof(viewportPng, finalPng, opts) {
     opts,
     frameKitDir: WINDOWS_FRAME_KIT_DIR,
     frameFontPath: WINDOWS_FRAME_FONT,
-    siteLogosDir: SITE_LOGOS_DIR,
   }), "utf8").toString("base64");
   const py = `
-import base64, json
+import base64, json, re, io
 from PIL import Image, ImageDraw, ImageFont
 
 payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
@@ -4667,7 +4754,6 @@ final_path = payload["finalPng"]
 opts = payload["opts"]
 frame_kit_dir = payload.get("frameKitDir")
 frame_font_path = payload.get("frameFontPath") or ""
-site_logos_dir = payload.get("siteLogosDir") or ""
 
 img = Image.open(viewport_path).convert("RGBA")
 trim_bottom = int(opts.get("viewportTrimBottomPx") or 0)
@@ -4675,14 +4761,8 @@ if trim_bottom > 0 and trim_bottom < img.size[1]:
     img = img.crop((0, 0, img.size[0], img.size[1] - trim_bottom))
 w, h = img.size
 
-chrome_top_path = f"{frame_kit_dir}/chrome-top.png"
-taskbar_path = f"{frame_kit_dir}/taskbar.png"
 layout_path = f"{frame_kit_dir}/layout.json"
-for code, candidate in [
-    ("windows_frame_chrome_top_missing", chrome_top_path),
-    ("windows_frame_taskbar_missing", taskbar_path),
-    ("windows_frame_layout_missing", layout_path),
-]:
+for code, candidate in [("windows_frame_layout_missing", layout_path)]:
     try:
         open(candidate, "rb").close()
     except FileNotFoundError:
@@ -4697,12 +4777,29 @@ except FileNotFoundError:
 with open(layout_path, "r", encoding="utf-8") as handle:
     layout = json.load(handle)
 
-frame_theme = "windows11_chrome_real_template"
 frame_template_version = str(layout.get("version") or "unknown")
+frame_theme = str(layout.get("frameTheme") or "windows11_chrome_real_template")
 reference_w = int(layout.get("referenceWidth") or 1280)
 scale = w / reference_w
 chrome_h = max(1, int(round(float(layout.get("chromeTopHeight") or 0) * scale)))
 taskbar_h = max(1, int(round(float(layout.get("taskbarHeight") or 0) * scale)))
+
+# Pre-rendered source widths keep large outputs crisp on Pillow-only runners.
+asset_widths = sorted([int(x) for x in (layout.get("assetWidths") or [reference_w]) if int(x) >= w])
+if not asset_widths:
+    raise RuntimeError("windows_frame_asset_resolution_insufficient")
+asset_width = asset_widths[0] if asset_widths else reference_w
+suffix = "" if asset_width == reference_w else f"-{asset_width}"
+chrome_top_path = f"{frame_kit_dir}/chrome-top{suffix}.png"
+taskbar_path = f"{frame_kit_dir}/taskbar{suffix}.png"
+for code, candidate in [
+    ("windows_frame_chrome_top_missing", chrome_top_path),
+    ("windows_frame_taskbar_missing", taskbar_path),
+]:
+    try:
+        open(candidate, "rb").close()
+    except FileNotFoundError:
+        raise RuntimeError(f"{code}: {candidate}")
 
 chrome_top = Image.open(chrome_top_path).convert("RGBA").resize((w, chrome_h))
 taskbar = Image.open(taskbar_path).convert("RGBA").resize((w, taskbar_h))
@@ -4748,18 +4845,30 @@ def draw_dynamic_field(field_name, value):
     draw.rectangle([x0, y0, x1, y1], fill=clear)
     draw.text((x0 + pad_x, y0 + pad_y), text_fit(value, max(1, x1 - x0 - pad_x * 2), font), fill=fill, font=font)
 
-def find_site_logo(site_sigla):
-    slug = str(site_sigla or "").strip().lower()
-    if not slug or not site_logos_dir:
-        return None
-    for ext in ["png", "webp", "jpg", "jpeg"]:
-        candidate = f"{site_logos_dir}/{slug}.{ext}"
-        try:
-            open(candidate, "rb").close()
-            return candidate
-        except FileNotFoundError:
-            pass
-    return None
+def draw_two_line_datetime(field_name, value):
+    field = (layout.get("dynamicFields") or {}).get(field_name) or {}
+    if not field.get("rect"):
+        return
+    rendered = str(value or "")
+    match = re.search(r"(\\d{2}/\\d{2}/\\d{4}).*?(\\d{2}:\\d{2})", rendered)
+    if match:
+        date_part, time_part = match.group(1), match.group(2)
+    else:
+        time_part, date_part = "", rendered
+    x0, y0, x1, y1 = scaled_rect(field["rect"], chrome_h + h)
+    draw.rectangle([x0, y0, x1, y1], fill=tuple(field.get("clearFill") or [239,245,253,255]))
+    font_size = max(8, int(round(float(field.get("fontSize") or 11) * scale)))
+    font = ImageFont.truetype(frame_font_path, font_size)
+    fill = tuple(field.get("fill") or [28,32,38,255])
+    for key, text in [("timeLineRect", time_part), ("dateLineRect", date_part)]:
+        rect = field.get(key)
+        if not rect:
+            continue
+        rx0, ry0, rx1, ry1 = scaled_rect(rect, chrome_h + h)
+        bbox = draw.textbbox((0,0), text, font=font)
+        tw = bbox[2]-bbox[0]
+        th = bbox[3]-bbox[1]
+        draw.text((rx1-tw-int(4*scale), ry0+max(0,(ry1-ry0-th)//2)-bbox[1]), text, fill=fill, font=font)
 
 def draw_tab_identity():
     surface_field = (layout.get("dynamicFields") or {}).get("tabSurface") or {}
@@ -4784,10 +4893,11 @@ def draw_tab_identity():
         ix0, iy0, ix1, iy1 = scaled_rect(icon_field.get("rect"))
         clear = tuple(icon_field.get("clearFill") or [255, 255, 255, 255])
         draw.rectangle([ix0, iy0, ix1, iy1], fill=clear)
-        logo_path = find_site_logo(site_sigla)
-        if logo_path:
+        favicon_data_url = opts.get("tabIconDataUrl") or ""
+        if favicon_data_url.startswith("data:image/png;base64,"):
             try:
-                logo = Image.open(logo_path).convert("RGBA")
+                favicon_bytes = base64.b64decode(favicon_data_url.split(",",1)[1])
+                logo = Image.open(io.BytesIO(favicon_bytes)).convert("RGBA")
                 logo.thumbnail((max(1, ix1 - ix0), max(1, iy1 - iy0)))
                 lx = ix0 + max(0, int(((ix1 - ix0) - logo.size[0]) / 2))
                 ly = iy0 + max(0, int(((iy1 - iy0) - logo.size[1]) / 2))
@@ -4798,14 +4908,11 @@ def draw_tab_identity():
         if not icon_rendered:
             icon_fallback = True
             icon_rendered = True
-            fill = tuple(icon_field.get("fallbackFill") or [66, 133, 244, 255])
-            text_fill = tuple(icon_field.get("fallbackTextFill") or [255, 255, 255, 255])
-            font_size = max(8, int(round(float(icon_field.get("fontSize") or 11) * scale)))
-            font = ImageFont.truetype(frame_font_path, font_size)
-            draw.rounded_rectangle([ix0, iy0, ix1, iy1], radius=max(3, int((ix1 - ix0) / 5)), fill=fill)
-            initial = str(site_sigla or tab_title or "?").strip()[:1].upper() or "?"
-            bbox = draw.textbbox((0, 0), initial, font=font)
-            draw.text((ix0 + ((ix1 - ix0) - (bbox[2] - bbox[0])) / 2, iy0 + ((iy1 - iy0) - (bbox[3] - bbox[1])) / 2 - 1), initial, fill=text_fill, font=font)
+            center = ((ix0+ix1)//2,(iy0+iy1)//2)
+            radius = max(3,(ix1-ix0)//2-2)
+            draw.ellipse((center[0]-radius,center[1]-radius,center[0]+radius,center[1]+radius), outline=(104,112,124,255), width=max(1,int(round(scale))))
+            draw.arc((center[0]-radius//2,center[1]-radius,center[0]+radius//2,center[1]+radius), 75, 285, fill=(104,112,124,255), width=max(1,int(round(scale))))
+            draw.arc((center[0]-radius,center[1]-radius//2,center[0]+radius,center[1]+radius//2), 0, 180, fill=(104,112,124,255), width=max(1,int(round(scale))))
 
     if title_field.get("rect"):
         tx0, ty0, tx1, ty1 = scaled_rect(title_field.get("rect"))
@@ -4818,6 +4925,13 @@ def draw_tab_identity():
         draw.rectangle([tx0, ty0, tx1, ty1], fill=clear)
         draw.text((tx0 + pad_x, ty0 + pad_y), text_fit(tab_title, max(1, tx1 - tx0 - pad_x * 2), font), fill=fill, font=font)
 
+    # Redraw the active-tab close control after dynamic title/favicon overlays.
+    cx, cy = int(round(307*scale)), int(round(20*scale))
+    d = max(3, int(round(3*scale)))
+    line_color = (105,112,123,255)
+    draw.line((cx-d,cy-d,cx+d,cy+d), fill=line_color, width=max(1,int(round(scale))))
+    draw.line((cx+d,cy-d,cx-d,cy+d), fill=line_color, width=max(1,int(round(scale))))
+
     return {
         "tabTitleRendered": title_rendered,
         "tabIconRendered": icon_rendered,
@@ -4829,7 +4943,10 @@ date_text = opts.get("systemDateTime", "")
 tab_identity = draw_tab_identity()
 
 draw_dynamic_field("addressText", opts.get("addressText", opts.get("hostLabel", "")))
-draw_dynamic_field("systemDateTimeInline", date_text)
+if (layout.get("dynamicFields") or {}).get("systemDateTime", {}).get("mode") == "two-line-date-time":
+    draw_two_line_datetime("systemDateTime", date_text)
+else:
+    draw_dynamic_field("systemDateTimeInline", date_text)
 
 scroll_metrics = opts.get("scrollMetrics") or {}
 try:
@@ -4899,12 +5016,14 @@ print(json.dumps({
     "frameTemplateVersion": frame_template_version,
     "frameTemplateSize": {"width": w, "chromeTopHeight": chrome_h, "taskbarHeight": taskbar_h},
     "frameStrictAssetsOk": True,
-    "dynamicFields": ["addressText", "tabSurface", "tabTitle", "tabIcon", "systemDateTimeInline"],
+    "dynamicFields": ["addressText", "tabSurface", "tabTitle", "tabIcon", "systemDateTime"],
     "chromeTopTheme": "light",
     "tabSurfaceRendered": bool(tab_identity.get("tabSurfaceRendered")),
     "tabTitleRendered": bool(tab_identity.get("tabTitleRendered")),
     "tabIconRendered": bool(tab_identity.get("tabIconRendered")),
     "tabIconFallback": bool(tab_identity.get("tabIconFallback")),
+    "tabIconSource": opts.get("tabIconSource") or ("generic_fallback" if tab_identity.get("tabIconFallback") else "unknown"),
+    "tabIconSourceUrl": opts.get("tabIconSourceUrl") or None,
     "chromeFrameHeight": chrome_h,
     "taskbarHeight": taskbar_h,
     "scrollbarRendered": scrollbar_rendered,
@@ -4927,6 +5046,8 @@ print(json.dumps({
       tabTitleRendered: null,
       tabIconRendered: null,
       tabIconFallback: null,
+      tabIconSource: null,
+      tabIconSourceUrl: null,
       chromeFrameHeight: null,
       taskbarHeight: null,
       scrollbarRendered: null,
@@ -7419,7 +7540,7 @@ async function main() {
   const reconstruction = captureClass === "historical_recovery"
     ? {
         reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
-        provenanceVersion: 3,
+        provenanceVersion: 4,
         contractedDate: isoDate,
         reconstructedAt: null,
         mediaUrl: insertion.mediaUrl,
@@ -8085,7 +8206,7 @@ async function main() {
     retroContentProof = retroContentEvidence.retroContentProof;
 
     systemDateTime = formatDesktopClock(captureDate);
-    const frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction);
+    const frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction, effectiveCaptureAt);
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
@@ -8153,6 +8274,7 @@ async function main() {
       reconstruction.slotReconstructed = await page.locator("[data-adops-reconstructed-slot]").count() > 0;
       reconstruction.historicalDisplayConfirmed = false;
     }
+    const observedTabFavicon = await captureObservedTabFavicon(page, mapping.domain);
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
       systemDateTime: frameSystemDateTime,
@@ -8160,6 +8282,9 @@ async function main() {
       tabTitle: mapping.browserTitle,
       hostLabel: mapping.hostLabel,
       addressText: buildAddressText(finalPageUrl, mapping.hostLabel),
+      tabIconDataUrl: observedTabFavicon?.dataUrl || null,
+      tabIconSource: observedTabFavicon?.source || "generic_fallback",
+      tabIconSourceUrl: observedTabFavicon?.sourceUrl || null,
       slotPng,
       proofStyle: effectiveProofStyle,
       scrollMetrics: pageScrollMetrics,
@@ -8343,6 +8468,8 @@ async function main() {
       tabTitleRendered: desktopFrameMetadata.tabTitleRendered === true,
       tabIconRendered: desktopFrameMetadata.tabIconRendered === true,
       tabIconFallback: desktopFrameMetadata.tabIconFallback === true,
+      tabIconSource: desktopFrameMetadata.tabIconSource ?? null,
+      tabIconSourceUrl: desktopFrameMetadata.tabIconSourceUrl ?? null,
       chromeFrameHeight: desktopFrameMetadata.chromeFrameHeight,
       taskbarHeight: desktopFrameMetadata.taskbarHeight,
       scrollbarRendered: desktopFrameMetadata.scrollbarRendered,
@@ -8586,6 +8713,8 @@ async function main() {
             tabTitleRendered: desktopFrameMetadata.tabTitleRendered === true,
             tabIconRendered: desktopFrameMetadata.tabIconRendered === true,
             tabIconFallback: desktopFrameMetadata.tabIconFallback === true,
+            tabIconSource: desktopFrameMetadata.tabIconSource ?? null,
+            tabIconSourceUrl: desktopFrameMetadata.tabIconSourceUrl ?? null,
             chromeFrameHeight: desktopFrameMetadata.chromeFrameHeight,
             taskbarHeight: desktopFrameMetadata.taskbarHeight,
             scrollbarRendered: desktopFrameMetadata.scrollbarRendered,
@@ -8907,5 +9036,8 @@ if (require.main === module) {
     restoreEvidenceFromArchive,
     parseSpacesEnv: parseEnvFile,
     composeDesktopProof,
+    captureObservedTabFavicon,
+    resolveAllowedExternalFaviconHosts,
+    isAllowedFaviconUrl,
   };
 }

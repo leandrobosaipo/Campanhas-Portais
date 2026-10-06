@@ -1,10 +1,16 @@
 # SPEC - Prints AdOps com Moldura Windows 11 + Chrome Claro v4
 
+## Escopo legado e precedência — 06/10/2026
+
+Este documento conserva o contrato do kit v4. O identificador histórico `windows11_chrome_real_template` descreve o compositor existente e não certifica uma screenshot nativa do Windows nem o uso de Segoe UI original. A apresentação nova v5 usa `windows11_chrome_reconstructed_template`, Selawik e recursos gráficos abertos autorizados, sem reinterpretar PNGs ou metadata antigos.
+
+Para novas reconstruções, seguir a [SPEC de reconstrução v4 e moldura v5](./adops/retroactive-proof-v4/spec.md) e seu [HARNESS](./adops/retroactive-proof-v4/harness.md). Proveniência v4 e kit visual v5 são versões de contratos diferentes. O rollout novo exige canário e readback; este runbook legado não comprova sua publicação.
+
 ## Objetivo
 
 Padronizar a composicao visual dos prints AdOps com moldura `windows11_chrome_real_template`, mantendo a auditoria baseada no viewport real capturado pelo Playwright.
 
-## Contrato visual atual
+## Contrato visual legado v4
 
 - `frameTemplateVersion`: `windows11-chrome-light-similar-v4`.
 - `chromeTopTheme`: `light`.
@@ -61,4 +67,3 @@ pnpm --dir scripts run frame:build-windows-template -- \
   --taskbarHeight 42 \
   --overlayIcons true
 ```
-

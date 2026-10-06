@@ -591,10 +591,11 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     : null;
   const reconstructionProvenanceV2 = reconstruction?.provenanceVersion === 2;
   const reconstructionProvenanceV3 = reconstruction?.provenanceVersion === 3;
-  const versionedReconstruction = reconstructionProvenanceV2 || reconstructionProvenanceV3;
+  const reconstructionProvenanceV4 = reconstruction?.provenanceVersion === 4;
+  const versionedReconstruction = reconstructionProvenanceV2 || reconstructionProvenanceV3 || reconstructionProvenanceV4;
   // `capturedAt` comes from the persisted capture log, not the runner request.
   // Keep a small allowance for upload/audit latency, but never let a supplied
-  // historical timestamp stand in for the actual desktop clock.
+  // historical timestamp stand in for real capture provenance.
   const reconstructionTimestampMatchesServerCapture = Boolean(reconstructionAt && capturedAt) &&
     Math.abs(new Date(reconstructionAt!).getTime() - new Date(capturedAt!).getTime()) <= 15 * 60 * 1000;
   const declaredLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
@@ -617,6 +618,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
         hour12: false,
       }).format(new Date(reconstructionAt)).replace(" ", "T")
     : null;
+  // v4 intentionally presents both visible clocks as the contracted reference;
+  // capturedAt/reconstructedAt still retain the real creation instant above.
   const desktopExpectedAt = reconstructionLocalTime || requestedCaptureAt;
   const desktopMatches = desktopExpectedAt
     ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt)

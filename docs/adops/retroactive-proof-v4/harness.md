@@ -1,0 +1,76 @@
+# HARNESS — Reconstrução retroativa v4
+
+## Verificação local
+
+Executar na branch isolada baseada em e11c7cc37a27f0787fdead8381d32f06c1b17acc, usando lockfile existente. Registrar comando, SHA e resultado; uma etapa skip não prova sua propriedade.
+
+1. node --check scripts/src/capture-insertion-proof.cjs.
+2. No diretório scripts: node --import tsx src/test-preupload-reconstruction-clock.ts.
+3. No diretório scripts: node --import tsx --test src/test-capture-proof-candidates.ts src/test-capture-provenance-flow.ts src/test-monthly-report-query.ts.
+4. node scripts/src/test-historical-reconstruction-frame.mjs e node scripts/src/test-windows-frame-template.mjs; validar que Pillow existe, sem aceitar skip visual como aprovação.
+5. pnpm --dir scripts run audit:capture-rules-integrity; builds API e painel.
+6. Regressões de reconstrução, candidato, readback/restore e mensal/export em arquivos existentes, mais testes específicos criados para fonte final e inventário. O teste test-monthly-report-target-evidences.mjs consulta snapshot público de agosto e contém contagem histórica fixa: registrar sua divergência separadamente, sem tratá-la como regressão deste código nem mudar o snapshot público para passar teste.
+7. Python unittest/pytest dos contratos OpenAPI existentes e teste de payload/202/UUID.
+
+### Integração de promoção em PostgreSQL isolado
+
+Não executar essa suíte contra produção. O schema criado apenas por `drizzle push` não reproduz todos os checks, FKs e triggers das migrations oficiais de candidatos/reviews/promotions. A fixture isolada deve aplicar o SQL oficial completo e conferir os dois triggers de imutabilidade, checks de hash/decisão e FKs de identidade antes de aprovar o teste. Essa paridade foi conferida na DB local `candidate_audit_test`, PostgreSQL 14.17, socket privado `/tmp/adops-candidate-pg-socket-retro20261006`, porta 55437 sem escuta TCP. A lifecycle da fixture é responsabilidade do root; não criar nem remover cluster implicitamente.
+
+O workflow CI também prepara essa paridade: somente na DB de teste `candidate_audit_test` recém-criada, recria as três tabelas vazias de candidatos/reviews/promotions pelo SQL oficial depois do push. `CREATE TABLE IF NOT EXISTS` isolado não acrescentaria os checks/FKs que o push omitiu e poderia produzir falso teste positivo. Esse preparo não altera migrations nem bancos de produção; o root validou YAML, ordem e URL isolada com Ruby Psych.
+
+Executar serialmente no diretório `scripts`, com `DATABASE_URL` apontando somente para a fixture e `ADOPS_PROMOTION_TEST=1`:
+
+```bash
+node --import tsx --test src/test-capture-candidate-promotion.integration.ts
+```
+
+A revisão Task8 registrou 16/16 aprovados, zero skips, nessa fixture com SQL oficial. O root repetiu integração de promoção e registro em sequência: 17/17 aprovados, zero skips, log privado `outputs/adops-retroativos-20261006/test-final-candidate-integration.log`. Para o decoder de registro/export, `ADOPS_EVIDENCE_EXPORT_PYTHON` deve apontar para Python com Pillow; para compositor/hash, usar `ADOPS_CAPTURE_PYTHON`. No ambiente local verificado, ambos usam `/Users/leandrobosaipo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3`; o `python3` padrão local não tem Pillow. A tentativa inicial de registro recebeu 409 por esse decoder ausente e passou após corrigir apenas o ambiente, sem mudar código.
+
+O gate final repete as suítes afetadas após alterações posteriores. Para typecheck, gerar antes os projetos referenciados: `pnpm exec tsc -b lib/db lib/api-zod`; depois `pnpm --filter @workspace/api-server run typecheck`. Um dist ausente não é uma falha comportamental da API.
+
+Após Task4 e atualização do YAML/clientes gerados, o root executou `pnpm run typecheck` completo: passou em libs, API, painel, scripts e mockup. Após Task5, builds API/painel, regras 41/41 sem erros e diff-check passaram. A suíte final serial promoção+registro+inventário passou 18/18, zero skips, na fixture com SQL oficial; log privado `outputs/adops-retroativos-20261006/test-final-all-db-integration.log`.
+
+Na integração final anterior ao release, o root também registrou 49/49 testes dos contratos da API e 69/69 regressões do consumidor/contagens/export/download/deadline aprovados. OpenAPI Python e TypeScript passaram com catálogo v4, 171 operações e 157 paths. O YAML mensal e os clientes gerados preservaram `requestedCaptureAt` local literal e `capturedAt` real na convenção existente. Esses resultados aprovam o código local; release e correção das evidências exigem o SHA efetivamente publicado e os readbacks abaixo.
+
+Com `DATABASE_URL` isolada e os dois caminhos Python configurados, executar registro e promoção na mesma sequência, sem outro teste usando essa DB:
+
+```bash
+ADOPS_PROMOTION_TEST=1 ADOPS_CANDIDATE_REGISTRY_TEST=1 node --import tsx --test --test-concurrency=1 src/test-capture-candidate-promotion.integration.ts src/test-capture-proof-candidate-registry.integration.ts
+```
+
+### Consumidor e fuso horário
+
+O teste `scripts/src/test-retroactive-report-candidate-ui.mjs` executa o JavaScript gerado do relatório. Confere thumb sem elevar aceite, job candidato com `promote=false`, correspondência exata de inserção/data/URL, erro HTTP e preservação do job não confirmado. O modal diferencia a referência `2026-10-01T20:30` da criação real `2026-10-06T09:41:51.403Z`; a referência sem offset é interpretada em Cuiabá, sem reescrever a string recebida.
+
+```bash
+TZ=UTC node scripts/src/test-retroactive-report-candidate-ui.mjs
+TZ=America/New_York node scripts/src/test-retroactive-report-candidate-ui.mjs
+```
+
+Esse caso reproduziu a divergência sob UTC antes da correção e passou sob os dois fusos depois. O teste local não substitui a abertura do modal autenticado, PNG e download após deploy.
+
+## Matriz comportamental
+
+| Caso | Resultado |
+| --- | --- |
+| v4, página e SO em requestedCaptureAt, criação real correlacionada | Aceitável com todos os outros gates |
+| v4, SO em reconstructedAt distante da referência | desktop_time_mismatch |
+| v3, SO real e página histórica | Comportamento preservado |
+| v2 legado | Comportamento preservado |
+| reconstructedAt antigo falsificado, job/data/hash errado | Bloqueado |
+| metadata apenas preliminar ou sem correlação | Origem a conferir |
+| artefato canônico e auditoria final aprovados, log pré-final antigo | Reconstrução tecnicamente aceita |
+| usuário conclui job candidato | Aguarda revisão, sem promoção automática |
+| inventário paginado | Sem duplicatas/lacunas e limite respeitado |
+
+O teste SQL real `scripts/src/test-historical-evidence-inventory.integration.ts` usa `ADOPS_HISTORICAL_INVENTORY_TEST=1` e a mesma DB isolada, serialmente. Valida título com caixa/espaços, canônico mais recente, recibo final aprovado e data divergente, booleano JSON malformado, undated com ID próprio, diário excluído e página vazia cujo cursor continua. Fixtures usam IDs exatos; cleanup do candidato é transacional e confere trigger habilitado em `pg_trigger`. Passou 1/1 abrangente, zero skips; helper/parser passou 4/4. Cursor acima do int4 é recusado e a allowlist de fixture aceita somente loopback explícito ou socket local nomeado.
+
+## Canário e liberação (root)
+
+A revisão local da moldura v5 foi concluída em 1280, 1660 e 3320 px. Executar `ADOPS_CAPTURE_PYTHON=/caminho/python-com-Pillow node scripts/src/test-windows-frame-v5.mjs` e `node scripts/src/test-observed-tab-favicon.mjs` com o mesmo ambiente; Sol repetiu ambos com sucesso. Luna também validou template, contrato DOM, histórico, pixels, retro-content e harness 5/5. As prévias sintéticas não provam campanha nem veiculação; usam fallback explicitamente marcado. Um GET real no Chromium isolado em Perrengue resolveu o favicon CDN declarado e o converteu para PNG sem enviar cookies/auth; seu domínio, timeout, tamanho e dimensões são limitados. O canário de campanha deve ter `tabIconFallback=false`.
+
+Inventariar primeiro por API, salvar páginas e manifest de IDs/datas/URLs/hashes/status, incluindo aprovados. Não repetir job com delivery_unknown. Antes de cada substituição salvar identidade/URL/bytes/hash/original e aprovação; manter originais arquivados no fluxo existente. Canário: uma data de #3047 e comparação visual independente de página/moldura/banner, relógios e ausência de carimbo. Gerar candidato com chave estável; auditar, persistir aprovação, promover e ler o mesmo ID/hash via status e mensal. Uma fila ou HTTP 200 não conclui.
+
+Só após o canário aprovado executar serialmente o conjunto inventariado e autorizado, excluindo capturas diárias e originais corretos. Relatório canônico deve abrir o PNG correto e mostrar origem/data real; API status/mensal devem concordar. Download/pacote PI usa a API assíncrona obrigatória. Registrar cada falha sem nova tentativa cega.
+
+Antes de deploy, backup oficial do banco, volumes anteriores, SHA da API/runner/web, HTML anterior e hash. Publicar o SHA testado pelos scripts oficiais. Readback: health/release SHA, runner, consumer autenticado, relatório/PNG e candidato→promoção. Se canário falhar, restaurar par de volumes anterior e HTML salvo; a promoção já compensa automaticamente readback falhado. Para substituição já aprovada, conferir ponteiro promovido e hash/bytes do original intacto antes de PATCH /api/evidences/{id} com tipo/arquivoUrl/titulo originais; repetir status/mensal/PNG. Não existe restoreAPI dedicada na base nem se copia arquivo por fora. Main só integra arquivos revisados da branch isolada; original dirty permanece intacto.

@@ -1,67 +1,40 @@
 {
-  "version": "windows11-chrome-light-similar-v4",
+  "version": "windows11-chrome-light-similar-v5",
+  "frameTheme": "windows11_chrome_reconstructed_template",
   "referenceWidth": 1280,
-  "chromeTopHeight": 102,
+  "assetWidths": [1280, 1660, 3320],
+  "chromeTopHeight": 72,
   "taskbarHeight": 42,
-  "viewport": {
-    "x": 0,
-    "y": 102,
-    "width": 1280
-  },
+  "viewport": { "x": 0, "y": 72, "width": 1280 },
   "dynamicFields": {
     "addressText": {
-      "target": "chrome-top",
-      "rect": [88, 40, 1118, 66],
-      "clearFill": [245, 247, 250, 255],
-      "fontSize": 15,
-      "fill": [33, 37, 41, 255],
-      "paddingX": 34,
-      "paddingY": 5
+      "target": "chrome-top", "rect": [120, 40, 1080, 66],
+      "clearFill": [245, 247, 250, 255], "fontSize": 15,
+      "fill": [33, 37, 41, 255], "paddingX": 0, "paddingY": 5
     },
     "tabSurface": {
-      "target": "chrome-top",
-      "rect": [90, 6, 326, 34],
-      "clearFill": [255, 255, 255, 255],
-      "outlineFill": [218, 224, 232, 255],
-      "radius": 10
+      "target": "chrome-top", "rect": [8, 5, 326, 34],
+      "clearFill": [255, 255, 255, 255], "outlineFill": [218, 224, 232, 255], "radius": 10
     },
     "tabIcon": {
-      "target": "chrome-top",
-      "rect": [104, 11, 122, 29],
-      "clearFill": [255, 255, 255, 255],
-      "fallbackFill": [66, 133, 244, 255],
-      "fallbackTextFill": [255, 255, 255, 255],
-      "fontSize": 11
+      "target": "chrome-top", "rect": [18, 11, 36, 29],
+      "clearFill": [255, 255, 255, 255]
     },
     "tabTitle": {
-      "target": "chrome-top",
-      "rect": [130, 8, 294, 32],
-      "clearFill": [255, 255, 255, 255],
-      "fontSize": 14,
-      "fill": [42, 48, 56, 255],
-      "paddingX": 0,
-      "paddingY": 3
+      "target": "chrome-top", "rect": [43, 8, 286, 32],
+      "clearFill": [255, 255, 255, 255], "fontSize": 14,
+      "fill": [42, 48, 56, 255], "paddingX": 0, "paddingY": 3
     },
-    "chromeDateTime": {
-      "target": "chrome-top",
-      "rect": [128, 113, 248, 136],
-      "disabled": true
-    },
-    "systemDateTimeInline": {
-      "target": "taskbar",
-      "rect": [1030, 7, 1274, 33],
-      "clearFill": [239, 245, 253, 255],
-      "fontSize": 11,
-      "fill": [28, 32, 38, 255],
-      "paddingX": 4,
-      "paddingY": 2
+    "systemDateTime": {
+      "target": "taskbar", "rect": [1138, 3, 1272, 39],
+      "clearFill": [239, 245, 253, 255], "fontSize": 11,
+      "fill": [28, 32, 38, 255], "paddingX": 0, "paddingY": 2,
+      "mode": "two-line-date-time", "timeLineRect": [1138, 4, 1272, 20],
+      "dateLineRect": [1138, 20, 1272, 38]
     }
   },
   "scrollbar": {
-    "width": 12,
-    "trackFill": [246, 247, 249, 230],
-    "thumbFill": [127, 132, 142, 235],
-    "minThumbHeight": 44,
-    "rightInset": 0
+    "width": 12, "trackFill": [246, 247, 249, 230],
+    "thumbFill": [127, 132, 142, 235], "minThumbHeight": 44, "rightInset": 0
   }
 }

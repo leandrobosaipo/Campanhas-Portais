@@ -90,6 +90,33 @@ test("proveniência v3 aceita o relógio real preliminar e mantém a hora histó
   }, now).approved, false);
 });
 
+test("proveniência v4 exige os dois relógios visíveis na referência histórica", () => {
+  const metadataV4 = {
+    ...metadata,
+    systemDateTime: "sábado, 12/09/2026, 21:53",
+    reconstruction: { ...metadata.reconstruction, provenanceVersion: 4 },
+  };
+  const validationV4 = {
+    ...baseline,
+    audit: evaluateCaptureMetadata({
+      requestedCaptureAt: metadataV4.requestedCaptureAt,
+      systemDateTime: metadataV4.systemDateTime,
+      pageDateText: metadataV4.pageDateText,
+    }, targetDate, now),
+  };
+  const result = validatePreUploadReconstructionClock(validationV4, metadataV4, now);
+  assert.equal(result.approved, true);
+  assert.equal(result.warnings[0]?.code, "preupload_reconstruction_clock_checked");
+  assert.equal(validatePreUploadReconstructionClock(validationV4, {
+    ...metadataV4,
+    systemDateTime: "terça-feira, 15/09/2026, 03:59",
+  }, now).approved, false, "v4 must not substitute the desktop creation clock for requestedCaptureAt");
+  assert.equal(validatePreUploadReconstructionClock(validationV4, {
+    ...metadataV4,
+    reconstruction: { ...metadataV4.reconstruction, reconstructedAt: "2026-09-12T21:53:00-04:00" },
+  }, now).approved, false, "the actual creation time remains recent and server-correlated");
+});
+
 test("untrusted timestamps, wrong historical desktop clock and invalid reconstruction identity remain blocked", () => {
   for (const reconstruction of [
     { ...metadata.reconstruction, reconstructedAt: "2026-09-15T03:44:59.000Z" },

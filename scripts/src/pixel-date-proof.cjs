@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const ENGINE_VERSION = "tesseract.js-6.0.1";
+const CAPTURE_PYTHON_BIN = process.env.ADOPS_CAPTURE_PYTHON || "python3";
 
 function normalizeOcrText(value) {
   return String(value || "")
@@ -43,7 +44,7 @@ function hashImageRegion(filePath, region) {
     "crop=im.crop((x,y,x+w,y+h))",
     "print(hashlib.sha256(crop.tobytes()).hexdigest())",
   ].join("\n");
-  return execFileSync("python3", ["-c", script, filePath, String(region.left), String(region.top), String(region.width), String(region.height)], {
+  return execFileSync(CAPTURE_PYTHON_BIN, ["-c", script, filePath, String(region.left), String(region.top), String(region.width), String(region.height)], {
     encoding: "utf8",
     timeout: 30_000,
   }).trim();

@@ -1473,6 +1473,18 @@ export const GetMonthlyEvidenceReportResponse = zod.object({
                   zod.literal(null),
                 ])
                 .nullish(),
+              requestedCaptureAt: zod
+                .string()
+                .nullish()
+                .describe(
+                  "Referência visual original de prova confiável e tecnicamente aceita. Uma referência sem offset é interpretada em America\/Cuiaba; a string original é preservada.",
+                ),
+              capturedAt: zod.coerce
+                .date()
+                .nullish()
+                .describe(
+                  "Instante real da captura ou reconstrução, separado da referência visual histórica.",
+                ),
               acceptancePolicy: zod.enum(["technical-audit-v1"]).optional(),
               technicalAccepted: zod
                 .boolean()

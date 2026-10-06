@@ -1,5 +1,11 @@
 # PRD - Relatorio mensal de evidencias AdOps
 
+## Consumidor canônico e reconstrução — 06/10/2026
+
+O consumidor dinâmico atual usa o slug estável `/reports/adops-evidencias/?mes=YYYY-MM`, com dados mensais da API e sessão Google existente. Os requisitos de snapshots mensais abaixo permanecem como histórico do consumidor estático.
+
+Miniatura disponível com `technicalStatus=audited` pode ser exibida mesmo quando a origem exige conferência. Ela conserva o aviso e não aumenta as contagens nem o aceite técnico/documental. O modal mostra origem da imagem, referência visual `requestedCaptureAt` e instante real `capturedAt`. Capturas solicitadas pelo operador são candidatos: aguardar auditoria e promoção persistida antes de substituir o canônico. Ver o [PRD de reconstrução v4](../retroactive-proof-v4/prd.md) e seu [harness](../retroactive-proof-v4/harness.md).
+
 ## Objetivo
 
 Entregar um painel HTML mensal, público em `sites.codigo5.com.br`, com todas as inserções canônicas da competência. A visão abre em `Ativas`, mas conserva `Encerradas` para consulta e entrega.

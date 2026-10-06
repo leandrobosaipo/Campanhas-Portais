@@ -1808,6 +1808,16 @@ export type GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItem = {
   status?: string;
   /** @nullable */
   captureClass?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemCaptureClass;
+  /**
+   * Referência visual original de prova confiável e tecnicamente aceita. Uma referência sem offset é interpretada em America/Cuiaba; a string original é preservada.
+   * @nullable
+   */
+  requestedCaptureAt?: string | null;
+  /**
+   * Instante real da captura ou reconstrução, separado da referência visual histórica.
+   * @nullable
+   */
+  capturedAt?: string | null;
   acceptancePolicy?: GetMonthlyEvidenceReport200ItemsItemEvidenceDaysItemAcceptancePolicy;
   /** true somente quando auditoria técnica e proveniência correlacionada forem válidas. */
   technicalAccepted?: boolean;

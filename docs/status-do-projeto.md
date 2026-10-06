@@ -1,5 +1,15 @@
 # Estado confirmado do projeto AdOps
 
+## Reconstruções v4 e moldura v5 — 06/10/2026, rollout pendente
+
+O usuário autorizou ambos os relógios visuais em `requestedCaptureAt`, PNG sem carimbo adicional e preservação de `capturedAt`/`reconstruction.reconstructedAt` reais e origem nos dados e no relatório. A moldura nova é reconstruída, usa Selawik e gráficos abertos; não afirma Windows nativo ou Segoe UI original. v2/v3 e capturas diárias mantêm seus contratos.
+
+A implementação ocorre na branch isolada `codex/adops-retroativos-20261006`, sobre a release de base observada `e11c7cc37a27f0787fdead8381d32f06c1b17acc`, preservando os checkouts com mudanças anteriores. API temporal, resolução final de metadata mensal, substituição histórica explícita e inventário paginado foram revisados; promoção, registro e inventário passaram 18 testes reais na DB PostgreSQL isolada com SQL oficial. Moldura v5 foi aprovada em três larguras, com Selawik, vetores licenciados, origem reconstruída explícita, clocks legíveis e favicon real do portal validado por GET público. Capturador passou clocks/pixels/dimensões sem tarja; OpenAPI v4, autenticação, typecheck e builds API/painel passaram.
+
+Release exige PR/CI e o mesmo SHA aprovado em main, API, runner e painel, com backup e readback. Ainda não há confirmação de publicação deste contrato nem de correção serial das evidências nesta etapa: o canário e o inventário vivo precedem as substituições, e o consumer deve confirmar origem, criação real e PNG por identidade/hash.
+
+Publicação e correção de PNGs existentes não estão confirmadas pelo teste local: faltam gates finais, release do SHA validado, backup, inventário vivo, canário, promoção e readback no consumidor. Ver o [plano](./superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md), [SPEC](./adops/retroactive-proof-v4/spec.md) e [HARNESS](./adops/retroactive-proof-v4/harness.md). Os registros datados e releases abaixo conservam o histórico operacional anterior.
+
 ## Relatório dinâmico de evidências — 2026-09-01
 
 - URL canônica de acompanhamento: `https://sites.codigo5.com.br/reports/adops-evidencias/`.

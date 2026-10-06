@@ -12,6 +12,26 @@ function monthlyArtifact(value: unknown) {
   catch { return null; }
 }
 
+export function resolveMonthlyRequestedCaptureAt(
+  metadata: Record<string, unknown> | null | undefined,
+  options: { correlated: boolean; trustedCapture: boolean; technicalStatus: string; technicalAccepted: boolean },
+) {
+  if (!options.correlated || !options.trustedCapture || options.technicalStatus !== "audited" || !options.technicalAccepted) return null;
+  const value = typeof metadata?.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = "0", zone] = match;
+  if (zone && !Number.isFinite(Date.parse(value))) return null;
+  const calendarDay = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (calendarDay.getUTCFullYear() !== Number(year)
+    || calendarDay.getUTCMonth() + 1 !== Number(month)
+    || calendarDay.getUTCDate() !== Number(day)
+    || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return null;
+  // Keep offset-free source references unchanged; the consumer interprets them
+  // in the campaign's local time zone rather than converting them as UTC.
+  return value;
+}
+
 export function selectMonthlyEvidenceProof<T extends { uploadedUrl?: string | null; cacheBustedUrl?: string | null; updatedAt: Date }>(url: string | null | undefined, rows: T[]) {
   return rows.filter(row => !url || [row.uploadedUrl, row.cacheBustedUrl].some(value => monthlyArtifact(value) && monthlyArtifact(value) === monthlyArtifact(url)))
     .reduce<T | null>((latest, row) => !latest || latest.updatedAt < row.updatedAt ? row : latest, null);
@@ -39,6 +59,7 @@ export function monthlyEvidenceProvenance(url: string | null | undefined, proof:
     : {};
   const manifestHash = typeof retroContentProof.manifestHash === 'string' ? retroContentProof.manifestHash.trim() : '';
   const historicalTechnicalProofValid = checklistValidation.approved === true
+    && checklistValidation.preliminary !== true
     && blockingIssues?.length === 0
     && checklistAudit.ok !== false
     && retroContentProof.status === 'approved'

@@ -15,10 +15,11 @@ import {
 } from "@workspace/db";
 import { getEvidenceDateKey, AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE } from "./capture-audit";
 import { attachServerCaptureProvenance } from "./capture-audit";
-import { validateAuditChecklist, type AuditChecklistValidation } from "./audit-checklist";
+import { loadAuditChecklistMetadata, validateAuditChecklist, type AuditChecklistValidation } from "./audit-checklist";
 import { selectCanonicalEvidencePerDate } from "./evidence-export";
 import { getLocalCaptureRuntime } from "./local-capture-runtime";
 import { inspectPersistedCaptureCandidate } from "./capture-proof-candidate-store";
+import { decideHistoricalPresentationUpgrade } from "./historical-presentation-upgrade-guard.mjs";
 
 export type CaptureProofCandidateRow = typeof captureProofCandidatesTable.$inferSelect;
 type ArchivePlan = { sourceKey: string; archiveKey: string; sha256?: string; bytes?: number };
@@ -45,6 +46,8 @@ export type CandidatePromotionServices = {
   }) => Promise<ArchivePlan>;
   audit?: (input: { insertionId: number; date: string; metadata?: unknown; phase?: "final" }) => Promise<AuditChecklistValidation>;
 };
+
+export type ReplaceHistoricalPresentation = { evidenceId: number; arquivoUrl: string; sha256: string; bytes: number };
 
 function promotionError(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -103,7 +106,7 @@ function canonicalEvidenceForDate(rows: Array<typeof evidencesTable.$inferSelect
  * All storage operations are read/archive/readback only; the canonical pointer
  * is changed only after persisted approval, source-job and hash checks pass.
  */
-export async function promoteApprovedCaptureCandidate(candidateId: string, services: CandidatePromotionServices = {}) {
+export async function promoteApprovedCaptureCandidate(candidateId: string, services: CandidatePromotionServices = {}, replaceHistoricalPresentation?: ReplaceHistoricalPresentation) {
   const readArtifact = services.hashArtifact ?? hashRemoteBytes;
   const audit = services.audit ?? validateAuditChecklist;
   const [candidate] = await db.select().from(captureProofCandidatesTable)
@@ -134,6 +137,15 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
   const priorPromotion = promotionRows.find((row) => ["awaiting_readback", "approved", "promoting"].includes(row.status))
     ?? promotionRows[0];
   if (priorPromotion?.status === "approved") {
+    if (replaceHistoricalPresentation) {
+      const priorAudit = priorPromotion.audit as Record<string, unknown> | null;
+      const expected = priorAudit?.expectedOriginal as Record<string, unknown> | undefined;
+      if (priorAudit?.reason !== "presentation_upgrade"
+        || expected?.evidenceId !== replaceHistoricalPresentation.evidenceId
+        || expected?.arquivoUrl !== replaceHistoricalPresentation.arquivoUrl
+        || expected?.sha256 !== replaceHistoricalPresentation.sha256
+        || expected?.bytes !== replaceHistoricalPresentation.bytes) throw promotionError("prior_promotion_readback_invalid");
+    }
     if (!sourceValid) throw sourceFailure;
     const priorAudit = await audit({ insertionId: candidate.insertionId, date: candidate.targetDate, phase: "final" });
     const rows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, candidate.insertionId));
@@ -198,7 +210,12 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
           throw promotionError("prior_promotion_state_changed");
         }
         const [updated] = await tx.update(captureProofCandidatePromotionsTable)
-          .set({ status: "approved", audit: toJsonRecord(priorAudit), updatedAt: new Date() })
+        .set({ status: "approved", audit: {
+          ...toJsonRecord(priorAudit),
+          ...((priorPromotion.audit as Record<string, unknown> | null)?.reason === "presentation_upgrade"
+            ? { reason: "presentation_upgrade", expectedOriginal: (priorPromotion.audit as Record<string, unknown>).expectedOriginal }
+            : {}),
+        }, updatedAt: new Date() })
           .where(and(eq(captureProofCandidatePromotionsTable.id, priorPromotion.id), eq(captureProofCandidatePromotionsTable.status, "awaiting_readback")))
           .returning({ id: captureProofCandidatePromotionsTable.id });
         if (!updated) throw promotionError("prior_promotion_state_changed");
@@ -229,7 +246,40 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
   ));
 
   const canonicalAudit = await audit({ insertionId: candidate.insertionId, date: candidate.targetDate, phase: "final" });
-  if (canonicalAudit.approved) throw promotionError("canonical_already_approved");
+  let upgrade: ReturnType<typeof decideHistoricalPresentationUpgrade> | null = null;
+  if (canonicalAudit.approved || replaceHistoricalPresentation) {
+    const originalMetadata = await loadAuditChecklistMetadata(candidate.insertionId, candidate.targetDate);
+    const originalReconstruction = originalMetadata?.reconstruction as Record<string, unknown> | null;
+    const candidateReconstruction = candidate.metadata.reconstruction as Record<string, unknown> | null;
+    upgrade = decideHistoricalPresentationUpgrade({
+      request: replaceHistoricalPresentation,
+      canonicalApproved: canonicalAudit.approved,
+      reviewApproved: latestReview.decision === "candidate_approved",
+      original: original && originalMetadata ? {
+        id: original.id,
+        arquivoUrl: original.arquivoUrl ?? "",
+        sha256: replaceHistoricalPresentation?.sha256 ?? "",
+        bytes: replaceHistoricalPresentation?.bytes ?? 0,
+        captureClass: String(originalMetadata.captureClass ?? ""),
+        auditApproved: canonicalAudit.approved,
+        auditCaptureClass: canonicalAudit.audit?.captureClass ?? null,
+        canonicalUrl: original?.arquivoUrl ?? null,
+        provenanceVersion: Number(originalReconstruction?.provenanceVersion),
+        frameTemplateVersion: typeof originalMetadata.frameTemplateVersion === "string" ? originalMetadata.frameTemplateVersion : undefined,
+      } : null,
+      candidate: {
+        captureClass: String(candidate.metadata.captureClass ?? ""),
+        provenanceVersion: Number(candidateReconstruction?.provenanceVersion),
+        frameTemplateVersion: String(candidate.metadata.frameTemplateVersion ?? ""),
+        historicalDisplayConfirmed: candidateReconstruction?.historicalDisplayConfirmed,
+      },
+    });
+    if (!upgrade.ok) throw promotionError(upgrade.code);
+    const actualOriginal = original?.arquivoUrl ? await readArtifact(original.arquivoUrl) : null;
+    if (!original || actualOriginal?.sha256 !== replaceHistoricalPresentation!.sha256
+      || actualOriginal.bytes !== replaceHistoricalPresentation!.bytes) throw promotionError("historical_original_hash_mismatch");
+    upgrade = { ...upgrade, expectedOriginal: { ...upgrade.expectedOriginal, sha256: actualOriginal.sha256, bytes: actualOriginal.bytes } };
+  }
 
   let archive: ArchivePlan | null = null;
   if (original?.arquivoUrl && original.arquivoUrl !== candidate.artifactUrl) {
@@ -260,6 +310,9 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
       });
       if (!plan) throw promotionError("canonical_archive_plan_invalid");
       archive = helpers.archiveEvidenceBeforeReplacement(helpers.parseSpacesEnv(runtime.spacesEnvFile), bucket, plan);
+    }
+    if (upgrade && (archive.sha256 !== upgrade.expectedOriginal.sha256 || archive.bytes !== upgrade.expectedOriginal.bytes)) {
+      throw promotionError("historical_original_archive_mismatch");
     }
   }
 
@@ -337,7 +390,7 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
       metadata: trustedMetadata,
       createdAt: candidate.capturedAt,
       updatedAt: now,
-      summary: { source: "approved_candidate_promotion", promotionId },
+      summary: { source: "approved_candidate_promotion", promotionId, ...(upgrade ? { reason: upgrade.reason, expectedOriginal: upgrade.expectedOriginal } : {}) },
       stages: [],
       artifacts: { candidateId: candidate.id, archive: archive ?? null },
     });
@@ -348,12 +401,17 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
       phase: "final",
     });
     if (!finalAudit.approved) throw Object.assign(promotionError("final_audit_failed"), { audit: finalAudit });
+    const finalMetadata = {
+      ...trustedMetadata,
+      checklistValidation: toJsonRecord(finalAudit),
+    };
     await tx.update(captureProofCandidatePromotionsTable).set({
       status: "awaiting_readback",
-      audit: toJsonRecord(finalAudit),
+      audit: { ...toJsonRecord(finalAudit), ...(upgrade ? { reason: upgrade.reason, expectedOriginal: upgrade.expectedOriginal } : {}) },
       updatedAt: new Date(),
     }).where(eq(captureProofCandidatePromotionsTable.id, promotionId));
-    await tx.update(captureProofLogsTable).set({ status: "ok", updatedAt: new Date() }).where(eq(captureProofLogsTable.id, finalLogId));
+    await tx.update(captureProofLogsTable).set({ status: "ok", metadata: finalMetadata, updatedAt: new Date() })
+      .where(eq(captureProofLogsTable.id, finalLogId));
   }).catch(async (error) => {
     await db.insert(captureProofCandidatePromotionsTable).values({
       ...promotionSnapshot,
@@ -377,7 +435,7 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
     if (verified.sha256 !== candidate.artifactSha256 || verified.bytes !== candidate.artifactBytes) {
       throw promotionError("canonical_final_hash_readback_failed");
     }
-    await db.update(captureProofCandidatePromotionsTable).set({ status: "approved", audit: toJsonRecord(finalAudit), updatedAt: new Date() })
+    await db.update(captureProofCandidatePromotionsTable).set({ status: "approved", audit: { ...toJsonRecord(finalAudit), ...(upgrade ? { reason: upgrade.reason, expectedOriginal: upgrade.expectedOriginal } : {}) }, updatedAt: new Date() })
       .where(eq(captureProofCandidatePromotionsTable.id, promotionId));
     return { ok: true, promotionId, candidateId, finalLogId, capturedAt: candidate.capturedAt.toISOString(), receivedAt: now.toISOString(), archiveSaved: Boolean(archive), audit: finalAudit };
   } catch (error) {
