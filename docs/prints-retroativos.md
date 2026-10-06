@@ -75,7 +75,9 @@ Nos portais publicos, o modo retroativo ja foi validado em Perrengue e OMT.
 2. Preencha o campo de data/hora ao lado do botao de print.
 3. Clique em `Gerar print`.
 4. Se ja existir uma evidencia valida para aquele dia, o sistema nao sobrescreve automaticamente.
-5. Se precisar refazer um dia especifico, use `Apagar evidencia` no card daquele dia e depois gere novamente.
+5. Para refazer um dia, preserve a evidencia atual e seu registro de identidade, URL, SHA-256 e bytes. Solicite uma captura candidata para a mesma insercao, data e referencia visual, com `candidate=true`, `promote=false` e `replace=false`.
+6. Audite o candidato pela API e confira visualmente o PNG exato. Geracao concluida ou auditoria tecnica aprovada, isoladamente, nao autorizam a substituicao.
+7. Promova somente o candidato aprovado pelo fluxo persistido, com os gates de identidade, archive, hash e readback. Para um canonico historico ja aprovado fora do contrato atual, use a substituicao explicita documentada na [SPEC v4](./adops/retroactive-proof-v4/spec.md). Nao apague nem invalide o original para liberar outra captura.
 
 ### Na lista de insercoes
 1. Abra `Insercoes`.
@@ -405,7 +407,15 @@ O print precisa tentar reproduzir o que um operador veria ao passar o cursor sob
 - variacao real do ponto do video entre datas, evitando pacote inteiro parado no mesmo frame
 - metadados `playerProof.currentTime`, `playerProof.duration`, `playerProof.targetTime`, `playerProof.randomSeed`, `controlsVisible` e `progressVisible`
 
-Fluxo atual do gerador:
+### Fluxo vigente para vídeo v4
+
+O capturador não adiciona barra artificial. Ele faz seek/pausa, passa o cursor sobre o player e mede a timeline nativa do Chromium pelo UA shadow DOM. `nativeProgressAudit` verifica tempo, duração, visibilidade efetiva, limites e oclusão; `finalPngProgressAudit` compara essa mesma região do viewport com o PNG final. A API exige ambos para VIDEO v4. Atributo `controls`, frame pintado e flag `progressVisible` isolados não comprovam a barra visível. Revisar visualmente o PNG exato antes de promover. Consulte a [SPEC v4](./adops/retroactive-proof-v4/spec.md).
+
+### Registro do fluxo legado, até a release 6422
+
+O fluxo abaixo documenta a implementação anterior; não é orientação para novas capturas v4. A barra injetada causou duplicação no candidato #3064 de 01/10/2026, que ficou retido sem promoção.
+
+Fluxo legado do gerador:
 1. localiza o elemento `video` dentro do anuncio validado
 2. ativa `controls`
 3. carrega metadata do video em `mute`

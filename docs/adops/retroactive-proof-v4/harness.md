@@ -67,6 +67,22 @@ O teste SQL real `scripts/src/test-historical-evidence-inventory.integration.ts`
 
 ## Canário e liberação (root)
 
+### Vídeo nativo: regressão e gate local
+
+O candidato #3064 de 01/10/2026, `c5111b5e-e76b-42a4-9739-b4f48911e3a8`, job `1791307251205-4gge30`, permaneceu `completed`/`candidate_approved` pelo contrato da release 6422, mas foi rejeitado pelo root ao ver duas barras. PNG original do canônico preservado; esse candidato não foi promovido. A auditoria anterior aceitava `progressVisible || overlayInjected`, sem medir a timeline nativa.
+
+O teste API `scripts/src/test-native-video-progress-audit.ts` exercita a rejeição desse padrão v4, timeline/ROI válidas, barra invisível/coberta/recortada, oclusão desconhecida, frame em reprodução, tempo/duração divergentes, ROI/crop/escala alterados, ausência/falha de pixel audit e compatibilidade v2/v3/diários/GIF. Com imutabilidade e decisão de checklist, passou 66/66, zero skips. O teste de decisão importa a DB, mas não a consulta; nesse gate puro usa-se uma DATABASE_URL de teste local, sem flags de integração. Não usar URL de produção.
+
+O capturer tem fixture local H.264 real `scripts/src/test-native-video-progress-audit.mjs`: Chromium mede a timeline pelo CDP, captura o mesmo player pausado com deviceScaleFactor=2 e compõe pelo compositor real. A ROI nativa intacta passou com similaridade 1 e crop 960×48 nos critérios produtivos existentes; screenshot oculto/coberto/recortado ou ROI final alterada foram rejeitados. O resultado desse caso real também é passado diretamente ao helper API `evaluateVideoPlayerProof` pelo child Node/tsx com JSON em stdin, que o aprova e identifica a origem nativa. São 10 cenários locais, sem rede externa, DB ou API writes; comprovam a mecânica local, não o portal vivo. Configurar `ADOPS_CAPTURE_PYTHON` com Pillow e usar FFmpeg/Chromium já presentes no harness.
+
+```bash
+node --import tsx --test src/test-native-video-progress-audit.ts src/test-capture-audit-immutability.ts
+```
+
+Antes de nova captura, o helper privado `capture-candidate.mjs` exige opt-in `--supersede-visually-rejected`, rejeição wx/600 ligada ao PNG rehash, ACK/job completed candidate-only exatos, GET candidato correlacionado, GET promotions vazio e canônico original ID/URL/hash/bytes intacto. O novo namespace conserva os recibos GET e o `supersession-intent.json` com releases anterior/nova. Teste privado `outputs/adops-retroativos-20261006/test-capture-candidate-supersession.mjs`: 43 casos locais, incluindo a rejeição real, sem API writes ou alteração dos registros antigos. Sem ACK/running/unknown/visual approval/promotion request ou receipt, parar.
+
+Novo release e canário VIDEO aguardam os gates e a janela ociosa confirmada pelo root. Antes de promover: PNG real com uma única barra nativa, domínio/ícone/título/relógios/banner corretos; auditoria final e hash exatos; recibo persistido e archive; status e PNG público com hash igual. Não contabilizar uma correção por job concluído ou auditoria técnica isolada.
+
 ### Hotfix do favicon: reprodução de 06/10/2026
 
 A release main39 e o relatório canônico foram publicados e conferidos; ver os recibos privados `outputs/adops-retroativos-20261006/release-final39.json` e `report-deploy-receipt.json` no checkout operacional original. Backup custom, restauração completa e rollback da primeira troca foram comprovados; a continuação revisada reutilizou essa prova, sem novo dump/restore, e conferiu os volumes novos antes de pular upload. O prazo oficial de polling é 300 segundos, não cancelamento do exec remoto; ver o README do stack.

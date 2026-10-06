@@ -6,6 +6,8 @@ Centralizar a decisao de evidencia valida no AdOps.
 
 Nenhum print deve ser considerado `audited` apenas porque a imagem existe ou a URL responde `200`.
 
+Para VIDEO reconstruído com proveniência v4, o gate de controles exige `nativeProgressAudit` e `finalPngProgressAudit` na metadata persistida. O primeiro mede a timeline nativa Chromium, sua visibilidade efetiva, oclusão e tempo/duração; o segundo compara a ROI da barra no viewport e no PNG com moldura. `controls=true`, `progressVisible=true` ou `overlayInjected=true` isoladamente não aprovam esse contrato. API e checklist usam a mesma decisão; em falha, `video_player_proof_incomplete`/`video_controls_missing` bloqueiam. v2/v3 e diários preservam suas regras anteriores; a origem artificial legada não é descrita como prova nativa. Detalhes na [SPEC v4](./retroactive-proof-v4/spec.md).
+
 O checklist tambem e o gate obrigatorio antes de baixar o `arquivoUrl`, montar a
 pasta do cliente ou criar `telegram-send-evidence`. Consulte o fluxo completo em
 [`evidence-print-delivery-api.md`](./evidence-print-delivery-api.md).
