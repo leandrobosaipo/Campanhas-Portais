@@ -21,8 +21,8 @@ test('mantém reconstrução e data real sem exigir aceite externo', () => {
 });
 
 test("gera uma casca pequena sem registros incorporados", () => {
-  // Mobile competence/history and exact-period download scope add a bounded inline runtime.
-  assert.ok(html.length < 97_000, `HTML inicial inesperadamente grande: ${html.length}`);
+  // Includes the bounded candidate review and separate visual/real timestamps runtime.
+  assert.ok(html.length < 100_000, `HTML inicial inesperadamente grande: ${html.length}`);
   assert.doesNotMatch(html, /"insertions"\s*:\s*\[/);
   assert.match(html, /\/api\/reports\/evidences\/monthly/);
 });
@@ -34,8 +34,10 @@ test("abre no mes corrente de Cuiaba e nao persiste mes antigo", () => {
 });
 
 test("usa validacao de mes compativel com o publicador do sites-index", () => {
-  assert.match(html, /\[0-9\]\{4\}/);
-  assert.doesNotMatch(html, /\\d\{4\}/);
+  const monthValidator = html.match(/const validMonth =[^\n]+/)?.[0];
+  assert.ok(monthValidator);
+  assert.match(monthValidator, /\[0-9\]\{4\}/);
+  assert.doesNotMatch(monthValidator, /\\d\{4\}/);
 });
 
 test("preserva filtros, URL, modais, acessibilidade e paginação", () => {
@@ -162,7 +164,7 @@ test("consulta dados protegidos pela sessao Google sem guardar token no HTML", (
 
 test("oferece captura e exclusao assincronas com progresso e contagem regressiva", () => {
   for (const marker of [
-    "Gerar print desta data",
+    "Gerar captura para revisão",
     "Excluir evidência",
     "evidenceJobProgress",
     "role=\"progressbar\"",

@@ -12,8 +12,114 @@ import {
   excludeSupersededMonthlyInsertions,
   monthlyReportInsertionMatches,
   monthlyEvidenceProvenance,
+  resolveMonthlyRequestedCaptureAt,
   selectMonthlyEvidenceProof,
 } from "../../artifacts/api-server/src/lib/monthly-evidence-report-query.ts";
+import { resolvePromotedCaptureProofMetadata } from "../../artifacts/api-server/src/lib/promoted-capture-proof-metadata.mjs";
+
+test("retorna requestedCaptureAt original só de proof correlacionado, trusted e auditado", () => {
+  const requestedCaptureAt = "2026-10-01T09:41:00-04:00";
+  const metadata = { requestedCaptureAt };
+  const trusted = { correlated: true, trustedCapture: true, technicalStatus: "audited", technicalAccepted: true } as const;
+  assert.equal(resolveMonthlyRequestedCaptureAt(metadata, trusted), requestedCaptureAt);
+  assert.equal(resolveMonthlyRequestedCaptureAt({ requestedCaptureAt: "2026-10-01T20:30" }, trusted), "2026-10-01T20:30");
+  assert.equal(resolveMonthlyRequestedCaptureAt(metadata, { ...trusted, correlated: false }), null);
+  assert.equal(resolveMonthlyRequestedCaptureAt(metadata, { ...trusted, trustedCapture: false }), null);
+  assert.equal(resolveMonthlyRequestedCaptureAt(metadata, { ...trusted, technicalAccepted: false }), null);
+  assert.equal(resolveMonthlyRequestedCaptureAt(metadata, { ...trusted, technicalStatus: "audited_best_effort" }), null);
+  assert.equal(resolveMonthlyRequestedCaptureAt({ requestedCaptureAt: "2026-02-30T09:41:00Z" }, trusted), null);
+});
+
+function promotedProofFixture() {
+  const url = "https://example.test/a.png?v=final";
+  const finalAudit = {
+    approved: true,
+    preliminary: false,
+    insertionId: 42,
+    date: "2026-10-01",
+    blockingIssues: [],
+    audit: { ok: true },
+  };
+  const candidate = {
+    id: "candidate-1", insertionId: 42, targetDate: "2026-10-01", sourceJobId: "job-1",
+    artifactUrl: url, artifactSha256: "a".repeat(64), artifactBytes: 4096,
+    capturedAt: new Date("2026-10-06T09:41:51.403Z"),
+    metadata: {
+      insertionId: 42, targetDate: "2026-10-01", sourceJobId: "job-1", captureClass: "historical_recovery",
+      uploadedUrl: url, capturedAt: "2026-10-06T09:41:51.403Z", auditPolicyVersion: "audit-policy-v1",
+      preliminary: true,
+      reconstruction: { provenanceVersion: 4, reconstructedAt: "2026-10-06T09:41:51.403Z", historicalDisplayConfirmed: false },
+      checklistValidation: { approved: true, preliminary: true, blockingIssues: [], audit: { ok: false } },
+      retroContentProof: { status: "approved", futureCount: 0, manifestHash: "verified-manifest-hash" },
+    },
+  };
+  const promotion = {
+    id: "promotion-1", candidateId: candidate.id, status: "approved", finalLogId: "log-1",
+    insertionId: 42, targetDate: "2026-10-01", sourceJobId: "job-1", candidateUrl: url,
+    candidateSha256: candidate.artifactSha256, candidateBytes: candidate.artifactBytes, audit: finalAudit,
+  };
+  const finalLog = {
+    id: "log-1", insertionId: 42, targetDate: "2026-10-01", status: "ok", jobId: "job-1", runnerJobId: "job-1",
+    uploadedUrl: url, createdAt: candidate.capturedAt, artifacts: { candidateId: candidate.id }, metadata: candidate.metadata,
+  };
+  return { canonicalEvidenceUrl: url, candidate, promotion, finalLog, finalAudit };
+}
+
+test("resolved promoted metadata prefers correlated final audit over preliminary log metadata", () => {
+  const input = promotedProofFixture();
+  const metadata = resolvePromotedCaptureProofMetadata(input);
+  assert.ok(metadata);
+  assert.equal((metadata.checklistValidation as { preliminary?: boolean }).preliminary, false);
+  assert.equal((metadata.checklistValidation as { audit?: { ok?: boolean } }).audit?.ok, true);
+  const result = monthlyEvidenceProvenance(input.canonicalEvidenceUrl, { uploadedUrl: input.canonicalEvidenceUrl, metadata }, true, "audited");
+  assert.equal(result.provenanceStatus, "reconstruction_recorded");
+  assert.equal(result.technicalAccepted, true);
+});
+
+test("unapproved, legacy-without-receipt, preliminary-only and identity-mismatched promotion stay untrusted", () => {
+  const input = promotedProofFixture();
+  assert.equal(monthlyEvidenceProvenance(input.canonicalEvidenceUrl, {
+    uploadedUrl: input.canonicalEvidenceUrl,
+    metadata: input.candidate.metadata,
+  }, true, "audited").provenanceStatus, "unknown");
+  assert.equal(monthlyEvidenceProvenance(input.canonicalEvidenceUrl, {
+    uploadedUrl: input.canonicalEvidenceUrl,
+    metadata: input.candidate.metadata,
+  }, true, "audited").provenanceStatus, "unknown");
+  assert.equal(resolvePromotedCaptureProofMetadata({ ...input, promotion: null }), null);
+  assert.equal(resolvePromotedCaptureProofMetadata({ ...input, promotion: { ...input.promotion, status: "blocked" } }), null);
+  assert.equal(resolvePromotedCaptureProofMetadata({
+    ...input,
+    promotion: { ...input.promotion, audit: null },
+  }), null);
+  for (const changed of [
+    { candidate: { ...input.candidate, insertionId: 43 } },
+    { promotion: { ...input.promotion, insertionId: 43 } },
+    { promotion: { ...input.promotion, targetDate: "2026-10-02" } },
+    { promotion: { ...input.promotion, finalLogId: "log-other" } },
+    { promotion: { ...input.promotion, candidateId: "candidate-other" } },
+    { promotion: { ...input.promotion, audit: { ...input.finalAudit, insertionId: 43 } } },
+    { promotion: { ...input.promotion, audit: { ...input.finalAudit, date: "2026-10-02" } } },
+    { finalLog: { ...input.finalLog, targetDate: "2026-10-02" } },
+    { finalLog: { ...input.finalLog, insertionId: 43 } },
+    { finalLog: { ...input.finalLog, uploadedUrl: "https://example.test/other.png" } },
+    { finalLog: { ...input.finalLog, jobId: "job-other" } },
+    { candidate: { ...input.candidate, sourceJobId: "job-other" } },
+    { candidate: { ...input.candidate, artifactSha256: "b".repeat(64) } },
+    { candidate: { ...input.candidate, artifactBytes: 4097 } },
+  ]) assert.equal(resolvePromotedCaptureProofMetadata({ ...input, ...changed }), null);
+});
+
+test("awaiting_readback still accepts a final checklist snapshot from the exact canonical runner log", () => {
+  const input = promotedProofFixture();
+  const finalLogMetadata = { ...input.candidate.metadata, checklistValidation: input.finalAudit };
+  const result = monthlyEvidenceProvenance(input.canonicalEvidenceUrl, {
+    uploadedUrl: input.canonicalEvidenceUrl,
+    metadata: finalLogMetadata,
+  }, true, "audited");
+  assert.equal(result.provenanceStatus, "reconstruction_recorded");
+  assert.equal(result.technicalAccepted, true);
+});
 
 test('proveniência histórica correlacionada é aceita tecnicamente e mantém o marcador histórico', () => {
   const proof = { uploadedUrl: 'https://example.test/a.png', metadata: {

@@ -1,67 +1,30 @@
-# Windows 11 + Chrome Light Frame Kit
+# Moldura reconstruída de navegador e desktop
 
-Este kit é a fonte visual oficial da moldura dos prints AdOps.
+Este diretório contém um **template gráfico reconstruído** para enquadrar evidências AdOps. Os PNGs são desenhos gerados pelo projeto, não capturas reais do Chrome ou do Windows e não comprovam versão, sistema operacional ou navegador nativos.
 
-## Arquivos obrigatórios
+## Kit atual
 
-- `chrome-top.png`: captura real do topo do Chrome claro, sem conteúdo do site.
-- `taskbar.png`: captura real da barra de tarefas do Windows 11.
-- `layout.json`: coordenadas fixas dos campos dinâmicos.
-- `icons/`: ícones reais da taskbar e bandeja (`Start`, `Search`, `File Explorer`, `Edge`, `Chrome`, `Settings`, `network`, `volume`, `caret`) com licença explícita.
+- `layout.json`: versão `windows11-chrome-light-similar-v5`, tema `windows11_chrome_reconstructed_template`, dimensões e coordenadas dinâmicas.
+- `chrome-top[-LARGURA].png` e `taskbar[-LARGURA].png`: camadas raster preparadas offline nas larguras 1280, 1660 e 3320; o runner seleciona uma fonte com resolução suficiente e compõe com Pillow.
+- `icons/`: SVGs licenciados de Windows, Search, Edge, Chrome, Site Controls (`sliders-horizontal`) e extensões (`puzzle`). O v5 também desenha estrela, + de nova aba e menu com formas próprias.
+- `../fonts/selawik.ttf`: fonte Selawik sob SIL Open Font License 1.1; licença em `../fonts/LICENSE-Selawik.txt`.
 
-## Fonte
+O topo mostra uma única aba cujo título e URL vêm do portal. O favicon vem de um `link[rel*=icon]` observado na página pública. A busca usa `credentials: omit`, rejeita redirecionamentos, expira em 3 segundos e limita corpo a 1 MiB, URI `data:` a 1,4 MB e imagem a 512×512 pixels. Só aceita a mesma origem ou o host exato `cdn.perrenguematogrosso.com` quando o domínio configurado e observado é `perrenguematogrosso.com`; outros hosts externos são recusados. Se não for possível verificar a imagem, o compositor desenha um glifo genérico e registra `tabIconFallback=true`; o gate da auditoria final continua bloqueando esse caso. A barra inferior não inventa clima nem perfil. O relógio vem do instante auditado e aparece em duas linhas: `HH:mm` e `dd/MM/yyyy`, alinhado à direita.
 
-O compositor usa Selawik como padrão. Selawik é uma substituta open source da Segoe UI, licenciada em OFL 1.1.
+## Compatibilidade e fonte
 
-Para usar Segoe real de uma instalação Windows licenciada, defina:
+O identificador `windows11-chrome-light-similar-v4` permanece aceito para auditorias já gravadas. Ele também designa um template semelhante/reconstruído; não certifica captura nativa. Novas evidências usam v5 e o tema `windows11_chrome_reconstructed_template`.
 
-```bash
-export ADOPS_WINDOWS_FRAME_FONT="/caminho/para/Segoe UI.ttf"
-```
+Selawik é a fonte licenciada incluída. Não redistribua fontes proprietárias obtidas de uma instalação Windows. A página [Segoe UI da Microsoft](https://learn.microsoft.com/en-us/typography/font-list/segoe-ui) informa a disponibilidade da família e a [FAQ de fontes da Microsoft](https://learn.microsoft.com/en-us/typography/fonts/font-faq) explica as condições de redistribuição; este projeto não inclui nem afirma usar Segoe UI.
 
-Se `ADOPS_WINDOWS_FRAME_FONT` for informado e a fonte não existir, a captura falha com `windows_frame_font_missing`.
+## Regenerar PNGs offline
 
-## Como atualizar o template
-
-1. Capture uma tela real do Windows 11 com Chrome claro na resolução base.
-2. Recorte o topo do Chrome em `chrome-top.png`.
-3. Recorte a barra de tarefas em `taskbar.png`.
-4. Atualize `layout.json` com:
-   - largura de referência;
-   - altura do topo do Chrome;
-   - altura da barra de tarefas;
-   - retângulos de URL e data/hora.
-5. Rode captura local sem upload em pelo menos 3 cenários:
-   - home/topo;
-   - slot com rolagem;
-   - página interna.
-
-Atalho para gerar os dois recortes a partir de uma captura real:
+Use o Python com Pillow configurado no ambiente de build:
 
 ```bash
-pnpm --dir scripts run frame:build-windows-template -- \
-  --source "/caminho/para/captura-real-windows-chrome.png" \
-  --chromeTopHeight 102 \
-  --taskbarHeight 42 \
-  --overlayIcons true \
-  --iconsDir "/caminho/para/icons"
+ADOPS_CAPTURE_PYTHON=/caminho/para/python3 node scripts/src/build-windows-frame-kit.mjs
 ```
 
-Atalho para regenerar o template similar claro, sem texto/ícone fixo na aba:
+O comando gera as três resoluções com Pillow/Selawik e rasteriza os SVGs licenciados via `rsvg-convert`, disponível neste ambiente de build. Esse utilitário é necessário apenas offline para gerar assets; não é uma dependência do runner nem é chamado pelo compositor. Faça uma prévia sintética com `node scripts/src/test-windows-frame-v5.mjs`; os arquivos gerados ficam em `outputs/adops-retroativos-20261006/frame-v5-previews/` e não são capturas de navegador.
 
-```bash
-pnpm --dir scripts run frame:build-windows-template -- \
-  --generateSimilar true \
-  --width 1280 \
-  --chromeTopHeight 102 \
-  --taskbarHeight 42 \
-  --overlayIcons true
-```
-
-## Regra operacional
-
-Este kit aceita template similar quando não houver captura real completa.
-
-Se `chrome-top.png`, `taskbar.png` ou a fonte configurada estiverem ausentes, o job deve falhar antes de publicar qualquer evidência.
-
-Proibido usar placeholders de cor para ícones de app na taskbar.
+Ausência de PNG, layout ou fonte deve interromper a composição antes da publicação de evidência.

@@ -7,8 +7,8 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
-import { and, desc, eq, sql, inArray, gte, lte } from "drizzle-orm";
-import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable } from "@workspace/db";
+import { and, asc, desc, eq, gt, sql, inArray, gte, lte, or } from "drizzle-orm";
+import { db, pool, insertionsTable, campaignsTable, sitesTable, clientsTable, agenciesTable, evidencesTable, printJobsTable, operationalDocumentStatesTable, captureProofLogsTable, captureProofCandidatePromotionsTable, captureProofCandidatesTable } from "@workspace/db";
 import {
   CreateInsertionBody,
   GetInsertionParams,
@@ -99,11 +99,18 @@ import {
   monthlyReportInsertionMatches,
   pageMonthlyInsertions,
   publicMonthlyInsertion,
+  resolveMonthlyRequestedCaptureAt,
   selectCanonicalMonthlyInsertions,
   excludeSupersededMonthlyInsertions,
   monthlyEvidenceProvenance,
   selectMonthlyEvidenceProof,
 } from "../lib/monthly-evidence-report-query";
+import { resolvePromotedCaptureProofMetadata } from "../lib/promoted-capture-proof-metadata.mjs";
+import {
+  classifyHistoricalInventorySource,
+  pageHistoricalInventoryRows,
+  parseHistoricalInventoryPagination,
+} from "../lib/historical-evidence-inventory.mjs";
 
 const router: IRouter = Router();
 
@@ -1747,6 +1754,18 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
     const pageProofRows = pageInsertionIds.length
       ? await db.select().from(captureProofLogsTable).where(inArray(captureProofLogsTable.insertionId, pageInsertionIds))
       : [];
+    const pagePromotionRows = pageInsertionIds.length
+      ? await db.select().from(captureProofCandidatePromotionsTable).where(and(
+          inArray(captureProofCandidatePromotionsTable.insertionId, pageInsertionIds),
+          eq(captureProofCandidatePromotionsTable.status, "approved"),
+        ))
+      : [];
+    const pageCandidateIds = Array.from(new Set(pagePromotionRows.map((row) => row.candidateId)));
+    const pageCandidateRows = pageCandidateIds.length
+      ? await db.select().from(captureProofCandidatesTable).where(inArray(captureProofCandidatesTable.id, pageCandidateIds))
+      : [];
+    const candidateById = new Map(pageCandidateRows.map((row) => [row.id, row]));
+    const proofLogById = new Map(pageProofRows.map((row) => [row.id, row]));
     const evidenceRowsByInsertion = new Map<number, Array<typeof evidencesTable.$inferSelect>>();
     for (const row of pageEvidenceRows) {
       const rows = evidenceRowsByInsertion.get(row.insercaoId) ?? [];
@@ -1770,10 +1789,28 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           : periodStart && periodEnd
             ? eachIsoDay(periodStart, periodEnd).filter((date) => date >= bounds.start && date <= bounds.evidenceEnd)
             : [];
-        const evidenceRows = evidenceRowsByInsertion.get(item.id) ?? [];
+        const evidenceRows = selectCanonicalEvidencePerDate(
+          evidenceRowsByInsertion.get(item.id) ?? [],
+          (row) => getEvidenceDateKey(row.titulo),
+        );
         const evidenceDays = evidenceDates.map((date) => {
           const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === date) ?? null;
-          const proof = selectMonthlyEvidenceProof(evidence?.arquivoUrl, proofByInsertionDate.get(`${item.id}:${date}`) ?? []);
+          const rawProof = selectMonthlyEvidenceProof(evidence?.arquivoUrl, proofByInsertionDate.get(`${item.id}:${date}`) ?? []);
+          let proof = rawProof;
+          for (const promotion of pagePromotionRows) {
+            if (promotion.insertionId !== item.id || promotion.targetDate !== date || promotion.status !== "approved") continue;
+            const finalLog = promotion.finalLogId ? proofLogById.get(promotion.finalLogId) : null;
+            const metadata = resolvePromotedCaptureProofMetadata({
+              promotion,
+              candidate: candidateById.get(promotion.candidateId),
+              finalLog,
+              canonicalEvidenceUrl: evidence?.arquivoUrl ?? null,
+            });
+            if (metadata && finalLog) {
+              proof = { ...finalLog, metadata };
+              break;
+            }
+          }
           const validUrl = isValidHttpUrl(evidence?.arquivoUrl);
           const proofFailed = proof && !["ok", "completed", "audited"].includes(proof.status);
           const status = !evidence && date === today && currentHour < 18
@@ -1807,6 +1844,12 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
             technicalStatus: status,
             ...provenance,
             capturedAt: correlation?.capturedAt ?? null,
+            requestedCaptureAt: resolveMonthlyRequestedCaptureAt(proof?.metadata, {
+              correlated: Boolean(correlation),
+              trustedCapture: Boolean(trustedCapture),
+              technicalStatus: status,
+              technicalAccepted: provenance.technicalAccepted,
+            }),
             evidenceId: evidence?.id ?? null,
             url: evidence?.arquivoUrl ?? null,
             checklistApproved: status === "audited",
@@ -2468,7 +2511,311 @@ export async function getCaptureProofAuditForDate(targetDate: string, filters: {
   };
 }
 
+export async function loadHistoricalEvidenceInventory(pagination: { limit: number; cursor: number | null }) {
+  const evidenceDate = sql<string | null>`substring(${evidencesTable.titulo} from '(?i)Print[[:space:]]+([0-9]{4}-[0-9]{2}-[0-9]{2})')`;
+  const canonicalEvidence = db.$with("historical_inventory_canonical_evidence").as(
+    db.select({
+      evidenceId: sql<number>`${evidencesTable.id}`.as("evidence_id"),
+      insertionId: sql<number>`${insertionsTable.id}`.as("insertion_id"),
+      targetDate: evidenceDate.as("target_date"),
+      evidenceUrl: sql<string | null>`${evidencesTable.arquivoUrl}`.as("evidence_url"),
+      evidenceCreatedAt: sql<Date>`${evidencesTable.criadoEm}`.as("evidence_created_at"),
+      campaignId: sql<number>`${campaignsTable.id}`.as("campaign_id"),
+      campaignName: sql<string>`${campaignsTable.nome}`.as("campaign_name"),
+      piCodigo: sql<string | null>`${campaignsTable.piCodigo}`.as("pi_codigo"),
+      competencia: sql<string | null>`${campaignsTable.competencia}`.as("competencia"),
+      siteSigla: sql<string | null>`${sitesTable.sigla}`.as("site_sigla"),
+      localFormato: sql<string>`${insertionsTable.localFormato}`.as("local_formato"),
+      localFormatoNormalizado: sql<string | null>`${insertionsTable.localFormatoNormalizado}`.as("local_formato_normalizado"),
+      periodoInicio: sql<string>`${insertionsTable.periodoInicio}`.as("periodo_inicio"),
+      periodoFim: sql<string>`${insertionsTable.periodoFim}`.as("periodo_fim"),
+      insertionStatus: sql<string>`${insertionsTable.statusNormalizado}`.as("insertion_status"),
+      canonicalRank: sql<number>`row_number() over (partition by ${evidencesTable.insercaoId}, ${evidenceDate}, case when ${evidenceDate} is null then ${evidencesTable.id} else 0 end order by ${evidencesTable.criadoEm} desc, ${evidencesTable.id} desc)`.as("canonical_rank"),
+    }).from(evidencesTable)
+      .innerJoin(insertionsTable, eq(insertionsTable.id, evidencesTable.insercaoId))
+      .innerJoin(campaignsTable, eq(campaignsTable.id, insertionsTable.campanhaId))
+      .leftJoin(sitesTable, eq(sitesTable.id, insertionsTable.siteId))
+      .where(eq(evidencesTable.tipo, "print")),
+  );
+  const canonicalConditions = [eq(canonicalEvidence.canonicalRank, 1)];
+  if (pagination.cursor !== null) canonicalConditions.push(gt(canonicalEvidence.evidenceId, pagination.cursor));
+  const queryRows = await db.with(canonicalEvidence).select().from(canonicalEvidence)
+    .where(and(...canonicalConditions))
+    .orderBy(asc(canonicalEvidence.evidenceId))
+    .limit(pagination.limit + 1);
+  const page = pageHistoricalInventoryRows(queryRows, pagination);
+  const pageRows = page.rows;
+  if (!pageRows.length) return { items: [], nextCursor: page.nextCursor };
+
+  const pairs = Array.from(new Map(pageRows.filter((row) => row.targetDate !== null).map((row) => [`${row.insertionId}:${row.targetDate}`, row])).values());
+  const pairCondition = pairs.length ? or(...pairs.map((row) => and(
+    eq(captureProofLogsTable.insertionId, row.insertionId),
+    eq(captureProofLogsTable.targetDate, row.targetDate!),
+  ))) : undefined;
+  const recentLogs = db.$with("historical_inventory_recent_logs").as(
+    db.select({
+      id: captureProofLogsTable.id,
+      insertionId: captureProofLogsTable.insertionId,
+      targetDate: captureProofLogsTable.targetDate,
+      jobId: captureProofLogsTable.jobId,
+      runnerJobId: captureProofLogsTable.runnerJobId,
+      status: captureProofLogsTable.status,
+      uploadedUrl: captureProofLogsTable.uploadedUrl,
+      createdAt: captureProofLogsTable.createdAt,
+      metadataCaptureClass: sql<string | null>`${captureProofLogsTable.metadata}->>'captureClass'`.as("metadata_capture_class"),
+      metadataTargetDate: sql<string | null>`${captureProofLogsTable.metadata}->>'targetDate'`.as("metadata_target_date"),
+      metadataSourceJobId: sql<string | null>`${captureProofLogsTable.metadata}->>'sourceJobId'`.as("metadata_source_job_id"),
+      metadataCapturedAt: sql<string | null>`${captureProofLogsTable.metadata}->>'capturedAt'`.as("metadata_captured_at"),
+      metadataAuditPolicyVersion: sql<string | null>`${captureProofLogsTable.metadata}->>'auditPolicyVersion'`.as("metadata_audit_policy_version"),
+      metadataRequestedCaptureAt: sql<string | null>`${captureProofLogsTable.metadata}->>'requestedCaptureAt'`.as("metadata_requested_capture_at"),
+      metadataFrameTemplateVersion: sql<string | null>`${captureProofLogsTable.metadata}->>'frameTemplateVersion'`.as("metadata_frame_template_version"),
+      metadataProvenanceVersion: sql<string | null>`${captureProofLogsTable.metadata}->'reconstruction'->>'provenanceVersion'`.as("metadata_provenance_version"),
+      metadataReconstructedAt: sql<string | null>`${captureProofLogsTable.metadata}->'reconstruction'->>'reconstructedAt'`.as("metadata_reconstructed_at"),
+      metadataHistoricalDisplayConfirmed: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'reconstruction'->'historicalDisplayConfirmed') = 'boolean' then (${captureProofLogsTable.metadata}->'reconstruction'->>'historicalDisplayConfirmed')::boolean else null end`.as("metadata_historical_display_confirmed"),
+      metadataPreliminary: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'preliminary') = 'boolean' then (${captureProofLogsTable.metadata}->>'preliminary')::boolean else null end`.as("metadata_preliminary"),
+      checklistApproved: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'checklistValidation'->'approved') = 'boolean' then (${captureProofLogsTable.metadata}->'checklistValidation'->>'approved')::boolean else null end`.as("checklist_approved"),
+      checklistPreliminary: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'checklistValidation'->'preliminary') = 'boolean' then (${captureProofLogsTable.metadata}->'checklistValidation'->>'preliminary')::boolean else null end`.as("checklist_preliminary"),
+      checklistAuditOk: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'checklistValidation'->'audit'->'ok') = 'boolean' then (${captureProofLogsTable.metadata}->'checklistValidation'->'audit'->>'ok')::boolean else null end`.as("checklist_audit_ok"),
+      checklistHasBlockingIssues: sql<boolean | null>`case when jsonb_typeof(${captureProofLogsTable.metadata}->'checklistValidation'->'blockingIssues') = 'array' then jsonb_array_length(${captureProofLogsTable.metadata}->'checklistValidation'->'blockingIssues') > 0 else null end`.as("checklist_has_blocking_issues"),
+      pairRank: sql<number>`row_number() over (partition by ${captureProofLogsTable.insertionId}, ${captureProofLogsTable.targetDate} order by ${captureProofLogsTable.createdAt} desc, ${captureProofLogsTable.id} desc)`.as("pair_rank"),
+    }).from(captureProofLogsTable)
+      .where(and(pairCondition, inArray(captureProofLogsTable.status, ["ok", "pending_audit"]))),
+  );
+  const logs = pairs.length ? await db.with(recentLogs).select().from(recentLogs)
+    .where(sql`${recentLogs.pairRank} <= 50`)
+    .orderBy(desc(recentLogs.createdAt), desc(recentLogs.id)) : [];
+
+  const promotedRows = pairs.length ? await db.select({
+    id: captureProofCandidatePromotionsTable.id,
+    candidateId: captureProofCandidatePromotionsTable.candidateId,
+    insertionId: captureProofCandidatePromotionsTable.insertionId,
+    targetDate: captureProofCandidatePromotionsTable.targetDate,
+    sourceJobId: captureProofCandidatePromotionsTable.sourceJobId,
+    candidateUrl: captureProofCandidatePromotionsTable.candidateUrl,
+    candidateSha256: captureProofCandidatePromotionsTable.candidateSha256,
+    candidateBytes: captureProofCandidatePromotionsTable.candidateBytes,
+    finalLogId: captureProofCandidatePromotionsTable.finalLogId,
+    promotionStatus: captureProofCandidatePromotionsTable.status,
+    audit: captureProofCandidatePromotionsTable.audit,
+    candidateCapturedAt: captureProofCandidatesTable.capturedAt,
+    candidateArtifactUrl: captureProofCandidatesTable.artifactUrl,
+    candidateArtifactSha256: captureProofCandidatesTable.artifactSha256,
+    candidateArtifactBytes: captureProofCandidatesTable.artifactBytes,
+    candidateSourceJobId: captureProofCandidatesTable.sourceJobId,
+    candidateProvenanceVersion: sql<string | null>`${captureProofCandidatesTable.metadata}->'reconstruction'->>'provenanceVersion'`.as("candidate_provenance_version"),
+    candidateReconstructedAt: sql<string | null>`${captureProofCandidatesTable.metadata}->'reconstruction'->>'reconstructedAt'`.as("candidate_reconstructed_at"),
+    candidateHistoricalDisplayConfirmed: sql<boolean | null>`case when jsonb_typeof(${captureProofCandidatesTable.metadata}->'reconstruction'->'historicalDisplayConfirmed') = 'boolean' then (${captureProofCandidatesTable.metadata}->'reconstruction'->>'historicalDisplayConfirmed')::boolean else null end`.as("candidate_historical_display_confirmed"),
+    candidateCaptureClass: sql<string | null>`${captureProofCandidatesTable.metadata}->>'captureClass'`.as("candidate_capture_class"),
+    candidateAuditPolicyVersion: sql<string | null>`${captureProofCandidatesTable.metadata}->>'auditPolicyVersion'`.as("candidate_audit_policy_version"),
+    candidateRequestedCaptureAt: sql<string | null>`${captureProofCandidatesTable.metadata}->>'requestedCaptureAt'`.as("candidate_requested_capture_at"),
+    candidateMetadataCapturedAt: sql<string | null>`${captureProofCandidatesTable.metadata}->>'capturedAt'`.as("candidate_metadata_captured_at"),
+    candidateMetadataInsertionId: sql<string | null>`${captureProofCandidatesTable.metadata}->>'insertionId'`.as("candidate_metadata_insertion_id"),
+    candidateMetadataTargetDate: sql<string | null>`${captureProofCandidatesTable.metadata}->>'targetDate'`.as("candidate_metadata_target_date"),
+    candidateMetadataSourceJobId: sql<string | null>`${captureProofCandidatesTable.metadata}->>'sourceJobId'`.as("candidate_metadata_source_job_id"),
+    candidateMetadataEvidenceUrl: sql<string | null>`${captureProofCandidatesTable.metadata}->>'evidenceUrl'`.as("candidate_metadata_evidence_url"),
+    candidateMetadataUploadedUrl: sql<string | null>`${captureProofCandidatesTable.metadata}->>'uploadedUrl'`.as("candidate_metadata_uploaded_url"),
+    candidateFrameTemplateVersion: sql<string | null>`${captureProofCandidatesTable.metadata}->>'frameTemplateVersion'`.as("candidate_frame_template_version"),
+    finalLogInsertionId: captureProofLogsTable.insertionId,
+    finalLogTargetDate: captureProofLogsTable.targetDate,
+    finalLogJobId: captureProofLogsTable.jobId,
+    finalLogRunnerJobId: captureProofLogsTable.runnerJobId,
+    finalLogStatus: captureProofLogsTable.status,
+    finalLogUploadedUrl: captureProofLogsTable.uploadedUrl,
+    finalLogCreatedAt: captureProofLogsTable.createdAt,
+    finalLogCandidateId: sql<string | null>`${captureProofLogsTable.artifacts}->>'candidateId'`.as("final_log_candidate_id"),
+  }).from(captureProofCandidatePromotionsTable)
+    .innerJoin(captureProofCandidatesTable, eq(captureProofCandidatesTable.id, captureProofCandidatePromotionsTable.candidateId))
+    .innerJoin(captureProofLogsTable, eq(captureProofLogsTable.id, captureProofCandidatePromotionsTable.finalLogId))
+    .where(and(
+      eq(captureProofCandidatePromotionsTable.status, "approved"),
+      or(...pairs.map((row) => and(
+        eq(captureProofCandidatePromotionsTable.insertionId, row.insertionId),
+        eq(captureProofCandidatePromotionsTable.targetDate, row.targetDate!),
+      ))),
+    )) : [];
+
+  const itemByPair = new Map<string, Record<string, unknown>>();
+  for (const row of pageRows) {
+    const key = row.targetDate === null ? `undated:${row.evidenceId}` : `${row.insertionId}:${row.targetDate}`;
+    if (row.targetDate === null) {
+      itemByPair.set(key, {
+        evidenceId: row.evidenceId, insertionId: row.insertionId, campaignId: row.campaignId,
+        campaignName: row.campaignName, piCodigo: row.piCodigo, competencia: row.competencia,
+        siteSigla: row.siteSigla, localFormato: row.localFormato,
+        localFormatoNormalizado: row.localFormatoNormalizado, periodoInicio: row.periodoInicio,
+        periodoFim: row.periodoFim, targetDate: null, url: row.evidenceUrl, origin: "unknown",
+        status: "unknown", captureClass: null, provenanceVersion: null, frameTemplateVersion: null,
+        capturedAt: null, requestedCaptureAt: null, preliminary: null, sourceLogStatus: null,
+      });
+      continue;
+    }
+    const pairLogs = logs.filter((log) => log.insertionId === row.insertionId && log.targetDate === row.targetDate);
+    let proof: Record<string, any> | null = null;
+    for (const promotion of promotedRows) {
+      if (promotion.insertionId !== row.insertionId || promotion.targetDate !== row.targetDate) continue;
+      const candidate = {
+        id: promotion.candidateId,
+        insertionId: row.insertionId,
+        targetDate: row.targetDate,
+        sourceJobId: promotion.candidateSourceJobId,
+        artifactUrl: promotion.candidateArtifactUrl,
+        artifactSha256: promotion.candidateArtifactSha256,
+        artifactBytes: promotion.candidateArtifactBytes,
+        capturedAt: promotion.candidateCapturedAt,
+        metadata: {
+          insertionId: Number(promotion.candidateMetadataInsertionId),
+          targetDate: promotion.candidateMetadataTargetDate,
+          sourceJobId: promotion.candidateMetadataSourceJobId,
+          capturedAt: promotion.candidateMetadataCapturedAt,
+          auditPolicyVersion: promotion.candidateAuditPolicyVersion,
+          uploadedUrl: promotion.candidateMetadataUploadedUrl,
+          evidenceUrl: promotion.candidateMetadataEvidenceUrl,
+          captureClass: promotion.candidateCaptureClass,
+          requestedCaptureAt: promotion.candidateRequestedCaptureAt,
+          frameTemplateVersion: promotion.candidateFrameTemplateVersion,
+          reconstruction: {
+            provenanceVersion: Number(promotion.candidateProvenanceVersion),
+            reconstructedAt: promotion.candidateReconstructedAt,
+            historicalDisplayConfirmed: promotion.candidateHistoricalDisplayConfirmed,
+          },
+        },
+      };
+      const finalLog = {
+        id: promotion.finalLogId,
+        insertionId: promotion.finalLogInsertionId,
+        targetDate: promotion.finalLogTargetDate,
+        jobId: promotion.finalLogJobId,
+        runnerJobId: promotion.finalLogRunnerJobId,
+        uploadedUrl: promotion.finalLogUploadedUrl,
+        status: promotion.finalLogStatus,
+        createdAt: promotion.finalLogCreatedAt,
+        artifacts: { candidateId: promotion.finalLogCandidateId },
+      };
+      const resolved = resolvePromotedCaptureProofMetadata({
+        promotion: { ...promotion, status: promotion.promotionStatus }, candidate, finalLog, canonicalEvidenceUrl: row.evidenceUrl,
+      });
+      if (!resolved) continue;
+      const correlation = correlateCaptureLogProvenance({
+        targetDate: finalLog.targetDate,
+        jobId: finalLog.jobId,
+        runnerJobId: finalLog.runnerJobId,
+        createdAt: finalLog.createdAt,
+        uploadedUrl: finalLog.uploadedUrl,
+        status: finalLog.status,
+        metadata: resolved,
+        evidenceUrl: row.evidenceUrl,
+      });
+      if (correlation) {
+        const resolvedChecklist = (resolved as Record<string, any>).checklistValidation;
+        proof = {
+          metadata: { ...resolved, preliminary: resolvedChecklist?.preliminary === true },
+          correlation,
+          status: finalLog.status,
+          frameTemplateVersion: promotion.candidateFrameTemplateVersion,
+        };
+        break;
+      }
+    }
+    if (!proof) {
+      const log = pairLogs.find((item) => item.uploadedUrl === row.evidenceUrl);
+      if (log) {
+        const metadata: Record<string, any> = {
+          captureClass: log.metadataCaptureClass,
+          targetDate: log.metadataTargetDate,
+          sourceJobId: log.metadataSourceJobId,
+          capturedAt: log.metadataCapturedAt,
+          auditPolicyVersion: log.metadataAuditPolicyVersion,
+          requestedCaptureAt: log.metadataRequestedCaptureAt,
+          frameTemplateVersion: log.metadataFrameTemplateVersion,
+          preliminary: log.metadataPreliminary,
+          checklistValidation: {
+            approved: log.checklistApproved,
+            preliminary: log.checklistPreliminary,
+            blockingIssues: log.checklistHasBlockingIssues === null ? null : log.checklistHasBlockingIssues ? [{}] : [],
+            audit: { ok: log.checklistAuditOk },
+          },
+          reconstruction: log.metadataProvenanceVersion === null ? null : {
+            provenanceVersion: Number(log.metadataProvenanceVersion),
+            reconstructedAt: log.metadataReconstructedAt,
+            historicalDisplayConfirmed: log.metadataHistoricalDisplayConfirmed,
+          },
+        };
+        const correlation = correlateCaptureLogProvenance({
+          targetDate: log.targetDate,
+          jobId: log.jobId,
+          runnerJobId: log.runnerJobId,
+          createdAt: log.createdAt,
+          uploadedUrl: log.uploadedUrl,
+          status: log.status,
+          metadata,
+          evidenceUrl: row.evidenceUrl,
+        });
+        proof = correlation ? { metadata, correlation, status: log.status, frameTemplateVersion: log.metadataFrameTemplateVersion } : null;
+      }
+    }
+    const metadata = proof?.metadata ?? null;
+    const correlation = proof?.correlation ?? null;
+    const trust = correlation ? buildCaptureClassTrustContext({
+      canonicalTargetDate: row.targetDate,
+      metadataTargetDate: typeof metadata?.targetDate === "string" ? metadata.targetDate : null,
+      captureClass: typeof metadata?.captureClass === "string" ? metadata.captureClass : null,
+      sourceJobId: correlation.sourceJobId,
+      capturedAt: correlation.capturedAt,
+      auditPolicyVersion: typeof metadata?.auditPolicyVersion === "string" ? metadata.auditPolicyVersion : null,
+    }) : null;
+    const source = classifyHistoricalInventorySource({
+      trustedClass: trust?.trusted ? trust.trustedClass : null,
+      reconstructionPresent: Boolean(metadata?.reconstruction && typeof metadata.reconstruction === "object"),
+    });
+    if (source === "daily") continue;
+    const checklist = metadata?.checklistValidation && typeof metadata.checklistValidation === "object"
+      ? metadata.checklistValidation as Record<string, any> : null;
+    const preliminaryValues = [metadata?.preliminary, checklist?.preliminary];
+    const preliminary = preliminaryValues.includes(true) ? true
+      : preliminaryValues.includes(false) ? false : null;
+    const approved = source === "historical" && checklist?.approved === true && preliminary === false
+      && Array.isArray(checklist?.blockingIssues) && checklist.blockingIssues.length === 0
+      && checklist?.audit?.ok === true;
+    itemByPair.set(key, {
+      evidenceId: row.evidenceId,
+      insertionId: row.insertionId,
+      campaignId: row.campaignId,
+      campaignName: row.campaignName,
+      piCodigo: row.piCodigo,
+      competencia: row.competencia,
+      siteSigla: row.siteSigla,
+      localFormato: row.localFormato,
+      localFormatoNormalizado: row.localFormatoNormalizado,
+      periodoInicio: row.periodoInicio,
+      periodoFim: row.periodoFim,
+      targetDate: row.targetDate,
+      url: row.evidenceUrl,
+      origin: source === "historical" ? "historical" : "unknown",
+      status: approved ? "approved" : source === "historical" ? "pending" : "unknown",
+      captureClass: trust?.trusted ? trust.trustedClass : null,
+      provenanceVersion: Number.isInteger(Number((metadata?.reconstruction as Record<string, unknown> | undefined)?.provenanceVersion))
+        ? Number((metadata?.reconstruction as Record<string, unknown>).provenanceVersion) : null,
+      frameTemplateVersion: typeof proof?.frameTemplateVersion === "string" ? proof.frameTemplateVersion : null,
+      capturedAt: correlation?.capturedAt ?? null,
+      requestedCaptureAt: typeof metadata?.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : null,
+      preliminary,
+      sourceLogStatus: proof?.status ?? null,
+    });
+  }
+  return { items: pageRows.map((row) => itemByPair.get(row.targetDate === null ? `undated:${row.evidenceId}` : `${row.insertionId}:${row.targetDate}`)).filter(Boolean), nextCursor: page.nextCursor };
+}
+
 router.get("/insertions/capture-proof/audit", async (req, res): Promise<void> => {
+  if (req.query.scope === "historical_inventory") {
+    const parsed = parseHistoricalInventoryPagination(req.query as Record<string, unknown>);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const result = await loadHistoricalEvidenceInventory({ limit: parsed.limit, cursor: parsed.cursor });
+    res.json({ scope: "historical_inventory", limit: parsed.limit, items: result.items, nextCursor: result.nextCursor });
+    return;
+  }
   const { competencia, siteId, clienteId, agenciaId, targetDate } = extractAuditQueryParams(req.query as Record<string, unknown>);
   const insertionIds = typeof req.query.insertionIds === "string"
     ? new Set(req.query.insertionIds.split(",").map((value) => Number.parseInt(value, 10)).filter((value) => Number.isInteger(value) && value > 0))

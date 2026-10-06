@@ -1,5 +1,13 @@
 # Harness - Relatorio mensal de evidencias AdOps
 
+## Gate atual do consumidor dinâmico — 06/10/2026
+
+Para `/reports/adops-evidencias/?mes=YYYY-MM`, validar a API mensal atual, o mesmo ID/data no status, o modal autenticado e os bytes/hash do PNG. `data.json` e snapshots estáticos abaixo registram o harness anterior e não são a fonte canônica desse gate.
+
+Executar `scripts/src/test-retroactive-report-candidate-ui.mjs` sob `TZ=UTC` e `TZ=America/New_York`. Ele confirma referência visual local e criação real distintas, miniatura com aviso sem elevar aceite, candidato sem promoção automática e correspondência exata do resultado. Recibo/log com identidade divergente mantém a origem não verificada. Ver os comandos de integração isolada e os gates de canário/readback no [HARNESS v4](../retroactive-proof-v4/harness.md).
+
+O teste `test-monthly-report-target-evidences.mjs` consulta um snapshot público de agosto e espera contagem histórica fixa; a divergência atual foi medida no baseline. Não editar esse snapshot para fazer o novo código passar nem apresentar essa asserção antiga como validação do consumidor dinâmico.
+
 ## Comandos
 
 Validacao sintatica:

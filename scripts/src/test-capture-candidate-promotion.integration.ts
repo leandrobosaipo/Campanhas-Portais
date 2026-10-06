@@ -37,7 +37,7 @@ const originalSha256 = createHash("sha256").update(originalBytes).digest("hex");
 const capturedAt = new Date("2026-10-01T22:50:57.930Z");
 const targetDate = "2026-09-08";
 
-function checklist(approved: boolean, insertionId: number): AuditChecklistValidation {
+function checklist(approved: boolean, insertionId: number, captureClass?: string): AuditChecklistValidation {
   return {
     approved,
     preliminary: false,
@@ -46,7 +46,7 @@ function checklist(approved: boolean, insertionId: number): AuditChecklistValida
     date: targetDate,
     contract: {} as AuditChecklistValidation["contract"],
     metadataPresent: true,
-    audit: null,
+    audit: { ok: approved, captureClass } as AuditChecklistValidation["audit"],
     issues: [],
     blockingIssues: [],
     warnings: [],
@@ -54,7 +54,10 @@ function checklist(approved: boolean, insertionId: number): AuditChecklistValida
   };
 }
 
-async function withFixture(run: (input: { candidateId: string; insertionId: number; oldUrl: string; candidateUrl: string; finalLogId: string }) => Promise<void>) {
+async function withFixture(run: (input: { candidateId: string; insertionId: number; oldUrl: string; candidateUrl: string; finalLogId: string }) => Promise<void>, options: {
+  candidateProvenanceVersion?: number; candidateFrameVersion?: string;
+  originalCaptureClass?: string; originalProvenanceVersion?: number; originalFrameVersion?: string;
+} = {}) {
   const suffix = randomUUID().replaceAll("-", "").slice(0, 18);
   const candidateId = `test-candidate-${suffix}`;
   const jobId = `test-job-${suffix}`;
@@ -84,7 +87,8 @@ async function withFixture(run: (input: { candidateId: string; insertionId: numb
     capturedAt: capturedAt.toISOString(),
     requestedCaptureAt: `${targetDate}T18:40:00-04:00`,
     auditPolicyVersion: "audit-policy-v1",
-    reconstruction: { provenanceVersion: 3, historicalDisplayConfirmed: false },
+    frameTemplateVersion: options.candidateFrameVersion,
+    reconstruction: { provenanceVersion: options.candidateProvenanceVersion ?? 3, historicalDisplayConfirmed: false },
   };
   await db.insert(printJobsTable).values({
     id: jobId,
@@ -138,7 +142,14 @@ async function withFixture(run: (input: { candidateId: string; insertionId: numb
     runnerJobId: "prior-job",
     status: "ok",
     uploadedUrl: oldUrl,
-    metadata: { sourceJobId: "prior-job", targetDate },
+    metadata: {
+      sourceJobId: "prior-job", targetDate,
+      ...(options.originalCaptureClass ? {
+        captureClass: options.originalCaptureClass,
+        frameTemplateVersion: options.originalFrameVersion,
+        reconstruction: { provenanceVersion: options.originalProvenanceVersion, historicalDisplayConfirmed: true },
+      } : {}),
+    },
   });
   await run({ candidateId, insertionId, oldUrl, candidateUrl, finalLogId: "" });
   } finally {
@@ -219,7 +230,7 @@ async function seedAwaitingReadback(input: {
   return { promotionId, finalLogId, original, originalLogs };
 }
 
-function servicesFor(insertionId: number, finalAudit: (call: number, input?: { metadata?: unknown }) => boolean): CandidatePromotionServices {
+function servicesFor(insertionId: number, finalAudit: (call: number, input?: { metadata?: unknown }) => boolean, captureClass?: string): CandidatePromotionServices {
   let auditCalls = 0;
   return {
     inspectCandidate: async (candidate) => ({
@@ -230,7 +241,7 @@ function servicesFor(insertionId: number, finalAudit: (call: number, input?: { m
       ? { sha256: originalSha256, bytes: originalBytes.length }
       : { sha256: candidateSha256, bytes: candidateBytes.length },
     archiveOriginal: async () => ({ sourceKey: "test-original/source.png", archiveKey: "adops-evidence-originals/test/sha-original.png", sha256: originalSha256, bytes: originalBytes.length }),
-    audit: async (input) => checklist(finalAudit(++auditCalls, input), insertionId),
+    audit: async (input) => checklist(finalAudit(++auditCalls, input), insertionId, captureClass),
   };
 }
 
@@ -250,6 +261,10 @@ test("promotes exact candidate bytes, logs real capture time and keeps receipt t
     const [log] = await db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, result.finalLogId!));
     assert.equal(log?.createdAt.toISOString(), capturedAt.toISOString());
     assert.equal(log?.uploadedUrl, candidateUrl);
+    assert.equal((log?.metadata as { checklistValidation?: { approved?: boolean; preliminary?: boolean; audit?: { ok?: boolean } } })
+      .checklistValidation?.approved, true);
+    assert.equal((log?.metadata as { checklistValidation?: { preliminary?: boolean } }).checklistValidation?.preliminary, false);
+    assert.equal((log?.metadata as { checklistValidation?: { audit?: { ok?: boolean } } }).checklistValidation?.audit?.ok, true);
     const [ledger] = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.id, result.promotionId));
     assert.equal(ledger?.status, "approved");
     assert.equal((ledger?.originalEvidence as { arquivoUrl?: string })?.arquivoUrl, oldUrl);
@@ -354,7 +369,7 @@ test("resumes awaiting-readback even when a newer blocked ledger row exists", { 
 test("failed resumed readback rolls back only the candidate row and verifies original bytes", { skip: !enabled }, async () => {
   await withFixture(async ({ candidateId, insertionId, oldUrl, candidateUrl }) => {
     const seeded = await seedAwaitingReadback({ candidateId, insertionId, oldUrl, candidateUrl });
-    const services = servicesFor(insertionId, () => true);
+    const services = servicesFor(insertionId, () => true, "historical_recovery");
     services.hashArtifact = async (url) => url === oldUrl
       ? { sha256: originalSha256, bytes: originalBytes.length }
       : { sha256: "0".repeat(64), bytes: candidateBytes.length };
@@ -401,6 +416,120 @@ test("preserves an already-approved canonical evidence", { skip: !enabled }, asy
     assert.equal(rows.find((row) => row.titulo?.includes(targetDate))?.arquivoUrl, oldUrl);
     const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
     assert.equal(promotions.length, 0);
+  });
+});
+
+test("upgrades an exact approved legacy presentation only with explicit identity and remains idempotent", { skip: !enabled }, async () => {
+  await withFixture(async ({ candidateId, insertionId, oldUrl, candidateUrl }) => {
+    const expected = { evidenceId: 1, arquivoUrl: oldUrl, sha256: originalSha256, bytes: originalBytes.length };
+    const [evidence] = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    expected.evidenceId = evidence!.id;
+    const services = servicesFor(insertionId, () => true, "historical_recovery");
+    const first = await promoteApprovedCaptureCandidate(candidateId, services, expected);
+    assert.equal(first.ok, true);
+    assert.equal(first.idempotent, undefined);
+    const [promoted] = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.id, first.promotionId));
+    assert.equal((promoted?.audit as Record<string, unknown>)?.reason, "presentation_upgrade");
+    assert.deepEqual((promoted?.audit as Record<string, unknown>)?.expectedOriginal, expected);
+    const [finalLog] = await db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, first.finalLogId!));
+    assert.equal((finalLog?.summary as Record<string, unknown>)?.reason, "presentation_upgrade");
+    assert.deepEqual((finalLog?.summary as Record<string, unknown>)?.expectedOriginal, expected);
+    assert.equal((finalLog?.metadata as Record<string, unknown>)?.reconstructionReason, undefined);
+    const rows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    assert.equal(rows.find((row) => row.id === evidence!.id)?.arquivoUrl, candidateUrl);
+    const retry = await promoteApprovedCaptureCandidate(candidateId, services, expected);
+    assert.equal(retry.idempotent, true);
+    assert.equal(retry.promotionId, first.promotionId);
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
+    assert.equal(promotions.length, 1);
+  }, {
+    candidateProvenanceVersion: 4,
+    candidateFrameVersion: "windows11-chrome-light-similar-v5",
+    originalCaptureClass: "historical_recovery",
+    originalProvenanceVersion: 3,
+    originalFrameVersion: "windows11-chrome-light-similar-v4",
+  });
+});
+
+test("a prior historical log cannot authorize upgrade when the current canonical audit is daily", { skip: !enabled }, async () => {
+  await withFixture(async ({ candidateId, insertionId, oldUrl }) => {
+    const [evidence] = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const expected = { evidenceId: evidence!.id, arquivoUrl: oldUrl, sha256: originalSha256, bytes: originalBytes.length };
+    await assert.rejects(promoteApprovedCaptureCandidate(candidateId, servicesFor(insertionId, () => true, "scheduled"), expected), /historical_original_identity_or_legacy_proof_required/);
+    const current = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    assert.equal(current.find((row) => row.id === evidence!.id)?.arquivoUrl, oldUrl);
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
+    assert.equal(promotions.length, 0);
+  }, {
+    candidateProvenanceVersion: 4,
+    candidateFrameVersion: "windows11-chrome-light-similar-v5",
+    originalCaptureClass: "historical_recovery",
+    originalProvenanceVersion: 3,
+    originalFrameVersion: "windows11-chrome-light-similar-v4",
+  });
+});
+
+test("refuses an upgrade when expected original bytes do not match before archive", { skip: !enabled }, async () => {
+  await withFixture(async ({ candidateId, insertionId, oldUrl }) => {
+    const [evidence] = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const expected = { evidenceId: evidence!.id, arquivoUrl: oldUrl, sha256: "0".repeat(64), bytes: originalBytes.length };
+    await assert.rejects(promoteApprovedCaptureCandidate(candidateId, servicesFor(insertionId, () => true, "historical_recovery"), expected), /historical_original_hash_mismatch/);
+    const rows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    assert.equal(rows.find((row) => row.id === evidence!.id)?.arquivoUrl, oldUrl);
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
+    assert.equal(promotions.length, 0);
+  }, {
+    candidateProvenanceVersion: 4,
+    candidateFrameVersion: "windows11-chrome-light-similar-v5",
+    originalCaptureClass: "historical_recovery",
+    originalProvenanceVersion: 3,
+    originalFrameVersion: "windows11-chrome-light-similar-v4",
+  });
+});
+
+test("archive failure leaves the approved historical canonical pointer untouched", { skip: !enabled }, async () => {
+  await withFixture(async ({ candidateId, insertionId, oldUrl }) => {
+    const [evidence] = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const expected = { evidenceId: evidence!.id, arquivoUrl: oldUrl, sha256: originalSha256, bytes: originalBytes.length };
+    const services = servicesFor(insertionId, () => true, "historical_recovery");
+    services.archiveOriginal = async () => { throw Object.assign(new Error("archive failed"), { code: "evidence_replacement_archive_failed" }); };
+    await assert.rejects(promoteApprovedCaptureCandidate(candidateId, services, expected), /archive failed/);
+    const rows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    assert.equal(rows.find((row) => row.id === evidence!.id)?.arquivoUrl, oldUrl);
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
+    assert.equal(promotions.length, 0);
+  }, {
+    candidateProvenanceVersion: 4,
+    candidateFrameVersion: "windows11-chrome-light-similar-v5",
+    originalCaptureClass: "historical_recovery",
+    originalProvenanceVersion: 3,
+    originalFrameVersion: "windows11-chrome-light-similar-v4",
+  });
+});
+
+test("failed upgraded candidate readback compensates to the archived original", { skip: !enabled }, async () => {
+  await withFixture(async ({ candidateId, insertionId, oldUrl, candidateUrl }) => {
+    const [evidence] = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    const expected = { evidenceId: evidence!.id, arquivoUrl: oldUrl, sha256: originalSha256, bytes: originalBytes.length };
+    const services = servicesFor(insertionId, () => true, "historical_recovery");
+    services.hashArtifact = async (url) => url === oldUrl
+      ? { sha256: originalSha256, bytes: originalBytes.length }
+      : { sha256: "0".repeat(64), bytes: candidateBytes.length };
+    await assert.rejects(promoteApprovedCaptureCandidate(candidateId, services, expected), /canonical_final_hash_readback_failed/);
+    const rows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+    assert.equal(rows.find((row) => row.id === evidence!.id)?.arquivoUrl, oldUrl);
+    const logs = await db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.insertionId, insertionId));
+    const promotedLog = logs.find((row) => row.uploadedUrl === candidateUrl);
+    assert.equal(promotedLog?.status, "failed");
+    assert.equal((promotedLog?.summary as Record<string, unknown>)?.reason, "presentation_upgrade");
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId));
+    assert.equal(promotions[0]?.status, "rolled_back");
+  }, {
+    candidateProvenanceVersion: 4,
+    candidateFrameVersion: "windows11-chrome-light-similar-v5",
+    originalCaptureClass: "historical_recovery",
+    originalProvenanceVersion: 3,
+    originalFrameVersion: "windows11-chrome-light-similar-v4",
   });
 });
 

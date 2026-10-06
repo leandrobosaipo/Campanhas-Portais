@@ -74,7 +74,7 @@ export function validateCandidateMetadata(metadata, { jobId, insertionId, target
     && metadata?.captureClass === "historical_recovery"
     && metadata?.auditPolicyVersion === "audit-policy-v1"
     && reconstruction?.historicalDisplayConfirmed === false
-    && reconstruction?.provenanceVersion === 3;
+    && [3, 4].includes(reconstruction?.provenanceVersion);
   return { ok: valid, reason: valid ? null : "candidate_metadata_provenance_mismatch" };
 }
 

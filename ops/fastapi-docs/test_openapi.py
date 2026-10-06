@@ -5,7 +5,7 @@ from main import REDOC_ASSET_PATH, REDOC_ASSET_URL, build_openapi_document, redo
 
 document = build_openapi_document()
 assert document["openapi"] == "3.1.0"
-assert document["info"]["version"] == "adops-ops-api-catalog-v2"
+assert document["info"]["version"] == "adops-ops-api-catalog-v4"
 assert document["x-cod5-endpoint-count"] >= 100
 assert "/api/healthz" in document["paths"]
 assert "/api/pi-site-exports" in document["paths"]
@@ -20,7 +20,34 @@ assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]
 assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofJobRequest"
 assert document["paths"]["/api/insertions/{id}/capture-proof/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofStatusResponse"
 assert "RetroContentProof" in document["components"]["schemas"]
-assert document["components"]["schemas"]["CaptureProofJobRequest"]["required"] == ["date", "candidate", "promote"]
+capture_job = document["components"]["schemas"]["CaptureProofJobRequest"]
+assert "required" not in capture_job
+assert capture_job["properties"]["captureAt"]["description"].find("America/Cuiaba") >= 0
+assert capture_job["properties"]["reconstructionReason"]["enum"] == ["late_publication_recovery"]
+assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["responses"]["202"]
+assert document["paths"]["/api/insertions/capture-proof/audit"]["get"]["responses"]["200"]
+assert document["components"]["schemas"]["HistoricalEvidenceInventoryResponse"]["properties"]["items"]["type"] == "array"
+capture_job_post = document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]
+assert {"200", "202", "409"}.issubset(capture_job_post["responses"])
+assert any(parameter["in"] == "path" and parameter["name"] == "id" and parameter["required"] for parameter in capture_job_post["parameters"])
+assert any(parameter["in"] == "header" and parameter["name"] == "Idempotency-Key" for parameter in capture_job_post["parameters"])
+assert document["paths"]["/api/internal/insertions/{id}/capture-proof/candidates"]["post"]["responses"]["201"]
+assert document["paths"]["/api/internal/insertions/{id}/capture-proof/candidates"]["post"]["responses"]["200"]
+assert document["paths"]["/api/internal/capture-proof-candidates/{candidateId}/audit"]["post"]["responses"]["409"]
+assert document["paths"]["/api/internal/capture-proof-candidates/{candidateId}/promote"]["post"]["responses"]["200"]
+assert document["paths"]["/api/internal/capture-proof-candidates/{candidateId}/promote"]["post"]["parameters"][0]["schema"]["format"] == "uuid"
+monthly_day = document["components"]["schemas"]["MonthlyEvidenceDay"]
+assert monthly_day["properties"]["requestedCaptureAt"]["type"] == ["string", "null"]
+assert monthly_day["properties"]["capturedAt"]["type"] == ["string", "null"]
+inventory_operation = document["paths"]["/api/insertions/capture-proof/audit"]["get"]
+assert "Sem scope" in inventory_operation["description"]
+inventory_one_of = inventory_operation["responses"]["200"]["content"]["application/json"]["schema"]["oneOf"]
+assert {schema["$ref"] for schema in inventory_one_of} == {
+    "#/components/schemas/LegacyCaptureProofAuditResponse",
+    "#/components/schemas/HistoricalEvidenceInventoryResponse",
+}
+assert document["components"]["schemas"]["HistoricalEvidenceInventoryResponse"]["properties"]["items"]["items"]["properties"]["url"]["type"] == ["string", "null"]
+assert document["components"]["schemas"]["LegacyCaptureProofAuditResponse"]["required"] == ["date", "totalEligible", "items"]
 assert document["paths"]["/api/ops/schedules/reconcile"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/ScheduleReconcileResponse"
 assert document["paths"]["/api/ops/queue/overview"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/QueueOverviewResponse"
 assert document["paths"]["/api/ops/daily-print-status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/DailyPrintStatusResponse"

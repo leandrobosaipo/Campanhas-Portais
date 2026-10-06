@@ -2,6 +2,7 @@ import { Router } from "express";
 import { captureProofCandidatePromotionsTable, db } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { promoteApprovedCaptureCandidate } from "../lib/capture-proof-candidate-promotion";
+import { parsePromotionRequestBody } from "../lib/historical-presentation-upgrade-guard.mjs";
 import { queueMonthlyEvidenceRefreshForDate } from "./ops";
 
 const router = Router();
@@ -10,13 +11,27 @@ router.get("/internal/capture-proof-candidates/:candidateId/promotions", async (
   const rows = await db.select().from(captureProofCandidatePromotionsTable)
     .where(eq(captureProofCandidatePromotionsTable.candidateId, String(req.params.candidateId)))
     .orderBy(desc(captureProofCandidatePromotionsTable.receivedAt));
-  res.json({ promotions: rows.map((row) => ({
-    id: row.id, candidateId: row.candidateId, insertionId: row.insertionId,
-    targetDate: row.targetDate, sourceJobId: row.sourceJobId,
-    artifactSha256: row.candidateSha256, artifactBytes: row.candidateBytes,
-    finalLogId: row.finalLogId, status: row.status, failure: row.failure,
-    receivedAt: row.receivedAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-  })) });
+  res.json({ promotions: rows.map((row) => {
+    const audit = row.audit && typeof row.audit === "object" && !Array.isArray(row.audit)
+      ? row.audit as Record<string, unknown> : null;
+    const rawExpected = audit?.expectedOriginal && typeof audit.expectedOriginal === "object" && !Array.isArray(audit.expectedOriginal)
+      ? audit.expectedOriginal as Record<string, unknown> : null;
+    const expectedOriginal = audit?.reason === "presentation_upgrade" && rawExpected
+      && typeof rawExpected.evidenceId === "number" && Number.isSafeInteger(rawExpected.evidenceId) && rawExpected.evidenceId > 0
+      && typeof rawExpected.arquivoUrl === "string" && typeof rawExpected.sha256 === "string"
+      && /^[a-f0-9]{64}$/.test(rawExpected.sha256)
+      && typeof rawExpected.bytes === "number" && Number.isSafeInteger(rawExpected.bytes) && rawExpected.bytes > 0
+      ? { evidenceId: rawExpected.evidenceId, arquivoUrl: rawExpected.arquivoUrl, sha256: rawExpected.sha256, bytes: rawExpected.bytes }
+      : null;
+    return {
+      id: row.id, candidateId: row.candidateId, insertionId: row.insertionId,
+      targetDate: row.targetDate, sourceJobId: row.sourceJobId,
+      artifactSha256: row.candidateSha256, artifactBytes: row.candidateBytes,
+      finalLogId: row.finalLogId, status: row.status, failure: row.failure,
+      ...(expectedOriginal ? { reason: "presentation_upgrade", expectedOriginal } : {}),
+      receivedAt: row.receivedAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+    };
+  }) });
 });
 
 // /internal is guarded by the existing internal API token middleware.
@@ -30,8 +45,13 @@ router.post("/internal/capture-proof-candidates/:candidateId/promote", async (re
     res.status(400).json({ error: "invalid_candidate_id" });
     return;
   }
+  const parsedRequest = parsePromotionRequestBody(req.body);
+  if (!parsedRequest.ok) {
+    res.status(400).json({ error: parsedRequest.error });
+    return;
+  }
   try {
-    const result = await promoteApprovedCaptureCandidate(candidateId);
+    const result = await promoteApprovedCaptureCandidate(candidateId, {}, parsedRequest.expectation);
     let reportRefresh: unknown = null;
     if (!result.idempotent) {
       try {

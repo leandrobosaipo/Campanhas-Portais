@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   campaignsTable,
+  captureProofCandidatePromotionsTable,
+  captureProofCandidatesTable,
   captureProofLogsTable,
   captureRulesTable,
   db,
@@ -28,9 +30,13 @@ import {
   resolveChecklistFinalProofStyle,
 } from "./proof-style-contract";
 import { selectCanonicalEvidencePerDate } from "./evidence-export";
+import { resolvePromotedCaptureProofMetadata } from "./promoted-capture-proof-metadata.mjs";
 
 export const AUDIT_CHECKLIST_VERSION = "audit-checklist-v1" as const;
-const REQUIRED_FRAME_TEMPLATE = "windows11-chrome-light-similar-v4";
+const REQUIRED_FRAME_TEMPLATES = new Set([
+  "windows11-chrome-light-similar-v4",
+  "windows11-chrome-light-similar-v5",
+]);
 
 type Severity = "blocking" | "warning";
 
@@ -297,7 +303,41 @@ export async function loadAuditChecklistMetadata(insertionId: number, targetDate
   const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
   const evidenceUrl = selectCanonicalEvidencePerDate(evidenceRows, (row) => getEvidenceDateKey(row.titulo))
     .find((row) => getEvidenceDateKey(row.titulo) === dateKey)?.arquivoUrl ?? null;
-  const latestLog = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? logs[0];
+  if (evidenceUrl) {
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(and(
+      eq(captureProofCandidatePromotionsTable.insertionId, insertionId),
+      eq(captureProofCandidatePromotionsTable.targetDate, dateKey),
+      eq(captureProofCandidatePromotionsTable.status, "approved"),
+    )).orderBy(desc(captureProofCandidatePromotionsTable.receivedAt));
+    for (const promotion of promotions) {
+      if (!promotion.finalLogId) continue;
+      const candidatePromise = db.select().from(captureProofCandidatesTable)
+        .where(eq(captureProofCandidatesTable.id, promotion.candidateId)).limit(1);
+      const logPromise = db.select().from(captureProofLogsTable)
+        .where(eq(captureProofLogsTable.id, promotion.finalLogId)).limit(1);
+      const [[candidate], [finalLog]] = await Promise.all([candidatePromise, logPromise]);
+      const promotedMetadata = resolvePromotedCaptureProofMetadata({
+        promotion,
+        candidate,
+        finalLog,
+        canonicalEvidenceUrl: evidenceUrl,
+      });
+      if (promotedMetadata && finalLog) {
+        const provenance = correlateCaptureLogProvenance({
+          targetDate: finalLog.targetDate,
+          jobId: finalLog.jobId,
+          runnerJobId: finalLog.runnerJobId,
+          createdAt: finalLog.createdAt,
+          uploadedUrl: finalLog.uploadedUrl,
+          status: finalLog.status,
+          metadata: promotedMetadata,
+          evidenceUrl,
+        });
+        if (provenance) return attachServerCaptureProvenance(promotedMetadata, provenance);
+      }
+    }
+  }
+  const latestLog = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? null;
   if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
   const metadata = { ...latestLog.metadata };
   const provenance = correlateCaptureLogProvenance({
@@ -620,12 +660,12 @@ export async function validateAuditChecklist(input: {
 
     if (requiredGates.requireFrameV4) {
       const frameTemplate = metadataString(metadata, "frameTemplateVersion");
-      if (frameTemplate !== REQUIRED_FRAME_TEMPLATE) {
+      if (!REQUIRED_FRAME_TEMPLATES.has(frameTemplate)) {
         blockingIssues.push(issue(
           "frame_template_mismatch",
           "requireFrameV4",
           "Moldura oficial ausente",
-          `Esperado ${REQUIRED_FRAME_TEMPLATE}; encontrado ${frameTemplate || "ausente"}.`,
+          `Esperado um de ${[...REQUIRED_FRAME_TEMPLATES].join(", ")}; encontrado ${frameTemplate || "ausente"}.`,
         ));
       }
       if (metadataString(metadata, "chromeTopTheme") !== "light") {

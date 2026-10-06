@@ -1,5 +1,15 @@
 # Spec - Relatorio mensal de evidencias AdOps
 
+## Contrato do consumidor dinâmico — 06/10/2026
+
+`scripts/src/build-dynamic-evidence-report.mjs` gera o consumidor canônico `/reports/adops-evidencias/?mes=YYYY-MM`. A fonte é `GET /api/reports/evidences/monthly`; sessão Google é usada nas ações já autenticadas. O contrato e as saídas estáticas descritos abaixo continuam registros do gerador mensal anterior, sem servir de fallback para a prova atual.
+
+Status e mensal resolvem a evidência canônica pela mesma seleção e, quando aplicável, pelo recibo aprovado com identidade/job/data/URL/hash/bytes exatos. Snapshot final de promoção é persistido no log; metadata preliminar nunca vale como auditoria final. Históricos finais de runner com correlação válida não precisam de recibo de candidato.
+
+O campo `requestedCaptureAt` é string ou null e só vem de prova correlacionada confiável e tecnicamente aceita. Uma string local sem offset conserva o valor original e é interpretada pelo relatório em `America/Cuiaba`; `capturedAt` continua o instante real. O modal distingue “Origem da imagem”, “Referência visual” e “Reconstruída em”.
+
+Thumb usa `technicalStatus`, preserva aviso de origem e não redefine `technicalAccepted` ou as contagens. Solicitação usa candidato com `promote=false`, sem motivo excepcional genérico. O término exige mesmo insertionId/data, candidateOnly=true, status ok e URL segura; mantém a evidência canônica e apresenta a captura para revisão. Ver a [SPEC v4](../retroactive-proof-v4/spec.md) para promoção e rollback.
+
 ## Entrada
 
 Variaveis opcionais:

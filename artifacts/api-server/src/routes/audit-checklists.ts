@@ -28,7 +28,7 @@ export function validatePreUploadReconstructionClock(
   if (!validation.preliminary || !suppliedMetadata || typeof suppliedMetadata !== "object" || Array.isArray(suppliedMetadata)) return validation;
   const metadata = suppliedMetadata as Record<string, unknown>;
   const reconstruction = metadata.reconstruction as Record<string, unknown> | null;
-  if (!reconstruction || (reconstruction.provenanceVersion !== 2 && reconstruction.provenanceVersion !== 3)) return validation;
+  if (!reconstruction || (reconstruction.provenanceVersion !== 2 && reconstruction.provenanceVersion !== 3 && reconstruction.provenanceVersion !== 4)) return validation;
 
   // The entire request is untrusted. This checks a preliminary desktop clock,
   // never immutable provenance: only the server receipt time anchors freshness.

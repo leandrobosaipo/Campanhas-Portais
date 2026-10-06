@@ -1160,6 +1160,13 @@ paths:
                               captureClass:
                                 type: [string, "null"]
                                 enum: [scheduled, same_day_retry, historical_recovery, null]
+                              requestedCaptureAt:
+                                type: [string, "null"]
+                                description: Referência visual original de prova confiável e tecnicamente aceita. Uma referência sem offset é interpretada em America/Cuiaba; a string original é preservada.
+                              capturedAt:
+                                type: [string, "null"]
+                                format: date-time
+                                description: Instante real da captura ou reconstrução, separado da referência visual histórica.
                               acceptancePolicy:
                                 type: string
                                 enum: [technical-audit-v1]

@@ -1,274 +1,112 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pythonBin = process.env.ADOPS_CAPTURE_PYTHON || "python3";
-const defaultOutDir = path.resolve(__dirname, "../assets/desktop-frame/windows11-chrome-light");
-
-function readArg(name, fallback = null) {
-  const index = process.argv.indexOf(`--${name}`);
-  if (index < 0) return fallback;
-  return process.argv[index + 1] || fallback;
-}
-
-const source = readArg("source");
-const generateSimilar = String(readArg("generateSimilar", "false")).toLowerCase() === "true";
-const width = Number(readArg("width", "1280"));
-const chromeTopHeight = Number(readArg("chromeTopHeight", "102"));
-const taskbarHeight = Number(readArg("taskbarHeight", "42"));
-const outDir = path.resolve(readArg("outDir", defaultOutDir));
-const overlayIcons = String(readArg("overlayIcons", "false")).toLowerCase() === "true";
-const iconsDir = path.resolve(readArg("iconsDir", path.join(defaultOutDir, "icons")));
-
-if (!source && !generateSimilar) {
-  throw new Error("Use --source <screenshot-real-windows-chrome.png> ou --generateSimilar true.");
-}
-if (source && !existsSync(source)) {
-  throw new Error(`source_missing: ${source}`);
-}
-if (!Number.isFinite(width) || width < 640) {
-  throw new Error("width_invalid");
-}
-if (!Number.isFinite(chromeTopHeight) || chromeTopHeight < 1) {
-  throw new Error("chromeTopHeight_invalid");
-}
-if (!Number.isFinite(taskbarHeight) || taskbarHeight < 1) {
-  throw new Error("taskbarHeight_invalid");
-}
-
+const outDir = path.resolve(process.argv.includes("--outDir")
+  ? process.argv[process.argv.indexOf("--outDir") + 1]
+  : path.resolve(__dirname, "../assets/desktop-frame/windows11-chrome-light"));
 mkdirSync(outDir, { recursive: true });
 
-if (generateSimilar) {
-  const payload = Buffer.from(JSON.stringify({
-    width,
-    chromeTopHeight,
-    taskbarHeight,
-    overlayIcons,
-    iconsDir,
-    chromeTopOut: path.join(outDir, "chrome-top.png"),
-    taskbarOut: path.join(outDir, "taskbar.png"),
-  }), "utf8").toString("base64");
-
-  const py = `
-import base64, json, os, subprocess, tempfile
-from PIL import Image, ImageDraw, ImageFont
-
-payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
-w = int(payload["width"])
-chrome_h = int(payload["chromeTopHeight"])
-taskbar_h = int(payload["taskbarHeight"])
-icons_dir = payload.get("iconsDir")
-overlay_icons = bool(payload.get("overlayIcons"))
-
-def font(size):
-    try:
-        return ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", size)
-    except Exception:
-        return ImageFont.load_default()
-
-chrome = Image.new("RGBA", (w, chrome_h), (246, 248, 252, 255))
-draw = ImageDraw.Draw(chrome)
-draw.rectangle((0, 0, w, chrome_h), fill=(244, 246, 250, 255))
-draw.rectangle((0, 34, w, 72), fill=(255, 255, 255, 255))
-draw.rectangle((0, 72, w, chrome_h), fill=(255, 255, 255, 255))
-draw.line((0, chrome_h - 1, w, chrome_h - 1), fill=(214, 220, 229, 255), width=1)
-
-# Tab strip: neutral inactive tabs + active light tab. Dynamic identity is rendered later.
-draw.rounded_rectangle((8, 7, 78, 32), radius=9, fill=(235, 239, 246, 255))
-draw.text((24, 13), "<", fill=(91, 99, 112, 255), font=font(13))
-draw.rounded_rectangle((82, 6, 326, 34), radius=10, fill=(255, 255, 255, 255), outline=(218, 224, 232, 255), width=1)
-draw.rounded_rectangle((330, 7, 514, 32), radius=9, fill=(235, 239, 246, 255))
-draw.text((354, 13), "+", fill=(80, 88, 101, 255), font=font(14))
-draw.text((w - 74, 10), "_", fill=(69, 77, 89, 255), font=font(15))
-draw.rectangle((w - 48, 13, w - 38, 23), outline=(69, 77, 89, 255), width=1)
-draw.text((w - 24, 10), "x", fill=(69, 77, 89, 255), font=font(13))
-
-# Toolbar and address bar.
-draw.text((14, 45), "<", fill=(84, 93, 106, 255), font=font(18))
-draw.text((45, 45), ">", fill=(160, 166, 176, 255), font=font(18))
-draw.arc((70, 43, 88, 61), 40, 330, fill=(84, 93, 106, 255), width=2)
-draw.rounded_rectangle((88, 40, w - 162, 66), radius=13, fill=(245, 247, 250, 255), outline=(225, 230, 238, 255), width=1)
-draw.ellipse((101, 48, 111, 58), outline=(93, 101, 114, 255), width=1)
-draw.line((109, 56, 116, 62), fill=(93, 101, 114, 255), width=1)
-draw.text((w - 134, 43), "☆", fill=(84, 93, 106, 255), font=font(17))
-draw.text((w - 100, 43), "⬇", fill=(84, 93, 106, 255), font=font(15))
-draw.ellipse((w - 68, 43, w - 46, 65), fill=(239, 112, 37, 255))
-draw.text((w - 62, 46), "M", fill=(255, 255, 255, 255), font=font(11))
-draw.text((w - 26, 43), "⋮", fill=(84, 93, 106, 255), font=font(18))
-
-# Bookmarks row.
-draw.text((14, 78), "▦", fill=(92, 100, 113, 255), font=font(14))
-draw.text((44, 80), "Todos os favoritos", fill=(92, 100, 113, 255), font=font(12))
-
-chrome.save(payload["chromeTopOut"], "PNG")
-
-taskbar = Image.new("RGBA", (w, taskbar_h), (239, 245, 253, 248))
-draw = ImageDraw.Draw(taskbar)
-draw.line((0, 0, w, 0), fill=(211, 219, 230, 255), width=1)
-
-def render_svg(svg_path, out_size, fill=None):
-    if not os.path.exists(svg_path):
-        return None
-    fd, tmp_png = tempfile.mkstemp(suffix=".png")
-    os.close(fd)
-    subprocess.check_call(["rsvg-convert", svg_path, "-w", str(out_size), "-h", str(out_size), "-o", tmp_png])
-    icon = Image.open(tmp_png).convert("RGBA")
-    os.remove(tmp_png)
-    if fill:
-        tinted = Image.new("RGBA", icon.size, fill)
-        alpha = icon.split()[-1]
-        tinted.putalpha(alpha)
-        icon = tinted
-    return icon
-
-draw.rounded_rectangle((14, 7, 126, 35), radius=14, fill=(255, 255, 255, 245), outline=(219, 225, 235, 255), width=1)
-draw.ellipse((24, 12, 30, 18), fill=(255, 187, 0, 255))
-draw.text((34, 11), "25C  Pred. nublado", fill=(94, 103, 116, 255), font=font(11))
-
-if overlay_icons:
-    required = {
-        "windows": None,
-        "search": (88, 95, 108, 255),
-        "folder": (88, 95, 108, 255),
-        "edge": None,
-        "chrome": None,
-        "settings": (88, 95, 108, 255),
-        "wifi": (88, 95, 108, 255),
-        "volume-2": (88, 95, 108, 255),
-        "chevron-up": (88, 95, 108, 255),
-    }
-    icons = {}
-    for name, fill in required.items():
-        icon = render_svg(os.path.join(icons_dir, f"{name}.svg"), 16, fill=fill)
-        if icon is None:
-            raise RuntimeError(f"taskbar_icon_missing: {name}")
-        icons[name] = icon
-    base_x = int((w - 320) / 2)
-    for i, key in enumerate(["windows", "search", "folder", "edge", "chrome", "settings"]):
-        x = base_x + i * 44
-        draw.rounded_rectangle((x - 4, 8, x + 28, 36), radius=8, fill=(255, 255, 255, 235), outline=(222, 229, 238, 255), width=1)
-        taskbar.alpha_composite(icons[key], (x + 4, 12))
-    tray_x = w - 214
-    taskbar.alpha_composite(icons["chevron-up"], (tray_x, 14))
-    taskbar.alpha_composite(icons["wifi"], (tray_x + 26, 12))
-    taskbar.alpha_composite(icons["volume-2"], (tray_x + 52, 12))
-draw.rounded_rectangle((w - 150, 7, w - 8, 35), radius=8, fill=(239, 245, 253, 255))
-taskbar.save(payload["taskbarOut"], "PNG")
-
-print(json.dumps({
-  "ok": True,
-  "mode": "similar",
-  "sourceSize": [w, chrome_h + taskbar_h],
-  "chromeTop": payload["chromeTopOut"],
-  "taskbar": payload["taskbarOut"],
-  "overlayIcons": overlay_icons
-}))
-`;
-
-  const stdout = execFileSync(pythonBin, ["-c", py], { encoding: "utf8", stdio: "pipe" });
-  console.log(stdout.trim());
-  process.exit(0);
-}
-
 const payload = Buffer.from(JSON.stringify({
-  source: path.resolve(source),
-  chromeTopHeight,
-  taskbarHeight,
-  overlayIcons,
-  iconsDir,
-  chromeTopOut: path.join(outDir, "chrome-top.png"),
-  taskbarOut: path.join(outDir, "taskbar.png"),
+  outDir,
+  fontPath: path.resolve(__dirname, "../assets/desktop-frame/fonts/selawik.ttf"),
+  widths: [1280, 1660, 3320],
 }), "utf8").toString("base64");
 
 const py = `
-import base64, json, os, subprocess, tempfile
-from PIL import Image, ImageDraw
+import base64, json, os
+import subprocess, tempfile
+from PIL import Image, ImageDraw, ImageFont
 
 payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
-img = Image.open(payload["source"]).convert("RGBA")
-w, h = img.size
-chrome_h = int(payload["chromeTopHeight"])
-taskbar_h = int(payload["taskbarHeight"])
-overlay_icons = bool(payload.get("overlayIcons"))
-icons_dir = payload.get("iconsDir")
-if chrome_h + taskbar_h >= h:
-    raise RuntimeError("frame_crop_invalid: chromeTopHeight + taskbarHeight excede altura da imagem")
-img.crop((0, 0, w, chrome_h)).save(payload["chromeTopOut"], "PNG")
-taskbar = img.crop((0, h - taskbar_h, w, h)).convert("RGBA")
+out = payload["outDir"]
+icons_dir = os.path.join(out, "icons")
+font_path = payload["fontPath"]
+if not os.path.isfile(font_path):
+    raise RuntimeError("windows_frame_font_missing: Selawik")
 
-def render_svg(svg_path, out_size, fill=None):
-    if not os.path.exists(svg_path):
-        return None
-    fd, tmp_png = tempfile.mkstemp(suffix=".png")
-    os.close(fd)
-    cmd = ["rsvg-convert", svg_path, "-w", str(out_size), "-h", str(out_size), "-o", tmp_png]
-    subprocess.check_call(cmd)
-    icon = Image.open(tmp_png).convert("RGBA")
-    os.remove(tmp_png)
-    if fill:
-        tinted = Image.new("RGBA", icon.size, fill)
-        alpha = icon.split()[-1]
-        tinted.putalpha(alpha)
-        icon = tinted
+BASE_W, TOP_H, BAR_H = 1280, 72, 42
+def font(size): return ImageFont.truetype(font_path, max(8, int(round(size))))
+def line(draw, points, fill=(83, 91, 103, 255), width=2):
+    draw.line(points, fill=fill, width=max(1, width), joint="curve")
+def svg_icon(name, size):
+    fd, temp_png = tempfile.mkstemp(suffix=".png"); os.close(fd)
+    source = os.path.join(icons_dir, name + ".svg")
+    subprocess.check_call(["rsvg-convert", source, "-w", str(size), "-h", str(size), "-o", temp_png])
+    icon = Image.open(temp_png).convert("RGBA"); os.remove(temp_png)
     return icon
 
-if overlay_icons:
-    required_icons = {
-        "windows": None,
-        "search": (88, 95, 108, 255),
-        "folder": (88, 95, 108, 255),
-        "edge": None,
-        "chrome": None,
-        "settings": (88, 95, 108, 255),
-        "wifi": (88, 95, 108, 255),
-        "volume-2": (88, 95, 108, 255),
-        "chevron-up": (88, 95, 108, 255),
-    }
+def make_top(width):
+    s = width / BASE_W
+    im = Image.new("RGBA", (width, round(TOP_H*s)), (246,248,252,255))
+    d = ImageDraw.Draw(im)
+    px = lambda n: round(n*s)
+    # Single active tab only. Dynamic title, favicon and close action are overlaid by the compositor.
+    d.rectangle((0,0,width,px(35)), fill=(235,239,246,255))
+    d.rounded_rectangle((px(8),px(5),px(326),px(34)), radius=px(10), fill=(255,255,255,255), outline=(218,224,232,255), width=max(1,px(1)))
+    # Tab close control is a simple X, not a circular status marker.
+    line(d,[(px(303),px(15)),(px(311),px(23))],width=max(1,px(1)))
+    line(d,[(px(311),px(15)),(px(303),px(23))],width=max(1,px(1)))
+    line(d,[(px(348),px(14)),(px(348),px(25))],fill=(83,91,103,255),width=max(1,px(1)))
+    line(d,[(px(342),px(19)),(px(354),px(19))],fill=(83,91,103,255),width=max(1,px(1)))
+    d.rectangle((0,px(35),width,px(72)), fill=(255,255,255,255))
+    # Back, forward and reload are simple paths; no typographic pseudo-icons.
+    line(d,[(px(30),px(52)),(px(18),px(52)),(px(24),px(46))])
+    line(d,[(px(18),px(52)),(px(24),px(58))])
+    line(d,[(px(52),px(46)),(px(60),px(52)),(px(52),px(58))], fill=(155,161,171,255))
+    d.arc((px(70),px(43),px(88),px(61)), 35, 325, fill=(83,91,103,255), width=max(1,px(2)))
+    line(d,[(px(84),px(44)),(px(88),px(43)),(px(88),px(48))])
+    d.rounded_rectangle((px(88),px(40),px(1118),px(66)), radius=px(13), fill=(245,247,250,255), outline=(225,230,238,255), width=max(1,px(1)))
+    # Site controls and extension puzzle are licensed SVGs; menu is anchored at the right edge.
+    controls = svg_icon("sliders-horizontal", px(18))
+    puzzle = svg_icon("puzzle", px(18))
+    im.alpha_composite(controls, (px(98),px(44)))
+    im.alpha_composite(puzzle, (px(1150),px(44)))
+    # Geometric bookmark star and menu dots; no profile or bookmark row.
+    star = [(px(1095),px(44)),(px(1098),px(50)),(px(1105),px(51)),(px(1100),px(56)),(px(1101),px(63)),(px(1095),px(60)),(px(1089),px(63)),(px(1090),px(56)),(px(1085),px(51)),(px(1092),px(50)),(px(1095),px(44))]
+    line(d,star,fill=(83,91,103,255),width=max(1,px(1)))
+    for yy in [px(49),px(54),px(59)]: d.ellipse((px(1243),yy,px(1246),yy+px(3)),fill=(83,91,103,255))
+    # Window controls; no fake profile identity.
+    d.line((px(width/ s-70),px(17),px(width/s-58),px(17)), fill=(69,77,89,255), width=max(1,px(1)))
+    d.rectangle((px(width/s-48),px(12),px(width/s-38),px(22)), outline=(69,77,89,255), width=max(1,px(1)))
+    d.line((px(width/s-24),px(12),px(width/s-12),px(24)), fill=(69,77,89,255), width=max(1,px(1)))
+    d.line((px(width/s-12),px(12),px(width/s-24),px(24)), fill=(69,77,89,255), width=max(1,px(1)))
+    d.rectangle((0,px(71),width,px(72)), fill=(214,220,229,255))
+    return im
 
-    icon_imgs = {}
-    for name, fill in required_icons.items():
-        path_svg = os.path.join(icons_dir, f"{name}.svg")
-        icon = render_svg(path_svg, 16, fill=fill)
-        if icon is None:
-            raise RuntimeError(f"taskbar_icon_missing: {path_svg}")
-        icon_imgs[name] = icon
+def make_taskbar(width):
+    s = width / BASE_W
+    im = Image.new("RGBA", (width, round(BAR_H*s)), (239,245,253,248))
+    d = ImageDraw.Draw(im)
+    px = lambda n: round(n*s)
+    d.line((0,0,width,0), fill=(211,219,230,255), width=max(1,px(1)))
+    # Centered, unmarked pinned icons; the template makes no claim about app launch state.
+    base_x = (width-px(176))//2
+    for index,name in enumerate(["windows","search","edge","chrome"]):
+        icon_size = px(22 if name == "windows" else 20)
+        icon = svg_icon(name, max(12,icon_size))
+        x = base_x + px(12 + index*44)
+        y = (round(BAR_H*s)-icon.size[1])//2
+        im.alpha_composite(icon,(x,y))
+    # Tray: network arcs and speaker. Clock box leaves the rightmost 8px margin.
+    tx = width-px(184)
+    d.arc((tx,px(11),tx+px(18),px(28)), 210, 330, fill=(71,83,101,255), width=max(1,px(2)))
+    d.arc((tx+px(4),px(16),tx+px(14),px(26)), 210, 330, fill=(71,83,101,255), width=max(1,px(2)))
+    d.ellipse((tx+px(8),px(26),tx+px(10),px(28)), fill=(71,83,101,255))
+    sx = tx+px(30)
+    d.polygon([(sx,px(17)),(sx+px(5),px(17)),(sx+px(11),px(12)),(sx+px(11),px(29)),(sx+px(5),px(24)),(sx,px(24))], fill=(71,83,101,255))
+    d.arc((sx+px(9),px(14),sx+px(19),px(27)), 300, 60, fill=(71,83,101,255), width=max(1,px(2)))
+    d.rounded_rectangle((width-px(146),px(3),width-px(5),px(39)), radius=px(4), fill=(239,245,253,255))
+    return im
 
-    draw = ImageDraw.Draw(taskbar)
-    draw.rectangle((0, 0, w, taskbar_h), fill=(239, 245, 253, 248))
-    draw.line((0, 0, w, 0), fill=(211, 219, 230, 255), width=1)
-
-    # Weather widget (left)
-    draw.rounded_rectangle((14, 7, 126, 35), radius=14, fill=(255, 255, 255, 245), outline=(219, 225, 235, 255), width=1)
-    draw.ellipse((24, 12, 30, 18), fill=(255, 187, 0, 255))
-    draw.text((34, 11), "25C  Pred. nublado", fill=(94, 103, 116, 255))
-
-    # Center launch area with real icons
-    base_x = int((w - 320) / 2)
-    y = 12
-    slots = ["windows", "search", "folder", "edge", "chrome", "settings"]
-    for i, key in enumerate(slots):
-        x = base_x + i * 44
-        draw.rounded_rectangle((x - 4, 8, x + 28, 36), radius=8, fill=(255, 255, 255, 235), outline=(222, 229, 238, 255), width=1)
-        taskbar.alpha_composite(icon_imgs[key], (x + 4, y))
-
-    # Right tray icons + single-line datetime area
-    tray_x = w - 185
-    taskbar.alpha_composite(icon_imgs["chevron-up"], (tray_x, y + 2))
-    taskbar.alpha_composite(icon_imgs["wifi"], (tray_x + 26, y))
-    taskbar.alpha_composite(icon_imgs["volume-2"], (tray_x + 52, y))
-    draw.rounded_rectangle((w - 156, 7, w - 8, 35), radius=8, fill=(239, 245, 253, 255))
-
-taskbar.save(payload["taskbarOut"], "PNG")
-print(json.dumps({
-  "ok": True,
-  "sourceSize": [w, h],
-  "chromeTop": payload["chromeTopOut"],
-  "taskbar": payload["taskbarOut"],
-  "overlayIcons": overlay_icons
-}))
+for width in payload["widths"]:
+    suffix = "" if width == 1280 else f"-{width}"
+    make_top(width).save(os.path.join(out, f"chrome-top{suffix}.png"), "PNG", optimize=True)
+    make_taskbar(width).save(os.path.join(out, f"taskbar{suffix}.png"), "PNG", optimize=True)
+print(json.dumps({"ok": True, "mode": "reconstructed-v5", "widths": payload["widths"], "outDir": out}))
 `;
 
-const stdout = execFileSync(pythonBin, ["-c", py], { encoding: "utf8", stdio: "pipe" });
-console.log(stdout.trim());
+console.log(execFileSync(pythonBin, ["-c", py], { encoding: "utf8", stdio: "pipe" }).trim());

@@ -1,5 +1,26 @@
 # Prints Retroativos
 
+## Contrato de apresentação v4 — decisão de 06/10/2026
+
+Para novas reconstruções `historical_recovery`, a proveniência v4 usa
+`requestedCaptureAt` como data/hora visível na página **e** na moldura do desktop,
+em `America/Cuiaba`. O PNG não recebe carimbo, faixa ou rodapé de reconstrução.
+`capturedAt` e `reconstruction.reconstructedAt` continuam sendo o instante real
+de criação, correlacionado com o job, disponível na API e no relatório junto da
+origem reconstruída. Isso não comprova sozinho que o banner foi veiculado naquela
+data; `historicalDisplayConfirmed=false` continua indicando essa limitação.
+
+Esse contrato aplica-se a novas capturas v4, depois do rollout validado.
+Não reinterpreta v2 legado, v3 (página histórica e relógio da moldura real),
+capturas `scheduled` ou `same_day_retry`, nem altera arquivos antigos.
+As instruções históricas abaixo devem ser lidas conforme a versão do artefato.
+Substituições atuais usam candidato, auditoria e promoção persistida com backup,
+hash e readback; não apagar evidência aprovada para solicitar outra captura.
+
+Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
+[SPEC](./adops/retroactive-proof-v4/spec.md),
+[HARNESS](./adops/retroactive-proof-v4/harness.md).
+
 ## Objetivo
 Permitir gerar provas visuais retroativas com data e hora simuladas, para que o print mostre:
 - a primeira dobra completa do site
@@ -316,9 +337,9 @@ Aprendizado consolidado no caso `PI 490711 / Energisa / Perrengue G06` em `2026-
 - a regeneracao final foi feita em serie, nao em paralelo;
 - todas as 12 evidencias ficaram `audited`, HTTP `200`, `gif_source` e frame aprovado.
 
-## Moldura oficial dos prints
+## Moldura oficial dos prints — contrato legado v4
 
-O modelo visual atual dos prints e `windows11-chrome-light-similar-v4`.
+Este trecho conserva o modelo `windows11-chrome-light-similar-v4` e seu identificador histórico `windows11_chrome_real_template`; esse nome não certifica screenshot nativa do Windows. Para o novo kit v5 reconstruído e sua precedência, seguir o [contrato v4 de proveniência e v5 de apresentação](./adops/retroactive-proof-v4/spec.md), sem reinterpretar os arquivos antigos.
 
 Regras obrigatorias:
 - topo do Chrome em tema claro

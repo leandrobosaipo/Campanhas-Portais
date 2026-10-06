@@ -60,6 +60,8 @@ def schema_for_path_parameter(name: str) -> dict[str, Any]:
     normalized = name.lower()
     if normalized == "jobid":
         return {"type": "string", "format": "uuid"}
+    if normalized == "candidateid":
+        return {"type": "string", "format": "uuid"}
     if normalized == "id" or normalized.endswith("id"):
         return {"type": "integer", "minimum": 1}
     return {"type": "string", "minLength": 1}
@@ -186,6 +188,20 @@ def build_openapi_document() -> dict[str, Any]:
     set_response_schema("/api/ops/queue/overview", "get", "QueueOverviewResponse")
     set_response_schema("/api/ops/daily-print-status", "get", "DailyPrintStatusResponse")
     set_response_schema("/api/ops/runner/heartbeat", "post", "RunnerHeartbeatResponse")
+    set_response_schema("/api/internal/capture-proof-candidates/{candidateId}/promotions", "get", "CaptureProofCandidatePromotionsResponse")
+
+    candidate_promotion = paths.get("/api/internal/capture-proof-candidates/{candidateId}/promote", {}).get("post")
+    if candidate_promotion:
+        candidate_promotion["summary"] = "Promover candidato aprovado; upgrade histórico exige identidade explícita"
+        candidate_promotion["description"] = (
+            "Sem corpo, uma evidência canônica já aprovada continua bloqueando a promoção. "
+            "O único bypass é replaceHistoricalPresentation com ID, URL, SHA-256 e bytes exatos "
+            "de um original historical_recovery legado; requer candidato já aprovado v4/frame v5."
+        )
+        candidate_promotion["requestBody"] = {
+            "required": False,
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofCandidatePromotionRequest"}}},
+        }
 
     print_backfill_path = paths.get("/api/ops/jobs/print-backfill", {})
     if "post" in print_backfill_path:
@@ -230,6 +246,74 @@ def build_openapi_document() -> dict[str, Any]:
         capture_status_path["get"]["responses"]["200"]["content"]["application/json"]["schema"] = {
             "$ref": "#/components/schemas/CaptureProofStatusResponse"
         }
+
+    inventory_path = paths.get("/api/insertions/capture-proof/audit", {}).get("get")
+    if inventory_path:
+        inventory_path.update({
+            "summary": "Inventário compacto de evidências históricas",
+            "description": "Sem scope, preserva a auditoria histórica por data e filtros. Com scope=historical_inventory, percorre evidências por ID. Origem unknown inclui itens sem data no título ou sem correlação confiável; a data não é inferida do relógio UTC.",
+            "parameters": [
+                {"name": "date", "in": "query", "required": False, "schema": {"type": "string", "format": "date"}},
+                {"name": "competencia", "in": "query", "required": False, "schema": {"type": "string"}},
+                {"name": "siteId", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1}},
+                {"name": "clienteId", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1}},
+                {"name": "agenciaId", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1}},
+                {"name": "insertionIds", "in": "query", "required": False, "description": "IDs separados por vírgula, para a auditoria sem scope.", "schema": {"type": "string"}},
+                {"name": "scope", "in": "query", "required": False, "schema": {"type": "string", "enum": ["historical_inventory"]}},
+                {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+                {"name": "cursor", "in": "query", "required": False, "description": "ID positivo até 2147483647.", "schema": {"type": "string", "pattern": "^[1-9][0-9]*$"}},
+            ],
+            "responses": {
+                "200": {"description": "Resposta legacy sem scope ou página compacta com scope=historical_inventory.", "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/LegacyCaptureProofAuditResponse"}, {"$ref": "#/components/schemas/HistoricalEvidenceInventoryResponse"}]}}}},
+                "400": {"description": "Limite ou cursor inválido."},
+            },
+        })
+
+    monthly_path = paths.get("/api/reports/evidences/monthly", {}).get("get")
+    if monthly_path:
+        monthly_path["description"] = "Relatório mensal. evidenceDays.requestedCaptureAt é string|null e, quando sem offset, representa hora local America/Cuiaba; não é convertido como UTC."
+        monthly_path.setdefault("responses", {}).setdefault("200", {"description": "Relatório mensal."}).setdefault("content", {}).setdefault("application/json", {})["schema"] = {"$ref": "#/components/schemas/MonthlyEvidenceReport"}
+
+    candidate_register = paths.get("/api/internal/insertions/{id}/capture-proof/candidates", {})
+    if "post" in candidate_register:
+        candidate_register["post"].update({
+            "summary": "Registrar candidato de captura persistido",
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofCandidateRegistrationRequest"}}}},
+            "responses": {
+                "201": {"description": "Candidato registrado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofCandidateRegistrationResponse"}}}},
+                "200": {"description": "Candidato idempotente já registrado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofCandidateRegistrationResponse"}}}},
+                "400": {"description": "Identidade inválida."}, "404": {"description": "Registro de candidatos desabilitado."}, "409": {"description": "Proveniência, artefato ou idempotência bloqueados."},
+            },
+        })
+    candidate_audit = paths.get("/api/internal/capture-proof-candidates/{candidateId}/audit", {}).get("post")
+    if candidate_audit:
+        candidate_audit.update({
+            "summary": "Auditar candidato persistido",
+            "responses": {
+                "201": {"description": "Nova revisão persistida."}, "200": {"description": "Revisão equivalente já existia."},
+                "404": {"description": "Candidato ausente ou auditoria desabilitada."}, "409": {"description": "Fonte não comprovada."},
+            },
+        })
+    candidate_promote = paths.get("/api/internal/capture-proof-candidates/{candidateId}/promote", {}).get("post")
+    if candidate_promote:
+        candidate_promote["responses"].update({"200": {"description": "Promoção confirmada ou idempotente."}, "404": {"description": "Candidato ausente ou promoção desabilitada."}, "409": {"description": "Promoção bloqueada por identidade, estado ou conflito."}})
+
+    capture_job_path = paths.get("/api/insertions/{id}/capture-proof/jobs", {})
+    if "post" in capture_job_path:
+        existing_parameters = capture_job_path["post"].get("parameters", [])
+        idempotency_parameter = {"name": "Idempotency-Key", "in": "header", "required": False, "description": "Chave estável, entre 8 e 160 caracteres; se omitida, derivada do payload.", "schema": {"type": "string", "minLength": 8, "maxLength": 160, "pattern": "^[A-Za-z0-9._:-]+$"}}
+        retained_parameters = [parameter for parameter in existing_parameters if not (parameter.get("in") == "header" and parameter.get("name") == "Idempotency-Key")]
+        capture_job_path["post"].update({
+            "parameters": retained_parameters + [idempotency_parameter],
+            "responses": {
+                "200": {"description": "Job existente para a mesma chave.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofJobAccepted"}}}},
+                "202": {"description": "Novo job enfileirado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CaptureProofJobAccepted"}}}},
+                "400": {"description": "Chave ou reconstructionReason inválidos."},
+                "404": {"description": "Inserção não encontrada."},
+                "409": {"description": "Promoção direta de candidato exige aprovação persistida."},
+                "422": {"description": "Checklist de auditoria não resolvido."},
+            },
+        })
 
     export_job_path = paths.get("/api/pi-site-exports/jobs", {})
     if "post" in export_job_path:
@@ -402,9 +486,9 @@ def build_openapi_document() -> dict[str, Any]:
                         "retroativo_auditado": {
                             "value": {
                                 "date": "2026-07-24",
-                                "captureAt": "2026-07-24T20:00:00-04:00",
-                                "candidate": True,
-                                "promote": True,
+                                "captureAt": "2026-07-24T20:00:00",
+                                "candidate": False,
+                                "promote": False,
                             }
                         }
                     },
@@ -846,13 +930,82 @@ def build_openapi_document() -> dict[str, Any]:
                 },
                 "CaptureProofJobRequest": {
                     "type": "object",
-                    "required": ["date", "candidate", "promote"],
                     "properties": {
                         "date": {"type": "string", "format": "date"},
-                        "captureAt": {"type": "string", "format": "date-time"},
-                        "candidate": {"type": "boolean", "const": True},
+                        "captureAt": {"type": "string", "description": "Data/hora ISO-8601; sem offset é interpretada no fuso America/Cuiaba.", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?([+-]\\d{2}:\\d{2}|Z)?$"},
+                        "candidate": {"type": "boolean", "default": False},
                         "promote": {"type": "boolean"},
                         "replace": {"type": "boolean", "default": False},
+                        "force": {"type": "boolean", "default": False},
+                        "reconstructionReason": {"type": "string", "enum": ["late_publication_recovery"]},
+                    },
+                    "additionalProperties": False,
+                },
+                "CaptureProofJobAccepted": {
+                    "type": "object", "required": ["ok", "duplicate", "jobId", "status", "date"],
+                    "properties": {"ok": {"type": "boolean", "const": True}, "duplicate": {"type": "boolean"}, "jobId": {"type": "string", "format": "uuid"}, "status": {"type": "string"}, "date": {"type": "string", "format": "date"}},
+                    "additionalProperties": False,
+                },
+                "CaptureProofCandidateRegistrationRequest": {"type": "object", "required": ["date", "sourceJobId"], "properties": {"date": {"type": "string", "format": "date"}, "sourceJobId": {"type": "string", "minLength": 1}}, "additionalProperties": False},
+                "CaptureProofCandidateRegistrationResponse": {"type": "object", "required": ["ok", "candidate"], "properties": {"ok": {"type": "boolean", "const": True}, "candidate": {"type": "object", "required": ["candidateId", "insertionId", "targetDate", "state"], "properties": {"candidateId": {"type": "string", "format": "uuid"}, "insertionId": {"type": "integer", "minimum": 1}, "targetDate": {"type": "string", "format": "date"}, "state": {"type": "string"}}, "additionalProperties": True}}, "additionalProperties": False},
+                "MonthlyEvidenceDay": {"type": "object", "required": ["date", "capturedAt", "requestedCaptureAt"], "properties": {"date": {"type": "string", "format": "date"}, "capturedAt": {"type": ["string", "null"], "format": "date-time", "description": "Instante real de captura validado pela correlação da evidência."}, "requestedCaptureAt": {"type": ["string", "null"], "description": "Referência visual; quando sem offset, hora local America/Cuiaba. Manter o valor textual sem conversão UTC."}}, "additionalProperties": True},
+                "MonthlyEvidenceReport": {"type": "object", "required": ["version", "items"], "properties": {"version": {"type": "string", "const": "monthly-evidence-report-v1"}, "items": {"type": "array", "items": {"type": "object", "properties": {"evidenceDays": {"type": "array", "items": {"$ref": "#/components/schemas/MonthlyEvidenceDay"}}}, "additionalProperties": True}}}, "additionalProperties": True},
+                "LegacyCaptureProofAuditResponse": {"type": "object", "required": ["date", "totalEligible", "items"], "properties": {"date": {"type": "string", "format": "date"}, "totalEligible": {"type": "integer", "minimum": 0}, "ok": {"type": "integer", "minimum": 0}, "strictOk": {"type": "integer", "minimum": 0}, "bestEffort": {"type": "integer", "minimum": 0}, "missing": {"type": "integer", "minimum": 0}, "invalid": {"type": "integer", "minimum": 0}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": True}}}, "additionalProperties": True},
+                "HistoricalEvidenceInventoryResponse": {
+                    "type": "object", "required": ["scope", "limit", "items", "nextCursor"],
+                    "properties": {
+                        "scope": {"type": "string", "const": "historical_inventory"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                        "nextCursor": {"type": ["string", "null"]},
+                        "items": {"type": "array", "items": {"type": "object", "required": ["evidenceId", "insertionId", "targetDate", "url", "origin", "status"], "properties": {
+                            "evidenceId": {"type": "integer", "minimum": 1}, "insertionId": {"type": "integer", "minimum": 1}, "campaignId": {"type": "integer", "minimum": 1}, "campaignName": {"type": ["string", "null"]}, "piCodigo": {"type": ["string", "null"]}, "competencia": {"type": ["string", "null"]}, "siteSigla": {"type": ["string", "null"]}, "localFormato": {"type": ["string", "null"]}, "localFormatoNormalizado": {"type": ["string", "null"]}, "periodoInicio": {"type": ["string", "null"], "format": "date"}, "periodoFim": {"type": ["string", "null"], "format": "date"}, "targetDate": {"type": ["string", "null"], "format": "date"}, "url": {"type": ["string", "null"]}, "origin": {"type": "string", "enum": ["historical", "unknown"]}, "status": {"type": "string", "enum": ["approved", "pending", "unknown"]}, "captureClass": {"type": ["string", "null"]}, "provenanceVersion": {"type": ["integer", "null"]}, "frameTemplateVersion": {"type": ["string", "null"]}, "capturedAt": {"type": ["string", "null"], "format": "date-time"}, "requestedCaptureAt": {"type": ["string", "null"]}, "preliminary": {"type": ["boolean", "null"]}, "sourceLogStatus": {"type": ["string", "null"]}
+                        }, "additionalProperties": False}},
+                    }, "additionalProperties": False,
+                },
+                "HistoricalPresentationExpectation": {
+                    "type": "object",
+                    "required": ["evidenceId", "arquivoUrl", "sha256", "bytes"],
+                    "properties": {
+                        "evidenceId": {"type": "integer", "minimum": 1},
+                        "arquivoUrl": {"type": "string", "format": "uri", "pattern": "^https://"},
+                        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                        "bytes": {"type": "integer", "minimum": 1},
+                    },
+                    "additionalProperties": False,
+                },
+                "CaptureProofCandidatePromotionRequest": {
+                    "type": "object",
+                    "properties": {
+                        "replaceHistoricalPresentation": {"$ref": "#/components/schemas/HistoricalPresentationExpectation"},
+                    },
+                    "additionalProperties": False,
+                },
+                "CaptureProofCandidatePromotionsResponse": {
+                    "type": "object",
+                    "required": ["promotions"],
+                    "properties": {
+                        "promotions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string", "format": "uuid"},
+                                    "candidateId": {"type": "string"},
+                                    "insertionId": {"type": "integer"},
+                                    "targetDate": {"type": "string", "format": "date"},
+                                    "sourceJobId": {"type": "string"},
+                                    "artifactSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                                    "artifactBytes": {"type": "integer", "minimum": 1},
+                                    "finalLogId": {"type": ["string", "null"]},
+                                    "status": {"type": "string"},
+                                    "failure": {"type": ["string", "null"]},
+                                    "reason": {"type": "string", "const": "presentation_upgrade"},
+                                    "expectedOriginal": {"$ref": "#/components/schemas/HistoricalPresentationExpectation"},
+                                    "receivedAt": {"type": "string", "format": "date-time"},
+                                    "updatedAt": {"type": "string", "format": "date-time"},
+                                },
+                                "additionalProperties": False,
+                            },
+                        },
                     },
                     "additionalProperties": False,
                 },
