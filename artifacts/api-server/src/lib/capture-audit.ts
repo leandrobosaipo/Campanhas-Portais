@@ -445,6 +445,68 @@ export function getEvidenceDateKey(title: string | null | undefined) {
   return match?.[1] ?? null;
 }
 
+// Legacy evidence keeps its recorded contract. New v4 video reconstructions must
+// identify Chromium's actual timeline and preserve its measured ROI in the PNG.
+export function evaluateVideoPlayerProof(metadata: any, isVideoCapture: boolean) {
+  const video = metadata?.videoProof ?? {};
+  const currentTime = Number(video.currentTime ?? 0);
+  const duration = Number(video.duration ?? 0);
+  const nativeRequired = isVideoCapture && metadata?.reconstruction?.provenanceVersion === 4;
+  const native = metadata?.nativeProgressAudit;
+  const pixels = metadata?.finalPngProgressAudit;
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const box = native?.box;
+  const roi = pixels?.slotBox;
+  const crop = pixels?.cropBox;
+  const boxMatches = box && roi && [box.x, box.y, box.width, box.height, roi.left, roi.top, roi.width, roi.height].every(finite)
+    && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0
+    && Math.abs(box.x - roi.left) <= 0.5 && Math.abs(box.y - roi.top) <= 0.5
+    && Math.abs(box.width - roi.width) <= 0.5 && Math.abs(box.height - roi.height) <= 0.5;
+  const cropMatches = boxMatches && finite(pixels?.pixelScale) && pixels.pixelScale > 0
+    && finite(metadata?.chromeFrameHeight) && metadata.chromeFrameHeight >= 0
+    && crop && [crop.left, crop.top, crop.width, crop.height].every(finite)
+    && crop.left === Math.max(0, Math.round(box.x * pixels.pixelScale))
+    && crop.top === Math.max(0, Math.round(metadata.chromeFrameHeight + box.y * pixels.pixelScale))
+    && crop.width === Math.max(1, Math.round(box.width * pixels.pixelScale))
+    && crop.height === Math.max(1, Math.round(box.height * pixels.pixelScale))
+    && pixels.cropSize?.width === crop.width && pixels.cropSize?.height === crop.height;
+  const nativeVisible = native?.version === 1 && native?.source === "chromium_ua_shadow_timeline"
+    && native.ok === true && native.pseudo === "-webkit-media-controls-timeline"
+    && native.tag === "INPUT" && native.type === "range" && native.controls === true
+    && native.disabled === false && native.visibility === "visible"
+    && typeof native.display === "string" && native.display.length > 0 && native.display !== "none"
+    && native.effectiveVisible === true && finite(native.effectiveOpacity) && native.effectiveOpacity > 0.01
+    && finite(native.visibleRatio) && native.visibleRatio >= 0.95 && native.visibleRatio <= 1
+    && native.insideVideoBounds === true && native.insideViewport === true && native.occlusion === "clear"
+    && native.paused === true && video.paused === true
+    && [native.value, native.max, native.currentTime, native.duration, video.currentTime, video.duration].every(finite)
+    && native.value > 0.5 && native.max > 0 && native.value <= native.max
+    && Math.abs(native.value - currentTime) <= 0.25 && Math.abs(native.max - duration) <= 0.25
+    && Math.abs(native.currentTime - currentTime) <= 0.25 && Math.abs(native.duration - duration) <= 0.25
+    && video.overlayInjected === false && video.artificialOverlayCount === 0 && native.artificialOverlayCount === 0;
+  const pixelsVisible = pixels?.ok === true && pixels?.source === "auditFinalPngSlotPixels_video_progress_roi"
+    && pixels.comparedTo === "viewportPng_video_progress_roi" && cropMatches
+    && Array.isArray(pixels.issues) && pixels.issues.length === 0
+    && finite(pixels.similarityScore) && finite(pixels.minSimilarity)
+    && pixels.minSimilarity >= 0.82 && pixels.minSimilarity <= 1
+    && pixels.similarityScore >= pixels.minSimilarity && pixels.similarityScore <= 1
+    && finite(pixels.finalCropMeanStddev) && finite(pixels.finalCropMinContentStddev)
+    && pixels.finalCropMinContentStddev > 0 && pixels.finalCropMeanStddev >= pixels.finalCropMinContentStddev;
+  const progressVisible = nativeRequired
+    ? Boolean(nativeVisible && pixelsVisible)
+    : video.progressVisible === true || video.overlayInjected === true;
+  const controlsVisible = nativeRequired ? Boolean(nativeVisible) : video.controls === true;
+  return {
+    ok: !isVideoCapture || Boolean(video.ok === true && video.controls === true && progressVisible && currentTime > 0.5 && duration > 0),
+    nativeRequired,
+    controlsVisible,
+    progressVisible,
+    progressSource: nativeVisible && pixelsVisible ? "chromium_ua_shadow_timeline" : nativeRequired ? "unverified" : video.overlayInjected === true ? "legacy_injected_overlay" : "legacy_reported_progress",
+    nativeProgressVerified: Boolean(nativeVisible),
+    finalProgressPixelsVerified: Boolean(pixelsVisible),
+  };
+}
+
 export function evaluateCaptureMetadata(metadata: any, targetDate: string, now = new Date()) {
   if (!metadata) {
     return {
@@ -667,15 +729,9 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const readinessOk = !readinessRequired || readinessAudit?.approved === true;
   const videoProofCurrentTime = Number(videoProof.currentTime ?? 0);
   const videoProofDuration = Number(videoProof.duration ?? 0);
-  const videoProgressVisible = videoProof.progressVisible === true || videoProof.overlayInjected === true;
-  const playerProofOk = !isVideoCapture || Boolean(
-    videoProof &&
-    videoProof.ok === true &&
-    videoProof.controls === true &&
-    videoProgressVisible &&
-    videoProofCurrentTime > 0.5 &&
-    videoProofDuration > 0,
-  );
+  const videoPlayerProof = evaluateVideoPlayerProof(metadata, isVideoCapture);
+  const videoProgressVisible = videoPlayerProof.progressVisible;
+  const playerProofOk = videoPlayerProof.ok;
   const visualAuditAvailable = visualAudit && typeof visualAudit === "object";
   const slotStableFrameOk = metadata.slotStableFrameOk === true;
   const slotLegibilityOk = metadata.slotLegibilityOk === true;
@@ -962,7 +1018,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     issues.push({
       code: "video_player_proof_incomplete",
       label: "Player do vídeo incompleto",
-      detail: `A prova do vídeo precisa mostrar controles e barra de progresso. Estado atual: ${videoProofCurrentTime.toFixed(2)}s de ${videoProofDuration.toFixed(2)}s, controls=${videoProof.controls === true ? "sim" : "nao"}, progress=${videoProgressVisible ? "sim" : "nao"}.`,
+      detail: `A prova do vídeo precisa mostrar controles e barra de progresso${videoPlayerProof.nativeRequired ? " nativos, medidos e preservados no PNG final" : " conforme o contrato legado"}. Estado atual: ${videoProofCurrentTime.toFixed(2)}s de ${videoProofDuration.toFixed(2)}s, controls=${videoPlayerProof.controlsVisible ? "sim" : "nao"}, progress=${videoProgressVisible ? "sim" : "nao"}.`,
     });
   }
   return {
@@ -982,8 +1038,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
       duration: videoProofDuration,
       targetTime: typeof videoProof.targetTime === "number" ? videoProof.targetTime : null,
       randomSeed: typeof videoProof.randomSeed === "number" ? videoProof.randomSeed : null,
-      controlsVisible: videoProof.controls === true,
+      controlsVisible: videoPlayerProof.controlsVisible,
       progressVisible: videoProgressVisible,
+      progressSource: videoPlayerProof.progressSource,
+      nativeProgressRequired: videoPlayerProof.nativeRequired,
+      nativeProgressVerified: videoPlayerProof.nativeProgressVerified,
+      finalProgressPixelsVerified: videoPlayerProof.finalProgressPixelsVerified,
       playResolved: videoProof.playResolved === true,
     },
     visualAudit: {

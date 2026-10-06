@@ -4080,6 +4080,205 @@ print(json.dumps({
   };
 }
 
+async function auditNativeVideoProgress(page, adSelector) {
+  const session = await page.context().newCDPSession(page);
+  let videoObjectId = null;
+  let timelineObjectId = null;
+  try {
+    await session.send("DOM.enable");
+    const videoObject = await session.send("Runtime.evaluate", {
+      expression: `document.querySelector(${JSON.stringify(adSelector)})?.querySelector("video") || null`,
+      returnByValue: false,
+    });
+    videoObjectId = videoObject.result?.objectId;
+    if (!videoObjectId) {
+      return { version: 1, source: "chromium_ua_shadow_timeline", ok: false, reason: "video_not_found" };
+    }
+    const described = await session.send("DOM.describeNode", {
+      objectId: videoObjectId,
+      depth: -1,
+      pierce: true,
+    });
+    const nodeAttribute = (node, name) => {
+      const index = Array.isArray(node?.attributes) ? node.attributes.indexOf(name) : -1;
+      return index >= 0 ? node.attributes[index + 1] : null;
+    };
+    const findTimeline = (node) => {
+      if (nodeAttribute(node, "pseudo") === "-webkit-media-controls-timeline") return node;
+      for (const child of [...(node?.shadowRoots || []), ...(node?.children || []), ...(node?.childNodes || [])]) {
+        const found = findTimeline(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    const timelineNode = findTimeline(described.node);
+    const [videoState, overlayState] = await Promise.all([
+      page.locator(adSelector).locator("video").first().evaluate((video) => ({
+        controls: video.controls === true,
+        currentTime: Number(video.currentTime),
+        duration: Number(video.duration),
+        paused: video.paused === true,
+        videoBox: (() => {
+          const rect = video.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        })(),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      })),
+      page.locator(adSelector).evaluate((ad) => ({
+        artificialOverlayCount: ad.querySelectorAll("[data-adops-video-overlay='1']").length,
+      })),
+    ]);
+    if (!timelineNode?.backendNodeId) {
+      return {
+        version: 1,
+        source: "chromium_ua_shadow_timeline",
+        ok: false,
+        reason: "native_timeline_missing",
+        ...videoState,
+        ...overlayState,
+      };
+    }
+    const resolved = await session.send("DOM.resolveNode", { backendNodeId: timelineNode.backendNodeId });
+    timelineObjectId = resolved.object?.objectId || null;
+    const measured = await session.send("Runtime.callFunctionOn", {
+      objectId: timelineObjectId,
+      returnByValue: true,
+      functionDeclaration: `function () {
+        const rect = this.getBoundingClientRect();
+        const box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
+        let effectiveOpacity = 1, effectiveVisible = true;
+        let node = this;
+        while (node) {
+          if (node instanceof Element) {
+            const style = getComputedStyle(node);
+            const opacity = Number(style.opacity);
+            effectiveOpacity *= Number.isFinite(opacity) ? opacity : 0;
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || opacity <= 0) effectiveVisible = false;
+            if (node !== this && /(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+              const clip = node.getBoundingClientRect();
+              left = Math.max(left, clip.left); top = Math.max(top, clip.top);
+              right = Math.min(right, clip.right); bottom = Math.min(bottom, clip.bottom);
+            }
+            node = node.parentElement || node.getRootNode()?.host || null;
+          } else node = null;
+        }
+        const style = getComputedStyle(this);
+        const video = (() => {
+          let host = this;
+          while (host && !(host instanceof HTMLVideoElement)) host = host.parentElement || host.getRootNode()?.host || null;
+          return host;
+        })();
+        const videoRect = video?.getBoundingClientRect();
+        const insideVideoBounds = Boolean(videoRect && rect.width > 0 && rect.height > 0 &&
+          rect.left >= videoRect.left - 1 && rect.top >= videoRect.top - 1 &&
+          rect.right <= videoRect.right + 1 && rect.bottom <= videoRect.bottom + 1);
+        const insideViewport = rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 &&
+          rect.right <= innerWidth && rect.bottom <= innerHeight;
+        const visibleWidthRatio = Math.max(0, right - left) / Math.max(1, rect.width);
+        const visibleHeightRatio = Math.max(0, bottom - top) / Math.max(1, rect.height);
+        const visibleRatio = Math.min(visibleWidthRatio, visibleHeightRatio);
+        const effectiveBoxVisible = visibleWidthRatio >= 0.95 && visibleHeightRatio >= 0.95;
+        return {
+          tag: this.tagName,
+          type: this.getAttribute('type'),
+          value: Number(this.value),
+          max: Number(this.max),
+          ariaLabel: this.getAttribute('aria-label'),
+          box,
+          display: style.display,
+          visibility: style.visibility,
+          opacity: Number(style.opacity),
+          effectiveOpacity,
+          effectiveVisible: effectiveVisible && effectiveBoxVisible,
+          visibleWidthRatio: Number(visibleWidthRatio.toFixed(4)),
+          visibleHeightRatio: Number(visibleHeightRatio.toFixed(4)),
+          visibleRatio: Number(visibleRatio.toFixed(4)),
+          insideVideoBounds,
+          insideViewport,
+          disabled: this.disabled === true,
+        };
+      }`,
+    });
+    const timeline = measured.result?.value || {};
+    let occlusion = "unavailable";
+    try {
+      const hit = await session.send("DOM.getNodeForLocation", {
+        x: Math.round(timeline.box.x + timeline.box.width / 2),
+        y: Math.round(timeline.box.y + timeline.box.height / 2),
+        includeUserAgentShadowDOM: true,
+        ignorePointerEventsNone: false,
+      });
+      if (hit.backendNodeId === timelineNode.backendNodeId) {
+        occlusion = "clear";
+      } else {
+        const hitNode = await session.send("DOM.describeNode", { backendNodeId: hit.backendNodeId, depth: 0 });
+        occlusion = nodeAttribute(hitNode.node, "pseudo") ? "ua_other_target" : "page_element_target";
+      }
+    } catch {}
+    const valuesMatch = Number.isFinite(timeline.value) && Number.isFinite(timeline.max) &&
+      Number.isFinite(videoState.currentTime) && Number.isFinite(videoState.duration) &&
+      Math.abs(timeline.value - videoState.currentTime) <= 0.25 &&
+      Math.abs(timeline.max - videoState.duration) <= 0.25;
+    const ok = videoState.controls === true && videoState.paused === true && videoState.currentTime > 0.5 && videoState.duration > 0 &&
+      timeline.tag === "INPUT" && timeline.type === "range" && valuesMatch &&
+      timeline.effectiveVisible === true && timeline.effectiveOpacity > 0.01 &&
+      timeline.insideVideoBounds === true && timeline.insideViewport === true &&
+      timeline.disabled === false &&
+      occlusion === "clear" &&
+      overlayState.artificialOverlayCount === 0;
+    return {
+      version: 1,
+      source: "chromium_ua_shadow_timeline",
+      ok,
+      pseudo: nodeAttribute(timelineNode, "pseudo"),
+      ...timeline,
+      currentTime: videoState.currentTime,
+      duration: videoState.duration,
+      paused: videoState.paused,
+      controls: videoState.controls,
+      videoBox: videoState.videoBox,
+      viewport: videoState.viewport,
+      artificialOverlayCount: overlayState.artificialOverlayCount,
+      occlusion,
+      valuesMatch,
+    };
+  } catch (error) {
+    return {
+      version: 1,
+      source: "chromium_ua_shadow_timeline",
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    if (timelineObjectId) await session.send("Runtime.releaseObject", { objectId: timelineObjectId }).catch(() => {});
+    if (videoObjectId) await session.send("Runtime.releaseObject", { objectId: videoObjectId }).catch(() => {});
+    await session.detach().catch(() => {});
+  }
+}
+
+function auditFinalPngVideoProgress(finalPng, viewportPng, nativeProgressAudit, desktopFrameMetadata, options = {}) {
+  if (!nativeProgressAudit?.ok || !nativeProgressAudit.box) {
+    return { ok: false, issues: [{ code: "native_progress_unverified", detail: nativeProgressAudit?.reason || "native timeline audit failed" }] };
+  }
+  const { x, y, width, height } = nativeProgressAudit.box;
+  const audit = auditFinalPngSlotPixels(
+    finalPng,
+    viewportPng,
+    { left: x, top: y, width, height },
+    desktopFrameMetadata,
+    {
+      finalProofStyle: options.finalProofStyle,
+      minSimilarity: Number(options.minSimilarity ?? 0.82),
+      minContentStddev: Number(options.minContentStddev ?? 4),
+      comparedTo: "viewportPng_video_progress_roi",
+      referenceIsViewport: true,
+      viewportWidthCss: Number(options.viewportWidthCss ?? 0),
+    },
+  );
+  return { ...audit, source: "auditFinalPngSlotPixels_video_progress_roi", slotBox: { left: x, top: y, width, height } };
+}
+
 function auditFinalPngCreativeIdentityAgainstFrames(finalPng, referenceFrames, slotBox, desktopFrameMetadata, options = {}) {
   const uniqueFrames = [];
   const seenPaths = new Set();
@@ -7270,48 +7469,6 @@ async function prepareVideoProof(page, adSelector, seed) {
       return { ok: false, reason: "video_not_found" };
     }
 
-    const formatTime = (seconds) => {
-      const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
-      const minutes = Math.floor(safeSeconds / 60);
-      const remainder = String(safeSeconds % 60).padStart(2, "0");
-      return `${minutes}:${remainder}`;
-    };
-    const injectProgressOverlay = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
-      const currentTime = Number(video.currentTime || 0);
-      const ratio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-      const previousOverlay = ad.querySelector("[data-adops-video-overlay='1']");
-      if (previousOverlay) previousOverlay.remove();
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-adops-video-overlay", "1");
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.style.position = "absolute";
-      overlay.style.left = "10px";
-      overlay.style.right = "10px";
-      overlay.style.bottom = "10px";
-      overlay.style.zIndex = "2147483647";
-      overlay.style.pointerEvents = "none";
-      overlay.style.background = "linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.74))";
-      overlay.style.color = "#fff";
-      overlay.style.font = "600 13px Arial, sans-serif";
-      overlay.style.textShadow = "0 1px 2px rgba(0,0,0,.8)";
-      overlay.style.padding = "18px 8px 6px";
-      overlay.style.borderRadius = "0 0 4px 4px";
-      overlay.innerHTML = `
-        <div style="height:5px;background:rgba(255,255,255,.42);border-radius:999px;overflow:hidden;margin-bottom:6px;">
-          <div style="width:${Math.round(ratio * 100)}%;height:100%;background:#ffffff;border-radius:999px;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="font-size:14px;">&#9658;</span> ${formatTime(currentTime)}</span>
-          <span>${formatTime(duration)}</span>
-        </div>
-      `;
-      const adStyle = window.getComputedStyle(ad);
-      if (adStyle.position === "static") ad.style.position = "relative";
-      ad.appendChild(overlay);
-      return { ratio, overlayInjected: true, progressVisible: true };
-    };
-
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
     video.setAttribute("muted", "");
@@ -7375,7 +7532,7 @@ async function prepareVideoProof(page, adSelector, seed) {
     const hoverX = rect.left + rect.width / 2;
     const hoverY = rect.top + rect.height / 2;
 
-    const progressState = injectProgressOverlay();
+    const artificialOverlayCount = ad.querySelectorAll("[data-adops-video-overlay='1']").length;
 
     video.setAttribute("data-adops-video-proof", "1");
     ad.classList.add("adops-video-proof");
@@ -7390,8 +7547,9 @@ async function prepareVideoProof(page, adSelector, seed) {
       paused: video.paused,
       playResolved,
       controls: video.controls === true,
-      overlayInjected: progressState.overlayInjected === true,
-      progressVisible: progressState.progressVisible === true,
+      overlayInjected: false,
+      artificialOverlayCount,
+      progressVisible: false,
       targetTime: Number(targetSecond || 0),
       randomSeed: Number(seed),
       progressRatio: video.duration > 0 ? Number((video.currentTime / video.duration).toFixed(4)) : 0,
@@ -7414,48 +7572,6 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
     if (!(ad instanceof HTMLElement)) return { ok: false, reason: "ad_not_found" };
     const video = ad.querySelector("video");
     if (!(video instanceof HTMLVideoElement)) return { ok: false, reason: "video_not_found" };
-    const formatTime = (seconds) => {
-      const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
-      const minutes = Math.floor(safeSeconds / 60);
-      const remainder = String(safeSeconds % 60).padStart(2, "0");
-      return `${minutes}:${remainder}`;
-    };
-    const injectProgressOverlay = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
-      const currentTime = Number(video.currentTime || 0);
-      const ratio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-      const previousOverlay = ad.querySelector("[data-adops-video-overlay='1']");
-      if (previousOverlay) previousOverlay.remove();
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-adops-video-overlay", "1");
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.style.position = "absolute";
-      overlay.style.left = "10px";
-      overlay.style.right = "10px";
-      overlay.style.bottom = "10px";
-      overlay.style.zIndex = "2147483647";
-      overlay.style.pointerEvents = "none";
-      overlay.style.background = "linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.74))";
-      overlay.style.color = "#fff";
-      overlay.style.font = "600 13px Arial, sans-serif";
-      overlay.style.textShadow = "0 1px 2px rgba(0,0,0,.8)";
-      overlay.style.padding = "18px 8px 6px";
-      overlay.style.borderRadius = "0 0 4px 4px";
-      overlay.innerHTML = `
-        <div style="height:5px;background:rgba(255,255,255,.42);border-radius:999px;overflow:hidden;margin-bottom:6px;">
-          <div style="width:${Math.round(ratio * 100)}%;height:100%;background:#ffffff;border-radius:999px;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="font-size:14px;">&#9658;</span> ${formatTime(currentTime)}</span>
-          <span>${formatTime(duration)}</span>
-        </div>
-      `;
-      const adStyle = window.getComputedStyle(ad);
-      if (adStyle.position === "static") ad.style.position = "relative";
-      ad.appendChild(overlay);
-      return { ratio, overlayInjected: true, progressVisible: true };
-    };
-
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
     if (!duration) return { ok: false, reason: "duration_unavailable" };
     const seedRatio = (Number(seed || 0) % 1000) / 1000;
@@ -7480,7 +7596,7 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
     try {
       video.pause();
     } catch {}
-    const progressState = injectProgressOverlay();
+    const artificialOverlayCount = ad.querySelectorAll("[data-adops-video-overlay='1']").length;
     const rect = video.getBoundingClientRect();
     return {
       ok: true,
@@ -7492,8 +7608,9 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
       randomSeed: Number(seed),
       attempt: Number(attempt),
       controls: video.controls === true,
-      overlayInjected: progressState.overlayInjected === true,
-      progressVisible: progressState.progressVisible === true,
+      overlayInjected: false,
+      artificialOverlayCount,
+      progressVisible: false,
     };
   }, { selector: adSelector, seed, attempt });
 
@@ -7807,6 +7924,8 @@ async function main() {
     }
     const gifSourceAllowed = !videoMedia && gifFrameSelectionMode !== "dom_only" && gifSourceUrl;
     let videoProof = null;
+    let nativeProgressAudit = null;
+    let finalPngProgressAudit = null;
     if (videoMedia) {
       const videoSeed = buildStableNumber(`${insertion.id}:${effectiveCaptureAt || isoDate}:${insertion.mediaUrl}`, 1000);
       videoProof = await prepareVideoProof(page, matchedAdSelector, videoSeed);
@@ -8272,7 +8391,32 @@ async function main() {
     const effectiveProofStyle = proofStyleContract.finalProofStyle;
     finalProofStyle = effectiveProofStyle;
 
-    if (!existsSync(viewportPng)) {
+    if (videoMedia) {
+      const videoLocator = page.locator(matchedAdSelector).locator("video").first();
+      const hoverPoint = await videoLocator.evaluate((video) => {
+        video.pause();
+        const rect = video.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+      await page.mouse.move(hoverPoint.x, hoverPoint.y);
+      await page.waitForTimeout(160);
+      await page.screenshot({ path: viewportPng });
+      if (readinessAudit) stampCaptureInstant();
+      nativeProgressAudit = await auditNativeVideoProgress(page, matchedAdSelector);
+      videoProof = {
+        ...videoProof,
+        currentTime: nativeProgressAudit.currentTime ?? videoProof?.currentTime ?? null,
+        duration: nativeProgressAudit.duration ?? videoProof?.duration ?? null,
+        paused: nativeProgressAudit.paused ?? videoProof?.paused ?? null,
+        controls: nativeProgressAudit.controls ?? videoProof?.controls ?? false,
+        progressRatio: Number.isFinite(nativeProgressAudit.currentTime) && nativeProgressAudit.duration > 0
+          ? Number((nativeProgressAudit.currentTime / nativeProgressAudit.duration).toFixed(4))
+          : videoProof?.progressRatio ?? 0,
+        overlayInjected: false,
+        artificialOverlayCount: nativeProgressAudit.artificialOverlayCount ?? null,
+        progressVisible: false,
+      };
+    } else if (!existsSync(viewportPng)) {
       await page.screenshot({ path: viewportPng });
       artifactRecords.viewportRecapturedBeforeCompose = {
         reason: "approved_viewport_artifact_missing",
@@ -8330,6 +8474,31 @@ async function main() {
     if (!finalPngSlotAudit.ok) {
       const details = finalPngSlotAudit.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
       throw new Error(`capture_audit_failed: final_png_slot_audit_failed: ${details}`);
+    }
+    if (videoMedia) {
+      finalPngProgressAudit = auditFinalPngVideoProgress(
+        finalPng,
+        viewportPng,
+        nativeProgressAudit,
+        desktopFrameMetadata,
+        {
+          finalProofStyle,
+          minSimilarity: Number(mapping.auditConfig?.finalPngSlotMinSimilarity ?? 0.82),
+          minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
+          viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
+        },
+      );
+      const progressVisible = nativeProgressAudit?.ok === true && finalPngProgressAudit?.ok === true;
+      videoProof = {
+        ...videoProof,
+        overlayInjected: false,
+        artificialOverlayCount: nativeProgressAudit?.artificialOverlayCount ?? null,
+        progressVisible,
+      };
+      if (reconstruction?.provenanceVersion === 4 && !progressVisible) {
+        const details = (finalPngProgressAudit?.issues || []).map((item) => `${item.code}: ${item.detail}`).join("; ");
+        throw new Error(`capture_audit_failed: native_video_progress_unverified: ${details || nativeProgressAudit?.reason || "native timeline or final PNG ROI did not pass"}`);
+      }
     }
     const finalPngCreativeReferenceFrames = gifSourceAllowed
       ? buildFinalPngCreativeReferenceFrames(frameSelection)
@@ -8493,6 +8662,8 @@ async function main() {
       proofStyleDowngradeReason,
       auditInsetSuppressed: proofStyleContract.auditInsetSuppressed,
       finalPngSlotAudit,
+      nativeProgressAudit,
+      finalPngProgressAudit,
       finalPngCreativeIdentityAudit,
       finalPngHeaderAdPolicyAudit,
       adClass: match.adClass || null,
@@ -9025,6 +9196,8 @@ if (require.main === module) {
     applyReferenceFrameToDomMediaInPage,
     resolveFinalPngSlotAuditBox,
     auditFinalPngSlotPixels,
+    auditNativeVideoProgress,
+    auditFinalPngVideoProgress,
     auditFinalPngCreativeIdentityAgainstFrames,
     auditVisibleMediaPixels,
     captureStrictReadinessCandidate,

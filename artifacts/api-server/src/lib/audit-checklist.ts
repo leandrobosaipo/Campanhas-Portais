@@ -21,6 +21,7 @@ import {
   attachServerCaptureProvenance,
   correlateCaptureLogProvenance,
   evaluateCaptureMetadata,
+  evaluateVideoPlayerProof,
   getEvidenceDateKey,
   isCaptureAtInRetroWindow,
   parseDateOnly,
@@ -597,7 +598,6 @@ export async function validateAuditChecklist(input: {
     const retroGate = metadataObject(metadata, "retroGate");
     const creativePlacementAudit = metadataObject(metadata, "creativePlacementAudit");
     const pageScrollMetrics = metadataObject(metadata, "pageScrollMetrics");
-    const videoProof = metadataObject(metadata, "videoProof");
     const readinessAudit = metadataObject(metadata, "readinessAudit");
     const metadataRequiredGates = metadataObject(metadata, "requiredGates");
     const relativeContentTimeline = isPlainObject(retroGate?.relativeContentTimeline)
@@ -891,18 +891,13 @@ export async function validateAuditChecklist(input: {
     }
 
     if (requiredGates.requireVideoControls) {
-      if (
-        videoProof?.ok !== true ||
-        videoProof.controls !== true ||
-        !((videoProof.progressVisible === true) || (videoProof.overlayInjected === true)) ||
-        Number(videoProof.currentTime ?? 0) <= 0.5 ||
-        Number(videoProof.duration ?? 0) <= 0
-      ) {
+      const playerProof = evaluateVideoPlayerProof(metadata, true);
+      if (!playerProof.ok) {
         blockingIssues.push(issue(
           "video_controls_missing",
           "requireVideoControls",
           "Controles do vídeo ausentes",
-          `videoProof inválido: ${JSON.stringify(videoProof ?? {})}.`,
+          `Progresso ${playerProof.nativeRequired ? "nativo no PNG final" : "do contrato legado"} não comprovado; controles=${playerProof.controlsVisible}, progresso=${playerProof.progressVisible}.`,
         ));
       }
     }
