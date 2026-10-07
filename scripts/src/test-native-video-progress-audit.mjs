@@ -184,9 +184,19 @@ try {
     screenshotAudits.positive.viewportPath,
     screenshotAudits.positive,
     frameMetas.positive,
-    { viewportWidthCss: 640 },
+    { viewportWidthCss: 640, minSimilarity: 0.48 },
   );
   assert.equal(actualFinalRoi.ok, true, `actual native-control screenshot ROI must pass production defaults: ${JSON.stringify(actualFinalRoi)}`);
+  assert.equal(actualFinalRoi.minSimilarity, 0.82, "native progress ROI must not inherit the lower generic slot threshold");
+  const stricterFinalRoi = auditFinalPngVideoProgress(
+    screenshotAudits.positive.finalPath,
+    screenshotAudits.positive.viewportPath,
+    screenshotAudits.positive,
+    frameMetas.positive,
+    { viewportWidthCss: 640, minSimilarity: 0.91 },
+  );
+  assert.equal(stricterFinalRoi.ok, true, `native progress ROI must retain a stricter configured threshold: ${JSON.stringify(stricterFinalRoi)}`);
+  assert.equal(stricterFinalRoi.minSimilarity, 0.91);
   const actualMetadata = {
     reconstruction: { provenanceVersion: 4 },
     chromeFrameHeight: frameMetas.positive.chromeFrameHeight,
@@ -248,9 +258,10 @@ const changedRoi = auditFinalPngVideoProgress(
   screenshotAudits.positive.viewportPath,
   screenshotAudits.positive,
   frameMetas.positive,
-  { viewportWidthCss: 640 },
+  { viewportWidthCss: 640, minSimilarity: 0.48 },
 );
 assert.equal(changedRoi.ok, false, "changed native timeline pixels in resized final ROI must fail");
+assert.equal(changedRoi.minSimilarity, 0.82, "tampered ROI must still be judged against the native threshold");
 
   console.log(JSON.stringify({ ok: true, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["native_timeline", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed"] }, null, 2));
 } finally {

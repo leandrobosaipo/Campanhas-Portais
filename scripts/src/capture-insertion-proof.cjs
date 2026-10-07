@@ -4558,6 +4558,8 @@ function auditFinalPngVideoProgress(finalPng, viewportPng, nativeProgressAudit, 
   if (!nativeProgressAudit?.ok || !nativeProgressAudit.box) {
     return { ok: false, issues: [{ code: "native_progress_unverified", detail: nativeProgressAudit?.reason || "native timeline audit failed" }] };
   }
+  const configuredMinSimilarity = Number(options.minSimilarity ?? 0.82);
+  const minSimilarity = Math.max(0.82, Number.isFinite(configuredMinSimilarity) ? configuredMinSimilarity : 0.82);
   const { x, y, width, height } = nativeProgressAudit.box;
   const audit = auditFinalPngSlotPixels(
     finalPng,
@@ -4566,7 +4568,7 @@ function auditFinalPngVideoProgress(finalPng, viewportPng, nativeProgressAudit, 
     desktopFrameMetadata,
     {
       finalProofStyle: options.finalProofStyle,
-      minSimilarity: Number(options.minSimilarity ?? 0.82),
+      minSimilarity,
       minContentStddev: Number(options.minContentStddev ?? 4),
       comparedTo: "viewportPng_video_progress_roi",
       referenceIsViewport: true,

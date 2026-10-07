@@ -12,9 +12,9 @@
 
 ## Estado atual — 07/10/2026
 
-**26/237 confirmadas; 211 restantes.** Main04cd98ba906ec57efc86ffd1a44390b5c666c5c2 publicada pelo PR117, CI37594453308 e backup/restauração/readback integral conferidos às08:50:26 UTC. Recibo privado `release-final-retro-canary-followup.json`. AFL2692/21Aug e ROO2641/23Aug promovidas com consumidor conferido. As tarefas abaixo conservam registros anteriores; publicação de código não encerra o lote.
+**Checkpoint do consumidor de 07/10 às10:32 UTC:30/237 confirmadas;207 restantes.** Main606cf05b70ee076bc613ef4d7bb5529f2d9c0b61 publicada pelo PR118, CI37601313114/37601935185 e backup/restauração/readback integral conferidos às10:08:36 UTC. Recibo privado `release-final-native-final-stage-retry1.json`. Restam170 pares não-vídeo liberados,28 de vídeo bloqueados pelo canário posterior e9 de #1944 bloqueados por identidade no consumidor. Os26 pares protegidos1826/1860 ficam fora dos237 operáveis. AFL1842/22–25Aug passou auditoria/revisão individual, promoção com original arquivado, hash/status e quatro miniaturas/modais conferidos. Recibo `checkpoint-30-confirmed.json`. As tarefas abaixo conservam registros anteriores; publicação de código não encerra o lote.
 
-Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-native-final-capture-stage-20261007`; checkout original preservado.
+Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-native-progress-threshold-20261007`; checkout original preservado.
 
 ### Task 16: Corrigir causas dos três canários d1
 
@@ -37,7 +37,7 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 3. [x] Regressão RED→GREEN no teste existente: ordem das chamadas e recusa/aceite do mesmo instante real conforme janela da etapa. Focal5/5, nativo10, syntax/diff-check aprovados por Luna.
 4. [x] Revisão independente Sol; typecheck com runtime existente; documentação consistente. CI37599924758 passou no commit650bcebe; a proteção operacional/qualificação adicionadas depois exigem CI do novo SHA.
 5. [x] Opt-in privado separado --supersede-provenance-blocked qualificado:87 checks offline, erro409/diagnóstico exatos, tuple/release/referência/bytes/hash/lista completa sem candidato e sem aprovação/promoção; canonicalCAS. Decisão root registration_provenance_blocked preserva timestamps/job/artefatos, sem rejeição visual fictícia.
-6. [ ] PR/CI do SHA exato/main; nova publicação com backup/restauração e readback integral. Não publicar enquanto houver captura ativa.
+6. [x] PR118/CI37601313114 e mainCI37601935185 do606 exato; publicação com backup/restauração/readback integral. A primeira tentativa parou antes de trocar fonte/stack por identificação incorreta do processo pausado; retomada com namespace novo e parser revisado31checks. Sem repetir PUT após timeout. Não publicar enquanto houver captura ativa.
 7. [ ] Novo canário VIDEO, auditoria final, revisão individual, promoção/archive/hash/status/miniatura/modal. Só então aumentar a contagem.
 8. [ ] Continuar somente os237 pares operáveis:26confirmados/211restantes. Inventário263 também inclui26 protegidos, preservados. Pacotes PI/portal somente pela API assíncrona. PI textual “PI - TCE” depende da escolha solicitada ao usuário; não inventar número.
 
@@ -49,7 +49,19 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] Registrar exceção: quatro PNGs1826/01–04Aug promovidos antes da qualificação; originais/archive/hash preservados, não contam como consumidor. Relatório corretamente mostra1841. Não declarar1860 duplicidade idêntica: sucessora difere em mídia/formato/identityKey.
 3. [x] Guard privado compartilhado antes de preparo/captura exige archivedAt=null e supersededByInsertionId=null. Positivo e negativos de arquivamento/vínculo/campos ausentes passaram; supersession87/87 segue passando.
 4. [x] Guard no main comum após fetchInsertion e antes de mapping/browser/mídia recusa qualquer marcador de arquivo/substituição; DTO antigo sem campos compatível. Teste RED→GREEN no harness existente; focal6/6 e contrato candidato aprovados. Typecheck/syntax/diff-check aprovados pelo root; revisão independente Sol aprovada.
-5. [ ] CI do novo head, integrar e publicar junto com Task17; novoVIDEOcanário antes dos28 pares de vídeo. Agenda qualificada mantém refs literais/IDs e grupos≤4, sem targets protegidos.
+5. [x] CI/integração/publicação606 junto com Task17. Agenda com identidade/hash/readback do consumidor mantém refs literais/IDs e grupos≤4, sem targets protegidos;9pares1944 também retidos. NovoVIDEOcanário ainda bloqueado, seguir Task19 antes dos28 pares de vídeo.
+
+### Task 19: Alinhar o limiar nativo do vídeo com a auditoria
+
+**Owner:** Luna possui capturer/teste existente; Sol revisa e qualifica repetição privada; root possui docs/Git/publicação/API/consumidor. Não reduzir exigências da API nem alterar metadata já registrada.
+
+1. [x] Canário606 #3064/01Oct job1791367753908-7m0esk: proveniência12/12, estágio final correto, controles nativos/pixels aprovados com score1.0. Candidatof0c33dbd-4b60-4d5e-96a6-1ef8f084dc46 bloqueado porque minSimilarity0.48 herdado do slot é inferior ao mínimo0.82 da auditoria nativa. Original preservado; nenhuma promoção.
+2. [x] Aplicar piso0.82 no comparador final nativo compartilhado, preservar valor maior configurado e manter comparação genérica do slot0.48 independente. Patch mínimo, sem dependência.
+3. [x] Regressão RED→GREEN existente: configuração0.48 resulta0.82, configuração0.91 preservada, ROI adulterada continua recusada.10 cenários nativos passaram; revisão independente Sol aprovada.
+4. [x] Repetição privada separada --supersede-audit-policy-blocked:133 checks offline, auditoria final/códigos exatos, PNG/metadata/proveniência/job/candidato/CAS e ausência de promoção. Exigir revisão da fonte vinculada à nova SHA publicada. Não reescrever o candidato606 nem criar rejeição visual fictícia.
+5. [ ] Commit/PR/CI do SHA exato/main, nova publicação com backup/restauração/rollback/readback dos quatro serviços, fonte, asset e OpenAPI. Nenhuma captura/promoção ativa durante publicação.
+6. [ ] Novo canário3064 com referência histórica, auditoria final sem issues, revisão individual, promoção com arquivo preservado, hash/status e miniatura/modal no consumidor. Só então liberar os demais vídeos e contar a entrega.
+7. [ ] Continuar lotes não-vídeo≤4 e pacotes finais PI/portal pela API assíncrona. #1944 permanece pendente da fonte/decisão; não inventar PI nem transferir evidências.
 
 ## Global Constraints
 

@@ -2,9 +2,9 @@
 
 Relatório dinâmico de evidências: [`docs/adops/relatorio-dinamico-evidencias.md`](adops/relatorio-dinamico-evidencias.md).
 
-Reconstruções retroativas atuais: [contrato v4](adops/retroactive-proof-v4/spec.md), [validação](adops/retroactive-proof-v4/harness.md) e [plano de correção](superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md). Estado de07/10/2026: main/release04cd98ba906e conferida;26/237 imagens corrigidas,211 restantes. Os relógios visuais são históricos; origem e criação reais permanecem nos dados/relatório. PNG sem carimbo adicional. Consultar [status atual](status-do-projeto.md) antes de usar os registros históricos abaixo.
+Reconstruções retroativas atuais: [contrato v4](adops/retroactive-proof-v4/spec.md), [validação](adops/retroactive-proof-v4/harness.md) e [plano de correção](superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md). Snapshot do consumidor de 07/10/2026, 10:32 UTC: release `606cf05b70ee076bc613ef4d7bb5529f2d9c0b61` publicada às 10:08:36 UTC; PR118 e CI `37601313114`/`37601935185` aprovados. Há 30/237 pares operáveis confirmados; dos 207 restantes, 170 não vídeo estão prontos, 28 vídeos estão retidos e 9 alvos `#1944` aguardam identidade. AFL `#1842`/22–25/08 está confirmada por auditoria, promoção e readback, com quatro miniaturas/modais conferidos; já está incluída nos 30. Consulte o [status detalhado](status-do-projeto.md) antes de usar os registros históricos abaixo.
 
-O inventário de263 inclui26 pares protegidos por arquivamento/substituição. A agenda de correção usa somente237 pares operáveis, qualificados por API; nenhum registro protegido é reativado ou removido.
+O inventário de 263 inclui 26 pares protegidos por arquivamento/substituição, fora dos 237 operáveis. Não reative nem transfira evidências protegidas. Para novas reconstruções, os relógios visuais usam a referência histórica; origem e instante real permanecem nos dados/relatório, e o PNG não recebe carimbo adicional. Isso não confirma, por si só, veiculação passada.
 
 > Estado: vigente
 > Público: equipe operacional e agentes
