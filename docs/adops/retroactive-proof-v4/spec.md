@@ -45,3 +45,15 @@ Uma nova tentativa desse candidato exige rejeição visual explícita ligada ao 
 Nova apresentação é distinguível pelo kit `windows11-chrome-light-similar-v5`; aceitar kit anterior v4 sem reinterpretá-lo. Preserva o viewport real, a seleção do slot e o checklist; alturas e offsets da moldura vêm do layout e da metadata do kit efetivamente usado. Gerar em resolução adequada, evitar ampliar raster 1280 para saída 3320; relógio em duas linhas hh:mm e dd/MM/yyyy no extremo direito. Toolbar usa SVGs oficiais/licenciados ou desenhos vetoriais, nunca glifos Unicode. URL/título/logo são reais; fonte e ícones têm origem/licença. O usuário autorizou Selawik e recursos gráficos abertos; a moldura é reconstruída e não pode ser anunciada como screenshot nativo de Windows nem como Segoe UI original. Não adicionar clima, perfil ou abas fictícios.
 
 Favicon da aba v5 usa o link de ícone efetivamente observado no DOM público, com URL/fonte registrada. A marca local de proporção 4:1 não deve ser recortada nem apresentada como favicon presumido. O fetch não transmite cookies ou headers AdOps; admite a mesma origem e somente a CDN explicitamente conhecida do portal, com HTTPS, timeout e limites de bytes/dimensões. Hosts arbitrários e redirecionamentos continuam recusados. Se a fonte estiver ausente ou inválida, `tabIconFallback=true` indica fallback gráfico e o gate existente de evidência final continua bloqueando. Dock central e controles vetoriais não indicam aplicativos extras abertos; não fabricar favoritos, perfil ou clima.
+
+As origens externas permitidas são pareadas com o domínio configurado, que deve coincidir com o hostname observado da página (ou seu `www`):
+
+| Domínio do portal | Origem externa exata |
+| --- | --- |
+| afolhalivre.com | https://afolhalivre.nyc3.digitaloceanspaces.com |
+| roonoticias.com | https://roonoticias.nyc3.digitaloceanspaces.com |
+| perrenguematogrosso.com | https://cdn.perrenguematogrosso.com |
+| portalnortemt.com | https://portalnortemt.nyc3.digitaloceanspaces.com |
+| portalpantanalmt.com | https://portalpantanalmt.nyc3.digitaloceanspaces.com |
+
+O Matogrossense usa o ícone declarado na mesma origem. Não há wildcard de buckets. Se o fetch do navegador falhar para uma origem externa permitida, a coleta Node usa somente o mesmo URL observado no DOM, revalidado como HTTPS, sem userinfo ou porta não padrão. Não recebe URL do operador nem reutiliza cookies, Authorization ou headers do capturer; bloqueia redirect, exige MIME de imagem e limita timeout a 3 s, stream a 1 MiB e imagem decodificada a 512×512. A conversão final conserva a fonte real do link. Os headers de cache são retirados só no scope do favicon e restaurados em `finally`; falha de restauração reprova a coleta.

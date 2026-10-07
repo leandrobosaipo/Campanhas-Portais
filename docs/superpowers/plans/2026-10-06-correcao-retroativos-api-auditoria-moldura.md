@@ -103,7 +103,7 @@ Identidade correta da metadata final; negação por hash/job/data; v2/v3 e daily
 - [ ] Conferir API status/mensal, abrir PNG e relatório canônico, fonte/data real e os dois relógios. Pacote final só via API assíncrona obrigatória se solicitado.
 - [x] Integrar main39 validada e conferir publicação da release; o aceite das evidências continua pendente. Se falhar, volumes+HTML anteriores; compensação automática cobre falha de promote. Rollback de aprovado usa PATCH /api/evidences/{id} com ponteiro/tipo/titulo originais, após checkcanônico+hash/bytes do original intacto e readback final; não inventar restoreAPI dedicada.
 
-Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (250 pendentes, 13 aprovados), 1157 unknown separados. Canário #3047/job `1791303736001-f5yuyn` falhou com `tab_icon_fallback`, sem promoção nem alteração do original. O lote continua bloqueado pelo canário. OpenAPI vivo main39: catálogo v4, 174 operações/157 paths; contagem separada dos gates locais de contrato.
+Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (snapshot persistido: 250 pendentes, 13 aprovados), 1157 unknown separados. O primeiro canário #3047/job `1791303736001-f5yuyn` falhou com `tab_icon_fallback`, sem promoção nem alteração do original; esse resultado foi preservado. Após a publicação 6422, o novo canário e as substituições seriais confirmaram 10/263 correções: oito datas de #3047 (18–24/09 e 01/10), #3063 e #3055 em 01/10. Cada correção tem archive, revisão visual, recibo de promoção e PNG canônico com hash conferido. Restam 253: 252 em 87 grupos e #3064 separado como canário de vídeo. Task7 continua aberta; novos grupos aguardam a publicação nativa e seu canário. OpenAPI vivo conferido: catálogo v4, 174 operações/157 paths; contagem separada dos gates locais de contrato.
 
 ### Task 9: Hotfix do favicon observado e título da aba
 
@@ -114,8 +114,25 @@ Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (250 pen
 - [x] Reproduzir em fixture a falha sob `Cache-Control`/`Pragma`, sem rede externa; corrigir somente durante a coleta, preservando demais headers e restaurando o objeto original em `finally` mesmo na falha. `no-store`/credenciais omitidas/redirect bloqueado/allowlist/limites ficam intactos. Chamadas antigas não alteram headers desconhecidos; falha de restauração propaga e reprova.
 - [x] Usar título real de `page.title()`, fallback somente se vazio e clipping existente; testes comportamentais para título diferente da configuração e retorno à política de headers nas requisições seguintes.
 - [x] Revisão Sol e testes afetados favicon/moldura/histórico/sintaxe/diff-check aprovados; integridade viva 41/41, zero erros, dois avisos conhecidos não publicados. Fonte 39 e artefatos originais preservados.
-- [ ] PR/CI/main novo SHA e readback de release por root.
-- [ ] Root: backup/restauração/readback do novo release, novo canário revisado e aprovado antes de retomar Task7. O job reprovado não é reclassificado como sucesso nem repetido cegamente.
+- [x] PR112 mergeado, CI da PR e main aprovados; release `6422f688968796544d84408f0632f2d770566d30` publicada e conferida por root em `release-final-favicon.json`.
+- [x] Root: backup custom, restauração completa e readback da release 6422 comprovados; novo canário revisado, promovido e conferido antes das dez substituições confirmadas. O primeiro job reprovado permaneceu preservado, sem reclassificação nem repetição cega.
+
+### Task 10: Barra nativa do vídeo e supersession do candidato rejeitado
+
+**Owner:** Luna (capturer/teste Chromium); Sol (API/checklist/testes/docs e guard privado); root (CI/main/publicação/canário).
+
+- [x] Remover a barra artificial do capturer atual; medir timeline UA-shadow, visibilidade/clipping/oclusão, estado pausado e ROI do PNG composto. API/checklist compartilham o gate VIDEO v4; contratos legados permanecem identificados.
+- [x] Validar API/checklist 66/66, Chromium real e prova ROI→API 10/10, guard privado de supersession 43/43. CI recebeu os dois comandos nativos; YAML conferido por root.
+- [x] Revisão concluída e PR113 mergeada: main `18bf1d2ca7f519cf98991b096cf6b9a64602905b`, árvore igual ao commit revisado `a106c0e`. #3064 permanece candidato rejeitado, sem promoção; nova tentativa exige rejeição/identidade/hash e ausência de recibo de promoção.
+- [ ] Publicar o novo SHA após Task11/CI/main e conferir o canário VIDEO real antes de retomar os grupos. Produção permanece na release 6422.
+
+### Task 11: Favicons dos quatro portais com origem pública externa
+
+**Owner:** Luna (helper existente e teste focal); Sol (revisão e SPEC/HARNESS mínimos); root (PR/CI/main/publicação).
+
+- [x] Preflight público dos seis portais identificou quatro origens exatas antes bloqueadas: AFL, ROO, PNMT e PPMT. OMT same-origin e a CDN Perrengue já foram resolvidos; recibo privado `site-favicon-preflight.json`.
+- [x] Parear as quatro origens HTTPS exatas com domínio configurado e observado, sem wildcard; fetch Node restrito ao link observado quando Chromium falha, com credenciais omitidas/no-store, redirect/userinfo/porta recusados, timeout/stream/MIME/dimensões limitados e decoder único. Focal local, sintaxe e diff-check passaram; SPEC/HARNESS atualizados. O preflight público dos seis portais foi aprovado pela Luna; captura real da release ainda depende do canário.
+- [ ] Integrar o patch pequeno e publicar uma única release nativa+favicon, com backup/restauração/readback pelos gates oficiais. Não declarar esse release publicado antes dos recibos vivos.
 
 ### Task 8: Substituição explícita de apresentação histórica aprovada
 

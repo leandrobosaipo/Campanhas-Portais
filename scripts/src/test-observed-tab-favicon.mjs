@@ -22,6 +22,16 @@ let faviconFetchHeaders = null;
 let externalRequests = 0;
 let cdnFetchCookieHeader = null;
 let cdnFetchHeaders = null;
+let portalFaviconRequests = 0;
+const originalGlobalFetch = globalThis.fetch;
+const nodeFallbackCalls = [];
+const portalFaviconHeaders = new Map();
+const portalFaviconHostsBySite = {
+  AFL: { domain: "afolhalivre.com", host: "afolhalivre.nyc3.digitaloceanspaces.com" },
+  ROO: { domain: "roonoticias.com", host: "roonoticias.nyc3.digitaloceanspaces.com" },
+  PNMT: { domain: "portalnortemt.com", host: "portalnortemt.nyc3.digitaloceanspaces.com" },
+  PPMT: { domain: "portalpantanalmt.com", host: "portalpantanalmt.nyc3.digitaloceanspaces.com" },
+};
 
 const external = createServer((req, res) => { externalRequests += 1; res.writeHead(200, { "content-type": "image/png" }); res.end(faviconBytes); });
 const server = createServer((req, res) => {
@@ -38,6 +48,19 @@ const server = createServer((req, res) => {
   if (req.url === "/perrengue-cdn") {
     res.writeHead(200, { "content-type": "text/html" });
     res.end(`<!doctype html><link rel="icon" href="https://cdn.perrenguematogrosso.com/app/uploads/favicon.png"><title>Perrengue</title>`);
+    return;
+  }
+  if (req.url.startsWith("/portal-favicon/")) {
+    const siteSigla = req.url.split("/")[2];
+    const target = portalFaviconHostsBySite[siteSigla];
+    if (!target) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(`<!doctype html><link rel="icon" href="https://${target.host}/app/uploads/favicon.png"><title>${siteSigla}</title>`);
+    return;
+  }
+  if (req.url === "/cross-nyc3") {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(`<!doctype html><link rel="icon" href="https://afolhalivre.nyc3.digitaloceanspaces.com/app/uploads/favicon.png"><title>Cross site</title>`);
     return;
   }
   if (req.url === "/oversized") {
@@ -69,7 +92,12 @@ try {
   secondPort = external.address().port;
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   firstPort = server.address().port;
-  browser = await chromium.launch({ headless: true, args: ["--host-resolver-rules=MAP perrenguematogrosso.com 127.0.0.1"] });
+  const mappedHosts = [
+    "perrenguematogrosso.com", "cdn.perrenguematogrosso.com",
+    ...Object.values(portalFaviconHostsBySite).flatMap(({ domain, host }) => [domain, host]),
+    "afolhalivre.nyc3.digitaloceanspaces.com",
+  ];
+  browser = await chromium.launch({ headless: true, args: [`--host-resolver-rules=${mappedHosts.map((host) => `MAP ${host} 127.0.0.1`).join(",")}`] });
   const context = await browser.newContext();
   await context.addCookies([{ name: "private_test_cookie", value: "must-not-leak", domain: "perrenguematogrosso.com", path: "/", httpOnly: true }]);
   const page = await context.newPage();
@@ -80,6 +108,38 @@ try {
     const carriesCaptureCacheHeaders = Boolean(cdnFetchHeaders.cacheControl || cdnFetchHeaders.pragma);
     await route.fulfill({ status: carriesCaptureCacheHeaders ? 403 : 200, contentType: "image/png", headers: { "access-control-allow-origin": `http://perrenguematogrosso.com:${firstPort}` }, body: faviconBytes });
   });
+  for (const { host } of Object.values(portalFaviconHostsBySite)) {
+    await page.route(`https://${host}/**`, async (route) => {
+      portalFaviconRequests += 1;
+      const headers = route.request().headers();
+      const summary = {
+        cacheControl: headers["cache-control"] || null,
+        pragma: headers.pragma || null,
+        cookie: headers.cookie || null,
+        authorization: headers.authorization || null,
+      };
+      portalFaviconHeaders.set(host, summary);
+      const carriesCaptureCacheHeaders = Boolean(summary.cacheControl || summary.pragma);
+      if (host.startsWith("roonoticias.") || host.startsWith("portalnortemt.")) {
+        await route.abort("failed");
+        return;
+      }
+      await route.fulfill({
+        status: carriesCaptureCacheHeaders ? 403 : 200,
+        contentType: "image/png",
+        headers: { "access-control-allow-origin": headers.origin || "null" },
+        body: faviconBytes,
+      });
+    });
+  }
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (!url.hostname.endsWith(".nyc3.digitaloceanspaces.com")) return originalGlobalFetch(input, options);
+    nodeFallbackCalls.push({ url: url.href, options: { method: options.method, credentials: options.credentials, cache: options.cache, redirect: options.redirect, hasSignal: Boolean(options.signal), headers: options.headers || null } });
+    if (url.searchParams.has("redirect")) return new Response("", { status: 302, headers: { location: "https://elsewhere.example/icon.png", "content-type": "image/png" } });
+    if (url.searchParams.has("oversized")) return new Response(new Uint8Array(1048577), { status: 200, headers: { "content-type": "image/png" } });
+    return new Response(faviconBytes, { status: 200, headers: { "content-type": "image/png" } });
+  };
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/`, { waitUntil: "domcontentloaded" });
   const captureHeaders = { "Cache-Control": "no-cache", Pragma: "no-cache", "Accept-Language": "pt-BR" };
   await page.setExtraHTTPHeaders(captureHeaders);
@@ -111,6 +171,30 @@ try {
   const restoredHeaders = await page.evaluate(async () => fetch("/header-echo").then((response) => response.json()));
   assert.deepEqual(restoredHeaders, { cacheControl: "no-cache", pragma: "no-cache", acceptLanguage: "pt-BR" }, "capture headers are restored after favicon fetch");
 
+  for (const [siteSigla, { domain, host }] of Object.entries(portalFaviconHostsBySite)) {
+    const allowedHostsForSite = resolveAllowedExternalFaviconHosts(domain, domain);
+    assert.deepEqual(allowedHostsForSite, [host], `${siteSigla} must allow only its confirmed exact favicon host`);
+    assert.equal(isAllowedFaviconUrl(`https://${domain}`, `https://${host}/app/uploads/favicon.png`, allowedHostsForSite), true);
+    assert.equal(isAllowedFaviconUrl(`https://${domain}`, `https://evil-${host}/app/uploads/favicon.png`, allowedHostsForSite), false);
+    assert.deepEqual(resolveAllowedExternalFaviconHosts(domain, "different.example"), [], `${siteSigla} host mapping must stay bound to its configured page host`);
+    await page.goto(`http://${domain}:${firstPort}/portal-favicon/${siteSigla}`, { waitUntil: "domcontentloaded" });
+    await page.setExtraHTTPHeaders(captureHeaders);
+    const portalIcon = await captureObservedTabFavicon(page, domain, captureHeaders);
+    assert.equal(portalIcon?.source, "observed_page_icon_link", `${siteSigla} real Chromium fixture should observe its mapped favicon`);
+    assert.equal(new URL(portalIcon.sourceUrl).hostname, host);
+    assert.deepEqual(portalFaviconHeaders.get(host), { cacheControl: null, pragma: null, cookie: null, authorization: null }, `${siteSigla} favicon request must omit global cache headers and credentials`);
+    const restoredPortalHeaders = await page.evaluate(async () => fetch("/header-echo").then((response) => response.json()));
+    assert.deepEqual(restoredPortalHeaders, { cacheControl: "no-cache", pragma: "no-cache", acceptLanguage: "pt-BR" });
+  }
+  assert.equal(nodeFallbackCalls.length, 2, "ROO and PNMT use the credential-free Node fallback after Chromium blocks their cross-origin fetches");
+  assert(nodeFallbackCalls.every(({ options }) => options.method === "GET" && options.credentials === "omit" && options.cache === "no-store" && options.redirect === "error" && options.hasSignal && options.headers === null));
+  assert(nodeFallbackCalls.every(({ url }) => url.endsWith("/app/uploads/favicon.png")));
+
+  const portalFaviconRequestsBeforeWrongSite = portalFaviconRequests;
+  await page.goto(`http://perrenguematogrosso.com:${firstPort}/cross-nyc3`, { waitUntil: "domcontentloaded" });
+  assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com", captureHeaders), null, "another portal's confirmed exact host remains blocked for this site");
+  assert.equal(portalFaviconRequests, portalFaviconRequestsBeforeWrongSite, "wrong-site host is rejected before network fetch");
+
   execFileSync(python, ["-c", "from PIL import Image; import sys; Image.new('RGB',(1280,720),(250,251,253)).save(sys.argv[1])", path.join(tempDir, "title-viewport.png")]);
   const titleActualPng = path.join(tempDir, "title-actual.png");
   const titleFallbackPng = path.join(tempDir, "title-fallback.png");
@@ -138,6 +222,24 @@ try {
   assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com"), null, "oversized data URI must be rejected before fetch/decode");
   await page.goto(`http://perrenguematogrosso.com:${firstPort}/wrong-type-page`, { waitUntil: "domcontentloaded" });
   assert.equal(await captureObservedTabFavicon(page, "perrenguematogrosso.com"), null, "non-image response must be rejected");
+  const fallbackPage = async (href) => {
+    await page.goto(`http://afolhalivre.com:${firstPort}/fallback-fixture`, { waitUntil: "domcontentloaded" });
+    await page.setContent(`<!doctype html><link rel="icon" href="${href}"><title>Fallback gate</title>`, { waitUntil: "domcontentloaded" });
+  };
+  const callsBeforeBlocked = nodeFallbackCalls.length;
+  for (const href of [
+    "https://user:pass@afolhalivre.nyc3.digitaloceanspaces.com/icon.png",
+    "https://afolhalivre.nyc3.digitaloceanspaces.com:444/icon.png",
+    "https://evil-afolhalivre.nyc3.digitaloceanspaces.com/icon.png",
+  ]) {
+    await fallbackPage(href);
+    assert.equal(await captureObservedTabFavicon(page, "afolhalivre.com"), null, `unsafe URL rejected: ${href.split("@").at(-1)}`);
+  }
+  assert.equal(nodeFallbackCalls.length, callsBeforeBlocked, "userinfo, nonstandard port, and unlisted hosts never reach Node fetch");
+  await fallbackPage("https://afolhalivre.nyc3.digitaloceanspaces.com/icon.png?redirect");
+  assert.equal(await captureObservedTabFavicon(page, "afolhalivre.com"), null, "Node fallback rejects redirect responses");
+  await fallbackPage("https://afolhalivre.nyc3.digitaloceanspaces.com/icon.png?oversized");
+  assert.equal(await captureObservedTabFavicon(page, "afolhalivre.com"), null, "Node fallback rejects an oversized streamed image");
   const timeoutHeaderCalls = [];
   const timedOutPage = {
     url: () => "https://perrenguematogrosso.com/timeout",
@@ -163,8 +265,9 @@ try {
   await captureObservedTabFavicon(omittedArgPage, "perrenguematogrosso.com");
   assert.equal(omittedArgHeaderCalls, 0, "two-argument calls leave unknown preexisting page headers untouched");
   await context.close();
-  console.log(JSON.stringify({ ok: true, sameOriginObserved: true, perrengueCdnAllowed: true, captureCacheHeadersScoped: true, innocentHeaderPreserved: true, headersRestored: true, actualPageTitleComposed: true, credentialsOmitted: true, arbitraryCrossOriginBlocked: true, oversizedDataAndNetworkImagesRejected: true }));
+  console.log(JSON.stringify({ ok: true, sameOriginObserved: true, perrengueCdnAllowed: true, fourExactPortalHostsAllowed: true, corsMissingFallbackSites: 2, wrongPortalHostBlockedBeforeFetch: true, captureCacheHeadersScoped: true, innocentHeaderPreserved: true, headersRestored: true, actualPageTitleComposed: true, credentialsOmitted: true, arbitraryCrossOriginBlocked: true, fallbackRejectsRedirectUserinfoPortOversize: true, oversizedDataAndNetworkImagesRejected: true }));
 } finally {
+  globalThis.fetch = originalGlobalFetch;
   if (browser) await browser.close();
   await new Promise((resolve) => server.close(resolve));
   await new Promise((resolve) => external.close(resolve));

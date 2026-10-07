@@ -4851,7 +4851,11 @@ function detectErrorCode(error) {
 }
 
 const FAVICON_CDN_HOSTS_BY_SITE = Object.freeze({
+  "afolhalivre.com": Object.freeze(["afolhalivre.nyc3.digitaloceanspaces.com"]),
+  "roonoticias.com": Object.freeze(["roonoticias.nyc3.digitaloceanspaces.com"]),
   "perrenguematogrosso.com": Object.freeze(["cdn.perrenguematogrosso.com"]),
+  "portalnortemt.com": Object.freeze(["portalnortemt.nyc3.digitaloceanspaces.com"]),
+  "portalpantanalmt.com": Object.freeze(["portalpantanalmt.nyc3.digitaloceanspaces.com"]),
 });
 
 function resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname) {
@@ -4865,6 +4869,7 @@ function isAllowedFaviconUrl(pageOrigin, url, allowedExternalHosts = []) {
   try {
     const page = new URL(pageOrigin);
     const target = new URL(url, pageOrigin);
+    if (target.username || target.password) return false;
     if (target.origin === page.origin) return target.protocol === "https:" || target.protocol === "http:";
     return target.protocol === "https:" && target.port === "" && allowedExternalHosts.includes(target.hostname.toLowerCase());
   } catch {
@@ -4882,7 +4887,7 @@ async function captureObservedTabFavicon(page, configuredDomain = "", captureHea
     if (originalHeaders) await page.setExtraHTTPHeaders(faviconHeaders);
     const pageHostname = new URL(page.url()).hostname;
     const allowedExternalHosts = resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname);
-    return await page.evaluate(async (trustedExternalHosts) => {
+    const observed = await page.evaluate(async (trustedExternalHosts) => {
       const links = Array.from(document.querySelectorAll('link[rel]'));
       const link = links.find((item) => /(?:^|\s)(?:shortcut\s+)?icon(?:\s|$)/i.test(item.rel || ""))
         || links.find((item) => /icon/i.test(item.rel || ""));
@@ -4890,6 +4895,7 @@ async function captureObservedTabFavicon(page, configuredDomain = "", captureHea
       const href = link.href;
       const parsed = new URL(href, location.href);
       const dataHref = parsed.protocol === "data:" && /^data:image\//i.test(href);
+      if (parsed.username || parsed.password) return null;
       if (dataHref && href.length > 1400000) return null;
       if (!dataHref && !(
         parsed.origin === location.origin
@@ -4901,7 +4907,15 @@ async function captureObservedTabFavicon(page, configuredDomain = "", captureHea
         const response = await fetch(href);
         blob = await response.blob();
       } else {
-        const response = await fetch(href, { credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(3000) });
+        let response;
+        try {
+          response = await fetch(href, { credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(3000) });
+        } catch (error) {
+          if (parsed.origin !== location.origin && error instanceof TypeError) {
+            return { nodeFetchFallback: true, href, pageOrigin: location.origin };
+          }
+          return null;
+        }
         if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) return null;
         const contentLength = Number(response.headers.get("content-length") || 0);
         if (contentLength > 1024 * 1024) return null;
@@ -4919,6 +4933,51 @@ async function captureObservedTabFavicon(page, configuredDomain = "", captureHea
         blob = new Blob(chunks, { type: response.headers.get("content-type") || "" });
       }
       if (!blob.type.startsWith("image/") || blob.size < 1 || blob.size > 1024 * 1024) return null;
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error("favicon_read_failed"));
+        reader.readAsDataURL(blob);
+      });
+      const sourceUrl = dataHref ? "page-declared-data-favicon" : `${parsed.origin}${parsed.pathname}`;
+      return { dataUrl, sourceUrl, source: "observed_page_icon_link" };
+    }, allowedExternalHosts);
+    let normalizedInput = observed;
+    if (observed?.nodeFetchFallback) {
+      const pageOrigin = observed.pageOrigin;
+      const fallbackUrl = new URL(observed.href, pageOrigin);
+      if (!isAllowedFaviconUrl(pageOrigin, fallbackUrl.href, allowedExternalHosts)
+          || fallbackUrl.origin === pageOrigin || fallbackUrl.protocol !== "https:"
+          || fallbackUrl.port !== "" || fallbackUrl.username || fallbackUrl.password) return null;
+      const response = await fetch(fallbackUrl.href, {
+        method: "GET",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) return null;
+      const contentLength = Number(response.headers.get("content-length") || 0);
+      if (contentLength > 1024 * 1024 || !response.body) return null;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > 1024 * 1024) { await reader.cancel(); return null; }
+        chunks.push(Buffer.from(value));
+      }
+      if (!total) return null;
+      const dataUrl = `data:${(response.headers.get("content-type") || "image/png").split(";")[0]};base64,${Buffer.concat(chunks).toString("base64")}`;
+      const parsed = new URL(fallbackUrl.href);
+      normalizedInput = { dataUrl, sourceUrl: `${parsed.origin}${parsed.pathname}`, source: "observed_page_icon_link" };
+    }
+    if (!normalizedInput?.dataUrl) return null;
+    return await page.evaluate(async (payload) => {
+      const blob = await (await fetch(payload.dataUrl)).blob();
+      if (!blob.type.startsWith("image/") || blob.size < 1 || blob.size > 1024 * 1024) return null;
       const bitmap = await createImageBitmap(blob);
       if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 512 || bitmap.height > 512 || bitmap.width * bitmap.height > 262144) {
         bitmap.close();
@@ -4927,15 +4986,17 @@ async function captureObservedTabFavicon(page, configuredDomain = "", captureHea
       const canvas = document.createElement("canvas");
       canvas.width = canvas.height = 64;
       const context = canvas.getContext("2d");
-      if (!context) return null;
+      if (!context) { bitmap.close(); return null; }
       const scale = Math.min(56 / bitmap.width, 56 / bitmap.height);
       const width = Math.max(1, Math.round(bitmap.width * scale));
       const height = Math.max(1, Math.round(bitmap.height * scale));
       context.drawImage(bitmap, Math.round((64-width)/2), Math.round((64-height)/2), width, height);
       bitmap.close();
-      const sourceUrl = dataHref ? "page-declared-data-favicon" : `${parsed.origin}${parsed.pathname}`;
+      const sourceUrl = payload.sourceUrl === "page-declared-data-favicon"
+        ? payload.sourceUrl
+        : `${new URL(payload.sourceUrl).origin}${new URL(payload.sourceUrl).pathname}`;
       return { dataUrl: canvas.toDataURL("image/png"), sourceUrl, source: "observed_page_icon_link" };
-    }, allowedExternalHosts);
+    }, normalizedInput);
   } catch {
     return null;
   } finally {
