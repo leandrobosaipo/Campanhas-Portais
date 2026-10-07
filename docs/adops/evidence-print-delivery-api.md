@@ -238,13 +238,21 @@ O arquivo para entrega e baixado de `arquivoUrl`, retornado por
 03-DOCUMENTOS-OPERACIONAIS/*.docx e *.pdf
 ```
 
-`GET /pi-site-exports?piCodigo={PI}&siteSigla={PORTAL}&download=1` consolida
-todas as insercoes exportaveis encontradas para a PI e o portal. Nao use esse
-endpoint quando houver insercao duplicada ou outra posicao fora da entrega.
+`GET /pi-site-exports?piCodigo={PI}&siteSigla={PORTAL}` permite conferir as
+inserções exportáveis da PI e do portal antes da entrega. Confira se a prévia
+contém somente as inserções e datas aprovadas. O contrato do job não oferece
+filtro por inserção ou data; uma PI com outras evidências pendentes deve aguardar
+qualificação do pacote completo.
 
-Os parametros `mode=prints-only` e `variant=web` nao fazem parte do contrato
-atual. Para cliente, baixe somente os `arquivoUrl` aprovados e monte uma pasta
-limpa.
+Para a entrega final ao cliente, use `POST /pi-site-exports/jobs` com
+`piCodigo`, `siteSigla`, `mode=full-pdf`, `variant=web` e `Idempotency-Key`
+estável. Consulte `GET /pi-site-exports/jobs/{jobId}` até `status=completed`
+e baixe `GET /pi-site-exports/jobs/{jobId}/download`. Não use o download
+síncrono nem monte uma pasta/ZIP manualmente para substituir esse fluxo.
+
+Na cópia web, confirme PDF, JPEGs progressivos independentes, auditoria,
+contact sheet e `SHA256SUMS.txt`; páginas do PDF devem corresponder aos JPEGs,
+sem PNG na cópia de entrega. Os PNGs originais auditados permanecem no storage.
 
 ## Convencao de entrega
 
