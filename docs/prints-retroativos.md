@@ -58,6 +58,19 @@ Em vídeo, `slot_captured` inclui a última recaptura nativa e sua medição. `c
 PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação tardia.
 Critérios completos e negativos estão na SPEC/HARNESS acima.
 
+## Escopo do fluxo legado abaixo
+
+As seções de preview e operação abaixo registram o fluxo implantado em abril de
+2026 e o contrato histórico v2. Elas descrevem `captureAt`/`adops_preview_at`
+como referência para renderizar o conteúdo do portal; esse valor não é o instante
+real da captura. Para novas reconstruções v4, prevalece o contrato no início
+deste documento e na [SPEC v4](./adops/retroactive-proof-v4/spec.md):
+`requestedCaptureAt` aparece nos relógios do site e do desktop, enquanto
+`capturedAt` e `reconstruction.reconstructedAt` permanecem tempos reais na API
+e no relatório. O PNG não recebe carimbo. A entrega final continua assíncrona:
+`full-pdf`/`web`, leitura até `completed` e download validado; ACK ou criação do
+job não comprova a entrega.
+
 ## Objetivo
 
 Antes de gerar um novo print, conferir a inserção atual: registros arquivados ou com supersededByInsertionId ficam fora do lote operacional. O capturador bloqueia esses marcadores antes de abrir o navegador. Preservar provas antigas e GET/readback; não reativar ou copiar a imagem para a sucessora. Inventário histórico pode incluir esses registros e deve ser qualificado antes da execução.
@@ -617,4 +630,4 @@ Os totais de originais e reconstruções ficam separados na auditoria do pacote.
 
 ### Prompt operacional recomendado
 
-> Use somente os endpoints da API AdOps. Consulte a PI e o site, gere todas as capturas retroativas com `candidate=true` e `promote=true`, e aguarde cada job assíncrono. Libere somente datas com `status=audited` e `retroContentProof.status=approved`. Depois crie um job de exportação `mode=full-pdf` e `variant=web`. Confirme no ZIP: mesma quantidade de JPEGs progressivos, páginas de PDF e manifestos; zero PNG; `futureCount=0`; contact sheet presente; e `SHA256SUMS.txt` válido. Não entregue pacote parcial.
+> Use somente os endpoints da API AdOps. Consulte a PI e o site. Para cada captura retroativa, gere um candidato isolado (`candidate=true`, `promote=false`), aguarde o job terminar, audite e confira visualmente o PNG exato. Registre a revisão e promova somente pelo fluxo persistido, depois de todos os gates. Confirme o status/readback da evidência antes da exportação. Crie o job assíncrono `mode=full-pdf` e `variant=web`, com `Idempotency-Key` estável; polling até `status=completed` e download são etapas obrigatórias. Confirme no ZIP: mesma quantidade de JPEGs progressivos, páginas de PDF e manifestos; zero PNG; `futureCount=0`; contact sheet presente; e `SHA256SUMS.txt` válido. Um ACK ou job criado não é prova de entrega. Não entregue pacote parcial.

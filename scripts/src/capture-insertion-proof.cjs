@@ -2464,8 +2464,9 @@ async function auditVisiblePageDateClock(page, mapping, requestedCaptureAt, view
 
 async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, targetSelector) {
   const selectors = mergePageDateSelectors(mapping?.pageDateSelectors);
-  const measure = async () => await page.evaluate(({ dateSelectors, mediaSelector }) => {
-    window.scrollTo(0, 0);
+  const measure = async () => await page.evaluate(async ({ dateSelectors, mediaSelector }) => {
+    window.scrollTo({ left: 0, top: 0, behavior: "instant" });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const clocks = [];
     for (const selector of dateSelectors) {
       let nodes = [];
@@ -2519,7 +2520,6 @@ async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, t
     || requiredBottom <= 0 || initial.viewport.scrollY !== 0 || initial.viewport.scrollX !== 0) {
     return { ok: false, reason: "viewport_geometry_invalid", initial };
   }
-  const requestedHeight = Math.max(initial.viewport.height, Math.ceil(requiredBottom + 4));
   const outputScale = Math.max(2, initial.viewport.deviceScaleFactor);
   const outputWidthPx = Math.ceil(initial.viewport.width * outputScale);
   let frameChromePixels;
@@ -2539,12 +2539,49 @@ async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, t
     return { ok: false, reason: "page_clock_viewport_frame_layout_unavailable", initial };
   }
   const maxHeightByPixelBudget = Math.floor((40_000_000 / Math.max(1, outputWidthPx) - frameChromePixels) / outputScale);
-  if (requestedHeight > maxHeightByPixelBudget) {
-    return { ok: false, reason: "page_clock_viewport_exceeds_pixel_budget", initial, requestedHeight, maxHeightByPixelBudget };
+  const geometry = (measurement) => ({
+    viewport: measurement.viewport,
+    target: measurement.target,
+    clockBounds: measurement.clocks.filter((item) => pageTextMatchesRequestedCaptureAt(item.text, requestedCaptureAt))
+      .map(({ top, bottom, left, right }) => ({ top, bottom, left, right })),
+  });
+  const measurements = [geometry(initial)];
+  let final = initial;
+  let stable = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const clocks = final.clocks.filter((item) => pageTextMatchesRequestedCaptureAt(item.text, requestedCaptureAt));
+    const bottom = Math.max(...clocks.map((item) => item.bottom), final.target?.bottom ?? NaN);
+    if (!clocks.length || !Number.isFinite(bottom) || bottom <= 0
+      || final.viewport.width !== initial.viewport.width
+      || final.viewport.deviceScaleFactor !== initial.viewport.deviceScaleFactor
+      || final.viewport.scrollX !== 0 || final.viewport.scrollY !== 0) {
+      return { ok: false, reason: "viewport_geometry_invalid", initial, final, measurements };
+    }
+    const requestedHeight = Math.max(final.viewport.height, Math.ceil(bottom + 4));
+    if (requestedHeight > maxHeightByPixelBudget) {
+      return { ok: false, reason: "page_clock_viewport_exceeds_pixel_budget", initial, final, requestedHeight, maxHeightByPixelBudget, measurements };
+    }
+    if (requestedHeight > final.viewport.height) {
+      await page.setViewportSize({ width: initial.viewport.width, height: requestedHeight });
+    }
+    const previous = final;
+    final = await measure();
+    measurements.push(geometry(final));
+    const near = (a, b) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.5;
+    const sameBox = (a, b) => a && b && ["top", "bottom", "left", "right"].every((key) => near(a[key], b[key]));
+    stable = final.viewport.height === previous.viewport.height
+      && final.viewport.width === initial.viewport.width
+      && final.viewport.deviceScaleFactor === initial.viewport.deviceScaleFactor
+      && sameBox(final.target, previous.target)
+      && final.clocks.some((clock) => pageTextMatchesRequestedCaptureAt(clock.text, requestedCaptureAt)
+        && clocks.some((previousClock) => sameBox(clock, previousClock)));
+    const fits = final.target && final.target.top >= 0 && final.target.bottom <= final.viewport.height
+      && final.clocks.some((clock) => pageTextMatchesRequestedCaptureAt(clock.text, requestedCaptureAt)
+        && clock.top >= 0 && clock.bottom <= final.viewport.height)
+      && final.viewport.scrollX === 0 && final.viewport.scrollY === 0;
+    if (stable && fits) break;
   }
-  const resized = requestedHeight > initial.viewport.height;
-  if (resized) await page.setViewportSize({ width: initial.viewport.width, height: requestedHeight });
-  const final = await measure();
+  const resized = final.viewport.height > initial.viewport.height;
   const finalMatchingClocks = final.clocks.filter((item) => pageTextMatchesRequestedCaptureAt(item.text, requestedCaptureAt));
   const targetAudit = final.target && final.viewport.scrollX === 0 && final.viewport.scrollY === 0
     && final.target.top >= 0 && final.target.bottom <= final.viewport.height
@@ -2563,7 +2600,10 @@ async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, t
     : { ok: false, reason: "proof_target_not_inside_final_viewport", selector: targetSelector };
   const clocksFit = finalMatchingClocks.some((item) => item.top >= 0 && item.bottom <= final.viewport.height);
   if (!targetAudit.ok || !clocksFit || final.viewport.scrollX !== 0 || final.viewport.scrollY !== 0) {
-    return { ok: false, reason: "page_clock_and_target_do_not_fit_final_viewport", initial, final, targetAudit };
+    return { ok: false, reason: "page_clock_and_target_do_not_fit_final_viewport", initial, final, targetAudit, measurements };
+  }
+  if (!stable) {
+    return { ok: false, reason: "page_clock_viewport_layout_unstable", initial, final, targetAudit, measurements };
   }
   return {
     ok: true,
@@ -2573,6 +2613,8 @@ async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, t
     viewportWidth: final.viewport.width,
     deviceScaleFactor: final.viewport.deviceScaleFactor,
     frameChromePixels,
+    layoutStable: true,
+    measurements,
     scrollX: final.viewport.scrollX,
     scrollY: final.viewport.scrollY,
     estimatedFinalPixelCount: Math.ceil(outputWidthPx * (final.viewport.height * outputScale + frameChromePixels)),
@@ -9754,6 +9796,21 @@ async function main() {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
     const errorCode = detectErrorCode(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const pageClockViewportGeometry = pageClockViewportAudit && {
+      ok: pageClockViewportAudit.ok,
+      reason: pageClockViewportAudit.reason ?? null,
+      initial: pageClockViewportAudit.initial && {
+        viewport: pageClockViewportAudit.initial.viewport,
+        target: pageClockViewportAudit.initial.target,
+      },
+      final: pageClockViewportAudit.final && {
+        viewport: pageClockViewportAudit.final.viewport,
+        target: pageClockViewportAudit.final.target,
+      },
+      measurements: pageClockViewportAudit.measurements ?? null,
+      requestedHeight: pageClockViewportAudit.requestedHeight ?? null,
+      maxHeightByPixelBudget: pageClockViewportAudit.maxHeightByPixelBudget ?? null,
+    };
 
     try {
       const slotInfo = describeLocalImage(slotPng);
@@ -9874,6 +9931,7 @@ async function main() {
               matchedMediaUrl: match?.mediaUrl || null,
               nativeProgressAudit,
               finalPngProgressAudit,
+              pageClockViewportAudit: pageClockViewportGeometry,
             },
           },
         }, {
@@ -9923,6 +9981,7 @@ async function main() {
                   matchedMediaUrl: match?.mediaUrl || null,
                   nativeProgressAudit,
                   finalPngProgressAudit,
+                  pageClockViewportAudit: pageClockViewportGeometry,
                 },
               },
             },

@@ -49,6 +49,19 @@ for (const name of ["nativeProgressAudit", "finalPngProgressAudit"]) {
   assert.equal(declaration.parent?.parent?.parent, captureMain.body,
     `${name} must be declared in main scope outside the protected try block`);
 }
+const clockGeometryDeclaration = captureTry.catchClause.block.statements
+  .filter(ts.isVariableStatement).flatMap((statement) => Array.from(statement.declarationList.declarations))
+  .find((declaration) => declaration.name.getText(captureSource) === "pageClockViewportGeometry");
+assert.ok(clockGeometryDeclaration?.initializer, "failure diagnostics must project clock viewport geometry");
+const projectFailureGeometry = new Function("pageClockViewportAudit", "return (" + clockGeometryDeclaration.initializer.getText(captureSource) + ");");
+let clockGeometryFallbacks = 0;
+function countClockGeometryFallbacks(node) {
+  if (ts.isPropertyAssignment(node) && node.name.getText(captureSource) === "pageClockViewportAudit"
+    && node.initializer.getText(captureSource) === "pageClockViewportGeometry") clockGeometryFallbacks += 1;
+  ts.forEachChild(node, countClockGeometryFallbacks);
+}
+countClockGeometryFallbacks(captureTry.catchClause.block);
+assert.equal(clockGeometryFallbacks, 2, "API failure persistence and outbox must both retain geometry");
 function findCallsIn(node, methodName) {
   const found = [];
   function visit(current) {
@@ -486,6 +499,61 @@ try {
   } finally {
     await tallClockPage.close();
   }
+  const resizeRegressionSummaries = [];
+  for (const mode of ["responsive", "async_resize", "never_fits"]) {
+    const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+    try {
+      await page.setContent(
+        '<!doctype html><style>body{margin:0;font:18px Arial}#clock{position:absolute;top:80px;left:40px;padding:8px;background:#123;color:white}' +
+        '.spacer{height:2214.171875px}#ad{height:270px;width:480px;color:white;background:linear-gradient(45deg,#123,#c60)}' +
+        (mode === "responsive" ? '@media(min-height:1400px){.spacer{height:2600.171875px}}' : '') +
+        '</style><time id="clock">segunda-feira, 24 de agosto de 2026, às 21:15:00</time><div class="spacer"></div><div id="ad">Resize regression creative</div>',
+      );
+      if (mode !== "responsive") await page.evaluate((fixtureMode) => {
+        addEventListener("resize", () => requestAnimationFrame(() => {
+          document.querySelector(".spacer").style.height = fixtureMode === "never_fits"
+            ? (innerHeight + 100) + "px" : "2600.171875px";
+        }));
+      }, mode);
+      const audit = await ensureFinalPageClockViewport(page, { pageDateSelectors: ["#clock"] }, "2026-08-24T21:15", "#ad");
+      assert.ok(audit.measurements.length <= 5, "initial measurement plus at most four passes");
+      assert.ok(audit.measurements.every((item) => item.viewport.width === 1660
+        && item.viewport.deviceScaleFactor === 2 && item.viewport.scrollX === 0 && item.viewport.scrollY === 0));
+      if (mode === "never_fits") {
+        assert.equal(audit.ok, false);
+        assert.equal(audit.reason, "page_clock_and_target_do_not_fit_final_viewport");
+        assert.equal(audit.measurements.length, 5, "non-convergent layout must stop at the bounded limit");
+        const failure = projectFailureGeometry({ ...audit,
+          initial: { ...audit.initial, clocks: [{ text: "PRIVATE_CLOCK_TEXT" }], url: "PRIVATE_URL" },
+          final: { ...audit.final, clocks: [{ text: "PRIVATE_CLOCK_TEXT" }], url: "PRIVATE_URL" },
+        });
+        assert.deepEqual(failure.measurements, audit.measurements);
+        assert.equal(JSON.stringify(failure).includes("PRIVATE_"), false, "failed geometry must omit text and URLs");
+      } else {
+        assert.equal(audit.ok, true, "resize reflow must converge: " + JSON.stringify(audit));
+        assert.equal(audit.layoutStable, true);
+        assert.equal(audit.finalHeight, 2875);
+        const viewportPng = path.join(workDir, mode + "-viewport.png");
+        const finalPng = path.join(workDir, mode + "-final.png");
+        await page.screenshot({ path: viewportPng });
+        const frame = composeDesktopProof(viewportPng, finalPng, {
+          systemDateTime: "24/08/2026 21:15:00", siteSigla: "TEST", tabTitle: "Resize fixture",
+          hostLabel: "127.0.0.1", addressText: "127.0.0.1/resize-fixture", proofStyle: "viewport_only",
+          scrollMetrics: { viewportWidth: 1660, viewportHeight: audit.finalHeight, scrollbarRendered: false },
+        });
+        const clock = await auditVisiblePageDateClock(page, { pageDateSelectors: ["#clock"] }, "2026-08-24T21:15", viewportPng, finalPng, frame);
+        assert.equal(clock.ok, true, "the resized final PNG must still prove its real clock pixels");
+        const slot = auditFinalPngSlotPixels(finalPng, viewportPng, audit.targetAudit.box, frame, {
+          minSimilarity: 0.82, minContentStddev: 4, comparedTo: "viewportPng", referenceIsViewport: true, viewportWidthCss: 1660,
+        });
+        assert.equal(slot.ok, true, "the same final PNG must also preserve target pixels");
+      }
+      resizeRegressionSummaries.push({ mode, ok: audit.ok, reason: audit.reason ?? null,
+        finalHeight: audit.finalHeight ?? audit.final?.viewport.height, measurements: audit.measurements.length });
+    } finally {
+      await page.close();
+    }
+  }
   const overBudgetPage = await browser.newPage({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 });
   try {
     await overBudgetPage.setContent(
@@ -546,6 +614,9 @@ assert.equal(changedRoi.ok, false, "changed native timeline pixels in resized fi
 assert.equal(changedRoi.minSimilarity, 0.82, "tampered ROI must still be judged against the native threshold");
 
   console.log(JSON.stringify({ ok: true, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio }, pageClock: { box: pageClockPositive.proof.box, viewport: pageClockPositive.proof.viewport, similarity: pageClockPositive.proof.pixelAudit.similarityScore, apiProof: JSON.parse(pageClockApi).direct.ok, captureAuditRejections: JSON.parse(rejectedClockApi).map((item) => item.label), tallViewport: tallViewportSummary, tallNativeAndClock: tallCombinedAuditSummary, overBudgetRejected: budgetBlockReason }, scrolled: { scrollY: screenshotAudits.scrolled.scrollY, box: screenshotAudits.scrolled.box, occlusion: screenshotAudits.scrolled.occlusion, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["zero_scroll_regression", "scrolled_native_hit_test", "scrolled_page_overlay_still_rejected", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed", "page_clock_final_roi_api_positive", "page_clock_offscreen_rejected", "page_clock_occlusion_rejected", "page_clock_hidden_rejected", "page_clock_wrong_date_or_time_rejected", "page_clock_late_scroll_rejected", "page_clock_and_lower_slot_tall_viewport", "page_clock_tall_viewport_pixel_budget", "capture_audit_blocks_offscreen_late_scroll_and_changed_roi", "tall_page_clock_plus_native_video_same_png_api_positive"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, resizeRegressions: resizeRegressionSummaries,
+    newCases: ["responsive_resize_reflow_final_pixels", "async_resize_reflow_final_pixels", "non_convergent_layout_bounded_failure"],
+    failureGeometryFallbacks: clockGeometryFallbacks }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

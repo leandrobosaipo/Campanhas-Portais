@@ -103,7 +103,7 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] Correção local: elemento inteiro no viewport, sem cobertura; prova de pixels existente após última captura. API usa regra do servidor e repete a auditoria antes de arquivar/substituir. Aprovação antiga não dispensa o gate. Data editorial não substitui relógio do site.
 3. [x] Viewport real mais alto somente quando necessário, mantendo scroll0, zoom1, DPR2, relógio original e player nativo. Geometria do layout.json e limites existentes40M pixels/20MiB conferidos. Nenhum relógio movido no DOM, carimbo, faixa ou cabeçalho separado.
 4. [x]22 casos reais passaram, incluindo relógio+H264/timeline nativa no mesmo PNG alto1874CSSpx/scroll0, comparação de ambasROI e gatesAPI. Negativos: fora da tela, cobertura, ocultação, hora/data erradas, scroll tardio, região adulterada e limite de pixels. Último instante real e aliases da prova final conferidos; preserva demais gates.17 testes API/17 promoção isolada/7PHP/26+20watchdog passaram.
-5. [ ] Revisão Sol, CI/main, publicação reversível e novo canário individual. Qualificar a substituição do candidato visualmente recusado pelo motivo exato; não reutilizar outro motivo nem reescrever a aprovação antiga.
+5. [x] Revisão Sol, PR122/CI37640504916/mainac4/CI37641276727 e publicação reversível conferida15:13:29UTC. Fonte real/quatro serviços/asset/OpenAPI174/157 e backup fresco/restauração/readback passaram. Novo canário1791386046875-74w8nh falhou no enquadramento, sem promoção; exige Task26. Aprovação antiga permanece como histórico do defeito.
 6. [ ] Só após PNG, auditoria final, promoção/arquivo/hash e miniatura/modal confirmados: atualizar a contagem e qualificar nova agenda dos vídeos.
 
 ### Task 24: Respeitar o início programado na auditoria da fila
@@ -122,9 +122,19 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 4. [x] Correção local em adrotate_adops_now: somente preview validado usa timestamp local do fuso WordPress para comparar calendário AdRotate. Instante absoluto global e fluxo normal preservados. Sete casos reais do PHP passaram: normal, referência final20:20, origem absoluta, referência ISOUTC, fim inclusivo, dia seguinte recusado e offset histórico do fuso. PHP lint aprovado.
 5. [ ] Conferir fonte realmente instalada, backup/rollback e acesso autorizado antes de publicar WordPress. A whitelist atual bloqueia leitura dos quatro arquivos; pergunta de acesso aberta. Não contornar nem tratar main/API publicada como publicação desses arquivos no portal.
 
+### Task 26: Estabilizar o enquadramento após crescer a janela
+
+**Owner:** Sol possui o helper de captura e o harness nativo existente; Luna revisa documentação em tarefas pequenas; root integra, publica e confere o consumidor.
+
+1. [x] Confirmar falha ac4 em2645/24Aug: três tentativas `page_clock_and_target_do_not_fit_final_viewport`, original público com mesmo hash/bytes, sem candidato final ou promoção. Recibo `ac4-2645-after-failure-preservation.json`.
+2. [x] Reproduzir a lacuna em Chromium local: CSS responsivo desloca o alvo após uma única mudança de altura. Isso não comprova o mecanismo específico do portal; o erro não guardou a geometria.
+3. [x] Recalcular com no máximo quatro passagens e duas pinturas após ajuste; manter largura/DPR/zoom/scroll0 e os mesmos limites40M/20MiB. Exigir estabilidade, sem mover o relógio ou costurar cabeçalho. Registrar somente geometria no diagnóstico de falha, em API e outbox.
+4. [x]25 casos locais passaram:22 anteriores e3 novos de reflow síncrono/assíncrono e crescimento não convergente; ROIs do relógio/alvo aprovadas no mesmo PNG dos positivos. Sintaxe/diff revisados. CI/main e publicação com backup/rollback/readback ainda são gates pendentes.
+5. [ ] Novo canário individual: PNG exato, auditoria final, revisão visual, promoção/arquivo/hash/status e miniatura/modal. Só então aumentar a contagem e qualificar os26 vídeos restantes.
+
 ## Global Constraints
 
-- Worktree atual: /Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps; branch codex/adops-scheduled-job-watchdog-20261007, base839c. Worktree inicial adops-retroativos-20261006 e seus recibos permanecem históricos. Não editar checkout original com alterações alheias.
+- Worktree atual: /Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps; branch codex/adops-final-clock-layout-stability-20261007, baseac4d. Branch anterior e worktree inicial adops-retroativos-20261006 com seus recibos permanecem históricos. Não editar checkout original com alterações alheias.
 - User confirmou contrato temporal e assets oficiais abertos com Selawik existente; não copiar assets proprietários nem afirmar fonte Windows original.
 - Root possui inventário vivo, backup, integração final, commits/main e deploy. Sol possui plano/docs/ledger/revisões. Luna executa tarefas pequenas 1–5 serialmente, preservando alterações de outros.
 - Não operar banco/storage por fora para corrigir evidências; promoção/restore API e readback obrigatório. Não alterar PI, planilha, AdRotate, daily scheduler ou aprovar sem hash.
