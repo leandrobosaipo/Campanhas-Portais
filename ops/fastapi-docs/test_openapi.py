@@ -15,6 +15,22 @@ assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["requestBody"]["co
 assert document["paths"]["/api/pi-site-exports/jobs"]["post"]["responses"]["202"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/PiSiteExportJobAccepted"
 assert document["paths"]["/api/pi-site-exports/jobs/{jobId}"]["get"]["parameters"][0]["schema"]["format"] == "uuid"
 assert "302" in document["paths"]["/api/pi-site-exports/jobs/{jobId}/download"]["get"]["responses"]
+campaign_filters = document["paths"]["/api/campaigns"]["get"]["parameters"]
+assert [(p["name"], p["in"], p["required"], p["schema"]["type"]) for p in campaign_filters] == [
+    ("competencia", "query", False, ["string", "null"]),
+    ("clienteId", "query", False, ["integer", "null"]),
+    ("agenciaId", "query", False, ["integer", "null"]),
+]
+insertion_filters = document["paths"]["/api/insertions"]["get"]["parameters"]
+assert [(p["name"], p["in"], p["required"], p["schema"]["type"]) for p in insertion_filters] == [
+    ("competencia", "query", False, ["string", "null"]),
+    ("siteId", "query", False, ["integer", "null"]),
+    ("clienteId", "query", False, ["integer", "null"]),
+    ("agenciaId", "query", False, ["integer", "null"]),
+    ("campanhaId", "query", False, ["integer", "null"]),
+    ("status", "query", False, ["string", "null"]),
+    ("atrasado", "query", False, ["boolean", "null"]),
+]
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["mode"]["default"] == "full-pdf"
 assert document["components"]["schemas"]["PiSiteExportJobRequest"]["properties"]["imageQuality"]["maximum"] == 90
 assert document["paths"]["/api/insertions/{id}/capture-proof/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/CaptureProofJobRequest"
