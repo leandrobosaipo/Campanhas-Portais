@@ -1,5 +1,11 @@
 # API de Checklist de Auditoria
 
+## Checkpoint de 07/10/2026
+
+Release64b4f560309fccc8386b19bf9333b039bda5263a publicada às10:55:27 UTC, PR119/CI37608283896/37608827821 aprovadas. O canário VIDEO3064/01Oct teve auditoria final não preliminar/zero issues, revisão individual, promoção/archive/hash/status e miniatura/modal confirmados:32/237 entregas,205 restantes (169 não vídeo,27 vídeo,9 identidades1944 retidas). Job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7/promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b. Prova privada video-canary-64b4-completion-proof.json, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. Falhas anteriores e metadata antiga continuam preservadas.
+
+Correção de cache do mensal está local e ainda não publicada: private,no-store na API e cache:no-store no fetch autenticado. Não alterar decisão da auditoria, contagens ou origem por causa do cache. Agenda própria ready_video ainda pendente; cada candidato exige todos os gates individuais, sem aprovação herdada do canário. Os26 protegidos/1157 unknown permanecem fora da execução.
+
 ## Objetivo
 
 Centralizar a decisao de evidencia valida no AdOps.

@@ -232,6 +232,7 @@ export function renderDynamicEvidenceReport() {
           if (cursor) query.set('cursor', cursor);
           const response = await fetch(REPORT_API_BASE + API_PATH + '?' + query, {
             credentials: 'include',
+            cache: 'no-store',
             signal: controller.signal, headers: { accept: 'application/json' },
           });
           if (sequence !== state.requestSequence) return;

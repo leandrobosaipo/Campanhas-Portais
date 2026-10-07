@@ -21,7 +21,15 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
-### Estado do consumidor — 07/10/2026, 10:32 UTC
+### Estado do consumidor — 07/10/2026, checkpoint32
+
+Release `64b4f560309fccc8386b19bf9333b039bda5263a` (PR119) conferida às 10:55:27 UTC; CI `37608283896`/`37608827821`, quatro serviços/fonte/asset/OpenAPI174/157 e backup fresco/restauração completa aprovados. Há 32/237 pares operáveis confirmados e 205 restantes: 169 não vídeo prontos, 27 vídeos aguardando agenda própria e 9 alvos `#1944` retidos. Os 26 protegidos ficam fora do lote.
+
+VIDEO `#3064`/01/10 foi confirmado: job `1791370618360-irjtai`, candidato `452e8465-2651-4eac-b5fa-fa2ab47a59b7`, promoção `a4012955-4f98-4b5e-926f-aa2a574b253b`; auditoria final sem issues, PNG individual, archive/hash/status e miniatura/modal. Prova privada `video-canary-64b4-completion-proof.json` (SHA256 `a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6`). Não repetir esse par nem aprovar os outros vídeos por inferência.
+
+Correção de atualização do mensal está local, ainda não publicada: API `private, no-store` e fetch `cache:'no-store'`, preservando sessão e paginação. Agenda dos demais vídeos será separada como `ready_video`, mantendo auditoria/revisão/promoção/readback individuais.
+
+### Histórico — consumidor em 07/10/2026, 10:32 UTC
 
 Release `606cf05b70ee076bc613ef4d7bb5529f2d9c0b61` (PR118) foi conferida ao vivo às 10:08:36 UTC; CI `37601313114` e `37601935185` passou. Neste snapshot do consumidor há 30/237 pares operáveis confirmados; dos 207 restantes, 170 não vídeo estão prontos, 28 vídeos estão retidos e 9 alvos `#1944` aguardam resolução de identidade. Os 26 pares protegidos permanecem fora do lote. AFL `#1842`/22–25/08 está confirmada após auditoria, promoção com arquivamento dos originais, readback de status/hash e conferência de quatro miniaturas/modais em que as imagens carregaram a 3320×2696; já está incluída nos 30.
 
@@ -40,7 +48,7 @@ prova editorial aprovada. Sem carimbo ou alegação de veiculação passada.
 
 O contrato foi publicado em d1e1974. A correção04cd98ba906e permite somente espaços e zero/um comentário literal conhecido de indisponibilidade AdRotate na âncora, preservando nós; demais conteúdos continuam bloqueados. ROO #2641/23Aug foi auditado, revisado e promovido, com original arquivado, hash/status e miniatura/modal conferidos.
 
-Em vídeo, `slot_captured` inclui a última recaptura nativa e sua medição. `capturedAt`/`reconstructedAt` registram esse instante real; `final_composed` começa depois. O estado do job #3064/01/10 em 04cd, recusado no registro porque a etapa fechava 2071 ms antes da recaptura, é um diagnóstico histórico. No snapshot de 07/10, o candidato posterior foi bloqueado pelo piso de similaridade descrito acima; nenhum PNG foi promovido nem metadata antiga alterada.
+Em vídeo, `slot_captured` inclui a última recaptura nativa e sua medição. `capturedAt`/`reconstructedAt` registram esse instante real; `final_composed` começa depois. O estado do job #3064/01/10 em 04cd, recusado no registro porque a etapa fechava 2071 ms antes da recaptura, é um diagnóstico histórico. O candidato posterior da release606 foi bloqueado pelo piso de similaridade descrito no histórico acima e não foi promovido. Sua metadata permanece intacta; o candidato novo64b4 foi confirmado no checkpoint31.
 PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação tardia.
 Critérios completos e negativos estão na SPEC/HARNESS acima.
 

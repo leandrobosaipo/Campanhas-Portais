@@ -24,6 +24,12 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 
 ## Checkpoint
 
+Em 07/10/2026, checkpoint32: **32/237 correções confirmadas; 205 restantes** (169 não vídeo prontos, 27 vídeos aguardando agenda e 9 identidades1944 retidas). Release `64b4f560309fccc8386b19bf9333b039bda5263a` publicada às10:55:27 UTC pelo PR119, CI37608283896/37608827821 aprovadas; quatro serviços/fonte/asset/OpenAPI174/157 e backup fresco/restauração completa conferidos. VIDEO3064/01Oct passou em auditoria final, PNG individual, promoção `a4012955-4f98-4b5e-926f-aa2a574b253b`, archive/hash/status e miniatura/modal. Job `1791370618360-irjtai`, candidato `452e8465-2651-4eac-b5fa-fa2ab47a59b7`; prova privada `video-canary-64b4-completion-proof.json`, SHA256 `a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6`.
+
+“Atualizar” deve consultar estado atual preservando autenticação e paginação. Correção local de cache (API private/no-store e fetch no-store) ainda não publicada. A agenda futura libera somente vídeos qualificados como ready_video, vinculados à release/prova do canário; cada imagem mantém seus próprios gates. Origem reconstruída e criação real permanecem fora do PNG; não inferir veiculação passada.
+
+### Histórico — checkpoint26
+
 Em 07/10/2026: **26/237 correções confirmadas; 211 restantes**. Main04cd98ba906ec57efc86ffd1a44390b5c666c5c2 publicada pelo PR117, CI37594453308 aprovada; dump novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI conferidos às08:50:26 UTC (`release-final-retro-canary-followup.json` privado). AFL #2692/21Aug e ROO #2641/23Aug auditadas, revisadas, promovidas e conferidas no consumidor. VIDEO #3064/01Oct continua sem promoção: a recaptura final ocorreu 2071 ms após o fechamento de slot_captured; API recusou o registro. Corrigir a ordem das etapas, sem alterar instante real ou relaxar proveniência. Não contar testes locais ou PNG concluído como entrega de evidências.
 
 ## Fora do escopo

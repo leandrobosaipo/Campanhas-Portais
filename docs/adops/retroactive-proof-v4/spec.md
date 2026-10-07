@@ -1,5 +1,13 @@
 # SPEC — Reconstrução retroativa v4
 
+## Estado publicado e atualização mensal
+
+Release `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119/CI37608283896/37608827821, conferida em 07/10 às10:55:27 UTC. O canário VIDEO3064/01Oct passou auditoria final, revisão individual, promoção/archive/hash/status e miniatura/modal: checkpoint32/237 confirmados,205 restantes (169 não vídeo,27 vídeo,9 identidades1944 retidas). Os26 protegidos e1157 unknown não entram na execução.
+
+Correção local ainda não publicada: resposta mensal `private, no-store`; o fetch único usado em carga, filtros, paginação e “Atualizar” usa `cache:'no-store'` mantendo `credentials:'include'`. Não mudar sessão, consulta, contagens ou criar nonce. A política publicada anterior (`public, max-age=30, stale-while-revalidate=120`) permite reutilização de snapshot antigo por até150s; publicação do código e leitura fresca do consumidor são gates distintos.
+
+Agenda de vídeo ainda pendente: `ready_video` em snapshot imutável próprio com hash/release e prova do canário, excluindo3064 já confirmado. Não renomear como ready_nonvideo, relaxar proteção de arquivo/substituição, identidade1944 ou origem desconhecida. Liberação significa somente elegibilidade para candidato; auditoria final, revisão de cada PNG, CAS/promoção e consumer readback permanecem obrigatórios.
+
 ## Elegibilidade operacional da inserção
 
 Antes de preparar/regenerar, ler a inserção atual. archivedAt não nulo ou supersededByInsertionId não nulo bloqueiam nova captura antes de abrir navegador/gerar mídia, para todos os callers do capturador. GET/readback e provas já persistidas permanecem acessíveis; não reescrever jobs anteriores. O operador exige os dois marcadores explicitamente nulos; o capturador conserva compatibilidade dos DTOs antigos sem esses campos, mas recusa qualquer marcador presente. Status/mídia/formato/identidade continuam sujeitos aos gates existentes.

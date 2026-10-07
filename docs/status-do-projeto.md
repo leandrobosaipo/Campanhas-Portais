@@ -1,6 +1,16 @@
 # Estado confirmado do projeto AdOps
 
-## Estado do consumidor — 07/10/2026, 10:32 UTC
+## Estado do consumidor — 07/10/2026, checkpoint32
+
+Main e produção: `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119 integrado; CI `37608283896` e `37608827821` aprovados. Publicação conferida às 10:55:27 UTC: quatro serviços, fonte real, asset público, OpenAPI174/157 e backup fresco com restauração completa. Operação terminou em `idle_no_pause`, fila zero, sem PAUSE/UNPAUSE executados.
+
+**32 de 237 pares operáveis confirmados; 205 restantes:** 169 não vídeo prontos, 27 vídeos aguardando agenda própria e 9 identidades `#1944` retidas. Canário `#3064`/01/10, job `1791370618360-irjtai`, candidato `452e8465-2651-4eac-b5fa-fa2ab47a59b7`, promoção `a4012955-4f98-4b5e-926f-aa2a574b253b`: auditoria final não preliminar/zero issues, revisão do PNG individual, archive/hash/status e miniatura/modal confirmados. Recibo privado `video-canary-64b4-completion-proof.json`, SHA256 `a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6`. Os 26 pares protegidos e 1157 origens desconhecidas permanecem preservados.
+
+Cache: o mensal publicado permite 30s frescos e 120s de resposta antiga durante revalidação; “Atualizar” usava fetch padrão. A correção local usa `private, no-store` na API e `cache:'no-store'` no único fetch paginado do relatório. Ainda não publicada. Liberação dos 27 vídeos requer agenda imutável `ready_video`, sem chamá-los `ready_nonvideo` nem aprovar cada PNG pelo sucesso do canário. Relógios históricos, origem/data real nos detalhes e PNG sem carimbo permanecem obrigatórios.
+
+A prova imutável do canário registra o checkpoint31. O acréscimo do checkpoint32 é AFL `#1842`/27/08, com promoção e miniatura/modal confirmados; não altera esse recibo anterior.
+
+## Histórico — consumidor em 07/10/2026, 10:32 UTC
 
 Main e produção: `606cf05b70ee076bc613ef4d7bb5529f2d9c0b61`, PR118 integrado; CI `37601313114` e `37601935185` aprovados. Publicação conferida às 10:08:36 UTC; este snapshot do consumidor é das 10:32 UTC. **30 de 237 pares operáveis** estão confirmados; 207 seguem sem confirmação. Dos restantes, 170 não vídeo estão prontos, 28 de vídeo estão retidos e 9 alvos da inserção `#1944` continuam ocultos por identidade comercial não resolvida. Os 26 pares protegidos por arquivamento/substituição ficam fora dos 237.
 
