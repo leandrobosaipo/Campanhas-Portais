@@ -597,13 +597,20 @@ Content-Type: application/json
   "date": "2026-07-24",
   "captureAt": "2026-07-24T20:00:00-04:00",
   "candidate": true,
-  "promote": true
+  "promote": false,
+  "replace": false
 }
 ```
 
 Consultar `GET /api/insertions/{id}/capture-proof/jobs/{jobId}` até
-`completed`. O candidato fica isolado; com `promote=true`, a troca ocorre
-somente depois da prova editorial local ser aprovada. Em seguida, confirmar
+`completed`. O candidato fica isolado para auditoria e revisão visual do PNG
+exato. `candidate=true,promote=true` é recusado com HTTP 409
+`candidate_promotion_requires_persisted_approval`; a conclusão do job não
+publica a evidência. Após registrar o candidato pelo fluxo interno, executar
+`POST /api/internal/capture-proof-candidates/{candidateId}/audit` e persistir
+a revisão visual antes de
+`POST /api/internal/capture-proof-candidates/{candidateId}/promote`.
+Preservar o original e conferir URL, SHA-256 e bytes após a promoção. Em seguida, confirmar
 `GET /api/insertions/{id}/capture-proof/status?date=YYYY-MM-DD` com
 `status=audited` e `retroContentProof.status=approved`.
 
