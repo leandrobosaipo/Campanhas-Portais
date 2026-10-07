@@ -18,13 +18,16 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 - Moldura legível, proporcional e neutra, com URL/título reais e relógio em duas linhas à direita; sem clima, perfil ou abas inventados. Assets têm licença registrada.
 - Inventário por API identifica o conjunto retroativo completo, inclusive aprovados, com paginação limitada e sem retornar DOM/base64 ou secrets.
 - Correção de arquivos existentes usa candidato, auditoria e promoção persistida, com backup, hash e readback. Evidências antigas não são alteradas apenas pela mudança de política.
+- Inserção arquivada ou com vínculo de substituição não gera nova captura operacional. Conferir identidade/estado atual antes do lote e bloquear na execução comum antes de abrir navegador. Preservar provas/GET/readback e registros antigos; não transferir imagem para sucessora ou declarar duplicidade idêntica apenas pelo vínculo.
 - Vídeo v4 mostra uma única barra nativa do player. Auditoria exige timeline nativa visível, desobstruída e preservada nos pixels finais; `controls=true` ou barra artificial não comprovam esse resultado. Revisão visual individual continua obrigatória.
 - Main e release publicada correspondem ao SHA validado; relatório canônico mantém contagens, campanhas encerradas, filtros e download.
 
 ## Checkpoint
 
-Em 07/10/2026 às 07:54 UTC: **24/263 correções confirmadas; 239 restantes**. Main d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 publicada; CI 37582190457 aprovada, dump novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI conferidos (`release-final-roo-afl-maintenance.json` privado). Os três canários d1 falharam e não foram promovidos: AFL #2692/21Aug perdeu ID no fetch; ROO #2641/23Aug encontrou comentário AdRotate na âncora; VIDEO #3064/01Oct recebeu atributo ativo vazio. Correções dessas causas seguem em branch local, com regressões e revisão independente. Não contar testes locais como entrega de evidências.
+Em 07/10/2026: **26/237 correções confirmadas; 211 restantes**. Main04cd98ba906ec57efc86ffd1a44390b5c666c5c2 publicada pelo PR117, CI37594453308 aprovada; dump novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI conferidos às08:50:26 UTC (`release-final-retro-canary-followup.json` privado). AFL #2692/21Aug e ROO #2641/23Aug auditadas, revisadas, promovidas e conferidas no consumidor. VIDEO #3064/01Oct continua sem promoção: a recaptura final ocorreu 2071 ms após o fechamento de slot_captured; API recusou o registro. Corrigir a ordem das etapas, sem alterar instante real ou relaxar proveniência. Não contar testes locais ou PNG concluído como entrega de evidências.
 
 ## Fora do escopo
+
+O inventário original contém263 pares; a qualificação dos53 IDs separou237 operáveis e26 protegidos (#1826:12; #1860:14). As quatro reconstruções já promovidas em1826 foram preservadas como histórico e não aumentam a contagem de entrega no relatório. Nenhuma das26 entregas confirmadas pertence a inserção protegida.
 
 Não sincronizar planilha, alterar PI/AdRotate, desativar rotação, enviar Telegram ou mudar autenticação. Não instalar bibliotecas nem copiar fontes proprietárias sem licença. O usuário confirmou ícones abertos oficiais, medidas fiéis e Selawik existente; não se afirma que esses assets sejam Windows/Segoe UI originais.

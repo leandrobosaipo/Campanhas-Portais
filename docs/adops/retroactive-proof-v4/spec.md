@@ -1,8 +1,14 @@
 # SPEC — Reconstrução retroativa v4
 
+## Elegibilidade operacional da inserção
+
+Antes de preparar/regenerar, ler a inserção atual. archivedAt não nulo ou supersededByInsertionId não nulo bloqueiam nova captura antes de abrir navegador/gerar mídia, para todos os callers do capturador. GET/readback e provas já persistidas permanecem acessíveis; não reescrever jobs anteriores. O operador exige os dois marcadores explicitamente nulos; o capturador conserva compatibilidade dos DTOs antigos sem esses campos, mas recusa qualquer marcador presente. Status/mídia/formato/identidade continuam sujeitos aos gates existentes.
+
+Inventário é histórico e inclui registros protegidos; não equivale ao conjunto executável. #1826→1841 confirma arquivamento/substituição; #1860→2192 tem mídia/formato diferentes e exige preservar essa diferença. Nunca copiar PNG para a sucessora nem reativar/apagar registros por inferência.
+
 ## Identidade e relógios
 
-Novas reconstruções usam reconstruction.provenanceVersion=4. Não criar um timestamp concorrente: requestedCaptureAt é a referência de apresentação (screenshot date/time), targetDate/date é o dia contratual, capturedAt e reconstruction.reconstructedAt são o instante real ISO com timezone. Os dois últimos continuam iguais e dentro do estágio slot_captured do job original. historicalDisplayConfirmed=false significa que não houve comprovação independente de veiculação passada; não descreve a aparência dos relógios.
+Novas reconstruções usam reconstruction.provenanceVersion=4. Não criar um timestamp concorrente: requestedCaptureAt é a referência de apresentação (screenshot date/time), targetDate/date é o dia contratual, capturedAt e reconstruction.reconstructedAt são o instante real ISO com timezone. Os dois últimos continuam iguais e dentro do estágio slot_captured do job original. Fechar esse estágio somente após a última screenshot e medição do viewport, inclusive recaptura dos controles nativos; iniciar final_composed depois. Não retroceder o timestamp para caber numa etapa encerrada. historicalDisplayConfirmed=false significa que não houve comprovação independente de veiculação passada; não descreve a aparência dos relógios.
 
 v2 mantém seu contrato legado; v3 mantém página histórica e relógio da moldura real; v4 exige ambos os relógios históricos. A exceção de v4 vale somente para historical_recovery com período, mídia, conteúdo histórico, job, URL e política correlacionados. Nenhuma exceção remove erros de outros gates. Capturas scheduled/same_day_retry continuam iguais.
 
@@ -22,7 +28,7 @@ Reutilizar o GET de status da evidência canônica. Inserção/data/sourceJobId,
 
 ## ROO/home/grupo1: fonte legada de posição e criativo
 
-Contrato publicado na release d1e1974; o canário #2641/23Aug falhou antes do upload e não foi promovido. Somente roonoticias.com, home, grupo1, slot/contexto `.g.g-1`, candidato histórico v4 sem gravação canônica, referência explícita igual à fonte e ao preview assinado, data contratual dentro de período encerrado. Reutilizar o GET canônico: original com audit/checklist totalmente aprovados, não preliminar, zero bloqueadores, inserção/data/job/URL alcançável/mídia/contexto/pixels/identidade/visibilidade correlacionados. Hash e bytes reais do original permanecem nos guards de preparação/promoção.
+Contrato publicado na release d1e1974; correção da âncora publicada em04cd98ba906e, canário #2641/23Aug promovido com archive/hash/status e consumidor conferidos. Somente roonoticias.com, home, grupo1, slot/contexto `.g.g-1`, candidato histórico v4 sem gravação canônica, referência explícita igual à fonte e ao preview assinado, data contratual dentro de período encerrado. Reutilizar o GET canônico: original com audit/checklist totalmente aprovados, não preliminar, zero bloqueadores, inserção/data/job/URL alcançável/mídia/contexto/pixels/identidade/visibilidade correlacionados. Hash e bytes reais do original permanecem nos guards de preparação/promoção.
 
 A fonte parcial aceita exclusivamente retroContentProof ausente/null e timeline empty_samples, com zero amostras e zero datas interpretadas. Ausência não equivale a aprovação editorial. Fonte editorial rejeitada, falha de relógio ou qualquer outro bloqueador não entram nessa exceção. Preservar o contrato e o arquivo legados. Reutilizar `reconstruction.sourceEvidence`, acrescentando `proofScope:position_only` e `sourceEditorialProofStatus:missing_legacy`; URL/job/origem continuam identificando o original. Não duplicar objetos de prova nem atribuir manifest hash editorial à fonte sem prova.
 

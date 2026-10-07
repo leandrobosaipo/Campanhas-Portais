@@ -1,11 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+import * as ts from "typescript";
 import {
   inspectCandidateJob,
   stableJson,
   validateCandidateMetadata,
   validateCandidateReadback,
 } from "../../artifacts/api-server/src/lib/capture-proof-candidate-provenance.mjs";
+
+const require = createRequire(import.meta.url);
+const capture = require("./capture-insertion-proof.cjs") as {
+  assertInsertionOperable: (insertion: Record<string, unknown>) => void;
+};
 
 const jobId = "1790894999713-zz1efr";
 const insertionId = 3024;
@@ -68,6 +77,76 @@ test("accepts v4 candidate provenance without weakening job, slot, or requested-
   assert.equal(validateCandidateMetadata(v4, identity).ok, true);
   assert.equal(validateCandidateMetadata({ ...v4, requestedCaptureAt: "2026-09-08T18:41:00-04:00" }, identity).ok, false);
   assert.equal(validateCandidateMetadata({ ...v4, sourceJobId: "another-job" }, identity).ok, false);
+});
+
+test("keeps the v4 slot capture stage open through the final native video recapture", () => {
+  const captureSource = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "capture-insertion-proof.cjs"), "utf8");
+  const sourceFile = ts.createSourceFile("capture-insertion-proof.cjs", captureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const calls: { nativeAudit: ts.CallExpression[]; slotFinish: ts.CallExpression[]; finalComposeStart: ts.CallExpression[] } = {
+    nativeAudit: [],
+    slotFinish: [],
+    finalComposeStart: [],
+  };
+  const isPropertyCall = (node: ts.Node, object: string, property: string): node is ts.CallExpression => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
+    return ts.isIdentifier(node.expression.expression)
+      && node.expression.expression.text === object
+      && node.expression.name.text === property;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "auditNativeVideoProgress") {
+      calls.nativeAudit.push(node);
+    }
+    const firstArgument = ts.isCallExpression(node) ? node.arguments[0] : undefined;
+    if (isPropertyCall(node, "trace", "finish") && firstArgument && ts.isIdentifier(firstArgument) && firstArgument.text === "slotCapturedStage") {
+      calls.slotFinish.push(node);
+    }
+    if (isPropertyCall(node, "trace", "start") && firstArgument && ts.isStringLiteral(firstArgument) && firstArgument.text === "final_composed") {
+      calls.finalComposeStart.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const nativeAuditCall = calls.nativeAudit.at(-1);
+  const slotFinishCall = calls.slotFinish.at(-1);
+  const finalComposeStartCall = calls.finalComposeStart.at(-1);
+  assert.ok(nativeAuditCall && slotFinishCall && finalComposeStartCall, "capture stage, native audit and final composition calls must be present");
+  assert.ok(nativeAuditCall.getStart(sourceFile) < slotFinishCall.getStart(sourceFile),
+    "slot_captured must finish after the last native video recapture and measurement");
+  assert.ok(slotFinishCall.getStart(sourceFile) < finalComposeStartCall.getStart(sourceFile),
+    "slot_captured must finish before final_composed starts");
+
+  const realCaptureInstant = "2026-10-07T09:00:07.378Z";
+  const v4 = {
+    ...metadata,
+    capturedAt: realCaptureInstant,
+    reconstruction: { provenanceVersion: 4, reconstructedAt: realCaptureInstant, historicalDisplayConfirmed: false },
+  };
+  const identity = {
+    jobId, insertionId, targetDate,
+    captureStageStartedAt: "2026-10-07T09:00:00.000Z",
+    captureStageFinishedAt: "2026-10-07T09:00:05.307Z",
+    requestedCaptureAt: metadata.requestedCaptureAt,
+  };
+  assert.equal(validateCandidateMetadata(v4, identity).ok, false,
+    "a stage closed before the real final capture instant must be rejected");
+  assert.equal(validateCandidateMetadata(v4, { ...identity, captureStageFinishedAt: "2026-10-07T09:00:07.500Z" }).ok, true,
+    "the same candidate is valid when slot_captured encloses its actual capture instant");
+});
+
+test("blocks only explicitly archived or superseded insertions before capture setup", () => {
+  assert.doesNotThrow(() => capture.assertInsertionOperable({ id: 1, archivedAt: null, supersededByInsertionId: null }));
+  assert.doesNotThrow(() => capture.assertInsertionOperable({ id: 2 }));
+  assert.throws(() => capture.assertInsertionOperable({ id: 3, archivedAt: "2026-08-07T12:00:00.000Z" }), /insertion_not_operable/);
+  assert.throws(() => capture.assertInsertionOperable({ id: 4, supersededByInsertionId: 1841 }), /insertion_not_operable/);
+
+  const captureSource = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "capture-insertion-proof.cjs"), "utf8");
+  const fetchAt = captureSource.indexOf("const insertion = await fetchInsertion(args.apiBase, args.insertionId);");
+  const guardAt = captureSource.indexOf("assertInsertionOperable(insertion);", fetchAt);
+  const mappingAt = captureSource.indexOf("const mapping = await getMapping(insertion, args.apiBase);", fetchAt);
+  const launchAt = captureSource.indexOf("const browser = await chromium.launch(launchOptions);", fetchAt);
+  assert.ok(fetchAt >= 0 && guardAt > fetchAt && mappingAt > guardAt && launchAt > guardAt,
+    "operability must be checked after insertion readback and before mapping or browser launch");
 });
 
 test("blocks forged job identity, timestamps, non-candidate paths and metadata provenance", () => {
