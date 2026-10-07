@@ -21,11 +21,21 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
-### Estado atual — 07/10/2026, checkpoint38
+### Última conferência comprovada — 07/10/2026, 18:26 UTC, CD3/checkpoint53
 
-Main e aplicação839c publicadas pelo PR121, CI aprovada, backup/restauração e quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store confirmado. Há38/237 pares confirmados;199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeos+9 identidades1944. Os26 protegidos continuam fora do lote.
+CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada e conferida. Os recibos `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços ativos/sem pausa, backup/restauração verificados, dez filtros e OpenAPI com 174 operações/157 caminhos.
 
-O candidato2645/24Aug020a53e9 passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado, sem promoção. A correção em andamento exige o relógio original completamente visível, sem cobertura, na última captura e na composição final. Usa viewport real mais alto quando necessário; não permite mover o relógio nem acrescentar carimbo ou faixa de cabeçalho. Datas de notícias não substituem esse relógio. Origem e criação real continuam nos dados e no relatório.
+Há **53/237 pares confirmados; 184 restantes**: 148 não-vídeo, 26 vídeo, uma retenção técnica (#2278/27Aug) e nove retenções de identidade (#1944). Os 26 protegidos e 1157 origens desconhecidas continuam fora da execução. Não houve novas capturas desde o checkpoint53.
+
+C67 entregou o canário de vídeo #2645/24Aug após a correção do viewport final: os dois relógios históricos, a barra nativa e os pixels passaram; promoção e consumidor foram conferidos. A reconstrução #2693/AFL/PI 91159 de 21–24/08 também está confirmada nas quatro datas. A origem reconstruída e o instante real de criação permanecem nos dados e no relatório, fora do PNG. O pacote PI 91134/AFL foi entregue e validado com 11 páginas PDF/JPEG, zero PNG e checksums conferidos.
+
+#2278/27Aug segue retida: a leitura/backup SSH dos quatro arquivos foi autorizada pelo usuário, mas a tentativa real continuou recusada. Os jobs mensais `c216f66b-f253-4124-8a23-297088b8d995` e `5a7eb7ae-2b67-4476-9e16-e57750a8faa2` falharam com HTTP 503 na fonte de 24/08; avanço parcial 2/4 não é entrega completa. No snapshot de 07/10 às 18:50 UTC, `657af4ff-2066-4f8b-9cf7-cb72054b7810` estava `ready_for_runner`, ainda sem origem confirmada. Uma conexão foi observada em 60184 ms sem `statusCode`, compatível com interrupção no limite de 60 s; a duração/conclusão da consulta à fonte não foi confirmada. Correção local desse cliente está pendente.
+
+### Histórico — consumidor em07/10/2026, checkpoint38
+
+Main e aplicação839c publicadas pelo PR121, CI aprovada, backup/restauração e quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store confirmado. Havia38/237 pares confirmados;199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeos+9 identidades1944. Os26 protegidos continuavam fora do lote.
+
+O candidato2645/24Aug020a53e9 passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado, sem promoção. A correção exigiu o relógio original completamente visível, sem cobertura, na última captura e na composição final. Usou viewport real mais alto quando necessário; não permitiu mover o relógio nem acrescentar carimbo ou faixa de cabeçalho. Datas de notícias não substituem esse relógio. Origem e criação real continuam nos dados e no relatório.
 
 ### Histórico — consumidor em07/10/2026, checkpoint32
 

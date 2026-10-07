@@ -1,12 +1,22 @@
 # SPEC — Reconstrução retroativa v4
 
-## Estado publicado e atualização mensal
+## Última conferência comprovada — 07/10, 18:26 UTC, CD3/checkpoint53
 
-Estado atual07/10: main e aplicação `839c98963d7186e68cf1e95538bf98bbf9c61b02`, PR121/CI37617379579 e37617823529 aprovados; conferência real12:15:55UTC com backup/restauração/quatro serviços/fonte/asset/OpenAPI174/157. Cache API `private,no-store` e fetch do relatório `cache:'no-store'` publicados e conferidos. Checkpoint38/237,199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeo+9 identidades1944.
+CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada. Recibos `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json`: quatro serviços running/sem pausa, backup/restauração verificados, dez filtros, OpenAPI 174 operações/157 caminhos. Checkpoint53: **53/237 confirmadas; 184 restantes** (148 não-vídeo, 26 vídeo, uma retenção técnica #2278/27Aug, nove identidades #1944); sem novas capturas, 26 protegidos fora da execução.
 
-Candidato2645/24Aug020a53e9, job1791375503114-nvvrj5, recusado visualmente por relógio do site fora do PNG, apesar da aprovação automática. Não promovido; original intacto. Task23 exige verificação de viewport/oclusão e prova de pixels da região do relógio após a recaptura final. Enquadramento maior é um viewport real; não permite mover relógio, cabeçalho costurado ou carimbo. A agenda64b4 permanece histórica e retida até novo canário completo.
+A correção C67 do viewport final foi entregue pelo canário #2645/24Aug e confirmada no consumidor (`2645-c67-delivered-canary.json`, `2645-c67-canary-consumer-readback.json`). #2693/AFL/PI 91159, 21–24/08, foi confirmada nas quatro datas; PI 91134/AFL tem pacote de 11 páginas PDF/JPEG validado. Em todos, os dois relógios representam a referência histórica; origem e instante real ficam fora do PNG.
 
-#2278/27Aug permanece retida: correção local do adaptador AdRotate converte somente a comparação de preview para o domínio de timestamp local WordPress. Não altera o instante absoluto da origem, calendário contratado ou referência20:20. Sete casos PHP e lint passaram; a fonte instalada/backup/rollback ainda não puderam ser conferidos pelo acesso SSH autorizado. Publicar a API/main não publica automaticamente essa correção no WordPress.
+O job mensal `c216f66b-f253-4124-8a23-297088b8d995` falhou com HTTP 503 na fonte de 24/08, avanço parcial 2/4, sem entrega completa. O job `5a7eb7ae-2b67-4476-9e16-e57750a8faa2` também falhou com 503; no snapshot de 07/10 às 18:50 UTC, `657af4ff-2066-4f8b-9cf7-cb72054b7810` estava `ready_for_runner`, origem não confirmada. Uma conexão foi observada em 60184 ms sem `statusCode`, compatível com interrupção no limite de 60 s; duração/conclusão da consulta à fonte não confirmada. Para #2278/27Aug, a autorização de leitura/backup SSH não removeu a recusa da tentativa real.
+
+A correção local, ainda não publicada, encaminha apenas o GET de `evidence-monthly-source` à `deliveryApiBase` pública, com timeout de 120000 ms; `operationsBase`, demais rotas e URLs de download não mudam. O teste VM stub verifica URL, timeout e header de autorização, sem provar resposta ou latência em produção. Nenhuma conclusão/entrega mensal é inferida desses checks.
+
+### Histórico — checkpoint38
+
+Estado em07/10: main e aplicação `839c98963d7186e68cf1e95538bf98bbf9c61b02`, PR121/CI37617379579 e37617823529 aprovados; conferência real12:15:55UTC com backup/restauração/quatro serviços/fonte/asset/OpenAPI174/157. Cache API `private,no-store` e fetch do relatório `cache:'no-store'` publicados e conferidos. Checkpoint38/237,199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeo+9 identidades1944.
+
+Candidato2645/24Aug020a53e9, job1791375503114-nvvrj5, recusado visualmente por relógio do site fora do PNG, apesar da aprovação automática. Não promovido; original intacto. A Task23 exigiu verificação de viewport/oclusão e prova de pixels da região do relógio após a recaptura final. Enquadramento maior é um viewport real; não permite mover relógio, cabeçalho costurado ou carimbo. A agenda64b4 era histórica e retida até novo canário completo.
+
+#2278/27Aug permanecia retida: correção local do adaptador AdRotate converte somente a comparação de preview para o domínio de timestamp local WordPress. Não altera o instante absoluto da origem, calendário contratado ou referência20:20. Sete casos PHP e lint passaram; a fonte instalada/backup/rollback ainda não puderam ser conferidos pelo acesso SSH autorizado. Publicar a API/main não publica automaticamente essa correção no WordPress.
 
 ### Histórico — publicação64b4 e checkpoint36
 

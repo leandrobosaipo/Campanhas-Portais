@@ -24,9 +24,19 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 
 ## Checkpoint
 
-Estado retomado em07/10: **38/237 confirmadas;199 restantes** (162 não vídeo liberadas,1 retenção técnica2278/27Aug,27 vídeos e9 identidades1944 retidas). Main e aplicação839c publicadas; backup/restauração/quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store conferidos no consumidor. Os26 protegidos continuam fora da execução.
+Última conferência comprovada em 07/10 às 18:26 UTC, checkpoint53: **53/237 confirmadas; 184 restantes** (148 não-vídeo, 26 vídeo, uma retenção técnica #2278/27Aug e nove identidades #1944). CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada; `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços running/sem pausa, backup/restauração, dez filtros e OpenAPI 174/157. Sem novas capturas desde o checkpoint; os26 protegidos permanecem fora da execução.
 
-O candidato2645/24Aug da release839c passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado; nenhuma promoção. Task23 corrige visibilidade e prova de pixels no instante final. Enquadramento deve manter o relógio original e o anúncio em um viewport real, sem mover o relógio, desenhar carimbo ou costurar cabeçalho. Uma data de notícia não substitui o relógio do site.
+A correção C67 de enquadramento final foi validada pelo canário #2645/24Aug, com auditoria, revisão visual, promoção e consumidor confirmados (`2645-c67-delivered-canary.json` e `2645-c67-canary-consumer-readback.json`). #2693/AFL/PI 91159, 21–24/08, foi confirmada nas quatro datas (`2693-four-c67-consumer-readback.json`). PI 91134/AFL foi entregue/validada com 11 páginas PDF/JPEG, zero PNG e checksums.
+
+O job mensal `c216f66b-f253-4124-8a23-297088b8d995` falhou com HTTP 503 na fonte de 24/08 após avanço parcial 2/4; não é entrega completa. O job `5a7eb7ae-2b67-4476-9e16-e57750a8faa2` também falhou com 503. No snapshot de 07/10 às 18:50 UTC, `657af4ff-2066-4f8b-9cf7-cb72054b7810` estava `ready_for_runner`, ainda sem confirmação da origem. Uma conexão foi observada em 60184 ms sem `statusCode`, compatível com interrupção no limite de 60 s; a duração/conclusão da consulta à fonte não foi confirmada. #2278/27Aug continua retida: leitura/backup via SSH foram autorizados, mas a tentativa real foi recusada.
+
+O cliente mensal foi ajustado localmente para encaminhar somente o GET de `evidence-monthly-source` pela `deliveryApiBase` pública com timeout de 120000 ms. `operationsBase`, as demais rotas e as URLs de download permanecem preservados. O teste VM verifica rota, limite e autenticação com fetch simulado; não comprova latência/resposta viva nem conclusão do relatório mensal.
+
+### Histórico — checkpoint38
+
+Estado de 07/10: **38/237 confirmadas;199 restantes** (162 não vídeo liberadas,1 retenção técnica2278/27Aug,27 vídeos e9 identidades1944 retidas). Main e aplicação839c publicadas; backup/restauração/quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store conferidos no consumidor. Os26 protegidos continuavam fora da execução.
+
+O candidato2645/24Aug da release839c passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado; nenhuma promoção. A correção Task23 exigiu visibilidade e prova de pixels no instante final. Enquadramento mantém o relógio original e o anúncio em viewport real, sem mover relógio, desenhar carimbo ou costurar cabeçalho. Uma data de notícia não substitui o relógio do site.
 
 ### Histórico — checkpoint32
 

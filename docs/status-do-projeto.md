@@ -1,12 +1,22 @@
 # Estado confirmado do projeto AdOps
 
-## Conferência de07/10/2026 — checkpoint38
+## Última conferência comprovada — 07/10/2026, 18:26 UTC — CD3/checkpoint53
 
-Release `ac4db3f4ef6ec443429ee2ef4c72e9a816656516` publicada pelo PR122, CI37640504916/37641276727 aprovadas. Readback15:13:29UTC confirmou quatro serviços ativos sem pausa, fontes reais, JavaScript público igual ao volume, OpenAPI174/157 e backup fresco/restauração completos. Painel abriu no navegador. Há38/237 evidências confirmadas e199 restantes=162 não vídeo liberadas+1 técnico2278/27Aug+27 vídeos+9 identidades1944.26 protegidas e1157 origens desconhecidas preservadas.
+Release CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` publicada e conferida. Recibos `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços running/sem pausa, backup/restauração verificados, dez filtros e OpenAPI com 174 operações/157 caminhos.
+
+**53/237 pares confirmados; 184 restantes:** 148 não-vídeo, 26 vídeo, uma retenção técnica (#2278/27Aug) e nove retenções de identidade (#1944). Os 26 protegidos e 1157 origens desconhecidas permanecem preservados; não houve novas capturas desde o checkpoint53.
+
+A correção C67 do viewport final foi validada no canário #2645/24Aug: auditoria, revisão visual individual, promoção e consumidor confirmados. #2693/AFL/PI 91159, de 21–24/08, tem as quatro datas confirmadas pelo consumidor. O pacote PI 91134/AFL foi entregue e validado com 11 páginas PDF/JPEG, zero PNG e checksums conferidos. Origem reconstruída e instante real permanecem nos dados/relatório, não no PNG.
+
+O mensal `c216f66b-f253-4124-8a23-297088b8d995` falhou com HTTP 503 na fonte de 24/08, após avanço parcial 2/4; isso não é entrega completa. O job `5a7eb7ae-2b67-4476-9e16-e57750a8faa2` também falhou com 503. No snapshot de 07/10 às 18:50 UTC, `657af4ff-2066-4f8b-9cf7-cb72054b7810` estava `ready_for_runner`, com origem não confirmada. Uma conexão foi observada em 60184 ms sem `statusCode`, compatível com interrupção no limite de 60 s; a duração/conclusão da consulta à fonte não foi confirmada. Para #2278/27Aug, houve autorização de leitura/backup SSH, mas a tentativa real continuou recusada. O censo da planilha permanece separado: linhas inconclusivas não provam ausência nem duplicidade.
+
+## Histórico — consumidor em 07/10/2026, checkpoint38
+
+Release `ac4db3f4ef6ec443429ee2ef4c72e9a816656516` publicada pelo PR122, CI37640504916/37641276727 aprovadas. Readback15:13:29UTC confirmou quatro serviços ativos sem pausa, fontes reais, JavaScript público igual ao volume, OpenAPI174/157 e backup fresco/restauração completos. Painel abriu no navegador. Havia38/237 evidências confirmadas e199 restantes=162 não vídeo liberadas+1 técnico2278/27Aug+27 vídeos+9 identidades1944.26 protegidas e1157 origens desconhecidas preservadas.
 
 Candidato2645/24Aug020a53e9 foi recusado visualmente pelo relógio fora do PNG. A correção Task23 foi publicada: viewport real mais alto, prova final do relógio e gate da API antes de substituir o original;22 cenários Chromium/API,17 testes API e17 promoção isolada passaram. O novo canário `1791386046875-74w8nh` falhou `page_clock_and_target_do_not_fit_final_viewport`, sem PNG final aprovado ou promoção. Original público conferido novamente com mesmo hash e bytes. Teste Chromium local reproduziu a lacuna de uma única medição após redimensionar; mecanismo específico do portal ainda inconclusivo porque a geometria não foi persistida no erro. Task26 corrige convergência limitada e diagnóstico; novo canário continua obrigatório. Watchdog publicado considera notBefore válido somente na fila, com26+20 checks; não reenvia o job falho antigo.
 
-WordPress2278/27Aug: adaptador local corrigido e7 casos PHP passaram; publicação no portal retida até leitura dos arquivos instalados, backup/rollback e acesso autorizado. Censo241linhasweb está provisório:119 únicas,105 múltiplas possibilidades,14 atual+histórico,2 indícios e1 histórico. Não prova duplicidade/ausência nem autoriza limpeza. Plano/SPEC/HARNESS são a referência do próximo passo.
+WordPress2278/27Aug: adaptador local corrigido e7 casos PHP passaram; publicação no portal retida até leitura dos arquivos instalados, backup/rollback e acesso autorizado. Censo241linhasweb estava provisório:119 únicas,105 múltiplas possibilidades,14 atual+histórico,2 indícios e1 histórico. Não provava duplicidade/ausência nem autorizava limpeza. Plano/SPEC/HARNESS eram a referência do próximo passo.
 
 ## Histórico — consumidor em07/10/2026, checkpoint32
 
