@@ -103,7 +103,7 @@ Identidade correta da metadata final; negação por hash/job/data; v2/v3 e daily
 - [ ] Conferir API status/mensal, abrir PNG e relatório canônico, fonte/data real e os dois relógios. Pacote final só via API assíncrona obrigatória se solicitado.
 - [x] Integrar main39 validada e conferir publicação da release; o aceite das evidências continua pendente. Se falhar, volumes+HTML anteriores; compensação automática cobre falha de promote. Rollback de aprovado usa PATCH /api/evidences/{id} com ponteiro/tipo/titulo originais, após checkcanônico+hash/bytes do original intacto e readback final; não inventar restoreAPI dedicada.
 
-Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (snapshot persistido: 250 pendentes, 13 aprovados), 1157 unknown separados. O primeiro canário #3047/job `1791303736001-f5yuyn` falhou com `tab_icon_fallback`, sem promoção nem alteração do original; esse resultado foi preservado. Após a publicação 6422, o novo canário e as substituições seriais confirmaram 10/263 correções: oito datas de #3047 (18–24/09 e 01/10), #3063 e #3055 em 01/10. Cada correção tem archive, revisão visual, recibo de promoção e PNG canônico com hash conferido. Restam 253: 252 em 87 grupos e #3064 separado como canário de vídeo. Task7 continua aberta; novos grupos aguardam a publicação nativa e seu canário. OpenAPI vivo conferido: catálogo v4, 174 operações/157 paths; contagem separada dos gates locais de contrato.
+Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (snapshot persistido: 250 pendentes, 13 aprovados), 1157 unknown separados. O primeiro canário #3047/job `1791303736001-f5yuyn` falhou com `tab_icon_fallback`, sem promoção nem alteração do original; esse resultado foi preservado. Dez correções foram confirmadas na release 6422: oito datas de #3047 (18–24/09 e 01/10), #3063 e #3055 em 01/10. Na release 262 publicada, OMT #1940, ROO #2310 e PNMT #2423 em 22/08 e OMT #1940 em 23/08 também foram promovidos/conferidos, totalizando 14/263; restam 249. A última promoção é `a035ec6e-7fa5-473e-9159-7590c3ccb4c0`. Cada correção tem archive, revisão visual, recibo de promoção e PNG canônico com hash conferido; OMT também passou por thumb/modal no Chrome. Task7 continua aberta. AFL #2692 permanece candidato misto sem promoção, com correção local ainda não publicada; VIDEO #3064 falhou antes do upload, causa individual pendente. PERR #1861 e PPMT #2980 falharam por slot ausente antes do upload, com originais intactos. OpenAPI vivo conferido: catálogo v4, 174 operações/157 paths; contagem separada dos gates locais de contrato.
 
 ### Task 9: Hotfix do favicon observado e título da aba
 
@@ -124,7 +124,8 @@ Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (snapsho
 - [x] Remover a barra artificial do capturer atual; medir timeline UA-shadow, visibilidade/clipping/oclusão, estado pausado e ROI do PNG composto. API/checklist compartilham o gate VIDEO v4; contratos legados permanecem identificados.
 - [x] Validar API/checklist 66/66, Chromium real e prova ROI→API 10/10, guard privado de supersession 43/43. CI recebeu os dois comandos nativos; YAML conferido por root.
 - [x] Revisão concluída e PR113 mergeada: main `18bf1d2ca7f519cf98991b096cf6b9a64602905b`, árvore igual ao commit revisado `a106c0e`. #3064 permanece candidato rejeitado, sem promoção; nova tentativa exige rejeição/identidade/hash e ausência de recibo de promoção.
-- [ ] Publicar o novo SHA após Task11/CI/main e conferir o canário VIDEO real antes de retomar os grupos. Produção permanece na release 6422.
+- [x] Publicar a release nativa+favicon `262d907c0bb18fb11c1b9b3434701118aab7c176` com dump novo/restauração completa e readback dos quatro serviços, fonte/volumes e JavaScript público. Recibo `release-final-native-video-retry1.json`.
+- [ ] Conferir o canário VIDEO real: job `1791346109508-yoq6go` de #3064 falhou no gate nativo antes do upload. Fixture local e leitura no portal passaram, mas a causa da falha individual em produção ainda é desconhecida; não aprovar nem declarar correção.
 
 ### Task 11: Favicons dos quatro portais com origem pública externa
 
@@ -132,7 +133,25 @@ Inventário terminado em 17 páginas: 263 históricos fora do par v4/v5 (snapsho
 
 - [x] Preflight público dos seis portais identificou quatro origens exatas antes bloqueadas: AFL, ROO, PNMT e PPMT. OMT same-origin e a CDN Perrengue já foram resolvidos; recibo privado `site-favicon-preflight.json`.
 - [x] Parear as quatro origens HTTPS exatas com domínio configurado e observado, sem wildcard; fetch Node restrito ao link observado quando Chromium falha, com credenciais omitidas/no-store, redirect/userinfo/porta recusados, timeout/stream/MIME/dimensões limitados e decoder único. Focal local, sintaxe e diff-check passaram; SPEC/HARNESS atualizados. O preflight público dos seis portais foi aprovado pela Luna; captura real da release ainda depende do canário.
-- [ ] Integrar o patch pequeno e publicar uma única release nativa+favicon, com backup/restauração/readback pelos gates oficiais. Não declarar esse release publicado antes dos recibos vivos.
+- [x] PR114 integrada e release 262 publicada com backup/restauração/readback oficiais; preflight final dos seis portais em `site-favicon-preflight-final.json`. A publicação não conclui o lote de evidências.
+
+### Task 12: Coerência da matéria interna AFL
+
+**Owner:** Sol (ramo AFL do capturer, teste existente e docs/revisão); Luna (gate de identidade na API/testes); root (revisão/integração/publicação/nova captura). **Base:** branch `codex/adops-retro-context-native-audit-20261007`, release 262; auditoria nativa permanece intacta.
+
+- [x] Confirmar candidato #2692 de 21/08, `892e58f0-cb48-48f8-9184-cded617aafa9`, job `1791346556496-fpl6me`, com URL/título/corpo da Expo e headline/hero do acidente; auditoria antiga aprovada, sem promoção. Reproduzir localmente `articleVerified=true` apesar da mistura.
+- [x] Selecionar o post pela origem/path da URL aberta, verificar headline/título da aba antes da mutação e recusar identidade ausente/incompatível. Preservar corpo/títulos/links; hero/data pertencem ao mesmo post. Teste existente RED→GREEN com dois posts, corpo/path/query/links e negativos; focal repetido por Sol/root, normalização, regras 41/41, sintaxe e diff-check passaram.
+- [x] Fechar revisão do gate local da API: URL aberta/esperada/visível/editorial devem coincidir no portal configurado, com `article_context_mismatch` para ausência/divergência. Negativo dos quatro URLs no mesmo outro portal RED→GREEN; HTTP/userinfo recusados. Suite Sol immutability+preupload 20/20 e typecheck passaram. Publicação continua pendente.
+- [ ] Integrar/publicar o fix local pelos gates oficiais e conferir nova captura AFL com contexto único, PNG exato e auditoria/promoção/readback. Preservar candidato misto e canônico original; o lote permanece aberto.
+
+### Task 13: Recuperação delimitada de slots históricos ausentes
+
+**Owner:** Luna (CJS/testes); Sol (revisão/docs); root (integração/release/operação). **Estado:** implementação local revisada; CI/publicação/canários pendentes.
+
+- [x] Diagnosticar PERR #1861/22Aug e PPMT #2980/16Sep: perfis home corretos, três tentativas failed por slot ausente, sem upload/original intacto. Helper permite período expirado, mas criação exige late_publication_recovery explícito. PERR original aprovado; PPMT exclusivamente clock mismatch com demais provas válidas.
+- [x] Reutilizar GET de status e guard determinístico somente candidate-only/histórico v4/período expirado/configuração exata PERR9 ou PPMT1. PERR9 é exceção fixa apenas nessa lane, sem mudar config/painel; PPMT exige allowAuditedReconstruction=true. Fonte correlacionada por inserção/data/job/URL/mídia/contexto/pixels/conteúdo: aprovada ou exclusivamente códigos temporais autorizados, sem reclassificação do original. Lane legada v2 preservada. Guard final qualificou as duas fontes reais sem mutação.
+- [x] Reutilizar criação de popup e âncora desktop existentes somente para slot ausente, recusando ambiguidades/slot ocupado. Preservar markup/close e marcar slot PERR reconstruído. Registrar origem/URL/job/códigos/hash editorial fora do PNG; não inventar hash do PNG fornecido pela API. Focais finais slots/crossportal repetidos por Sol/root passaram; API68/typecheck/builds passaram.
+- [ ] Integrar CI/release/readback e novos candidatos dos dois perfis. Revisar PNGs exatos, auditar, promover com archive/CAS e conferir consumidor; originais e falhas anteriores permanecem preservados.
 
 ### Task 8: Substituição explícita de apresentação histórica aprovada
 

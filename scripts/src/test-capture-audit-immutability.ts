@@ -485,3 +485,88 @@ test("reconstrução legada aprovada preserva o contrato histórico", () => {
   assert.equal(result.ok, true);
   assert.equal(result.issues.some((issue) => issue.code === "reconstruction_provenance_invalid"), false);
 });
+
+test("reconstrução AFL v4 de artigo exige URL canônica igual à notícia esperada e visível", () => {
+  const targetDate = "2026-08-23";
+  const capturedAt = "2026-08-24T15:00:00.000Z";
+  const requestedCaptureAt = `${targetDate}T20:40:00-04:00`;
+  const makeArticle = ({
+    pageUrl = "https://afolhalivre.com/expo-agro-2026/?preview=token",
+    expectedUrl = "https://afolhalivre.com/expo-agro-2026?signature=expected",
+    visibleUrl = expectedUrl,
+    editorialUrl = visibleUrl,
+    captureClass = "historical_recovery",
+    provenanceVersion = 4,
+    format = "INTERNO",
+  }: {
+    pageUrl?: string | null;
+    expectedUrl?: string | null;
+    visibleUrl?: string | null;
+    editorialUrl?: string | null;
+    captureClass?: string;
+    provenanceVersion?: number;
+    format?: string;
+  } = {}) => {
+    const metadata = buildMetadata({
+      captureClass,
+      targetDate,
+      requestedCaptureAt,
+      captureTime: requestedCaptureAt,
+      capturedAt: captureClass === "scheduled" ? "2026-08-23T23:00:00.000Z" : capturedAt,
+      contentDateSamples: [`${targetDate}T19:00:00-04:00`],
+      reconstruction: captureClass === "historical_recovery" ? {
+        reason: "late_publication_recovery",
+        provenanceVersion,
+        contractedDate: targetDate,
+        reconstructedAt: capturedAt,
+        mediaUrl: "https://cdn.example.com/creative.jpg",
+        historicalDisplayConfirmed: false,
+      } : null,
+    }) as Record<string, unknown>;
+    metadata.siteSigla = "AFL";
+    metadata.format = format;
+    metadata.pageUrl = pageUrl;
+    metadata.editorialSamples = editorialUrl ? [{ title: "Notícia", url: editorialUrl, date: targetDate }] : [];
+    metadata.retroContentManifest = {
+      expectedPosts: expectedUrl ? [{ title: "Notícia", url: expectedUrl, date: targetDate }] : [],
+      visiblePosts: visibleUrl ? [{ title: "Notícia", url: visibleUrl, date: targetDate }] : [],
+    };
+    return metadata;
+  };
+  const evaluate = (metadata: Record<string, unknown>) => evaluateCaptureMetadata(metadata, targetDate, new Date("2026-08-24T15:01:00.000Z"));
+  const issuePresent = (result: ReturnType<typeof evaluateCaptureMetadata>) => result.issues.some((issue) => issue.code === "article_context_mismatch");
+
+  const valid = evaluate(makeArticle());
+  assert.equal(valid.auditContext.resolvedPage, "article");
+  assert.equal(issuePresent(valid), false);
+  assert.equal(valid.ok, true);
+
+  for (const mismatch of [
+    makeArticle({ expectedUrl: "https://afolhalivre.com/acidente-na-rodovia/" }),
+    makeArticle({ visibleUrl: "https://afolhalivre.com/acidente-na-rodovia/" }),
+    makeArticle({ editorialUrl: "https://afolhalivre.com/acidente-na-rodovia/" }),
+    makeArticle({ expectedUrl: null }),
+    makeArticle({ visibleUrl: null }),
+    makeArticle({ editorialUrl: null }),
+    makeArticle({ pageUrl: null }),
+    makeArticle({ expectedUrl: "https://outro-portal.example/expo-agro-2026/" }),
+    makeArticle({ pageUrl: "https://outro-portal.example/expo-agro-2026/", expectedUrl: "https://outro-portal.example/expo-agro-2026/" }),
+    makeArticle({ pageUrl: "http://afolhalivre.com/expo-agro-2026/", expectedUrl: "http://afolhalivre.com/expo-agro-2026/" }),
+    makeArticle({ pageUrl: "https://user@afolhalivre.com/expo-agro-2026/", expectedUrl: "https://user@afolhalivre.com/expo-agro-2026/" }),
+    makeArticle({ editorialUrl: "not a URL" }),
+  ]) {
+    const rejected = evaluate(mismatch);
+    assert.equal(issuePresent(rejected), true);
+    assert.equal(rejected.ok, false);
+  }
+
+  const legacy = evaluate(makeArticle({ provenanceVersion: 3 }));
+  assert.equal(legacy.captureClass, "historical_recovery");
+  assert.equal(issuePresent(legacy), false);
+  const daily = evaluate(makeArticle({ captureClass: "scheduled" }));
+  assert.equal(daily.captureClass, "scheduled");
+  assert.equal(issuePresent(daily), false);
+  const home = evaluate(makeArticle({ format: "MEGABANNER TOPO", pageUrl: "https://afolhalivre.com/" }));
+  assert.equal(home.auditContext.resolvedPage, "home");
+  assert.equal(issuePresent(home), false);
+});

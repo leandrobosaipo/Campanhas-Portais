@@ -11,6 +11,8 @@ A v3 atual mostra a referência histórica na página e o instante real na moldu
 - Nova reconstrução: ambos os relógios representam requestedCaptureAt em America/Cuiaba; capturedAt e reconstruction.reconstructedAt representam o instante real e correlacionam com o job.
 - Nenhum carimbo adicional no PNG. Origem reconstruída e data real ficam no relatório e na API.
 - Auditoria, corte editorial, criativo esperado, checklist, hashes e aprovação persistida permanecem obrigatórios.
+- Página interna AFL mantém URL, título da aba, headline, imagem e corpo da mesma matéria. Um post histórico diferente não pode substituir parcialmente a matéria aberta; identidade ausente ou títulos incompatíveis bloqueiam a reconstrução.
+- Slot ausente só pode ser reconstruído nos perfis delimitados PERR9/pop-up inferior e PPMT1/topo desktop, em candidato histórico v4 com período expirado e original correlacionado. Original aprovado ou exclusivamente rejeitado pelo relógio antigo exige provas válidas de mídia, posição, pixels e conteúdo; isso não transforma o original rejeitado em aprovado.
 - Mensal e status utilizam a mesma evidência final correlacionada; uma auditoria preliminar não suplanta a final. Ausência ou identidade divergente continua bloqueada.
 - Moldura legível, proporcional e neutra, com URL/título reais e relógio em duas linhas à direita; sem clima, perfil ou abas inventados. Assets têm licença registrada.
 - Inventário por API identifica o conjunto retroativo completo, inclusive aprovados, com paginação limitada e sem retornar DOM/base64 ou secrets.

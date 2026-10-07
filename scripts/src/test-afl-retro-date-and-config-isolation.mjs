@@ -176,32 +176,55 @@ try {
   }, `${today}T12:00:00-04:00`);
   assert.deepEqual(liveDateAudit, { ok: true, skipped: true, reason: "live_same_day" });
 
-  await page.setContent(`
+  const expoUrl = "https://afolhalivre.com/expo-primavera/";
+  const expoTitle = "Expo Primavera terá espaço exclusivo para pessoas com deficiência";
+  const expoBody = "A Expo Primavera contará com uma estrutura exclusiva para pessoas com deficiência.";
+  const articleImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6z0AAAAASUVORK5CYII=";
+  await page.route(expoUrl + "**", route => route.fulfill({ contentType: "text/html; charset=utf-8", body: `
+    <title>${expoTitle} - A Folha Livre</title>
     <main><article>
-      <a href="https://afolhalivre.com/atual/"><img src="https://example.test/atual.jpg"></a>
-      <h1>Notícia atual</h1>
-      <time datetime="2026-08-28T10:00:00">há 2 horas</time>
+      <a class="category-link" href="https://afolhalivre.com/categoria/primavera/">Primavera</a>
+      <a class="article-hero" href="${expoUrl}"><img src="${articleImage}"></a>
+      <h1>${expoTitle}</h1>
+      <time datetime="2026-08-21T14:00:00">há 2 horas</time>
+      <div class="entry-content"><p>${expoBody}</p></div>
     </article></main>
-  `);
+  ` }));
+  await page.goto(expoUrl + "?adops_preview=fixture", { waitUntil: "domcontentloaded" });
+  const articlePosts = [{
+    id: 123, slug: "acidente-cruzamento", url: "https://afolhalivre.com/acidente-cruzamento/",
+    title: "Acidente entre carro e motocicleta no cruzamento", image: articleImage + "#accident",
+    category: "Primavera", date: "2026-08-21T15:38:00",
+  }, {
+    id: 124, slug: "expo-primavera", url: expoUrl, title: expoTitle, image: articleImage,
+    category: "Primavera", date: "2026-08-21T14:00:00",
+  }];
   const articleResult = await applyAflRetroPreview(page, {
     domain: "afolhalivre.com",
     page: "article",
-  }, "2026-07-29T21:50:00-04:00", {
-    posts: [{
-      id: 123,
-      slug: "idosa-morre",
-      url: "https://afolhalivre.com/idosa-morre/",
-      title: "Idosa morre após atropelamento",
-      image: "https://cdn.example.test/idosa.jpg",
-      category: "Primavera",
-      date: "2026-07-29T15:29:00",
-    }],
+  }, "2026-08-21T18:14:00-04:00", {
+    posts: articlePosts,
   });
   assert.equal(articleResult.applied, true);
   assert.equal(articleResult.articleVerified, true);
-  assert.equal(articleResult.expectedPosts[0].id, 123);
-  assert.equal(await page.locator("main article h1").textContent(), "Idosa morre após atropelamento");
-  assert.equal(await page.locator("main article a").getAttribute("href"), "https://afolhalivre.com/idosa-morre/");
+  assert.equal(articleResult.expectedPosts[0].id, 124, "article reconstruction must select the opened URL, not the newest post");
+  assert.equal(await page.locator("main article h1").textContent(), expoTitle);
+  assert.equal(await page.locator("a.article-hero").getAttribute("href"), expoUrl);
+  assert.equal(await page.locator("a.category-link").getAttribute("href"), "https://afolhalivre.com/categoria/primavera/", "reconstruction must preserve original article links");
+  assert.equal(await page.locator("main article img").getAttribute("src"), articleImage);
+  assert.equal(await page.locator(".entry-content").textContent(), expoBody);
+  assert.equal(await page.title(), expoTitle + " - A Folha Livre");
+  assert.equal(new URL(page.url()).pathname, "/expo-primavera/");
+  const reconstructedHtml = await page.locator("main article").innerHTML();
+  await assert.rejects(applyAflRetroPreview(page, { domain: "afolhalivre.com", page: "article" }, "2026-08-21T18:14:00-04:00", { posts: [articlePosts[0]] }), /article_identity_mismatch/);
+  assert.equal(await page.locator("main article").innerHTML(), reconstructedHtml, "unknown article identity must fail before mutation");
+  await assert.rejects(applyAflRetroPreview(page, { domain: "afolhalivre.com", page: "article" }, "2026-08-21T18:14:00-04:00", { posts: [{ ...articlePosts[1], url: "https://other.example/expo-primavera/" }] }), /article_identity_mismatch/);
+  await page.evaluate(() => { document.title = "Acidente no cruzamento - A Folha Livre"; });
+  await assert.rejects(applyAflRetroPreview(page, { domain: "afolhalivre.com", page: "article" }, "2026-08-21T18:14:00-04:00", { posts: articlePosts }), /article_content_mismatch/);
+  await page.evaluate(title => { document.title = title; }, expoTitle + " - A Folha Livre");
+  await page.locator("main article h1").evaluate(node => { node.textContent = "Another article headline"; });
+  await assert.rejects(applyAflRetroPreview(page, { domain: "afolhalivre.com", page: "article" }, "2026-08-21T18:14:00-04:00", { posts: articlePosts }), /article_content_mismatch/);
+  assert.equal(await page.locator(".entry-content").textContent(), expoBody);
 
   await page.setContent(`
     <header><div class="omt-header-top"><div id="block-8"><!-- anúncio encerrado --></div></div></header>

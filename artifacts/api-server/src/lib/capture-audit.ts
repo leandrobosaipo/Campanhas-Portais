@@ -654,6 +654,40 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const reconstructionProvenanceV2 = reconstruction?.provenanceVersion === 2;
   const reconstructionProvenanceV3 = reconstruction?.provenanceVersion === 3;
   const reconstructionProvenanceV4 = reconstruction?.provenanceVersion === 4;
+  const requiresAflArticleIdentity = siteSigla === "AFL" &&
+    normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY &&
+    reconstructionProvenanceV4 && resolvedMapping?.page === "article";
+  let aflArticleIdentityMatches = true;
+  if (requiresAflArticleIdentity) {
+    const configuredHomeUrl = getSiteIntegration(siteSigla)?.homeUrl;
+    const normalizeAflArticleIdentity = (value: unknown): string | null => {
+      if (typeof value !== "string" || !value.trim()) return null;
+      try {
+        const url = new URL(value.trim());
+        if (url.protocol !== "https:" || url.username || url.password) return null;
+        if (!configuredHomeUrl || url.origin !== new URL(configuredHomeUrl).origin) return null;
+        return `${url.origin}${url.pathname.replace(/\/+$/, "") || "/"}`;
+      } catch {
+        return null;
+      }
+    };
+    const manifest = metadata.retroContentManifest && typeof metadata.retroContentManifest === "object"
+      ? metadata.retroContentManifest
+      : {};
+    const expectedUrl = Array.isArray(manifest.expectedPosts)
+      ? normalizeAflArticleIdentity(manifest.expectedPosts[0]?.url)
+      : null;
+    const visibleUrl = Array.isArray(manifest.visiblePosts)
+      ? normalizeAflArticleIdentity(manifest.visiblePosts[0]?.url)
+      : null;
+    const editorialUrl = Array.isArray(metadata.editorialSamples)
+      ? normalizeAflArticleIdentity(metadata.editorialSamples[0]?.url)
+      : null;
+    const pageUrl = normalizeAflArticleIdentity(metadata.pageUrl);
+    aflArticleIdentityMatches = Boolean(
+      pageUrl && expectedUrl === pageUrl && visibleUrl === pageUrl && editorialUrl === pageUrl,
+    );
+  }
   const versionedReconstruction = reconstructionProvenanceV2 || reconstructionProvenanceV3 || reconstructionProvenanceV4;
   // `capturedAt` comes from the persisted capture log, not the runner request.
   // Keep a small allowance for upload/audit latency, but never let a supplied
@@ -795,6 +829,13 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     playerProofOk,
   );
   const issues: Array<{ code: string; label: string; detail: string }> = [];
+  if (!aflArticleIdentityMatches) {
+    issues.push({
+      code: "article_context_mismatch",
+      label: "Página não corresponde à notícia comprovada",
+      detail: "A reconstrução histórica v4 de artigo da AFL exige que a página aberta, a notícia esperada e as notícias visíveis identifiquem a mesma origem e caminho.",
+    });
+  }
   if (!captureClassTrustContext.trusted && explicitCaptureClass) {
     const trustIssues: Array<{ code: string; label: string; detail: string }> = captureClassTrustContext.reasons
       .map((reason) => {
@@ -1115,7 +1156,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     playerProofOk,
     visualsOk,
     issues,
-    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

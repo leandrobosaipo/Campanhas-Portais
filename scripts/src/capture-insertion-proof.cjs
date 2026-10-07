@@ -2827,12 +2827,25 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
 
     if (pageType === "article") {
       const article = document.querySelector("main article") || document.querySelector("article") || document.querySelector("main");
-      const post = retroPosts[0];
-      if (!article || !post) return { applied: false, reason: "article_target_missing" };
-      setLink(article, post);
-      setImage(article, post, true);
+      if (!article) return { applied: false, reason: "article_target_missing" };
+      const currentUrl = new URL(window.location.href);
+      const articlePath = currentUrl.pathname.replace(/\/+$/, "") || "/";
+      const post = retroPosts.find((candidate) => {
+        try {
+          const candidateUrl = new URL(candidate.url || `/${candidate.slug}/`, currentUrl.origin);
+          return candidateUrl.origin === currentUrl.origin
+            && (candidateUrl.pathname.replace(/\/+$/, "") || "/") === articlePath;
+        } catch { return false; }
+      });
+      if (!post) return { applied: false, reason: "article_identity_mismatch" };
       const title = article.querySelector("h1,h2,.entry-title") || document.querySelector("main h1,h1.entry-title");
-      if (title) title.textContent = post.title;
+      const normalizedText = (value) => text(value).replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+      const expectedTitle = normalizedText(post.title);
+      if (!title || !expectedTitle || normalizedText(title.textContent) !== expectedTitle
+          || !normalizedText(document.title).includes(expectedTitle)) {
+        return { applied: false, reason: "article_content_mismatch" };
+      }
+      setImage(article, post, true);
       let dateNodesUpdated = normalizeArticleDate(article, post.date);
       if (dateNodesUpdated === 0) {
         const time = document.createElement("time");
@@ -2847,13 +2860,15 @@ async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
       article.setAttribute("data-adops-retro-post-date", post.date);
       document.documentElement.setAttribute("data-adops-afl-retro-preview", rawCaptureAt);
       const expectedUrl = absoluteUrl(post.url || `/${post.slug}/`);
-      const linkedUrl = article.querySelector("a[href]")?.href || "";
       const visible = (node) => node instanceof HTMLElement && node.getBoundingClientRect().width > 8 && node.getBoundingClientRect().height > 8;
       return {
         applied: true,
         source: "afl-wp-rest",
         posts: retroPosts.length,
-        articleVerified: visible(title) && dateNodesUpdated > 0 && linkedUrl === expectedUrl,
+        articleVerified: visible(title) && dateNodesUpdated > 0
+          && (new URL(expectedUrl).pathname.replace(/\/+$/, "") || "/") === articlePath
+          && normalizedText(title.textContent) === expectedTitle,
+        articlePath: currentUrl.pathname,
         expectedArticlePath: new URL(expectedUrl).pathname,
         expectedPosts: [post].map((item) => ({
           id: Number(item.id || 0),
@@ -3093,7 +3108,7 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
 
 function buildStaticRetroSlotPlan(mapping) {
   const domain = String(mapping?.domain || "").toLowerCase();
-  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com"]).has(domain)) return null;
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com", "perrenguematogrosso.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
@@ -3119,6 +3134,8 @@ function buildStaticRetroSlotPlan(mapping) {
   if (matches.length !== 1) return null;
   const groupId = Number(matches[0][1]);
   if (!Number.isInteger(groupId) || groupId < 1) return null;
+  if (domain === "perrenguematogrosso.com"
+    && (groupId !== 9 || slotSelector !== "#cod5-bottom-popup-ad .g.g-9" || configuredContextSelector !== "#cod5-bottom-popup-ad")) return null;
   if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
   if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
@@ -3148,15 +3165,117 @@ function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart
   return capture < today && start <= capture && capture <= end && (end < today || authorizedLateRecovery);
 }
 
+function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate, captureAt, currentDate = currentDateInCuiaba(), captureClass, provenanceVersion, candidateOnly = false, saveEvidence = true, status }) {
+  const plan = buildStaticRetroSlotPlan(mapping);
+  const domain = String(mapping?.domain || "").toLowerCase();
+  const profile = domain === "perrenguematogrosso.com"
+    && mapping?.groupId === 9
+    && mapping?.slotSelector === "#cod5-bottom-popup-ad .g.g-9"
+    && mapping?.contextSelector === "#cod5-bottom-popup-ad"
+    && mapping?.page === "home"
+    && plan?.groupId === 9
+    ? "perrengue-popup-9"
+    : domain === "portalpantanalmt.com"
+      && mapping?.groupId === 1
+      && mapping?.slotSelector === "div.hidden.lg\\:block .g.g-1"
+      && mapping?.contextSelector === "div.hidden.lg\\:block .g.g-1"
+      && mapping?.page === "home"
+      && plan?.groupId === 1
+      && plan?.requireUniqueVisibleAnchor === true
+      ? "ppmt-desktop-top-1"
+      : null;
+  const target = String(targetDate || "").slice(0, 10);
+  const start = String(insertion?.periodoInicio || "").slice(0, 10);
+  const end = String(insertion?.periodoFim || "").slice(0, 10);
+  const today = String(currentDate || "").slice(0, 10);
+  const exactPerrengueProfile = profile === "perrengue-popup-9";
+  if (!candidateOnly || saveEvidence || !captureAt || captureClass !== "historical_recovery" || provenanceVersion !== 4 || !profile
+    || (mapping?.auditConfig?.allowAuditedReconstruction !== true && !exactPerrengueProfile)) return { ok: false, reason: "candidate_or_config_not_eligible" };
+  if (![target, start, end, today].every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)) || target >= today || end >= today || target < start || target > end) return { ok: false, reason: "target_not_expired_historical_in_period" };
+  const proof = status?.audit;
+  const checklist = status?.checklistValidation;
+  const exactIssues = (items) => {
+    if (!Array.isArray(items)) return null;
+    const codes = items.map((item) => typeof item === "string" ? item : item?.code);
+    return codes.every((code) => typeof code === "string" && code.length > 0) ? codes : null;
+  };
+  const auditIssues = exactIssues(proof?.issues);
+  const blockingIssues = exactIssues(checklist?.blockingIssues);
+  const globallyApproved = checklist?.approved === true && checklist?.preliminary === false
+    && proof?.ok === true && ["audited", "audited_best_effort"].includes(status?.status)
+    && auditIssues?.length === 0 && blockingIssues?.length === 0;
+  const clockOnlyMismatch = auditIssues?.length === 1 && auditIssues[0] === "desktop_time_mismatch"
+    && blockingIssues?.length === 1 && blockingIssues[0] === "metadata_desktop_time_mismatch"
+    && checklist?.approved === false && checklist?.preliminary === false && status?.status === "invalid_audit";
+  const mediaProof = proof?.mediaProof;
+  const context = proof?.auditContext;
+  let sourceUrlIsSafe = false;
+  try {
+    const sourceUrl = new URL(status?.arquivoUrl);
+    sourceUrlIsSafe = sourceUrl.protocol === "https:" && !sourceUrl.username && !sourceUrl.password;
+  } catch {}
+  const sameReference = typeof captureAt === "string" && proof?.requestedCaptureAt === captureAt;
+  const sameMedia = typeof insertion?.mediaUrl === "string" && mediaProof?.matchedMediaUrl === insertion.mediaUrl;
+  const visualIdentityOk = proof?.visualsOk === true && proof?.visualAudit?.identityFrameOk === true;
+  const visibility = proof?.slotVisibility;
+  const visibleEnough = visibility?.fullyVisible === true && Number.isFinite(Number(visibility?.visibleRatio)) && Number(visibility.visibleRatio) >= 0.95;
+  const manifestHash = proof?.retroContentProof?.manifestHash;
+  const validManifestHash = typeof manifestHash === "string" && /^[a-f0-9]{64}$/i.test(manifestHash);
+  const exactContext = context?.resolvedPage === "home"
+    && context?.resolvedGroupId === plan.groupId
+    && context?.resolvedSlotSelector === mapping.slotSelector
+    && context?.resolvedContextSelector === mapping.contextSelector;
+  const qualified = status?.insertionId === Number(insertion?.id)
+    && status?.date === target
+    && checklist?.insertionId === Number(insertion?.id)
+    && checklist?.date === target
+    && status?.inPeriod === true
+    && status?.hasEvidenceForDate === true
+    && status?.hasValidUrl === true
+    && status?.isReachable === true
+    && status?.urlStatus === 200
+    && sourceUrlIsSafe
+    && proof?.captureClass === "historical_recovery"
+    && proof?.targetDate === target
+    && typeof proof?.sourceJobId === "string" && proof.sourceJobId.length > 0
+    && sameReference
+    && mediaProof?.ok === true && sameMedia
+    && exactContext
+    && proof?.finalPngSlotAudit?.ok === true
+    && visualIdentityOk && visibleEnough
+    && proof?.pageMatches === true
+    && proof?.retroContentProof?.status === "approved"
+    && proof?.retroContentProof?.futureCount === 0
+    && validManifestHash
+    && Array.isArray(auditIssues) && Array.isArray(blockingIssues)
+    && (globallyApproved || clockOnlyMismatch);
+  if (!qualified) return { ok: false, reason: "original_historical_proof_not_qualified" };
+  const sourceIssueCodes = [...new Set([...auditIssues, ...blockingIssues])];
+  return {
+    ok: true,
+    profile,
+    sourceEvidence: {
+      url: status.arquivoUrl,
+      sourceJobId: proof.sourceJobId,
+      issueCodes: sourceIssueCodes,
+      manifestHash,
+      origin: "canonical_historical_evidence",
+    },
+  };
+}
+
 async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasename, options = {}) {
   const allowExplicitStaticInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1" ||
     (mapping?.auditConfig?.allowAuditedReconstruction === true && options.reconstructionReason === "late_publication_recovery");
-  if (!allowExplicitStaticInjection) return false;
-  if (options.reconstructionReason !== "late_publication_recovery") return false;
+  const auditedCandidateReconstruction = options.auditedCandidateReconstruction?.ok === true
+    && options.candidateOnly === true
+    && options.reconstructionProvenanceVersion === 4;
+  if (!allowExplicitStaticInjection && !auditedCandidateReconstruction) return false;
+  if (options.reconstructionReason !== "late_publication_recovery" && !auditedCandidateReconstruction) return false;
   const domain = String(mapping?.domain || "").toLowerCase();
   if (options.allowConfiguredSlotReconstruction !== true) return false;
-  if (mapping?.domain !== "perrenguematogrosso.com" && !allowExplicitStaticInjection) return false;
-  if (!allowExplicitStaticInjection && mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
+  if (mapping?.domain !== "perrenguematogrosso.com" && !allowExplicitStaticInjection && !auditedCandidateReconstruction) return false;
+  if (!allowExplicitStaticInjection && !auditedCandidateReconstruction && mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
   const url = String(mediaUrl || "").trim();
   if (!url) return false;
 
@@ -3164,8 +3283,9 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     ? buildStaticRetroSlotPlan(mapping)
     : null;
   if (missingSlotPlan?.requireUniqueVisibleAnchor === true && mapping?.auditConfig?.allowAuditedReconstruction !== true) return false;
-  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2) return false;
-  return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan }) => {
+  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2 && !auditedCandidateReconstruction) return false;
+  if (auditedCandidateReconstruction && !["perrengue-popup-9", "ppmt-desktop-top-1"].includes(options.auditedCandidateReconstruction.profile)) return false;
+  return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan, auditedCandidateReconstruction }) => {
     const normalizeSelector = (value) => String(value || "").trim();
     const createMissingInternalSlot = () => {
       const selector = normalizeSelector(slotSelector);
@@ -3195,12 +3315,90 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     const createMissingPopupSlot = () => {
       const selector = normalizeSelector(slotSelector);
       if (selector !== "#cod5-bottom-popup-ad .g.g-9") return null;
-      let host = document.querySelector("#cod5-bottom-popup-ad");
+      const hosts = Array.from(document.querySelectorAll("#cod5-bottom-popup-ad"));
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9" && hosts.length > 1) return null;
+      let host = auditedCandidateReconstruction?.profile === "perrengue-popup-9" ? hosts[0] : document.querySelector("#cod5-bottom-popup-ad");
       if (!(host instanceof HTMLElement)) {
         host = document.createElement("div");
         host.id = "cod5-bottom-popup-ad";
         host.setAttribute("data-cod5-popup-retro-ad", "1");
+        if (auditedCandidateReconstruction?.profile === "perrengue-popup-9") host.setAttribute("data-cod5-popup-ad", "bottom-fixed");
         document.body.appendChild(host);
+      }
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9" && host.querySelector(".g.g-9")) return null;
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9") {
+        let inner = host.querySelector(".cod5-bottom-popup-ad__inner");
+        const close = host.querySelector(".cod5-bottom-popup-ad__close");
+        const outsideKnownContent = Array.from(host.children).some((child) => child !== inner && child !== close);
+        if (outsideKnownContent || (close && (!inner || !inner.contains(close)))) return null;
+        if (!(inner instanceof HTMLElement)) {
+          if (host.children.length > 0) return null;
+          inner = document.createElement("div");
+          inner.className = "cod5-bottom-popup-ad__inner";
+          host.appendChild(inner);
+        }
+        if (Array.from(inner.children).some((child) => child !== close)) return null;
+        host.classList.add("cod5-bottom-popup-ad");
+        host.setAttribute("data-cod5-popup-ad", "bottom-fixed");
+        host.setAttribute("role", "region");
+        host.setAttribute("aria-label", "Publicidade");
+        host.style.position = "fixed";
+        host.style.left = "50%";
+        host.style.bottom = "max(10px, env(safe-area-inset-bottom))";
+        host.style.transform = "translateX(-50%)";
+        host.style.zIndex = "9990";
+        host.style.width = "min(calc(100vw - 24px), 1120px)";
+        host.style.display = "block";
+        host.style.visibility = "visible";
+        host.style.opacity = "1";
+        host.style.pointerEvents = "none";
+        host.style.background = "transparent";
+        inner.style.position = "relative";
+        inner.style.display = "flex";
+        inner.style.justifyContent = "center";
+        inner.style.alignItems = "center";
+        inner.style.width = "100%";
+        inner.style.padding = "0 42px 0 0";
+        inner.style.pointerEvents = "auto";
+        const slot = document.createElement("div");
+        slot.className = "g g-9";
+        slot.setAttribute("data-adops-reconstructed-slot", "9");
+        slot.style.display = "block";
+        slot.style.visibility = "visible";
+        slot.style.opacity = "1";
+        slot.style.width = "100%";
+        slot.style.maxWidth = "970px";
+        slot.style.minHeight = "90px";
+        slot.style.pointerEvents = "auto";
+        inner.appendChild(slot);
+        const popupClose = close || document.createElement("button");
+        if (!close) {
+          popupClose.className = "cod5-bottom-popup-ad__close";
+          popupClose.type = "button";
+          popupClose.setAttribute("aria-label", "Fechar publicidade");
+          popupClose.textContent = "×";
+          popupClose.addEventListener("click", () => host.remove());
+        }
+        popupClose.style.position = "absolute";
+        popupClose.style.right = "0";
+        popupClose.style.top = "50%";
+        popupClose.style.display = "inline-flex";
+        popupClose.style.alignItems = "center";
+        popupClose.style.justifyContent = "center";
+        popupClose.style.width = "32px";
+        popupClose.style.height = "32px";
+        popupClose.style.border = "0";
+        popupClose.style.borderRadius = "999px";
+        popupClose.style.background = "rgba(16,18,24,.82)";
+        popupClose.style.color = "#fff";
+        popupClose.style.fontSize = "22px";
+        popupClose.style.fontWeight = "800";
+        popupClose.style.lineHeight = "1";
+        popupClose.style.transform = "translateY(-50%)";
+        popupClose.style.cursor = "pointer";
+        popupClose.style.pointerEvents = "auto";
+        if (!close) inner.appendChild(popupClose);
+        return slot;
       }
       host.style.position = "fixed";
       host.style.left = "50%";
@@ -3281,6 +3479,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         rect.height >= 24;
     };
     const slots = Array.from(document.querySelectorAll(slotSelector || ".g.g-1"));
+    if (auditedCandidateReconstruction && slots.length !== 0) return { applied: false, reason: "candidate_slot_must_be_missing" };
     if (missingSlotPlan?.requireUniqueVisibleAnchor === true && slots.length !== 0) {
       const host = resolveUniqueDesktopAnchor();
       const existing = slots[0];
@@ -3297,7 +3496,9 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         return { applied: false, reason: "slot_conflict" };
       }
     }
-    const slot = slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot();
+    const slot = auditedCandidateReconstruction
+      ? (auditedCandidateReconstruction.profile === "perrengue-popup-9" ? createMissingPopupSlot() : createConfiguredHomeSlot())
+      : (slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot());
     if (!slot) return { applied: false, reason: missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
     const basename = String(targetBasename || targetUrl.split("/").pop() || "").toLowerCase();
     if (slot.querySelector("[data-adops-static-retro-ad='1']")) {
@@ -3377,7 +3578,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       mediaWidth: mediaRect ? Math.round(mediaRect.width) : null,
       mediaHeight: mediaRect ? Math.round(mediaRect.height) : null,
     };
-  }, { mediaUrl: url, mediaBasename, slotSelector: mapping?.slotSelector || ".g.g-1", missingSlotPlan });
+  }, { mediaUrl: url, mediaBasename, slotSelector: mapping?.slotSelector || ".g.g-1", missingSlotPlan, auditedCandidateReconstruction: auditedCandidateReconstruction ? options.auditedCandidateReconstruction : null });
 }
 
 function parseIsoLikeDate(value) {
@@ -7724,6 +7925,7 @@ async function main() {
     allowConfiguredSlotReconstruction: allowConfiguredRetroSlotReconstruction,
     reconstructionReason: args.reconstructionReason,
     reconstructionProvenanceVersion: captureClass === "historical_recovery" ? 2 : null,
+    candidateOnly: args.candidateOnly === true,
   };
   const reconstruction = captureClass === "historical_recovery"
     ? {
@@ -7840,6 +8042,57 @@ async function main() {
 
   try {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
+    const staticSlotPlan = buildStaticRetroSlotPlan(mapping);
+    const exactCandidateSlotMapping = (mapping.domain === "perrenguematogrosso.com"
+        && mapping.page === "home"
+        && mapping.groupId === 9
+        && mapping.slotSelector === "#cod5-bottom-popup-ad .g.g-9"
+        && mapping.contextSelector === "#cod5-bottom-popup-ad"
+        && staticSlotPlan?.groupId === 9)
+      || (mapping.auditConfig?.allowAuditedReconstruction === true
+        && mapping.domain === "portalpantanalmt.com"
+          && mapping.page === "home"
+          && mapping.groupId === 1
+          && mapping.slotSelector === "div.hidden.lg\\:block .g.g-1"
+          && mapping.contextSelector === "div.hidden.lg\\:block .g.g-1"
+          && staticSlotPlan?.groupId === 1
+          && staticSlotPlan?.requireUniqueVisibleAnchor === true);
+    const targetDay = String(isoDate);
+    const contractStart = String(insertion.periodoInicio || "").slice(0, 10);
+    const contractEnd = String(insertion.periodoFim || "").slice(0, 10);
+    const todayInCuiaba = currentDateInCuiaba();
+    const candidateSlotReferenceEligible = args.candidateOnly === true
+      && args.saveEvidence === false
+      && Boolean(args.captureAt)
+      && captureClass === "historical_recovery"
+      && targetDay < todayInCuiaba
+      && contractEnd < todayInCuiaba
+      && /^\d{4}-\d{2}-\d{2}$/.test(contractStart)
+      && /^\d{4}-\d{2}-\d{2}$/.test(contractEnd)
+      && contractStart <= targetDay && targetDay <= contractEnd
+      && exactCandidateSlotMapping
+      && Boolean(args.apiBase && internalCaptureToken);
+    if (candidateSlotReferenceEligible) {
+      const originalStatus = await fetchCaptureAuditStatus(args.apiBase, insertion.id, targetDay);
+      const auditedCandidateReconstruction = evaluateAuditedRetroSlotReconstruction({
+        insertion,
+        mapping,
+        targetDate: targetDay,
+        captureAt: args.captureAt,
+        currentDate: todayInCuiaba,
+        captureClass,
+        provenanceVersion: 4,
+        candidateOnly: args.candidateOnly,
+        saveEvidence: args.saveEvidence,
+        status: originalStatus,
+      });
+      if (auditedCandidateReconstruction.ok) {
+        staticRetroAdOptions.reconstructionProvenanceVersion = 4;
+        staticRetroAdOptions.auditedCandidateReconstruction = auditedCandidateReconstruction;
+        reconstruction.sourceEvidence = auditedCandidateReconstruction.sourceEvidence;
+        reconstruction.historicalDisplayConfirmed = false;
+      }
+    }
     if (args.saveEvidence && args.apiBase && internalCaptureToken) {
       try {
         pendingLogFlush = await flushPendingCaptureLogs();
@@ -9155,6 +9408,8 @@ async function main() {
               slotSelector: resolvedSlotSelector,
               contextSelector: resolvedContextSelector || resolvedSlotSelector,
               matchedMediaUrl: match?.mediaUrl || null,
+              nativeProgressAudit,
+              finalPngProgressAudit,
             },
           },
         }, {
@@ -9202,6 +9457,8 @@ async function main() {
                   slotSelector: resolvedSlotSelector,
                   contextSelector: resolvedContextSelector || resolvedSlotSelector,
                   matchedMediaUrl: match?.mediaUrl || null,
+                  nativeProgressAudit,
+                  finalPngProgressAudit,
                 },
               },
             },
@@ -9243,6 +9500,7 @@ if (require.main === module) {
     applyPerrengueStaticRetroAd,
     buildStaticRetroSlotPlan,
     shouldAllowConfiguredRetroSlotReconstruction,
+    evaluateAuditedRetroSlotReconstruction,
     normalizeRetroEditorialPosts,
     buildWordPressArticleApiUrl,
     fetchWordPressArticleCandidates,
