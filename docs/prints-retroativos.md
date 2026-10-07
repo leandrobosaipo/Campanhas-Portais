@@ -21,6 +21,12 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
+### Estado do consumidor — 07/10/2026, 10:32 UTC
+
+Release `606cf05b70ee076bc613ef4d7bb5529f2d9c0b61` (PR118) foi conferida ao vivo às 10:08:36 UTC; CI `37601313114` e `37601935185` passou. Neste snapshot do consumidor há 30/237 pares operáveis confirmados; dos 207 restantes, 170 não vídeo estão prontos, 28 vídeos estão retidos e 9 alvos `#1944` aguardam resolução de identidade. Os 26 pares protegidos permanecem fora do lote. AFL `#1842`/22–25/08 está confirmada após auditoria, promoção com arquivamento dos originais, readback de status/hash e conferência de quatro miniaturas/modais em que as imagens carregaram a 3320×2696; já está incluída nos 30.
+
+Após a publicação, o canário `#3064`/01/10, capturado às 10:10:04 UTC (`1791367753908-7m0esk`, candidato `f0c33dbd-4b60-4d5e-96a6-1ef8f084dc46`), passou proveniência 12/12 e verificações nativas/pixels, mas foi bloqueado porque o limiar de similaridade da barra nativa era `0.48`, abaixo do piso da API `0.82`; não foi promovido. A correção local ajusta esse piso sem alterar limites maiores nem o limiar desta regra do slot `0.48`. Os 10 cenários nativos passaram e a revisão independente aprovou a mudança, que ainda não foi publicada. Não contar o candidato como entrega.
+
 ### ROO/home/grupo1: fonte parcial e canário conferido
 
 Um original legado totalmente aprovado para posição/criativo, sem prova editorial
@@ -34,7 +40,7 @@ prova editorial aprovada. Sem carimbo ou alegação de veiculação passada.
 
 O contrato foi publicado em d1e1974. A correção04cd98ba906e permite somente espaços e zero/um comentário literal conhecido de indisponibilidade AdRotate na âncora, preservando nós; demais conteúdos continuam bloqueados. ROO #2641/23Aug foi auditado, revisado e promovido, com original arquivado, hash/status e miniatura/modal conferidos.
 
-Em vídeo, slot_captured inclui a última recaptura nativa e sua medição. capturedAt/reconstructedAt registram esse instante real; final_composed começa depois. O job #3064/01Oct em04cd foi recusado no registro porque a etapa fechava 2071 ms antes dessa recaptura. Correção em andamento; original preservado, sem promoção ou alteração retroativa da metadata.
+Em vídeo, `slot_captured` inclui a última recaptura nativa e sua medição. `capturedAt`/`reconstructedAt` registram esse instante real; `final_composed` começa depois. O estado do job #3064/01/10 em 04cd, recusado no registro porque a etapa fechava 2071 ms antes da recaptura, é um diagnóstico histórico. No snapshot de 07/10, o candidato posterior foi bloqueado pelo piso de similaridade descrito acima; nenhum PNG foi promovido nem metadata antiga alterada.
 PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação tardia.
 Critérios completos e negativos estão na SPEC/HARNESS acima.
 

@@ -19,7 +19,7 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 - Inventário por API identifica o conjunto retroativo completo, inclusive aprovados, com paginação limitada e sem retornar DOM/base64 ou secrets.
 - Correção de arquivos existentes usa candidato, auditoria e promoção persistida, com backup, hash e readback. Evidências antigas não são alteradas apenas pela mudança de política.
 - Inserção arquivada ou com vínculo de substituição não gera nova captura operacional. Conferir identidade/estado atual antes do lote e bloquear na execução comum antes de abrir navegador. Preservar provas/GET/readback e registros antigos; não transferir imagem para sucessora ou declarar duplicidade idêntica apenas pelo vínculo.
-- Vídeo v4 mostra uma única barra nativa do player. Auditoria exige timeline nativa visível, desobstruída e preservada nos pixels finais; `controls=true` ou barra artificial não comprovam esse resultado. Revisão visual individual continua obrigatória.
+- Vídeo v4 mostra uma única barra nativa do player. Auditoria exige timeline nativa visível, desobstruída e preservada nos pixels finais, com piso de similaridade0.82 próprio para a barra; o limiar do banner não o reduz. `controls=true` ou barra artificial não comprovam esse resultado. Revisão visual individual continua obrigatória.
 - Main e release publicada correspondem ao SHA validado; relatório canônico mantém contagens, campanhas encerradas, filtros e download.
 
 ## Checkpoint
