@@ -1,5 +1,13 @@
 # Prints Retroativos
 
+## Mídia efetivamente visível — 07/10/2026
+
+O preparo de mídia deve usar interseção positiva com o viewport real: largura e altura positivas, bottom>0, top<altura, right>0 e left<largura. Não contar os120px abaixo da imagem como viewport. Esse predicado atende imagens, fundos e vídeos; a validação própria da mídia do slot continua obrigatória. Um vídeo com1px visível entra na auditoria e deve estar carregado. Não alterar playback/load para contornar o gate.
+
+#2693/29Aug job1791410115391-jhwe8k revelou a diferença: vídeo y1277 fora do PNG de1200px, contado1/0 pelo predicado antigo. Falhou antes do upload; original preservado. A correção é local e depende de nova publicação/canário;30/31nãoexecutados. O lote25–28/08 está entregue no consumidor: checkpoint57/237,8/11 capturas nessa inserção.
+
+O modal deve apresentar a imagem alinhada ao topo e centralizada horizontalmente, mantendo proporção e PNG integral. A faixa preta superior observada vinha do alinhamento vertical da janela, não do arquivo. Origem e data real continuam nos detalhes, fora do PNG; nenhum carimbo adicional.
+
 ## Continuação — 07/10/2026, 20:57 UTC
 
 PR126 está na main 674, com CI aprovada. A publicação encerrou com código 28 na consulta de containers após a troca; o rollback foi executado. Readback independente confirmou CD3, quatro serviços ativos/sem pausa e API/web saudáveis. Nenhum PNG foi substituído nessa tentativa: **53/237 confirmadas; 184 restantes**. Não executar lotes dependentes nem declarar 674 publicado antes de nova publicação qualificada.

@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const python = process.env.ADOPS_CAPTURE_PYTHON || "python3";
-const { forceMatchedAdVisible, auditNativeVideoProgress, auditFinalPngVideoProgress, auditFinalPngSlotPixels, auditVisiblePageDateClock, ensureFinalPageClockViewport, composeDesktopProof } = require("./capture-insertion-proof.cjs");
+const { forceMatchedAdVisible, auditNativeVideoProgress, waitForViewportVisuals, auditFinalPngVideoProgress, auditFinalPngSlotPixels, auditVisiblePageDateClock, ensureFinalPageClockViewport, composeDesktopProof } = require("./capture-insertion-proof.cjs");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captureSourcePath = path.join(projectRoot, "scripts/src/capture-insertion-proof.cjs");
 const captureProgram = ts.createProgram([captureSourcePath], {
@@ -117,6 +117,17 @@ const server = createServer((req, res) => {
     res.end(videoBytes);
     return;
   }
+  if (req.url?.startsWith("/viewport-")) {
+    const route = req.url.split("?")[0];
+    const top = route === "/viewport-offscreen" ? "1277px" : route === "/viewport-contact" ? "1200px" : "1199px";
+    const left = route === "/viewport-edge" ? "1660px" : "0";
+    const videoDisplay = route === "/viewport-zero-area" ? "none" : "block";
+    const source = route === "/viewport-unloaded-bottom" ? "/missing.mp4" : "/fixture.mp4";
+    const svg = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' fill='blue'/></svg>";
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html><style>body{margin:0}#visual-img{position:absolute;top:20px;left:20px;width:32px;height:32px}#visual-bg{position:absolute;top:60px;left:20px;width:32px;height:32px;background-image:url("${svg}");background-size:32px 32px}video{position:absolute;top:${top};left:${left};width:184px;height:150px;display:${videoDisplay}}</style><img id="visual-img" src="${svg}"><div id="visual-bg"></div><video controls muted playsinline preload="auto" src="${source}"></video>`);
+    return;
+  }
   const hidden = req.url === "/hidden";
   const noControls = req.url === "/no-controls";
   const overlay = req.url === "/overlay";
@@ -159,6 +170,36 @@ async function auditFixture(route, screenshotPath = null, options = {}) {
 }
 
 try {
+  async function viewportVisualsFixture(route) {
+    const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+    try {
+      await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
+      return await waitForViewportVisuals(page, "#visual-slot");
+    } finally {
+      await page.close();
+    }
+  }
+  const belowFoldVisuals = await viewportVisualsFixture("/viewport-offscreen");
+  assert.equal(belowFoldVisuals.viewportVideosTotal, 0, "a video starting below the viewport (at y=1277) is not a viewport visual");
+  assert.equal(belowFoldVisuals.viewportVideosLoaded, 0);
+  assert.equal(belowFoldVisuals.viewportImagesTotal, 1, "visible images remain included");
+  assert.equal(belowFoldVisuals.viewportImagesLoaded, 1);
+  assert.equal(belowFoldVisuals.viewportBackgroundsTotal, 1, "visible background images remain included");
+  assert.equal(belowFoldVisuals.viewportBackgroundsLoaded, 1);
+  const bottomEdgeVisuals = await viewportVisualsFixture("/viewport-bottom");
+  assert.equal(bottomEdgeVisuals.viewportVideosTotal, 1, "an intersecting video at y=1199 is included");
+  assert.equal(bottomEdgeVisuals.viewportVideosLoaded, 1);
+  const viewportContactVisuals = await viewportVisualsFixture("/viewport-contact");
+  assert.equal(viewportContactVisuals.viewportVideosTotal, 0, "a video starting exactly at viewport height is outside the viewport");
+  const edgeVisuals = await viewportVisualsFixture("/viewport-edge");
+  assert.equal(edgeVisuals.viewportVideosTotal, 0, "a video beginning at the right viewport edge is excluded");
+  const zeroAreaVisuals = await viewportVisualsFixture("/viewport-zero-area");
+  assert.equal(zeroAreaVisuals.viewportVideosTotal, 0, "zero-area video elements are excluded");
+  const unloadedBottomVisuals = await viewportVisualsFixture("/viewport-unloaded-bottom");
+  assert.equal(unloadedBottomVisuals.viewportVideosTotal, 1, "an intersecting unloaded video remains subject to readiness");
+  assert.equal(unloadedBottomVisuals.viewportVideosLoaded, 0);
+  assert.equal(unloadedBottomVisuals.ok, false, "an intersecting unloaded video must continue to block readiness");
+
   const positive = await auditFixture("/positive");
   assert.equal(positive.ok, true, `native Chromium timeline should pass: ${JSON.stringify(positive)}`);
   assert.equal(positive.source, "chromium_ua_shadow_timeline");
@@ -613,7 +654,7 @@ const changedRoi = auditFinalPngVideoProgress(
 assert.equal(changedRoi.ok, false, "changed native timeline pixels in resized final ROI must fail");
 assert.equal(changedRoi.minSimilarity, 0.82, "tampered ROI must still be judged against the native threshold");
 
-  console.log(JSON.stringify({ ok: true, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio }, pageClock: { box: pageClockPositive.proof.box, viewport: pageClockPositive.proof.viewport, similarity: pageClockPositive.proof.pixelAudit.similarityScore, apiProof: JSON.parse(pageClockApi).direct.ok, captureAuditRejections: JSON.parse(rejectedClockApi).map((item) => item.label), tallViewport: tallViewportSummary, tallNativeAndClock: tallCombinedAuditSummary, overBudgetRejected: budgetBlockReason }, scrolled: { scrollY: screenshotAudits.scrolled.scrollY, box: screenshotAudits.scrolled.box, occlusion: screenshotAudits.scrolled.occlusion, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["zero_scroll_regression", "scrolled_native_hit_test", "scrolled_page_overlay_still_rejected", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed", "page_clock_final_roi_api_positive", "page_clock_offscreen_rejected", "page_clock_occlusion_rejected", "page_clock_hidden_rejected", "page_clock_wrong_date_or_time_rejected", "page_clock_late_scroll_rejected", "page_clock_and_lower_slot_tall_viewport", "page_clock_tall_viewport_pixel_budget", "capture_audit_blocks_offscreen_late_scroll_and_changed_roi", "tall_page_clock_plus_native_video_same_png_api_positive"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, viewportVisualReadiness: { offscreenVideo1277: [belowFoldVisuals.viewportVideosTotal, belowFoldVisuals.viewportVideosLoaded], contactAt1200: viewportContactVisuals.viewportVideosTotal, intersecting1199: [bottomEdgeVisuals.viewportVideosTotal, bottomEdgeVisuals.viewportVideosLoaded], unloaded1199Blocks: unloadedBottomVisuals.ok === false, edgeExcluded: edgeVisuals.viewportVideosTotal === 0, zeroAreaExcluded: zeroAreaVisuals.viewportVideosTotal === 0, visibleImageLoaded: belowFoldVisuals.viewportImagesLoaded, visibleBackgroundLoaded: belowFoldVisuals.viewportBackgroundsLoaded }, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio }, pageClock: { box: pageClockPositive.proof.box, viewport: pageClockPositive.proof.viewport, similarity: pageClockPositive.proof.pixelAudit.similarityScore, apiProof: JSON.parse(pageClockApi).direct.ok, captureAuditRejections: JSON.parse(rejectedClockApi).map((item) => item.label), tallViewport: tallViewportSummary, tallNativeAndClock: tallCombinedAuditSummary, overBudgetRejected: budgetBlockReason }, scrolled: { scrollY: screenshotAudits.scrolled.scrollY, box: screenshotAudits.scrolled.box, occlusion: screenshotAudits.scrolled.occlusion, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["zero_scroll_regression", "scrolled_native_hit_test", "scrolled_page_overlay_still_rejected", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed", "page_clock_final_roi_api_positive", "page_clock_offscreen_rejected", "page_clock_occlusion_rejected", "page_clock_hidden_rejected", "page_clock_wrong_date_or_time_rejected", "page_clock_late_scroll_rejected", "page_clock_and_lower_slot_tall_viewport", "page_clock_tall_viewport_pixel_budget", "capture_audit_blocks_offscreen_late_scroll_and_changed_roi", "tall_page_clock_plus_native_video_same_png_api_positive", "viewport_offscreen_video_excluded", "viewport_boundary_contact_excluded", "viewport_intersecting_video_counted", "viewport_intersecting_unloaded_video_blocks", "viewport_horizontal_edge_excluded", "viewport_zero_area_excluded", "viewport_images_and_backgrounds_counted"] }, null, 2));
   console.log(JSON.stringify({ ok: true, resizeRegressions: resizeRegressionSummaries,
     newCases: ["responsive_resize_reflow_final_pixels", "async_resize_reflow_final_pixels", "non_convergent_layout_bounded_failure"],
     failureGeometryFallbacks: clockGeometryFallbacks }, null, 2));
