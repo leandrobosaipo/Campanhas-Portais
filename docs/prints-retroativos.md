@@ -1,6 +1,10 @@
 # Prints Retroativos
 
-## Continuação — 07/10/2026, 19:58 UTC
+## Continuação — 07/10/2026, 20:57 UTC
+
+PR126 está na main 674, com CI aprovada. A publicação encerrou com código 28 na consulta de containers após a troca; o rollback foi executado. Readback independente confirmou CD3, quatro serviços ativos/sem pausa e API/web saudáveis. Nenhum PNG foi substituído nessa tentativa: **53/237 confirmadas; 184 restantes**. Não executar lotes dependentes nem declarar 674 publicado antes de nova publicação qualificada.
+
+## Histórico — 07/10/2026, 19:58 UTC
 
 As 53/237 correções confirmadas e o pacote PI91134/AFL permanecem preservados. A aplicação continua na release CD3: o deploy8f42 parou antes da troca dos serviços e restaurou o runner. Atualização de main/CI não comprova publicação.
 

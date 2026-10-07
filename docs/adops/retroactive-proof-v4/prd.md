@@ -1,6 +1,10 @@
 # PRD — Reconstrução retroativa v4
 
-## Continuação comprovada — 07/10, 19:58 UTC
+## Continuação comprovada — 07/10, 20:57 UTC
+
+A correção compartilhada mensal está integrada em main 674, com CI aprovada; a aplicação continua CD3 após rollback verificado. A tentativa encerrou na consulta de containers após a troca, sem concluir o smoke. Exigir publicação, quatro serviços ativos/sem pausa, fonte instalada e consumidor conferidos antes dos próximos lotes. Permanecem **53/237 confirmadas; 184 pendentes**, sem novas substituições.
+
+## Histórico — 07/10, 19:58 UTC
 
 A publicação do PR125/main `8f42d460e8952f12c2145dea511228bd530ed4b8` parou no preparo do volume web, antes da troca dos serviços. Backup e restauração completos passaram; o runner CD3 foi reativado e os quatro serviços anteriores estão running/sem pausa. Main atualizada não equivale a aplicação publicada. Permanecem 53/237 evidências confirmadas, com 184 pendentes.
 

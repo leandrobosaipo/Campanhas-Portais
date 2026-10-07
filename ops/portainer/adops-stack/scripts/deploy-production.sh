@@ -250,7 +250,7 @@ STACK_SWITCHED="true"
 COMPOSE_FILE="$STACK_DIR/docker-compose.volume.yml" \
   bash "$SCRIPT_DIR/deploy-stack.sh" "$DEPLOY_ENV"
 
-CONTAINERS="$(portainer_curl "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
+CONTAINERS="$(portainer_get_json "${PORTAINER_API}/endpoints/${ENDPOINT_ID}/docker/containers/json?all=true")"
 for container_name in adops-postgres adops-api adops-web adops-runner adops-runner-print-single adops-drive-pi-monitor-stack; do
   CONTAINER_ID="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .Id' | head -n 1)"
   CONTAINER_STATE="$(printf '%s' "$CONTAINERS" | jq -r --arg name "/$container_name" '.[]? | select(.Names[]? == $name) | .State' | head -n 1)"

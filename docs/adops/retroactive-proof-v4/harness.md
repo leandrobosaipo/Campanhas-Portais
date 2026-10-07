@@ -1,6 +1,10 @@
 # HARNESS — Reconstrução retroativa v4
 
-## Gate da continuação mensal — 07/10, 19:58 UTC
+## Gate de publicação — 07/10, 20:57 UTC
+
+PR126/main 674 passou no CI; a publicação terminou com código 28 na consulta de containers pós-switch, antes do smoke. Backup/restauração passaram e o rollback CD3 foi conferido independentemente com quatro serviços running/sem pausa e API/web healthy. Stack/mounts e resposta HTTP isolada não substituem esse readback. O check offline da correção desse GET deve reproduzir falha transitória seguida de sucesso e falha definitiva, usando o helper real; somente a leitura pode ser repetida. Não repetir o PUT nem iniciar containers após leitura definitiva inválida.
+
+## Histórico — gate mensal, 07/10, 19:58 UTC
 
 O teste VM de `test-monthly-report-incremental-refresh.mjs` deve executar o helper e as chamadas reais extraídas do gerador: GET da fonte, POST batch e polling. Conferir destino direto padrão, timeout, autenticação, corpo/corte histórico e prioridade das bases explícitas; os links de download mantêm os checks anteriores. Simulação local não comprova latência ou entrega viva.
 

@@ -1,6 +1,13 @@
 # Estado confirmado do projeto AdOps
 
-## Última conferência comprovada — 07/10/2026, 19:58 UTC
+## Última conferência — 07/10/2026, 20:57 UTC
+
+- PR126 integrado na main `674ad48e1d7beb9ef2b3c0eafad0b521a7505b41`; CI do head e da main aprovadas. Na fonte integrada, RPCs mensais padrão usam o destino direto, preservando overrides e contratos; essa mudança ainda não está publicada.
+- Publicação 674 incompleta, encerrada com código 28. Backup novo e restauração completa passaram; ambos os volumes foram enviados. Após a troca recebida, a consulta de containers expirou antes do loop de inicialização/smoke. A sequência do log aponta esse GET, não uma falha comprovada no código da aplicação.
+- Rollback CD3 concluído pelo publicador. Readback independente às 20:57:36 UTC confirmou quatro serviços running/sem pausa, API/web healthy e SHA CD3 nos dois endereços públicos. Recibo privado `monthly-shared-direct-sol-recovery-observation-2026-10-07T20-57-36.798Z.json`.
+- Permanecem **53/237 confirmadas; 184 pendentes**. Nenhuma nova captura/promoção nesta tentativa. Entrega mensal completa continua pendente; pacote próprio PI91134/AFL preservado. Os registros abaixo são históricos.
+
+## Histórico — 07/10/2026, 19:58 UTC
 
 - Main8f42/PR125 e CI estão aprovadas; sua publicação falhou antes da troca dos serviços, durante o preparo do volume web.
 - CD3 permanece publicada. Os quatro serviços estão running/sem pausa; o runner foi restaurado com o mesmo PID. Backup e restauração completos de 8f42 foram verificados.
