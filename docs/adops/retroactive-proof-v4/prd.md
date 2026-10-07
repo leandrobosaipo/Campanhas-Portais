@@ -1,5 +1,11 @@
 # PRD — Reconstrução retroativa v4
 
+## Continuação comprovada — 07/10, 19:58 UTC
+
+A publicação do PR125/main `8f42d460e8952f12c2145dea511228bd530ed4b8` parou no preparo do volume web, antes da troca dos serviços. Backup e restauração completos passaram; o runner CD3 foi reativado e os quatro serviços anteriores estão running/sem pausa. Main atualizada não equivale a aplicação publicada. Permanecem 53/237 evidências confirmadas, com 184 pendentes.
+
+O relatório mensal `77ca4a4c-2c57-4cd4-9639-5ac96e571f8d` falhou em 19:44 UTC porque faltaram ZIPs completos após erros 502/503 no batch. O GET da fonte chegou a responder 200; corrigir somente esse GET não resolve as chamadas de exportação. A próxima correção local deve retirar a ponte legada de 60 s das RPCs padrão, preservando bases explicitamente configuradas, links públicos, corte histórico e idempotência. Não liberar relatório sem ZIP completo nem reenviar jobs de resultado desconhecido.
+
 ## Problema e decisão
 
 O usuário confirmou em 06/10/2026 que os dois relógios visíveis de uma nova reconstrução devem representar a data e hora contratadas. O PNG não deve ter carimbo, faixa ou rodapé de reconstrução. A origem reconstruída e o instante real de criação continuam acessíveis nos dados e no relatório; não há declaração de que uma reconstrução prove veiculação passada.

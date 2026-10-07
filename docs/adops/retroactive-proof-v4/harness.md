@@ -1,6 +1,12 @@
 # HARNESS — Reconstrução retroativa v4
 
-## Última conferência comprovada — 07/10, 18:26 UTC, CD3/checkpoint53
+## Gate da continuação mensal — 07/10, 19:58 UTC
+
+O teste VM de `test-monthly-report-incremental-refresh.mjs` deve executar o helper e as chamadas reais extraídas do gerador: GET da fonte, POST batch e polling. Conferir destino direto padrão, timeout, autenticação, corpo/corte histórico e prioridade das bases explícitas; os links de download mantêm os checks anteriores. Simulação local não comprova latência ou entrega viva.
+
+O deploy8f42 terminou com falha no preparo do volume web, antes do switch. Os recibos privados de restauração/readback confirmam CD3, mesmo PID do runner, quatro serviços running/sem pausa. A criação do helper web foi posteriormente localizada por GET; seu estado `created` não autoriza repetir a criação nem comprova upload. Job mensal77ca terminou failed, com ZIPs completos ausentes após batch502/503. Não remover a validação para publicar um relatório parcial.
+
+## Histórico — 07/10, 18:26 UTC, CD3/checkpoint53
 
 CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada. `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços running/sem pausa, backup/restauração verificados, dez filtros e OpenAPI 174/157. O checkpoint atual é **53/237 confirmadas, 184 restantes** (148 não-vídeo, 26 vídeo, uma retenção técnica #2278/27Aug e nove identidades #1944); 26 protegidos permanecem fora e não houve novas capturas.
 
