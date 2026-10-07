@@ -10,6 +10,8 @@
 
 Esta referência explica qual interface usar, em que ordem e com quais gates. O contrato de campos permanece no [OpenAPI vivo](https://adops-api.codigo5.com.br/api/openapi.json).
 
+Para novas reconstruções históricas v4, ambos os relógios visíveis usam a referência solicitada; origem e instante real permanecem na API e no relatório, sem carimbo no PNG. Correção da apresentação de uma evidência antiga usa `POST /api/insertions/{id}/capture-proof/jobs` com `candidate=true`, sem promoção implícita, seguido de registro, auditoria e promoção persistida do mesmo arquivo. Consulte a [SPEC v4](./retroactive-proof-v4/spec.md) e o [registro de candidatos](./capture-proof-candidates.md). Uma imagem só pode ser liberada após auditoria final, revisão visual, preservação do original e readback de hash/bytes.
+
 Defina a base sem registrar valores sensíveis:
 
 ```bash
@@ -169,7 +171,7 @@ Na release que introduz incidentes, confirme que `0004_ops_incidents.sql` aparec
 
 A sequência canônica é: **preflight Drive -> publicação AdRotate -> confirmação viva -> print-backfill -> auditoria -> relatório**. Não inverta a publicação e a confirmação viva com a captura: `bannerPublicadoNoSite=true`, HTTP 200 ou arquivo existente isoladamente não comprovam publicação nem evidência auditada.
 
-`POST /api/ops/jobs/print-backfill` é o único caminho retroativo. Ele exige um recorte (`insertionId`, `campaignId`, `siteId`, `competencia` ou `piCodigo` com `siteSigla`) e persiste `reconstructionReason=late_publication_recovery`, `attempt=1` e `maxAttempts=3` no payload/job. A resposta de aceitação exige `ok`, `kind`, `jobId`, `status` e `duplicate`, e pode trazer `existingNotBefore` como data/hora ou `null` (replay ou job novo); consulte o progresso/resultado do job para tentativas e itens. A mesma chave lógica devolve o mesmo `jobId` com `duplicate=true`; acompanhe esse job até `completed` ou `failed`, sem criar outro enquanto ele estiver em curso.
+Para recuperação automática em lote por publicação tardia, use `POST /api/ops/jobs/print-backfill`. Correção de apresentação histórica por candidato segue o fluxo v4 da seção Finalidade; não invente o motivo de publicação tardia para essa correção. O backfill exige um recorte (`insertionId`, `campaignId`, `siteId`, `competencia` ou `piCodigo` com `siteSigla`) e persiste `reconstructionReason=late_publication_recovery`, `attempt=1` e `maxAttempts=3` no payload/job. A resposta de aceitação exige `ok`, `kind`, `jobId`, `status` e `duplicate`, e pode trazer `existingNotBefore` como data/hora ou `null` (replay ou job novo); consulte o progresso/resultado do job para tentativas e itens. A mesma chave lógica devolve o mesmo `jobId` com `duplicate=true`; acompanhe esse job até `completed` ou `failed`, sem criar outro enquanto ele estiver em curso.
 
 O resultado por inserção/data é um de `audited`, `failed`, `skipped_existing`, `blocked_reconstruction` ou `blocked_upstream`. Se algum item falhar ou bloquear, o job pai termina `failed` preservando os resultados parciais. Evidência já auditada não é recapturada.
 

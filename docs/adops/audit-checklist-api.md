@@ -8,6 +8,10 @@ Nenhum print deve ser considerado `audited` apenas porque a imagem existe ou a U
 
 Para VIDEO reconstruído com proveniência v4, o gate de controles exige `nativeProgressAudit` e `finalPngProgressAudit` na metadata persistida. O primeiro mede a timeline nativa Chromium, sua visibilidade efetiva, oclusão e tempo/duração; o segundo compara a ROI da barra no viewport e no PNG com moldura. `controls=true`, `progressVisible=true` ou `overlayInjected=true` isoladamente não aprovam esse contrato. API e checklist usam a mesma decisão; em falha, `video_player_proof_incomplete`/`video_controls_missing` bloqueiam. v2/v3 e diários preservam suas regras anteriores; a origem artificial legada não é descrita como prova nativa. Detalhes na [SPEC v4](./retroactive-proof-v4/spec.md).
 
+Para artigo AFL histórico v4, `pageUrl` e as URLs esperada, visível e editorial devem identificar a mesma matéria na origem HTTPS configurada. Ausência, credenciais na URL, outra origem ou caminho divergente produzem `article_context_mismatch`, também na reavaliação final da promoção. O capturador verifica headline e título real da aba antes da alteração; a API não afirma comparar um texto que não está persistido.
+
+Em falha de captura de vídeo, a metadata de diagnóstico preserva `nativeProgressAudit` e `finalPngProgressAudit` quando disponíveis. Esses detalhes explicam a reprovação; não aprovam a imagem nem dispensam nova auditoria. A reconstrução restrita de posições antigas usa as condições da SPEC v4 e preserva o resultado da evidência anterior.
+
 O checklist tambem e o gate obrigatorio antes de baixar o `arquivoUrl`, montar a
 pasta do cliente ou criar `telegram-send-evidence`. Consulte o fluxo completo em
 [`evidence-print-delivery-api.md`](./evidence-print-delivery-api.md).
