@@ -5,7 +5,59 @@ import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 process.chdir(rootDir);
-const { attachServerCaptureProvenance, evaluateCaptureMetadata } = await import("../../artifacts/api-server/src/lib/capture-audit.ts");
+const { attachServerCaptureProvenance, evaluateCaptureMetadata, evaluateFinalPageClockProof } = await import("../../artifacts/api-server/src/lib/capture-audit.ts");
+
+test("relógio final exige texto visível, bounds e pixels correlacionados sem reclassificar canônicos legados", () => {
+  const metadata: any = buildMetadata({ captureClass: "historical_recovery", targetDate: "2026-08-24",
+    requestedCaptureAt: "2026-08-24T21:15:00-04:00", captureTime: "24/08/2026 21:15",
+    capturedAt: "2026-10-07T04:00:00Z", contentDateSamples: [],
+    reconstruction: { provenanceVersion: 4, reason: "late_publication_recovery", contractedDate: "2026-08-24",
+      mediaUrl: "https://cdn.example.com/creative.jpg", reconstructedAt: "2026-10-07T04:00:00Z" } });
+  metadata.chromeFrameHeight = 200;
+  metadata.visiblePageDateAudit = { version: 2, source: "final_viewport_page_clock", ok: true, skipped: false,
+    requestedCaptureAt: metadata.requestedCaptureAt, renderedText: "24/08/2026 21:15",
+    box: { x: 10, y: 20, width: 220, height: 25 }, viewport: { width: 1660, height: 3000, scrollX: 0, scrollY: 0 },
+    fullyInsideViewport: true, effectiveVisible: true, occlusion: "clear",
+    pixelAudit: { source: "auditFinalPngSlotPixels_page_clock_roi", comparedTo: "viewportPng_page_clock_roi",
+      ok: true, issues: [], slotBox: { left: 10, top: 20, width: 220, height: 25 }, pixelScale: 2,
+      cropBox: { left: 20, top: 240, width: 440, height: 50 }, cropSize: { width: 440, height: 50 },
+      similarityScore: 1, minSimilarity: 0.82, finalCropMeanStddev: 20, finalCropMinContentStddev: 4 } };
+  const evaluate = (m: any, required = true) => evaluateCaptureMetadata(m, "2026-08-24", new Date("2026-10-07T04:01:00Z"), { finalPageClockRequired: required });
+  assert.equal(evaluateFinalPageClockProof(metadata).ok, true);
+  assert.equal(evaluate(metadata).ok, true, JSON.stringify(evaluate(metadata).issues));
+  for (const mutate of [
+    (m: any) => { delete m.visiblePageDateAudit; },
+    (m: any) => { m.visiblePageDateAudit.version = 1; },
+    (m: any) => { m.visiblePageDateAudit.renderedText = "24/08/2026"; },
+    (m: any) => { m.visiblePageDateAudit.renderedText = "24/08/2026 20:15"; },
+    (m: any) => { m.visiblePageDateAudit.requestedCaptureAt = "2026-08-23T21:15"; },
+    (m: any) => { m.visiblePageDateAudit.box.y = -1; },
+    (m: any) => { m.visiblePageDateAudit.box.y = 2990; },
+    (m: any) => { m.visiblePageDateAudit.viewport.height = 0; },
+    (m: any) => { m.visiblePageDateAudit.effectiveVisible = false; },
+    (m: any) => { m.visiblePageDateAudit.occlusion = "page_element_target"; },
+    (m: any) => { m.visiblePageDateAudit.skipped = true; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.minSimilarity = 0.48; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.similarityScore = 0.4; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.slotBox.top = 21; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.cropBox.top = 0; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.finalCropMeanStddev = 0; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.finalCropMinContentStddev = 0.01; },
+    (m: any) => { m.visiblePageDateAudit.pixelAudit.issues = [{ code: "tampered" }]; },
+    (m: any) => { m.requiredGates = { requireVisiblePageDate: false }; delete m.visiblePageDateAudit; },
+  ]) {
+    const changed = structuredClone(metadata); mutate(changed);
+    assert.equal(evaluate(changed).issues.some(i => i.code === "final_page_clock_unverified"), true);
+    assert.equal(evaluate(changed).ok, false);
+  }
+  const legacy = structuredClone(metadata); delete legacy.visiblePageDateAudit;
+  attachServerCaptureProvenance(legacy, { targetDate: "2026-08-24", sourceJobId: "job-immutable-001", capturedAt: "2026-10-07T04:00:00Z", uploadedUrl: "https://cdn.example.com/evidence.png" });
+  assert.equal(evaluate(legacy, false).ok, true);
+  for (const provenanceVersion of [2, 3]) {
+    legacy.reconstruction.provenanceVersion = provenanceVersion;
+    assert.equal(evaluate(legacy).issues.some(i => i.code === "final_page_clock_unverified"), false);
+  }
+});
 
 function buildMetadata({
   captureClass,

@@ -1,5 +1,5 @@
 const { execFileSync } = require("node:child_process");
-const { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync, statSync } = require("node:fs");
 const crypto = require("node:crypto");
 const path = require("node:path");
 const os = require("node:os");
@@ -2327,6 +2327,257 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
     throw new Error(`capture_audit_failed: visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
   }
   return audit;
+}
+
+async function auditVisiblePageDateClock(page, mapping, requestedCaptureAt, viewportPng, finalPng, desktopFrameMetadata) {
+  const selectors = mergePageDateSelectors(mapping?.pageDateSelectors);
+  const measured = await page.evaluate((rawSelectors) => {
+    const finiteRect = (rect) => [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)
+      && rect.width > 0 && rect.height > 0;
+    const candidates = [];
+    for (const selector of rawSelectors) {
+      let nodes = [];
+      try { nodes = Array.from(document.querySelectorAll(selector)); } catch {}
+      for (const element of nodes) {
+        if (!(element instanceof HTMLElement)) continue;
+        const renderedText = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+        if (!renderedText) continue;
+        const rect = element.getBoundingClientRect();
+        const box = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+        let effectiveOpacity = 1;
+        let effectiveVisible = finiteRect(rect);
+        let visibleLeft = Math.max(0, rect.left);
+        let visibleTop = Math.max(0, rect.top);
+        let visibleRight = Math.min(window.innerWidth, rect.right);
+        let visibleBottom = Math.min(window.innerHeight, rect.bottom);
+        for (let ancestor = element; ancestor instanceof HTMLElement; ancestor = ancestor.parentElement) {
+          const style = window.getComputedStyle(ancestor);
+          effectiveOpacity *= Number(style.opacity || "1");
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse"
+            || style.contentVisibility === "hidden" || !Number.isFinite(effectiveOpacity) || effectiveOpacity <= 0.01) {
+            effectiveVisible = false;
+          }
+          const ancestorRect = ancestor.getBoundingClientRect();
+          const clipsX = /(hidden|clip|auto|scroll)/.test(style.overflowX);
+          const clipsY = /(hidden|clip|auto|scroll)/.test(style.overflowY);
+          if (clipsX) {
+            visibleLeft = Math.max(visibleLeft, ancestorRect.left);
+            visibleRight = Math.min(visibleRight, ancestorRect.right);
+          }
+          if (clipsY) {
+            visibleTop = Math.max(visibleTop, ancestorRect.top);
+            visibleBottom = Math.min(visibleBottom, ancestorRect.bottom);
+          }
+        }
+        const fullyInsideViewport = finiteRect(rect)
+          && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+        const fullyInsideAncestors = visibleLeft <= rect.left + 0.5 && visibleTop <= rect.top + 0.5
+          && visibleRight >= rect.right - 0.5 && visibleBottom >= rect.bottom - 0.5;
+        let hitTestClear = effectiveVisible && fullyInsideViewport && fullyInsideAncestors;
+        if (hitTestClear) {
+          const insetX = Math.min(2, rect.width / 4);
+          const insetY = Math.min(2, rect.height / 4);
+          const points = [
+            [rect.left + rect.width / 2, rect.top + rect.height / 2],
+            [rect.left + insetX, rect.top + insetY],
+            [rect.right - insetX, rect.top + insetY],
+            [rect.left + insetX, rect.bottom - insetY],
+            [rect.right - insetX, rect.bottom - insetY],
+          ];
+          hitTestClear = points.every(([x, y]) => {
+            const hit = document.elementFromPoint(x, y);
+            return hit === element || (hit instanceof Node && element.contains(hit));
+          });
+        }
+        candidates.push({
+          renderedText: renderedText.slice(0, 240),
+          box,
+          fullyInsideViewport,
+          fullyInsideAncestors,
+          effectiveVisible,
+          effectiveOpacity,
+          hitTestClear,
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
+          },
+        });
+      }
+    }
+    return candidates;
+  }, selectors);
+  const textCandidates = measured.filter((item) => pageTextMatchesRequestedCaptureAt(item.renderedText, requestedCaptureAt));
+  const selected = textCandidates.find((item) => item.effectiveVisible && item.fullyInsideViewport && item.fullyInsideAncestors && item.hitTestClear)
+    || textCandidates[0]
+    || measured[0]
+    || null;
+  const issues = [];
+  if (!selected) issues.push({ code: "page_clock_missing" });
+  else {
+    if (!pageTextMatchesRequestedCaptureAt(selected.renderedText, requestedCaptureAt)) issues.push({ code: "page_clock_text_mismatch" });
+    if (selected.effectiveVisible !== true) issues.push({ code: "page_clock_not_visible" });
+    if (selected.fullyInsideViewport !== true || selected.fullyInsideAncestors !== true) issues.push({ code: "page_clock_outside_viewport" });
+    if (selected.hitTestClear !== true) issues.push({ code: "page_clock_occluded" });
+  }
+  const box = selected?.box || null;
+  let pixelAudit;
+  if (box) {
+    pixelAudit = auditFinalPngSlotPixels(finalPng, viewportPng, {
+      left: box.x,
+      top: box.y,
+      width: box.width,
+      height: box.height,
+    }, desktopFrameMetadata, {
+      finalProofStyle: "viewport_only",
+      minSimilarity: 0.82,
+      minContentStddev: 4,
+      comparedTo: "viewportPng_page_clock_roi",
+      referenceIsViewport: true,
+      viewportWidthCss: Number(selected.viewport?.width ?? 0),
+    });
+  } else {
+    pixelAudit = { ok: false, issues: [{ code: "page_clock_box_missing" }] };
+  }
+  pixelAudit = {
+    ...pixelAudit,
+    source: "auditFinalPngSlotPixels_page_clock_roi",
+  };
+  if (pixelAudit.ok !== true) issues.push({ code: "page_clock_pixels_unverified" });
+  return {
+    version: 2,
+    source: "final_viewport_page_clock",
+    ok: issues.length === 0,
+    skipped: false,
+    requestedCaptureAt,
+    renderedText: selected?.renderedText || "",
+    box,
+    viewport: selected?.viewport || null,
+    fullyInsideViewport: selected?.fullyInsideViewport === true && selected?.fullyInsideAncestors === true,
+    effectiveVisible: selected?.effectiveVisible === true,
+    occlusion: selected?.hitTestClear === true ? "clear" : "blocked",
+    pixelAudit,
+    issues,
+  };
+}
+
+async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, targetSelector) {
+  const selectors = mergePageDateSelectors(mapping?.pageDateSelectors);
+  const measure = async () => await page.evaluate(({ dateSelectors, mediaSelector }) => {
+    window.scrollTo(0, 0);
+    const clocks = [];
+    for (const selector of dateSelectors) {
+      let nodes = [];
+      try { nodes = Array.from(document.querySelectorAll(selector)); } catch {}
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const rect = node.getBoundingClientRect();
+        clocks.push({
+          text: text.slice(0, 240),
+          top: rect.top + window.scrollY,
+          bottom: rect.bottom + window.scrollY,
+          left: rect.left + window.scrollX,
+          right: rect.right + window.scrollX,
+        });
+      }
+    }
+    let target = null;
+    try {
+      const node = document.querySelector(mediaSelector);
+      if (node instanceof HTMLElement) {
+        const rect = node.getBoundingClientRect();
+        target = {
+          top: rect.top + window.scrollY,
+          bottom: rect.bottom + window.scrollY,
+          left: rect.left + window.scrollX,
+          right: rect.right + window.scrollX,
+        };
+      }
+    } catch {}
+    return {
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        deviceScaleFactor: window.devicePixelRatio || 1,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+      },
+      clocks,
+      target,
+    };
+  }, { dateSelectors: selectors, mediaSelector: targetSelector });
+  const initial = await measure();
+  const matchingClocks = initial.clocks.filter((item) => pageTextMatchesRequestedCaptureAt(item.text, requestedCaptureAt));
+  if (!matchingClocks.length || !initial.target) {
+    return { ok: false, reason: !matchingClocks.length ? "page_clock_not_found" : "proof_target_not_found", initial };
+  }
+  const requiredBottom = Math.max(...matchingClocks.map((item) => item.bottom), initial.target.bottom);
+  if (![requiredBottom, initial.viewport.width, initial.viewport.height, initial.viewport.deviceScaleFactor].every(Number.isFinite)
+    || requiredBottom <= 0 || initial.viewport.scrollY !== 0 || initial.viewport.scrollX !== 0) {
+    return { ok: false, reason: "viewport_geometry_invalid", initial };
+  }
+  const requestedHeight = Math.max(initial.viewport.height, Math.ceil(requiredBottom + 4));
+  const outputScale = Math.max(2, initial.viewport.deviceScaleFactor);
+  const outputWidthPx = Math.ceil(initial.viewport.width * outputScale);
+  let frameChromePixels;
+  try {
+    const layout = JSON.parse(readFileSync(path.join(WINDOWS_FRAME_KIT_DIR, "layout.json"), "utf8"));
+    const referenceWidth = Number(layout?.referenceWidth);
+    const chromeTopHeight = Number(layout?.chromeTopHeight);
+    const taskbarHeight = Number(layout?.taskbarHeight);
+    if (![referenceWidth, chromeTopHeight, taskbarHeight].every(Number.isFinite)
+      || referenceWidth <= 0 || chromeTopHeight <= 0 || taskbarHeight <= 0) {
+      throw new Error("layout_geometry_invalid");
+    }
+    const frameScale = outputWidthPx / referenceWidth;
+    frameChromePixels = Math.max(1, Math.round(chromeTopHeight * frameScale))
+      + Math.max(1, Math.round(taskbarHeight * frameScale));
+  } catch {
+    return { ok: false, reason: "page_clock_viewport_frame_layout_unavailable", initial };
+  }
+  const maxHeightByPixelBudget = Math.floor((40_000_000 / Math.max(1, outputWidthPx) - frameChromePixels) / outputScale);
+  if (requestedHeight > maxHeightByPixelBudget) {
+    return { ok: false, reason: "page_clock_viewport_exceeds_pixel_budget", initial, requestedHeight, maxHeightByPixelBudget };
+  }
+  const resized = requestedHeight > initial.viewport.height;
+  if (resized) await page.setViewportSize({ width: initial.viewport.width, height: requestedHeight });
+  const final = await measure();
+  const finalMatchingClocks = final.clocks.filter((item) => pageTextMatchesRequestedCaptureAt(item.text, requestedCaptureAt));
+  const targetAudit = final.target && final.viewport.scrollX === 0 && final.viewport.scrollY === 0
+    && final.target.top >= 0 && final.target.bottom <= final.viewport.height
+    ? {
+        ok: true,
+        selector: targetSelector,
+        box: {
+          top: Math.round(final.target.top),
+          left: Math.round(final.target.left),
+          width: Math.round(final.target.right - final.target.left),
+          height: Math.round(final.target.bottom - final.target.top),
+          bottom: Math.round(final.target.bottom),
+        },
+        scrollY: 0,
+      }
+    : { ok: false, reason: "proof_target_not_inside_final_viewport", selector: targetSelector };
+  const clocksFit = finalMatchingClocks.some((item) => item.top >= 0 && item.bottom <= final.viewport.height);
+  if (!targetAudit.ok || !clocksFit || final.viewport.scrollX !== 0 || final.viewport.scrollY !== 0) {
+    return { ok: false, reason: "page_clock_and_target_do_not_fit_final_viewport", initial, final, targetAudit };
+  }
+  return {
+    ok: true,
+    resized,
+    resizedFromHeight: resized ? initial.viewport.height : null,
+    finalHeight: final.viewport.height,
+    viewportWidth: final.viewport.width,
+    deviceScaleFactor: final.viewport.deviceScaleFactor,
+    frameChromePixels,
+    scrollX: final.viewport.scrollX,
+    scrollY: final.viewport.scrollY,
+    estimatedFinalPixelCount: Math.ceil(outputWidthPx * (final.viewport.height * outputScale + frameChromePixels)),
+    targetAudit,
+  };
 }
 
 async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt) {
@@ -8072,6 +8323,9 @@ async function main() {
         mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
       }
     : null;
+  const requiresFinalPageClockProof = captureClass === "historical_recovery"
+    && reconstruction?.provenanceVersion === 4
+    && mapping.auditConfig?.requireVisiblePageDate === true;
   const stampCaptureInstant = () => {
     capturedAt = new Date().toISOString();
     if (reconstruction) reconstruction.reconstructedAt = capturedAt;
@@ -8126,6 +8380,7 @@ async function main() {
   let stickyHeaderViewportAudit = null;
   let slotVisibility = null;
   let pageScrollMetrics = null;
+  let pageClockViewportAudit = null;
   let domMediaPatch = null;
   let pageDateObserved = null;
   let pageDateText = null;
@@ -8661,6 +8916,17 @@ async function main() {
     if (!finalViewportTargetAudit.ok) {
       throw new Error(`capture_audit_failed: final_viewport_target_not_visible: ${finalViewportTargetAudit.reason || "unknown"} selector=${finalViewportTargetSelector}`);
     }
+    if (requiresFinalPageClockProof) {
+      pageClockViewportAudit = await ensureFinalPageClockViewport(page, mapping, effectiveCaptureAt, finalViewportTargetSelector);
+      if (!pageClockViewportAudit.ok) {
+        throw new Error("capture_audit_failed: final_page_clock_viewport_unavailable: " + pageClockViewportAudit.reason);
+      }
+      finalViewportTargetAudit = pageClockViewportAudit.targetAudit;
+      slotVisibility = await measureSlotVisibility(page, resolvedSlotSelector);
+      if (!slotVisibility?.mostlyVisible) {
+        throw new Error("capture_audit_failed: final_viewport_target_not_visible_after_clock_viewport");
+      }
+    }
     stickyHeaderViewportAudit = await assertStickyHeaderInViewport(page, mapping);
     const readinessStage = trace.start("critical_assets");
     readinessAudit = await captureStrictReadinessCandidate(
@@ -8724,7 +8990,7 @@ async function main() {
     const finalPageUrl = targetUrl || page.url();
 
     const pageDateSelectors = mergePageDateSelectors(mapping.pageDateSelectors);
-    const visiblePageDateAudit = await assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, effectiveCaptureAt);
+    let visiblePageDateAudit = await assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, effectiveCaptureAt);
     pageDateObserved = await page.evaluate((selectors) => {
       const isVisible = (el) => {
         if (!el) return false;
@@ -8874,7 +9140,7 @@ async function main() {
       await page.mouse.move(hoverPoint.x, hoverPoint.y);
       await page.waitForTimeout(160);
       await page.screenshot({ path: viewportPng });
-      if (readinessAudit) stampCaptureInstant();
+      if (readinessAudit || requiresFinalPageClockProof) stampCaptureInstant();
       nativeProgressAudit = await auditNativeVideoProgress(page, matchedAdSelector);
       videoProof = {
         ...videoProof,
@@ -8889,12 +9155,16 @@ async function main() {
         artificialOverlayCount: nativeProgressAudit.artificialOverlayCount ?? null,
         progressVisible: false,
       };
-    } else if (!existsSync(viewportPng)) {
+    } else if (requiresFinalPageClockProof || !existsSync(viewportPng)) {
+      const viewportPngWasMissingBeforeFinalCapture = !existsSync(viewportPng);
       await page.screenshot({ path: viewportPng });
-      artifactRecords.viewportRecapturedBeforeCompose = {
-        reason: "approved_viewport_artifact_missing",
-        capturedAt: new Date().toISOString(),
-      };
+      if (requiresFinalPageClockProof) stampCaptureInstant();
+      if (viewportPngWasMissingBeforeFinalCapture) {
+        artifactRecords.viewportRecapturedBeforeCompose = {
+          reason: "approved_viewport_artifact_missing",
+          capturedAt: capturedAt || new Date().toISOString(),
+        };
+      }
     }
 
     trace.finish(slotCapturedStage, "ok", {
@@ -8934,6 +9204,34 @@ async function main() {
       pageScrollMetrics,
       ...desktopFrameMetadata,
     });
+    if (requiresFinalPageClockProof) {
+      const composedImage = describeLocalImage(finalPng);
+      const composedBytes = statSync(finalPng).size;
+      const composedWidth = Number(composedImage?.width);
+      const composedHeight = Number(composedImage?.height);
+      if (!Number.isFinite(composedWidth) || !Number.isFinite(composedHeight)
+        || composedWidth <= 0 || composedHeight <= 0
+        || composedWidth * composedHeight > 40_000_000) {
+        throw new Error("capture_audit_failed: candidate_artifact_dimensions_blocked");
+      }
+      if (!Number.isFinite(composedBytes) || composedBytes <= 0 || composedBytes > 20 * 1024 * 1024) {
+        throw new Error("capture_audit_failed: candidate_artifact_too_large");
+      }
+      visiblePageDateAudit = await auditVisiblePageDateClock(
+        page,
+        mapping,
+        effectiveCaptureAt,
+        viewportPng,
+        finalPng,
+        desktopFrameMetadata,
+      );
+      if (!visiblePageDateAudit.ok) {
+        const details = visiblePageDateAudit.issues.map((item) => item.code).join(", ");
+        throw new Error("capture_audit_failed: final_page_clock_unverified: " + (details || "page clock proof failed"));
+      }
+      pageDateObserved = visiblePageDateAudit.renderedText;
+      pageDateText = visiblePageDateAudit.renderedText;
+    }
 
     const finalPngSlotAuditBox = resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit);
     const finalPngSlotAudit = auditFinalPngSlotPixels(
@@ -9116,6 +9414,7 @@ async function main() {
       stickyHeaderViewportAudit,
       finalPngStickyHeaderAudit,
       finalViewportTargetAudit,
+      pageClockViewportAudit,
       capturedAt,
       pageScrollMetrics,
       frameTheme: desktopFrameMetadata.frameTheme,
@@ -9684,6 +9983,8 @@ if (require.main === module) {
     auditFinalPngSlotPixels,
     auditNativeVideoProgress,
     auditFinalPngVideoProgress,
+    auditVisiblePageDateClock,
+    ensureFinalPageClockViewport,
     auditFinalPngCreativeIdentityAgainstFrames,
     auditVisibleMediaPixels,
     captureStrictReadinessCandidate,

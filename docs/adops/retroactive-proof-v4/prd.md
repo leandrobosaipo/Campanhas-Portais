@@ -24,6 +24,12 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 
 ## Checkpoint
 
+Estado retomado em07/10: **38/237 confirmadas;199 restantes** (162 não vídeo liberadas,1 retenção técnica2278/27Aug,27 vídeos e9 identidades1944 retidas). Main e aplicação839c publicadas; backup/restauração/quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store conferidos no consumidor. Os26 protegidos continuam fora da execução.
+
+O candidato2645/24Aug da release839c passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado; nenhuma promoção. Task23 corrige visibilidade e prova de pixels no instante final. Enquadramento deve manter o relógio original e o anúncio em um viewport real, sem mover o relógio, desenhar carimbo ou costurar cabeçalho. Uma data de notícia não substitui o relógio do site.
+
+### Histórico — checkpoint32
+
 Em 07/10/2026, checkpoint32: **32/237 correções confirmadas; 205 restantes** (169 não vídeo prontos, 27 vídeos aguardando agenda e 9 identidades1944 retidas). Release `64b4f560309fccc8386b19bf9333b039bda5263a` publicada às10:55:27 UTC pelo PR119, CI37608283896/37608827821 aprovadas; quatro serviços/fonte/asset/OpenAPI174/157 e backup fresco/restauração completa conferidos. VIDEO3064/01Oct passou em auditoria final, PNG individual, promoção `a4012955-4f98-4b5e-926f-aa2a574b253b`, archive/hash/status e miniatura/modal. Job `1791370618360-irjtai`, candidato `452e8465-2651-4eac-b5fa-fa2ab47a59b7`; prova privada `video-canary-64b4-completion-proof.json`, SHA256 `a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6`.
 
 “Atualizar” deve consultar estado atual preservando autenticação e paginação. Correção local de cache (API private/no-store e fetch no-store) ainda não publicada. A agenda futura libera somente vídeos qualificados como ready_video, vinculados à release/prova do canário; cada imagem mantém seus próprios gates. Origem reconstruída e criação real permanecem fora do PNG; não inferir veiculação passada.

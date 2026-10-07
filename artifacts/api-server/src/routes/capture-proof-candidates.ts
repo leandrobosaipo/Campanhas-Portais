@@ -165,7 +165,7 @@ router.post("/internal/capture-proof-candidates/:candidateId/audit", async (req:
         capturedAt: candidate.capturedAt.toISOString(),
         uploadedUrl: candidate.artifactUrl,
       });
-      checklist = await validateAuditChecklist({ insertionId: candidate.insertionId, date: candidate.targetDate, metadata }) as unknown as Record<string, unknown>;
+      checklist = await validateAuditChecklist({ insertionId: candidate.insertionId, date: candidate.targetDate, metadata, candidateFinalPageClock: true }) as unknown as Record<string, unknown>;
     }
     const decision = checklist.approved === true ? "candidate_approved" : "candidate_blocked";
     const [previous] = await tx.select().from(captureProofCandidateReviewsTable)

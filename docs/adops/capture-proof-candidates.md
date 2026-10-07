@@ -21,6 +21,14 @@ The server reads the candidate metadata from its candidate-only print directory 
 
 `POST .../{candidateId}/audit` reruns the complete audit checklist against the immutable candidate and stores a separate `candidate_approved` or `candidate_blocked` review. Repeated reviews append records. This result is not canonical `audited` status or permission to publish. `historicalDisplayConfirmed` stays `false`.
 
+Historical v4 candidates whose server rule requires a visible page clock must
+provide the final `visiblePageDateAudit.version=2` proof described in the
+[v4 specification](./retroactive-proof-v4/spec.md). The clock text, viewport,
+occlusion and final image region must agree. The server chooses this requirement;
+there is no public bypass option. Promotion repeats the final audit before
+archiving or replacing the canonical image, even for a previously approved
+candidate. Existing reviews and canonical legacy files remain preserved.
+
 The deployed migration is `ops/portainer/adops-stack/migrations/2026-10-02-capture-proof-candidates.sql`.
 
 Candidate registration, audit, and promotion writes are disabled by default. To enable them, set `ADOPS_CAPTURE_PROOF_CANDIDATES_ENABLED=true` in the deployment environment; the production deploy script validates and passes that explicit value into the API container. Set it to `false` to disable writes again. Disabling the feature preserves candidate, review, and promotion records; existing authenticated internal `GET` routes remain available for readback.

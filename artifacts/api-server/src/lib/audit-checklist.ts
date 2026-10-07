@@ -555,6 +555,7 @@ export async function validateAuditChecklist(input: {
   date: string;
   metadata?: unknown;
   phase?: "pre_upload" | "final";
+  candidateFinalPageClock?: boolean;
 }): Promise<AuditChecklistValidation> {
   const date = normalizeDateKey(input.date);
   const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date });
@@ -564,7 +565,8 @@ export async function validateAuditChecklist(input: {
     ? await loadAuditChecklistMetadata(input.insertionId, date)
     : input.metadata;
   const metadata = isPlainObject(loadedMetadata) ? loadedMetadata : null;
-  const audit = evaluateCaptureMetadata(metadata, date);
+  const finalPageClockRequired = input.candidateFinalPageClock === true && contract.ok && contract.requiredGates.requireVisiblePageDate;
+  const audit = evaluateCaptureMetadata(metadata, date, new Date(), { finalPageClockRequired });
 
   if (!metadata) {
     blockingIssues.push(issue(
@@ -805,7 +807,7 @@ export async function validateAuditChecklist(input: {
         ));
       }
     }
-    if (requiredGates.requireVisiblePageDate && metadataRequiredGates?.requireVisiblePageDate === true) {
+    if (requiredGates.requireVisiblePageDate && (metadataRequiredGates?.requireVisiblePageDate === true || finalPageClockRequired)) {
       const visiblePageDateAudit = metadataObject(metadata, "visiblePageDateAudit");
       if (
         visiblePageDateAudit?.ok !== true ||

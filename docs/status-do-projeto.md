@@ -1,6 +1,14 @@
 # Estado confirmado do projeto AdOps
 
-## Estado do consumidor — 07/10/2026, checkpoint32
+## Conferência de07/10/2026 — checkpoint38
+
+Release839c publicada pelo PR121, CI37617379579/37617823529 aprovados. Readback12:15:55UTC confirmou quatro serviços/fonte/asset/OpenAPI174/157 e backup/restauração completos; cache API e relatório no-store confirmado. Há38/237 evidências confirmadas e199 restantes=162 não vídeo liberadas+1 técnico2278/27Aug+27 vídeos+9 identidades1944.26 protegidas e1157 origens desconhecidas preservadas.
+
+Candidato2645/24Aug020a53e9 passou na API, mas foi recusado visualmente pelo relógio fora do PNG; original intacto, sem promoção. Correção local Task23 usa viewport real mais alto, prova final do relógio e gate da API antes de substituir o original.22 cenários Chromium/API,17 testes API e17 promoção isolada passaram. Watchdog considera a espera notBefore somente na fila, com26+20 checks; não reenvia o job falho antigo. Integração/publicação e canário real continuam gates pendentes.
+
+WordPress2278/27Aug: adaptador local corrigido e7 casos PHP passaram; publicação no portal retida até leitura dos arquivos instalados, backup/rollback e acesso autorizado. Censo241linhasweb está provisório:119 únicas,105 múltiplas possibilidades,14 atual+histórico,2 indícios e1 histórico. Não prova duplicidade/ausência nem autoriza limpeza. Plano/SPEC/HARNESS são a referência do próximo passo.
+
+## Histórico — consumidor em07/10/2026, checkpoint32
 
 Main e produção: `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119 integrado; CI `37608283896` e `37608827821` aprovados. Publicação conferida às 10:55:27 UTC: quatro serviços, fonte real, asset público, OpenAPI174/157 e backup fresco com restauração completa. Operação terminou em `idle_no_pause`, fila zero, sem PAUSE/UNPAUSE executados.
 

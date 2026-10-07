@@ -2,6 +2,16 @@
 
 ## Checkpoint atual — 07/10/2026
 
+Main/aplicação839c, PR121 e CI37617379579/37617823529 aprovados; readback12:15:55UTC confirmou quatro serviços/fonte/asset/OpenAPI174/157, backup/restauração completos. Cache API e consumidor no-store confirmados. Checkpoint38/237,199 restantes=162 não vídeo+1 técnico2278/27Aug+27 vídeo+9 identidades1944;26 protegidos preservados.
+
+Retomada: integridade41JSON/101API/41publicadas passou, zero erros/dois avisos conhecidos não publicados. Correção local watchdog:26 verificações existentes+20 casos reais passaram, revisão independente aprovada; ainda sem CI/main/publicação. Candidato2645/24Aug020a53e9 foi recusado visualmente: relógio fora do PNG. Preservar aprovação antiga da API como registro do defeito, sem promoção.
+
+Task23 requer negativos reais de relógio fora da tela, coberto ou ausente após recaptura, adulteração da região de pixels e positivo com relógio original+player nativo em viewport real mais alto. Revisão de cada PNG e consumidor continuam obrigatórios. Não aprovar somente por texto no DOM nem usar datas editoriais no lugar do relógio.
+
+API local:17 testes de imutabilidade e17 testes de promoção passaram, zero skips; typecheckAPI passou. O caso de promoção usa regra publicada AFL6 real: aprovação antiga sem prova do relógio final bloqueia antes do arquivo/substituição, sem alterar evidência ou recibo antigo. A fixture PostgreSQL14 existente, candidate_audit_test/socket privado55437/semTCP, foi iniciada somente para esses testes e desligada após a conclusão, dados preservados. Recibo `final-page-clock-isolated-db-lifecycle.json`. Ainda não comprova publicação nem entrega de novo PNG2645.
+
+### Histórico — release64b4 e checkpoint36
+
 Release `64b4f560309fccc8386b19bf9333b039bda5263a` publicada e conferida às10:55:27 UTC, PR119/CI37608283896/37608827821 aprovadas. Quatro serviços, CJS real, asset público, OpenAPI174/157 e backup fresco/restauração completa conferidos. Gate terminou idle_no_pause/fila0; nenhuma PAUSE/UNPAUSE foi executada.
 
 Checkpoint36: **36/237 confirmados;201 restantes=164 não vídeo liberados+1 retido tecnicamente (#2278/27Aug)+27 vídeos retidos+9 identidades1944 retidas**. Inclui quatro datas2278/22–25Aug com miniaturas/modais confirmados. VIDEO3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7, passou auditoria final não preliminar/zero issues, revisão individual e promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b com archive/hash/status/miniatura/modal. Recibo privado video-canary-64b4-completion-proof.json, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. Os26 protegidos e1157 unknown permanecem preservados.

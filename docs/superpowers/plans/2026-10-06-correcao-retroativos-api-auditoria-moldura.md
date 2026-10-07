@@ -73,7 +73,7 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] Patch local mínimo: API private,no-store; fetch cache:no-store conservando credentials:include/paginação/abort. Não adicionar nonce nem retirar sessão.
 3. [x] Sol revisou o diff mínimo e os options da carga; root confirmou19/19 testes do relatório e buildAPI. Sessão, abort e paginação permanecem. Correção local ainda não publicada.
 4. [x] PR120/CI37613541656/mainCI37614027155 e main11 exata; publicação HTML pelo fluxo existente com baseline503f/novo backup/hash474f. Consumidor das quatro datas2278/22–25Aug confirmado.
-5. [ ] Publicar API private,no-store junto com Task22 e conferir resposta fresca/Atualizar; fluxo existente, backup/restauração/readback novos. Publisher API11 preparado não aplicado; não reutilizar intent/backup de publicação anterior.
+5. [x] API publicada com Task22 na main839c. Resposta real `private,no-store` e Atualizar no navegador confirmados em07/10; recibos privados `monthly-cache-api-839-readback.json` e `monthly-cache-839-browser-readback.json`. Publisher API11 nunca aplicado, preservado como preparação histórica.
 
 ### Task 21: Agenda separada para os vídeos restantes
 
@@ -92,12 +92,39 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] Reproduzir localmente com Chromium154.0.8037.99, viewport1660×1200/DPR2 e geometria real. Somar scroll no hit-test dá clear/ok; scroll0 mantém resultado; cobertura real continua bloqueada. Recibos privados dos logs e fixture, sem produção mutável.
 3. [x] Medir scrollX/Y junto ao box no mesmo Runtime.callFunctionOn; converter somente CDP.getNodeForLocation. Conservar box viewport na ROI, piso0.82, oclusão clear obrigatória e todos gates API/proveniência. Patch Luna revisado independentemente por Sol.
 4. [x] Teste nativo existente RED→GREEN: scroll0, scroll1579 e cobertura real rolada; comparação de ROI/cross-layer reais. Sol repetiu12 cenários com Pillow existente: PASS, score1/crop960×48/helper API aprovado; sintaxe/diff-check limpos. Gates de release/regras permanecem antes da publicação.
-5. [ ] Integrar CI/main e publicar fix+cacheAPI com backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI; requalificar agenda para release nova antes de capturar.
+5. [x] PR121/head9f8dfcb e main839c com CI aprovado; publicação com backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI174/157. Recibo privado `release-final-native-timeline-scroll.json`.
 6. [ ] Novo candidato AFL2645/24Aug, auditoria final/PNG individual/promoção/archive/CAS/hash/consumidor. Preservar logs/artefatos/job anterior, sem reescrever como aprovado. Lote permanece aberto.
+
+### Task 23: Exigir o relógio do site na imagem final
+
+**Owner:** Luna implementa capturador/testes pequenos; Sol confere contrato e auditoria; root integra documentação, publicação e consumidor. Base839c; preservar os três arquivos da Task24.
+
+1. [x] Candidato020a53e9/job1791375503114-nvvrj5 em2645/24Aug passou na API, mas ficou retido na revisão visual: relógio do site fora do PNG após scroll. Original intacto, sem promoção; a contagem permanece38/237. Recibo `sol-afl-2645-final-clock-contract-review.json`.
+2. [x] Correção local: elemento inteiro no viewport, sem cobertura; prova de pixels existente após última captura. API usa regra do servidor e repete a auditoria antes de arquivar/substituir. Aprovação antiga não dispensa o gate. Data editorial não substitui relógio do site.
+3. [x] Viewport real mais alto somente quando necessário, mantendo scroll0, zoom1, DPR2, relógio original e player nativo. Geometria do layout.json e limites existentes40M pixels/20MiB conferidos. Nenhum relógio movido no DOM, carimbo, faixa ou cabeçalho separado.
+4. [x]22 casos reais passaram, incluindo relógio+H264/timeline nativa no mesmo PNG alto1874CSSpx/scroll0, comparação de ambasROI e gatesAPI. Negativos: fora da tela, cobertura, ocultação, hora/data erradas, scroll tardio, região adulterada e limite de pixels. Último instante real e aliases da prova final conferidos; preserva demais gates.17 testes API/17 promoção isolada/7PHP/26+20watchdog passaram.
+5. [ ] Revisão Sol, CI/main, publicação reversível e novo canário individual. Qualificar a substituição do candidato visualmente recusado pelo motivo exato; não reutilizar outro motivo nem reescrever a aprovação antiga.
+6. [ ] Só após PNG, auditoria final, promoção/arquivo/hash e miniatura/modal confirmados: atualizar a contagem e qualificar nova agenda dos vídeos.
+
+### Task 24: Respeitar o início programado na auditoria da fila
+
+**Owner:** Luna possui ops.ts, Worker e teste incremental existente; Sol revisa; root integra/publica junto com Task23.
+
+1. [x] Job64530ac9 foi marcado failed ao contar15min de espera programada como atraso. Sem reenvio ou alteração do registro terminal.
+2. [x] Patch local considera notBefore válido somente em queued/ready_for_runner; running e limites de tempo permanecem iguais.26 verificações existentes e20 casos das funções reais passaram; revisão independente em `sol-scheduled-job-watchdog-review.json`.
+3. [ ] CI/main/publicação e observação de novo job programado. Não reativar o job antigo para testar.
+
+### Task 25: Concluir a conferência da planilha e o bloqueio WordPress
+
+1. [x] Planilha atual:260 linhas,241web e19sociais; quatro linhas de outubro têm correspondência. GET geral expirou e não prova ausência de campanha.
+2. [ ] Censo web por filtros documentados antes do enriquecimento; separar ausência comprovada de erro de consulta e divergência de identidade. Sem cadastrar ou limpar por suposição.
+3. [x] #2278/27Aug: comparação de relógios WordPress usa domínios temporais distintos; seis casos locais reproduzem a causa. Instante absoluto da origem deve permanecer intacto.
+4. [x] Correção local em adrotate_adops_now: somente preview validado usa timestamp local do fuso WordPress para comparar calendário AdRotate. Instante absoluto global e fluxo normal preservados. Sete casos reais do PHP passaram: normal, referência final20:20, origem absoluta, referência ISOUTC, fim inclusivo, dia seguinte recusado e offset histórico do fuso. PHP lint aprovado.
+5. [ ] Conferir fonte realmente instalada, backup/rollback e acesso autorizado antes de publicar WordPress. A whitelist atual bloqueia leitura dos quatro arquivos; pergunta de acesso aberta. Não contornar nem tratar main/API publicada como publicação desses arquivos no portal.
 
 ## Global Constraints
 
-- Worktree: /Users/leandrobosaipo/.codex/worktrees/adops-retroativos-20261006/AdOps; branch codex/adops-retroativos-20261006. Não editar checkout original com 161 alterações.
+- Worktree atual: /Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps; branch codex/adops-scheduled-job-watchdog-20261007, base839c. Worktree inicial adops-retroativos-20261006 e seus recibos permanecem históricos. Não editar checkout original com alterações alheias.
 - User confirmou contrato temporal e assets oficiais abertos com Selawik existente; não copiar assets proprietários nem afirmar fonte Windows original.
 - Root possui inventário vivo, backup, integração final, commits/main e deploy. Sol possui plano/docs/ledger/revisões. Luna executa tarefas pequenas 1–5 serialmente, preservando alterações de outros.
 - Não operar banco/storage por fora para corrigir evidências; promoção/restore API e readback obrigatório. Não alterar PI, planilha, AdRotate, daily scheduler ou aprovar sem hash.

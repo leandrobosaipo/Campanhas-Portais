@@ -2,6 +2,14 @@
 
 ## Estado publicado e atualização mensal
 
+Estado atual07/10: main e aplicação `839c98963d7186e68cf1e95538bf98bbf9c61b02`, PR121/CI37617379579 e37617823529 aprovados; conferência real12:15:55UTC com backup/restauração/quatro serviços/fonte/asset/OpenAPI174/157. Cache API `private,no-store` e fetch do relatório `cache:'no-store'` publicados e conferidos. Checkpoint38/237,199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeo+9 identidades1944.
+
+Candidato2645/24Aug020a53e9, job1791375503114-nvvrj5, recusado visualmente por relógio do site fora do PNG, apesar da aprovação automática. Não promovido; original intacto. Task23 exige verificação de viewport/oclusão e prova de pixels da região do relógio após a recaptura final. Enquadramento maior é um viewport real; não permite mover relógio, cabeçalho costurado ou carimbo. A agenda64b4 permanece histórica e retida até novo canário completo.
+
+#2278/27Aug permanece retida: correção local do adaptador AdRotate converte somente a comparação de preview para o domínio de timestamp local WordPress. Não altera o instante absoluto da origem, calendário contratado ou referência20:20. Sete casos PHP e lint passaram; a fonte instalada/backup/rollback ainda não puderam ser conferidos pelo acesso SSH autorizado. Publicar a API/main não publica automaticamente essa correção no WordPress.
+
+### Histórico — publicação64b4 e checkpoint36
+
 Release API `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119/CI37608283896/37608827821, conferida em 07/10 às10:55:27 UTC. O canário VIDEO3064/01Oct passou auditoria final, revisão individual, promoção/archive/hash/status e miniatura/modal. Checkpoint36:36/237 confirmados,201 restantes:164 não vídeo liberados,1 não vídeo retido tecnicamente (#2278/27Aug),27 vídeos retidos até a Task22 e9 identidades1944 retidas. Inclui quatro datas2278/22–25Aug com consumidor confirmado. Os26 protegidos e1157 unknown não entram na execução.
 
 Main `11e674ba6cd94bf6d8ea70d446343572e1444bb8` integrada pelo PR120, CI37613541656/37614027155 aprovadas. HTML com `cache:'no-store'` publicado às11:31:46 UTC, hash normalizado474f67f7e24812b5b50913b73dbd80346fbcdfce2af9e7af8ed075859ccbb165; sessão, filtros, paginação e “Atualizar” preservados. A resposta mensal API `private, no-store` ainda aguarda publicação conjunta com a Task22. A API publicada ainda emite `public, max-age=30, stale-while-revalidate=120`; essa política permite reutilização de snapshot antigo por até150s. Não mudar consulta/contagens nem criar nonce; publicação e leitura fresca do consumidor são gates distintos.
@@ -21,6 +29,18 @@ Novas reconstruções usam reconstruction.provenanceVersion=4. Não criar um tim
 v2 mantém seu contrato legado; v3 mantém página histórica e relógio da moldura real; v4 exige ambos os relógios históricos. A exceção de v4 vale somente para historical_recovery com período, mídia, conteúdo histórico, job, URL e política correlacionados. Nenhuma exceção remove erros de outros gates. Capturas scheduled/same_day_retry continuam iguais.
 
 API, pré-upload, validação de candidato e capturer devem reconhecer v4 explicitamente. Datas inválidas, reconstructedAt retroativo fingindo criação real, capturedAt fora do estágio, job errado ou historicalDisplayConfirmed=true continuam recusados. O PNG não recebe tarja/rodapé; a classificação e a data real permanecem nos dados e no relatório.
+
+## Relógio no PNG final — nova validação de candidato
+
+Para candidato historical_recovery/v4 cuja regra do servidor exige requireVisiblePageDate, a auditoria e a promoção exigem visiblePageDateAudit.version=2. Essa decisão vem do caller interno e da regra resolvida, nunca de uma opção pública ou somente dos requiredGates enviados pelo produtor. A promoção repete o gate antes de arquivar o original, inclusive quando existe aprovação de candidato anterior à correção.
+
+- source=final_viewport_page_clock; requestedCaptureAt igual à referência registrada; renderedText corresponde à data e hora completas.
+- box positivo e inteiro dentro do viewport; ancestrais visíveis e sem recorte; hit-test desobstruído. Datas de notícias e atributos escondidos não substituem texto do relógio renderizado.
+- pixelAudit usa auditFinalPngSlotPixels_page_clock_roi e viewportPng_page_clock_roi. Box, crop, escala e deslocamento da moldura precisam coincidir; similaridade mínima0.82, desvio de conteúdo mínimo4 e zero issues.
+- Captura definitiva ocorre antes do fechamento de slot_captured. capturedAt/reconstructedAt são registrados após essa screenshot; pageDateObserved/pageDateText vêm da prova final aprovada na lane estrita.
+- Quando necessário, o viewport real cresce em altura, mantendo largura/escala e scroll0. Usa a geometria do kit e respeita os limites existentes do candidato:40 milhões de pixels e20MiB. O PNG final repete esses limites antes do upload. Não mover relógio ou montar faixa de cabeçalho.
+
+A comparação de pixels verifica preservação da região; não é OCR nem prova independente de veiculação passada. Revisão visual ligada ao SHA256 continua obrigatória. Canônicos legados não recebem o novo contexto de candidato; provas novas versionadas continuam verificadas. Falha final_page_clock_unverified bloqueia a nova aprovação; candidate_final_audit_failed bloqueia promoção sem trocar a evidência. Origem e criação real permanecem fora do PNG.
 
 ## Coerência editorial AFL
 

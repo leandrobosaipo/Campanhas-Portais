@@ -6,6 +6,26 @@ Este documento e o contrato operacional para gerar provas de veiculacao por API,
 validar cada imagem, montar uma pasta limpa para o cliente e enviar provas
 aprovadas ao Telegram.
 
+### Reconstruções históricas v4
+
+Uma reconstrução não comprova sozinha veiculação passada. O PNG usa a referência
+histórica nos dois relógios; a origem e o instante real de criação permanecem na
+API e nos detalhes do relatório. Nenhum carimbo, faixa ou rodapé é acrescentado.
+
+A correção de evidência existente começa em
+`POST /api/insertions/{id}/capture-proof/jobs`, com `candidate=true`,
+`promote=false`, `replace=false`, data/hora explícitas e chave estável.
+Consultar o mesmo job até resultado terminal. Auditoria interna e revisão visual
+individual antecedem a promoção com identificação/hash/tamanho do original.
+O relógio original do site precisa aparecer no PNG final junto do anúncio;
+texto escondido, fora da tela ou data de notícia não satisfaz esse requisito.
+A correção desse gate está na Task23 do plano v4, ainda em implantação.
+
+Para entrega final por PI/portal, prevalece o fluxo assíncrono
+`POST /api/pi-site-exports/jobs`, `mode=full-pdf`, `variant=web`, seguido da
+consulta e download do mesmo job concluído. Não montar o ZIP final manualmente
+quando essa API estiver disponível. Telegram somente quando solicitado.
+
 O operador nunca grava evidencia diretamente no banco. A sequencia canonica e:
 
 ```text
