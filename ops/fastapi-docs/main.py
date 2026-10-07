@@ -190,6 +190,26 @@ def build_openapi_document() -> dict[str, Any]:
     set_response_schema("/api/ops/runner/heartbeat", "post", "RunnerHeartbeatResponse")
     set_response_schema("/api/internal/capture-proof-candidates/{candidateId}/promotions", "get", "CaptureProofCandidatePromotionsResponse")
 
+    campaigns_list = paths.get("/api/campaigns", {}).get("get")
+    if campaigns_list:
+        campaigns_list["parameters"] = [
+            {"name": "competencia", "in": "query", "required": False, "schema": {"type": ["string", "null"]}},
+            {"name": "clienteId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+            {"name": "agenciaId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+        ]
+
+    insertions_list = paths.get("/api/insertions", {}).get("get")
+    if insertions_list:
+        insertions_list["parameters"] = [
+            {"name": "competencia", "in": "query", "required": False, "schema": {"type": ["string", "null"]}},
+            {"name": "siteId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+            {"name": "clienteId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+            {"name": "agenciaId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+            {"name": "campanhaId", "in": "query", "required": False, "schema": {"type": ["integer", "null"]}},
+            {"name": "status", "in": "query", "required": False, "schema": {"type": ["string", "null"]}},
+            {"name": "atrasado", "in": "query", "required": False, "schema": {"type": ["boolean", "null"]}},
+        ]
+
     candidate_promotion = paths.get("/api/internal/capture-proof-candidates/{candidateId}/promote", {}).get("post")
     if candidate_promotion:
         candidate_promotion["summary"] = "Promover candidato aprovado; upgrade histórico exige identidade explícita"
