@@ -7064,7 +7064,9 @@ async function waitForViewportVisuals(page, slotSelector) {
   const stats = await page.evaluate(async (selector) => {
     function isInsideFirstFold(element) {
       const rect = element.getBoundingClientRect();
-      return rect.bottom > 0 && rect.top < window.innerHeight + 120;
+      return rect.width > 0 && rect.height > 0
+        && rect.bottom > 0 && rect.top < window.innerHeight
+        && rect.right > 0 && rect.left < window.innerWidth;
     }
 
     function imageReady(img) {
@@ -10041,6 +10043,7 @@ if (require.main === module) {
     resolveFinalPngSlotAuditBox,
     auditFinalPngSlotPixels,
     auditNativeVideoProgress,
+    waitForViewportVisuals,
     auditFinalPngVideoProgress,
     auditVisiblePageDateClock,
     ensureFinalPageClockViewport,

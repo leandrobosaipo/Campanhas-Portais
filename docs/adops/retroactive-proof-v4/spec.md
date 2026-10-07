@@ -1,5 +1,11 @@
 # SPEC — Reconstrução retroativa v4
 
+## Interseção de mídia com o viewport — 07/10/2026
+
+`waitForViewportVisuals/isInsideFirstFold` usa a mesma interseção real positiva para imagens, backgrounds e vídeos, no loop e na leitura final: rect.width>0, rect.height>0, rect.bottom>0, rect.top<innerHeight, rect.right>0 e rect.left<innerWidth. Remover a margem+120 desse predicado; não modificar validação própria de slotImages nem os gates de auditoria total===loaded. Contato apenas na borda não é interseção;1px efetivamente visível exige carregamento.
+
+Não modificar `videoReady/load()` com base nesse diagnóstico: vídeo fora do PNG é a causa comprovada de #2693/29Aug, job1791410115391-jhwe8k. Original preservado; sem upload/promoção. Apresentação do modal: `place-items:start center`, imagem proporcional e completa, sem mutação dos pixels. Correções locais pendentes de release/canário; produção5c7 e checkpoint57 permanecem distintos.
+
 ## Estado — 07/10, 20:57 UTC
 
 A correção compartilhada abaixo está integrada na main 674/PR126, com CI aprovada, mas ainda não publicada. A tentativa terminou com código 28 após o switch, durante a consulta de containers; rollback CD3 e quatro serviços ativos/sem pausa foram conferidos. O GET de leitura pós-switch deve reutilizar as tentativas limitadas de `portainer_get_json`; não reenviar PUT por resposta desconhecida. Checkpoint mantido em 53/237.

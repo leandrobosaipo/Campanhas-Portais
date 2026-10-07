@@ -1,5 +1,13 @@
 # Estado confirmado do projeto AdOps
 
+## Correção do viewport — 07/10/2026, 22:10 UTC
+
+Produção e main estão em5c7c7e9cd1b8. O lote #2693/AFL/PI91159 de25–28/08 passou por auditoria, revisão visual Luna, promoção com arquivo anterior preservado e consumidor real. Checkpoint57: **57/237 confirmadas,180 restantes**, com144 não vídeos prontos. A inserção apresenta8/11 capturas conferidas.
+
+O job1791410115391-jhwe8k de29/08 terminou failed antes do upload:1 vídeo editorial foi contado como visível por estar nos120px adicionais abaixo do viewport. O PNG de diagnóstico termina em1200px; a medição real do vídeo no navegador1660×1200 mostrou top1277. Não houve promoção; o original continua com1952634bytes e SHA282ff102e6f61a8cf5146addf81da93623c9974c81cf2757c41b298853b41dfa. Datas30/31nãoexecutadas.
+
+A correção local troca esse predicado compartilhado por interseção real com o viewport; o gate de mídia visível permanece obrigatório. Outro ajuste local alinha a imagem ao topo do modal, sem mudar PNGs. **Ainda não publicados:** exigir CI, backup/restauração, release montada e novo canário. Mensal completo45s, #2278/27Aug e divergências de fonte continuam pendentes.
+
 ## Última conferência — 07/10/2026, 20:57 UTC
 
 - PR126 integrado na main `674ad48e1d7beb9ef2b3c0eafad0b521a7505b41`; CI do head e da main aprovadas. Na fonte integrada, RPCs mensais padrão usam o destino direto, preservando overrides e contratos; essa mudança ainda não está publicada.

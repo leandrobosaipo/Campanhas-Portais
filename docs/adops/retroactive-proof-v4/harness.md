@@ -1,5 +1,13 @@
 # HARNESS — Reconstrução retroativa v4
 
+## Gate do viewport real — 07/10/2026
+
+Antes da publicação, validar o predicado extraído da fonte: vídeo y1277/viewport1200 excluído; y1200 excluído; y1199 incluído e vídeo descarregado bloqueado; largura/altura zero e mídia fora das bordas horizontais excluídas; imagens e backgrounds visíveis ainda contados. Complementar com vídeo H.264 realmente decodificado dentro do viewport, mantendo total===loaded e sem relaxar auditoria. O teste não recupera o job antigo.
+
+Fixture do modal: desktop1414×786/mobile390×844, detalhes abertos/fechados, PNG3320×2696 e vídeo3320×5140. Resultado local8/8: alinhamento superior0px, proporção mantida, lateral mobile rolável. Testes existentes de navegador6/6. Ainda exigir CI, backup/restauração, hashes da release montada e novo candidato/auditoria/revisão/promoção/consumidor antes de afirmar publicação ou entrega.
+
+Checkpoint57 reúne4promoções e consumidor real25–28Aug;180restantes.29Aug falhou antes do upload e30/31nãoexecutados. Preservar recibos de falha, originais, agenda C67 e os26 protegidos. Não iniciar produtor durante implantação nem reenviar um pedido de resultado desconhecido.
+
 ## Gate de publicação — 07/10, 20:57 UTC
 
 PR126/main 674 passou no CI; a publicação terminou com código 28 na consulta de containers pós-switch, antes do smoke. Backup/restauração passaram e o rollback CD3 foi conferido independentemente com quatro serviços running/sem pausa e API/web healthy. Stack/mounts e resposta HTTP isolada não substituem esse readback. O check offline da correção desse GET deve reproduzir falha transitória seguida de sucesso e falha definitiva, usando o helper real; somente a leitura pode ser repetida. Não repetir o PUT nem iniciar containers após leitura definitiva inválida.

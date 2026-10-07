@@ -1,5 +1,11 @@
 # PRD — Reconstrução retroativa v4
 
+## Mídia e apresentação — 07/10/2026
+
+Auditar as mídias que efetivamente intersectam o viewport capturado, além da validação própria do anúncio. Não reprovar uma imagem por vídeo editorial abaixo do recorte; não aprovar vídeo descarregado que aparece, mesmo parcialmente. Não alterar conteúdo editorial nem esconder um vídeo visível para obter aprovação.
+
+Apresentar o PNG inteiro no modal, com proporção preservada e alinhamento superior. Classificação de reconstrução e instante real permanecem fora do PNG. #2693/25–28Aug entregue:57/237 confirmadas.29Aug falhou antes do upload por contagem de vídeo fora do viewport;30/31nãoexecutados. Correções locais ainda exigem publicação e novo canário; produção permanece5c7.
+
 ## Continuação comprovada — 07/10, 20:57 UTC
 
 A correção compartilhada mensal está integrada em main 674, com CI aprovada; a aplicação continua CD3 após rollback verificado. A tentativa encerrou na consulta de containers após a troca, sem concluir o smoke. Exigir publicação, quatro serviços ativos/sem pausa, fonte instalada e consumidor conferidos antes dos próximos lotes. Permanecem **53/237 confirmadas; 184 pendentes**, sem novas substituições.
