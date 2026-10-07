@@ -12,9 +12,11 @@
 
 ## Estado atual — 07/10/2026
 
-**Checkpoint do consumidor de 07/10 às10:32 UTC:30/237 confirmadas;207 restantes.** Main606cf05b70ee076bc613ef4d7bb5529f2d9c0b61 publicada pelo PR118, CI37601313114/37601935185 e backup/restauração/readback integral conferidos às10:08:36 UTC. Recibo privado `release-final-native-final-stage-retry1.json`. Restam170 pares não-vídeo liberados,28 de vídeo bloqueados pelo canário posterior e9 de #1944 bloqueados por identidade no consumidor. Os26 pares protegidos1826/1860 ficam fora dos237 operáveis. AFL1842/22–25Aug passou auditoria/revisão individual, promoção com original arquivado, hash/status e quatro miniaturas/modais conferidos. Recibo `checkpoint-30-confirmed.json`. As tarefas abaixo conservam registros anteriores; publicação de código não encerra o lote.
+**Checkpoint32 de 07/10:32/237 confirmadas;205 restantes.** Main64b4f560309fccc8386b19bf9333b039bda5263a publicada pelo PR119, CI37608283896/37608827821 e backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI174/157 conferidos às10:55:27 UTC. Gate idle_no_pause/fila0, sem PAUSE/UNPAUSE executados. Restam169 pares não-vídeo liberados,27 de vídeo aguardando agenda própria e9 de #1944 retidos por identidade. Os26 protegidos1826/1860 ficam fora dos237. VIDEO3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7, passou auditoria final/PNG individual/promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b/archive/hash/status/miniatura/modal. Prova privada `video-canary-64b4-completion-proof.json`, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. O checkpoint30 anterior incluía as quatro datasAFL1842/22–25Aug; seus recibos permanecem. Publicação de código e canário não encerram o lote.
 
-Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-native-progress-threshold-20261007`; checkout original preservado.
+O recibo imutável do canário conserva o checkpoint31. AFL1842/27Aug teve promoção e miniatura/modal confirmados depois, compondo o checkpoint32. Não regravar a prova anterior.
+
+Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-monthly-refresh-cache-20261007`; checkout original preservado. Correção de cache está local; produção continua64b4.
 
 ### Task 16: Corrigir causas dos três canários d1
 
@@ -38,7 +40,7 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 4. [x] Revisão independente Sol; typecheck com runtime existente; documentação consistente. CI37599924758 passou no commit650bcebe; a proteção operacional/qualificação adicionadas depois exigem CI do novo SHA.
 5. [x] Opt-in privado separado --supersede-provenance-blocked qualificado:87 checks offline, erro409/diagnóstico exatos, tuple/release/referência/bytes/hash/lista completa sem candidato e sem aprovação/promoção; canonicalCAS. Decisão root registration_provenance_blocked preserva timestamps/job/artefatos, sem rejeição visual fictícia.
 6. [x] PR118/CI37601313114 e mainCI37601935185 do606 exato; publicação com backup/restauração/readback integral. A primeira tentativa parou antes de trocar fonte/stack por identificação incorreta do processo pausado; retomada com namespace novo e parser revisado31checks. Sem repetir PUT após timeout. Não publicar enquanto houver captura ativa.
-7. [ ] Novo canário VIDEO, auditoria final, revisão individual, promoção/archive/hash/status/miniatura/modal. Só então aumentar a contagem.
+7. [x] Novo canário VIDEO confirmado na Task19/release64b4: auditoria final, revisão individual, promoção/archive/hash/status/miniatura/modal. Checkpoint31 inclui esse único par.
 8. [ ] Continuar somente os237 pares operáveis:26confirmados/211restantes. Inventário263 também inclui26 protegidos, preservados. Pacotes PI/portal somente pela API assíncrona. PI textual “PI - TCE” depende da escolha solicitada ao usuário; não inventar número.
 
 ### Task 18: Excluir inserções arquivadas/substituídas da execução
@@ -59,9 +61,27 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] Aplicar piso0.82 no comparador final nativo compartilhado, preservar valor maior configurado e manter comparação genérica do slot0.48 independente. Patch mínimo, sem dependência.
 3. [x] Regressão RED→GREEN existente: configuração0.48 resulta0.82, configuração0.91 preservada, ROI adulterada continua recusada.10 cenários nativos passaram; revisão independente Sol aprovada.
 4. [x] Repetição privada separada --supersede-audit-policy-blocked:133 checks offline, auditoria final/códigos exatos, PNG/metadata/proveniência/job/candidato/CAS e ausência de promoção. Exigir revisão da fonte vinculada à nova SHA publicada. Não reescrever o candidato606 nem criar rejeição visual fictícia.
-5. [ ] Commit/PR/CI do SHA exato/main, nova publicação com backup/restauração/rollback/readback dos quatro serviços, fonte, asset e OpenAPI. Nenhuma captura/promoção ativa durante publicação.
-6. [ ] Novo canário3064 com referência histórica, auditoria final sem issues, revisão individual, promoção com arquivo preservado, hash/status e miniatura/modal no consumidor. Só então liberar os demais vídeos e contar a entrega.
+5. [x] PR119/CI37608283896/mainCI37608827821, main64b4 exata e publicação10:55:27 UTC com backup fresco/restauração/rollback/readback dos quatro serviços, fonte, asset e OpenAPI174/157. Sem captura/promoção ativa durante publicação.
+6. [x] Novo canário3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7: referência histórica, auditoria final não preliminar/zero issues, revisão individual, promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b/archive/hash/status e miniatura/modal. Prova privada SHAa1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6; checkpoint31. Os27 vídeos restantes dependem da Task21.
 7. [ ] Continuar lotes não-vídeo≤4 e pacotes finais PI/portal pela API assíncrona. #1944 permanece pendente da fonte/decisão; não inventar PI nem transferir evidências.
+
+### Task 20: Consultar o mensal atual ao atualizar o relatório
+
+**Owner:** root possui API/gerador/teste/publicação; Sol revisa código/docs; Luna preserva sua ownership privada da agenda. Sem mudar autenticação, contagens ou política de auditoria.
+
+1. [x] Diagnóstico readonly: mensal publicado emite public,max-age=30,stale-while-revalidate=120; único fetch do load não declara cache. Snapshot antigo no consumidor durante revalidação não prova falha de promoção. GET11:04:48 retornou3064 com novo job1791370618360-irjtai; consumidor posterior confirmado.
+2. [x] Patch local mínimo: API private,no-store; fetch cache:no-store conservando credentials:include/paginação/abort. Não adicionar nonce nem retirar sessão.
+3. [x] Sol revisou o diff mínimo e os options da carga; root confirmou19/19 testes do relatório e buildAPI. Sessão, abort e paginação permanecem. Correção local ainda não publicada.
+4. [ ] PR/CI/main exata, publicação API e HTML pelo fluxo existente com baseline/backup/hash novos; verificar resposta fresca e Atualizar no consumidor. Não reutilizar intent/backup de publicação anterior.
+
+### Task 21: Agenda separada para os vídeos restantes
+
+**Owner:** Luna cria cópia privada/agenda/testes; Sol revisa; root aplica depois do ACK de ausência de produtor concorrente e opera os grupos.
+
+1. [x] Canary64b4 comprovado no checkpoint31. Inventário da agenda antiga contém28 vídeos/11grupos, incluindo3064 uma vez; excluir o par já confirmado deixa27/10.
+2. [ ] Criar agenda imutável ready_video, vinculada à release64b4 e hash da prova real do canário; preservar refs/IDs, grupos≤4 e agenda nonvideo. Não incluir1944/protegidos/unknown nem confirmar imagem por elegibilidade.
+3. [ ] Reutilizar produtor com opt-in --video e testes offline: sem prova/hash/release válidos ou grupo qualificado, falhar; defaultnonvideo permanece intacto. Revisão independente antes de aplicar helper compartilhado.
+4. [ ] Operar serialmente candidatos/auditorias; revisar cada PNG, promover com CAS/archive/hash e conferir consumidor. Falha interrompe grupo; não contabilizar conclusão apenas por audit/ACK.
 
 ## Global Constraints
 

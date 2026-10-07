@@ -2,6 +2,18 @@
 
 ## Checkpoint atual — 07/10/2026
 
+Release `64b4f560309fccc8386b19bf9333b039bda5263a` publicada e conferida às10:55:27 UTC, PR119/CI37608283896/37608827821 aprovadas. Quatro serviços, CJS real, asset público, OpenAPI174/157 e backup fresco/restauração completa conferidos. Gate terminou idle_no_pause/fila0; nenhuma PAUSE/UNPAUSE foi executada.
+
+Checkpoint32: **32/237 confirmados;205 restantes=169 não vídeo+27 vídeo+9 identidades1944 retidas**. VIDEO3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7, passou auditoria final não preliminar/zero issues, revisão individual e promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b com archive/hash/status/miniatura/modal. Recibo privado video-canary-64b4-completion-proof.json, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. Os26 protegidos e1157 unknown permanecem preservados.
+
+Cache local, ainda não publicado: verificar que o fetch paginado conserva sessão/abort/paginação e envia cache:no-store; a API deve responder private,no-store. Reutilizar VM de load, cobrindo carga inicial e Atualizar; validar resposta fresca no consumidor depois da publicação. Não usar nonce nem contornar autenticação.
+
+Agenda VIDEO ainda em preparação: 27 pares/10 grupos≤4, ready_video separado da agenda nonvideo, release64b4/prova do canário e hashes correlacionados. Negativos: prova ausente/alterada, release/hash divergente, protegido/1944/unknown, par3064 já confirmado e grupo não qualificado. Nenhum sucesso da agenda dispensa revisão visual do PNG individual, auditoria, promoção/CAS e consumidor.
+
+A prova do canário permanece no checkpoint31. AFL1842/27Aug acrescentou uma confirmação com promoção e consumidor, levando ao checkpoint32; não regravar o recibo imutável anterior.
+
+### Histórico — release606 e checkpoint30
+
 Release606cf05b70ee076bc613ef4d7bb5529f2d9c0b61 publicada e conferida às10:08:36 UTC pelo PR118, CI37601935185 aprovada. Backup fresco e restauração completa, quatro serviços sem pausa, fonte real, JavaScript público e OpenAPI174/157 conferidos. Registro do novo VIDEO3064/01Oct passou nas12 condições de proveniência: capturedAt10:10:04.382Z dentro de slot_captured terminado10:10:04.747Z. Auditoria final ainda bloqueou: ROI com score1.0 declarou minSimilarity0.48 herdado desta regra do slot, enquanto API exige0.82. Original preservado; sem promoção ou aprovação visual do candidatof0c33dbd-4b60-4d5e-96a6-1ef8f084dc46. Correção localizada: piso0.82 só na ROI nativa, mantendo configurações maiores e gate da API. Regressão real com0.48 reproduz RED antes do ajuste, passa após;0.91 preservado e ROI adulterada bloqueada. Publicação dessa correção e novo canário seguem pendentes.
 
 Checkpoint do consumidor às10:32 UTC:30/237 pares operáveis confirmados,207 restantes (170 não-vídeo prontos,28 vídeos retidos,9 identidades1944 retidas). AFL1842/22–25Aug passou auditoria/revisão individual e promoção com original arquivado; status/hash, quatro miniaturas e quatro modais foram conferidos. Os26 pares protegidos permanecem fora do lote. O snapshot anterior26 abaixo conserva a qualificação inicial.

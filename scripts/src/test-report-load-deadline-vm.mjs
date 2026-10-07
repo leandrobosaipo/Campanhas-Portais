@@ -17,7 +17,9 @@ async function loadAt(responseDelay) {
     controls:{search:control(''),portal:control(''),publication:control('all'),evidence:control('all')},
     setTimeout:(callback,ms)=>{const key=++id;timers.set(key,{callback,at:now+ms});return key},clearTimeout:key=>timers.delete(key),
     populatePortals:()=>{},setSummary:()=>{},render:()=>{},loadCaptureDiagnostics:async()=>{},restoreActiveEvidenceJob:()=>{},syncUrl:()=>{},escapeHtml:String,
-    fetch:(_url,{signal})=>new Promise((resolve,reject)=>{
+    fetch:(_url,{signal,credentials,cache})=>new Promise((resolve,reject)=>{
+      assert.equal(credentials,'include');
+      assert.equal(cache,'no-store','Monthly refresh must request current data, including with a previously cached response.');
       signal.addEventListener('abort',()=>reject(Object.assign(new Error('Aborted'),{name:'AbortError'})),{once:true});
       if(responseDelay!==null){const key=++id;timers.set(key,{at:responseDelay,callback:()=>resolve({status:200,ok:true,json:async()=>({items:[{id:3050,campanhaId:1051}],portals:['OMT'],pagination:{total:1,nextCursor:null},generatedAt:'2026-10-01T11:42:00Z'})})})}
     }),

@@ -1896,7 +1896,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       evidenceScope: "page",
     };
 
-    res.setHeader("cache-control", "public, max-age=30, stale-while-revalidate=120");
+    res.setHeader("cache-control", "private, no-store");
     res.json({
       version: "monthly-evidence-report-v1",
       generatedAt: new Date().toISOString(),
