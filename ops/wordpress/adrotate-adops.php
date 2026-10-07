@@ -383,6 +383,13 @@ if (!function_exists('adrotate_adops_publish_payload')) {
 
 if (!function_exists('adrotate_adops_now')) {
 	function adrotate_adops_now() {
+		if (function_exists('cod5_adops_preview_datetime')) {
+			$preview = cod5_adops_preview_datetime();
+			if ($preview instanceof DateTimeImmutable) {
+				// AdRotate schedules use WordPress local timestamps, not Unix UTC.
+				return $preview->getTimestamp() + wp_timezone()->getOffset($preview);
+			}
+		}
 		if (function_exists('cod5_adops_preview_timestamp')) {
 			return (int) cod5_adops_preview_timestamp();
 		}

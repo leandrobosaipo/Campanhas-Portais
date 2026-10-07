@@ -826,6 +826,14 @@ function getJobAgeMs(record: OpsJobRecord, nowMs = Date.now()) {
   const updated = parseDateMs(record.updated_at);
   const created = parseDateMs(record.created_at);
   const base = updated ?? created ?? nowMs;
+  if (record.status === "queued" || record.status === "ready_for_runner") {
+    const payload = parseJson(record.payload_json);
+    const payloadRecord = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : null;
+    const notBefore = parseDateMs(typeof payloadRecord?.notBefore === "string" ? payloadRecord.notBefore : null);
+    return Math.max(0, nowMs - Math.max(base, notBefore ?? base));
+  }
   return Math.max(0, nowMs - base);
 }
 

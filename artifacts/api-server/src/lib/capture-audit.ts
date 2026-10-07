@@ -507,7 +507,51 @@ export function evaluateVideoPlayerProof(metadata: any, isVideoCapture: boolean)
   };
 }
 
-export function evaluateCaptureMetadata(metadata: any, targetDate: string, now = new Date()) {
+// Candidate callers require this proof from the server's rule. Canonical legacy
+// evidence retains its recorded contract; newly recorded v2 proofs are checked.
+export function evaluateFinalPageClockProof(metadata: any) {
+  const proof = metadata?.visiblePageDateAudit;
+  const box = proof?.box;
+  const viewport = proof?.viewport;
+  const pixels = proof?.pixelAudit;
+  const roi = pixels?.slotBox;
+  const crop = pixels?.cropBox;
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const inside = box && viewport && [box.x, box.y, box.width, box.height, viewport.width, viewport.height, viewport.scrollX, viewport.scrollY].every(finite)
+    && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0
+    && viewport.width > 0 && viewport.height > 0
+    && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
+  const matchingRoi = inside && roi && [roi.left, roi.top, roi.width, roi.height].every(finite)
+    && Math.abs(roi.left - box.x) <= 0.5 && Math.abs(roi.top - box.y) <= 0.5
+    && Math.abs(roi.width - box.width) <= 0.5 && Math.abs(roi.height - box.height) <= 0.5;
+  const matchingCrop = matchingRoi && finite(pixels?.pixelScale) && pixels.pixelScale > 0
+    && finite(metadata?.chromeFrameHeight) && metadata.chromeFrameHeight >= 0
+    && crop && [crop.left, crop.top, crop.width, crop.height].every(finite)
+    && crop.left === Math.round(box.x * pixels.pixelScale)
+    && crop.top === Math.round(metadata.chromeFrameHeight + box.y * pixels.pixelScale)
+    && crop.width === Math.max(1, Math.round(box.width * pixels.pixelScale))
+    && crop.height === Math.max(1, Math.round(box.height * pixels.pixelScale))
+    && pixels.cropSize?.width === crop.width && pixels.cropSize?.height === crop.height;
+  const textMatches = typeof metadata?.requestedCaptureAt === "string"
+    && proof?.requestedCaptureAt === metadata.requestedCaptureAt
+    && typeof proof?.renderedText === "string"
+    && pageTextMatchesRequestedCaptureAt(proof.renderedText, metadata.requestedCaptureAt);
+  return {
+    ok: Boolean(proof?.version === 2 && proof?.source === "final_viewport_page_clock"
+      && proof.ok === true && proof.skipped === false && textMatches && inside
+      && proof.fullyInsideViewport === true && proof.effectiveVisible === true && proof.occlusion === "clear"
+      && pixels?.ok === true && pixels.source === "auditFinalPngSlotPixels_page_clock_roi"
+      && pixels.comparedTo === "viewportPng_page_clock_roi" && matchingCrop
+      && Array.isArray(pixels.issues) && pixels.issues.length === 0
+      && finite(pixels.similarityScore) && finite(pixels.minSimilarity)
+      && pixels.minSimilarity >= 0.82 && pixels.minSimilarity <= 1
+      && pixels.similarityScore >= pixels.minSimilarity && pixels.similarityScore <= 1
+      && finite(pixels.finalCropMeanStddev) && finite(pixels.finalCropMinContentStddev)
+      && pixels.finalCropMinContentStddev >= 4 && pixels.finalCropMeanStddev >= pixels.finalCropMinContentStddev),
+  };
+}
+
+export function evaluateCaptureMetadata(metadata: any, targetDate: string, now = new Date(), options: { finalPageClockRequired?: boolean } = {}) {
   if (!metadata) {
     return {
       requestedCaptureAt: null,
@@ -915,6 +959,16 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
         : `O site não exibiu a data esperada para ${canonicalTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
+  const finalPageClockRequired = reconstructionProvenanceV4 && recordedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
+    && (options.finalPageClockRequired === true || metadata.visiblePageDateAudit?.version === 2);
+  const finalPageClockVerified = !finalPageClockRequired || evaluateFinalPageClockProof(metadata).ok;
+  if (!finalPageClockVerified) {
+    issues.push({
+      code: "final_page_clock_unverified",
+      label: "Relógio do site ausente ou não comprovado no PNG final",
+      detail: "O candidato histórico precisa comprovar data/hora renderizadas, visibilidade no viewport final e correspondência dos pixels da região do relógio.",
+    });
+  }
   if (!contentTimelineOk) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
@@ -1189,10 +1243,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     slotVisibility,
     desktopMatches,
     pageMatches,
+    finalPageClockRequired,
+    finalPageClockVerified,
     playerProofOk,
     visualsOk,
     issues,
-    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && partialSourceEditorialOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && finalPageClockVerified && visualsOk && contentTimelineOk && retroContentProofOk && partialSourceEditorialOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 

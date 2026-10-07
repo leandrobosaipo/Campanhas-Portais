@@ -44,7 +44,7 @@ export type CandidatePromotionServices = {
     insertionId: number;
     targetDate: string;
   }) => Promise<ArchivePlan>;
-  audit?: (input: { insertionId: number; date: string; metadata?: unknown; phase?: "final" }) => Promise<AuditChecklistValidation>;
+  audit?: (input: { insertionId: number; date: string; metadata?: unknown; phase?: "final"; candidateFinalPageClock?: boolean }) => Promise<AuditChecklistValidation>;
 };
 
 export type ReplaceHistoricalPresentation = { evidenceId: number; arquivoUrl: string; sha256: string; bytes: number };
@@ -234,6 +234,20 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
   }
   if (!sourceValid) throw sourceFailure;
 
+  // Re-evaluate candidate metadata before any archive or canonical mutation.
+  // A persisted approval from an earlier rule cannot waive the final clock.
+  if (candidate.metadata.captureClass === "historical_recovery"
+    && (candidate.metadata.reconstruction as Record<string, unknown> | undefined)?.provenanceVersion === 4) {
+    const candidateMetadata = { ...candidate.metadata };
+    attachServerCaptureProvenance(candidateMetadata, {
+      targetDate: candidate.targetDate, sourceJobId: candidate.sourceJobId,
+      capturedAt: candidate.capturedAt.toISOString(), uploadedUrl: candidate.artifactUrl,
+    });
+    const candidateAudit = await audit({ insertionId: candidate.insertionId, date: candidate.targetDate,
+      metadata: candidateMetadata, phase: "final", candidateFinalPageClock: true });
+    if (!candidateAudit.approved) throw Object.assign(promotionError("candidate_final_audit_failed"), { audit: candidateAudit });
+  }
+
   const [insertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, candidate.insertionId)).limit(1);
   if (!insertion) throw promotionError("insertion_not_found");
   const [campaign] = await db.select().from(campaignsTable).where(eq(campaignsTable.id, insertion.campanhaId)).limit(1);
@@ -399,6 +413,7 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
       date: candidate.targetDate,
       metadata: trustedMetadata,
       phase: "final",
+      candidateFinalPageClock: true,
     });
     if (!finalAudit.approved) throw Object.assign(promotionError("final_audit_failed"), { audit: finalAudit });
     const finalMetadata = {

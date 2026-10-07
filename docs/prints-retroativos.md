@@ -21,7 +21,13 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
-### Estado do consumidor — 07/10/2026, checkpoint32
+### Estado atual — 07/10/2026, checkpoint38
+
+Main e aplicação839c publicadas pelo PR121, CI aprovada, backup/restauração e quatro serviços/fonte/asset/OpenAPI conferidos. Cache mensal API e cliente no-store confirmado. Há38/237 pares confirmados;199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeos+9 identidades1944. Os26 protegidos continuam fora do lote.
+
+O candidato2645/24Aug020a53e9 passou na API, mas foi recusado visualmente porque o relógio do site ficou fora do PNG. Original preservado, sem promoção. A correção em andamento exige o relógio original completamente visível, sem cobertura, na última captura e na composição final. Usa viewport real mais alto quando necessário; não permite mover o relógio nem acrescentar carimbo ou faixa de cabeçalho. Datas de notícias não substituem esse relógio. Origem e criação real continuam nos dados e no relatório.
+
+### Histórico — consumidor em07/10/2026, checkpoint32
 
 Release `64b4f560309fccc8386b19bf9333b039bda5263a` (PR119) conferida às 10:55:27 UTC; CI `37608283896`/`37608827821`, quatro serviços/fonte/asset/OpenAPI174/157 e backup fresco/restauração completa aprovados. Há 32/237 pares operáveis confirmados e 205 restantes: 169 não vídeo prontos, 27 vídeos aguardando agenda própria e 9 alvos `#1944` retidos. Os 26 protegidos ficam fora do lote.
 

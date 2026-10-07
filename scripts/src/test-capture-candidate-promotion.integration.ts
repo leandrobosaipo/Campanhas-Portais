@@ -13,9 +13,11 @@ import {
   insertionsTable,
   printJobsTable,
   sitesTable,
+  captureRulesTable,
 } from "@workspace/db";
 import { promoteApprovedCaptureCandidate, type CandidatePromotionServices } from "../../artifacts/api-server/src/lib/capture-proof-candidate-promotion";
-import type { AuditChecklistValidation } from "../../artifacts/api-server/src/lib/audit-checklist";
+import { resolveAuditChecklist, validateAuditChecklist, type AuditChecklistValidation } from "../../artifacts/api-server/src/lib/audit-checklist";
+import { evaluateFinalPageClockProof } from "../../artifacts/api-server/src/lib/capture-audit";
 
 function isExplicitIsolatedTestDatabase() {
   if (process.env.ADOPS_PROMOTION_TEST !== "1" || !process.env.DATABASE_URL) return false;
@@ -57,6 +59,8 @@ function checklist(approved: boolean, insertionId: number, captureClass?: string
 async function withFixture(run: (input: { candidateId: string; insertionId: number; oldUrl: string; candidateUrl: string; finalLogId: string }) => Promise<void>, options: {
   candidateProvenanceVersion?: number; candidateFrameVersion?: string;
   originalCaptureClass?: string; originalProvenanceVersion?: number; originalFrameVersion?: string;
+  finalPageClockProof?: Record<string, unknown>;
+  publishedClockRule?: boolean;
 } = {}) {
   const suffix = randomUUID().replaceAll("-", "").slice(0, 18);
   const candidateId = `test-candidate-${suffix}`;
@@ -66,20 +70,28 @@ async function withFixture(run: (input: { candidateId: string; insertionId: numb
   let siteId: number | null = null;
   let campaignId: number | null = null;
   let insertionId: number | null = null;
+  let clockRuleId: number | null = null;
   try {
-  const [site] = await db.insert(sitesTable).values({ nome: `Test ${suffix}`, sigla: `T${suffix.slice(0, 5)}` }).returning();
+  const [site] = await db.insert(sitesTable).values({ nome: `Test ${suffix}`, sigla: options.publishedClockRule ? "AFL" : `T${suffix.slice(0, 5)}` }).returning();
   siteId = site!.id;
   const [campaign] = await db.insert(campaignsTable).values({ nome: `Promotion test ${suffix}`, competencia: "2026-09" }).returning();
   campaignId = campaign!.id;
   const [insertion] = await db.insert(insertionsTable).values({
     campanhaId: campaign!.id,
     siteId: site!.id,
-    localFormato: "Teste",
+    localFormato: options.publishedClockRule ? "VIDEO" : "Teste",
+    mediaUrl: options.publishedClockRule ? "https://cdn.example.com/creative.mp4" : null,
     periodoInicio: targetDate,
     periodoFim: targetDate,
     statusNormalizado: "ativa",
   }).returning();
   insertionId = insertion!.id;
+  if (options.publishedClockRule) {
+    const [rule] = await db.insert(captureRulesTable).values({ siteSigla: "AFL", groupId: 6,
+      page: "home", slotSelector: ".g.g-6", contextSelector: ".g.g-6", statusPublished: true,
+      auditConfig: { requireVisiblePageDate: true } }).returning();
+    clockRuleId = rule!.id;
+  }
   const metadata = {
     captureClass: "historical_recovery",
     targetDate,
@@ -89,6 +101,7 @@ async function withFixture(run: (input: { candidateId: string; insertionId: numb
     auditPolicyVersion: "audit-policy-v1",
     frameTemplateVersion: options.candidateFrameVersion,
     reconstruction: { provenanceVersion: options.candidateProvenanceVersion ?? 3, historicalDisplayConfirmed: false },
+    ...(options.finalPageClockProof ? { visiblePageDateAudit: options.finalPageClockProof, chromeFrameHeight: 200 } : {}),
   };
   await db.insert(printJobsTable).values({
     id: jobId,
@@ -165,6 +178,7 @@ async function withFixture(run: (input: { candidateId: string; insertionId: numb
     await db.delete(printJobsTable).where(eq(printJobsTable.id, jobId));
     if (insertionId !== null) await db.delete(insertionsTable).where(eq(insertionsTable.id, insertionId));
     if (campaignId !== null) await db.delete(campaignsTable).where(eq(campaignsTable.id, campaignId));
+    if (clockRuleId !== null) await db.delete(captureRulesTable).where(eq(captureRulesTable.id, clockRuleId));
     if (siteId !== null) await db.delete(sitesTable).where(eq(sitesTable.id, siteId));
   }
 }
@@ -244,6 +258,60 @@ function servicesFor(insertionId: number, finalAudit: (call: number, input?: { m
     audit: async (input) => checklist(finalAudit(++auditCalls, input), insertionId, captureClass),
   };
 }
+
+test("candidate v4 approval is rechecked before archive and canonical mutation for the final page clock", { skip: !enabled }, async () => {
+  const clockProof = { version: 2, source: "final_viewport_page_clock", ok: true, skipped: false,
+    requestedCaptureAt: `${targetDate}T18:40:00-04:00`, renderedText: "08/09/2026 18:40",
+    box: { x: 10, y: 20, width: 220, height: 25 }, viewport: { width: 1660, height: 3000, scrollX: 0, scrollY: 0 },
+    fullyInsideViewport: true, effectiveVisible: true, occlusion: "clear",
+    pixelAudit: { source: "auditFinalPngSlotPixels_page_clock_roi", comparedTo: "viewportPng_page_clock_roi",
+      ok: true, issues: [], slotBox: { left: 10, top: 20, width: 220, height: 25 }, pixelScale: 2,
+      cropBox: { left: 20, top: 240, width: 440, height: 50 }, cropSize: { width: 440, height: 50 },
+      similarityScore: 1, minSimilarity: 0.82, finalCropMeanStddev: 20, finalCropMinContentStddev: 4 } };
+  for (const validProof of [false, true]) {
+    await withFixture(async ({ candidateId, insertionId, oldUrl, candidateUrl }) => {
+      let candidateChecks = 0, archives = 0;
+      const services = servicesFor(insertionId, () => true);
+      services.audit = async (input) => {
+        if (input.metadata !== undefined) {
+          assert.equal(input.candidateFinalPageClock, true);
+          candidateChecks++;
+          const contract = await resolveAuditChecklist({ insertionId, date: targetDate });
+          assert.equal(contract.ok, true);
+          assert.ok(contract.ok && contract.requiredGates.requireVisiblePageDate === true);
+          const realChecklist = await validateAuditChecklist(input);
+          assert.equal(realChecklist.blockingIssues.some(issue => issue.code === "metadata_final_page_clock_unverified"), !validProof);
+          // Other capture gates use the established service fixture; this case
+          // isolates the real server-rule clock gate and archive ordering.
+          return checklist(evaluateFinalPageClockProof(input.metadata).ok, insertionId);
+        }
+        return checklist(false, insertionId); // Original canonical remains unapproved.
+      };
+      const originalArchive = services.archiveOriginal!;
+      services.archiveOriginal = async input => { archives++; return originalArchive(input); };
+      if (!validProof) {
+        const before = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+        await assert.rejects(promoteApprovedCaptureCandidate(candidateId, services), /candidate_final_audit_failed/);
+        assert.equal(archives, 0);
+        assert.deepEqual(await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId)), before);
+        assert.equal((await db.select().from(captureProofCandidatePromotionsTable).where(eq(captureProofCandidatePromotionsTable.candidateId, candidateId))).length, 0);
+        const [review] = await db.select().from(captureProofCandidateReviewsTable).where(eq(captureProofCandidateReviewsTable.candidateId, candidateId));
+        assert.equal(review?.decision, "candidate_approved"); // Persisted old approval is preserved.
+      } else {
+        let canonicalCalls = 0;
+        const candidateAudit = services.audit;
+        services.audit = async input => input.metadata !== undefined ? candidateAudit(input) : checklist(++canonicalCalls > 1, insertionId);
+        const result = await promoteApprovedCaptureCandidate(candidateId, services);
+        assert.equal(result.ok, true);
+        assert.equal(archives, 1);
+        const evidence = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+        assert.equal(evidence.find(row => row.titulo?.includes(targetDate))?.arquivoUrl, candidateUrl);
+        assert.notEqual(candidateUrl, oldUrl);
+      }
+      assert.equal(candidateChecks, validProof ? 2 : 1);
+    }, { candidateProvenanceVersion: 4, publishedClockRule: true, ...(validProof ? { finalPageClockProof: clockProof } : {}) });
+  }
+});
 
 test("promotes exact candidate bytes, logs real capture time and keeps receipt time separate", { skip: !enabled }, async () => {
   await withFixture(async ({ candidateId, insertionId, oldUrl, candidateUrl }) => {

@@ -64,6 +64,8 @@ jobs:
           node scripts/src/test-windows-frame-v5.mjs
           node scripts/src/test-observed-tab-favicon.mjs
           node scripts/src/test-native-video-progress-audit.mjs
+          node scripts/src/test-monthly-report-incremental-refresh.mjs
+          node scripts/src/test-adrotate-preview-clock.mjs
       - name: PNMT reconstructed desktop anchor guards
         run: |
           node scripts/src/test-cross-portal-retro-reconstruction.mjs
