@@ -274,7 +274,7 @@ async function api(pathname, options = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       apiRequestCount += 1;
-      const response = await fetchWithTimeout(`${options.baseUrl ?? apiBase}${pathname}`, {
+      const response = await fetchWithTimeout(`${options.baseUrl ?? (process.env.ADOPS_PUBLIC_API_BASE_URL ? apiBase : deliveryApiBase)}${pathname}`, {
         method: options.method || "GET",
         headers: {
           ...apiHeaders(),

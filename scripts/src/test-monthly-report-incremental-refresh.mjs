@@ -37,12 +37,17 @@ const materializeExportsIndex = report.indexOf("const exportLinks = await materi
 assert.ok(previousSnapshotIndex >= 0 && previousSnapshotIndex < reuseDownloadsIndex);
 assert.ok(reuseDownloadsIndex >= 0 && reuseDownloadsIndex < materializeExportsIndex);
 
-function loadReportApi(source, requests) {
+function loadReportApi(source, requests, options = {}) {
   const sourceFile = ts.createSourceFile("monthly-report.mjs", source, ts.ScriptTarget.Latest, true);
-  const apiDeclaration = sourceFile.statements.find((statement) =>
-    ts.isFunctionDeclaration(statement) && statement.name?.text === "api",
+  const functionDeclaration = (name) => sourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name,
   );
+  const apiDeclaration = functionDeclaration("api");
+  const waitDeclaration = functionDeclaration("waitForCompactJob");
+  const materializeDeclaration = functionDeclaration("materializeCompleteCampaignExports");
   assert.ok(apiDeclaration, "real monthly report api() declaration exists");
+  assert.ok(waitDeclaration, "real monthly report waitForCompactJob() declaration exists");
+  assert.ok(materializeDeclaration, "real materializeCompleteCampaignExports() caller exists");
 
   let monthlySourceCall;
   const visit = (node) => {
@@ -56,35 +61,115 @@ function loadReportApi(source, requests) {
   assert.ok(monthlySourceCall, "real evidence-monthly-source call site exists");
 
   const context = vm.createContext({
-    apiBase: "https://operations.invalid",
-    deliveryApiBase: "https://public.invalid",
+    apiBase: options.operationsBase || "https://operations.invalid",
+    deliveryApiBase: options.deliveryBase || "https://delivery.invalid",
+    process: { env: options.env || {} },
     MONTHLY_REPORT_SOURCE_TIMEOUT_MS: 120_000,
+    MONTHLY_REPORT_CAMPAIGN_BATCH_TIMEOUT_MS: 360_000,
+    materializeOptionalExports: true,
+    competencia: "AGOSTO/2026",
     apiRequestCount: 0,
     apiResponseBytes: 0,
     Buffer,
+    Date,
+    Math,
+    Promise,
+    Map,
+    console: { warn() {} },
     apiHeaders: () => ({ authorization: "Bearer unit-test-only" }),
     isPartialCampaignExportBatch: () => false,
     fetchWithTimeout: async (url, options, timeoutMs) => {
       requests.push({ url, options, timeoutMs });
-      return { ok: true, status: 200, text: async () => "{}" };
+      const pathname = new URL(url).pathname;
+      let payload = {};
+      if (pathname === "/api/campaign-evidence-exports/jobs/batch") {
+        const body = JSON.parse(options.body);
+        payload = { items: body.campaigns.map(({ piCodigo }) => ({
+          piCodigo,
+          jobId: `job-${piCodigo}`,
+          httpStatus: 202,
+          status: "ready_for_runner",
+        })) };
+        requests.at(-1).parsedBody = body;
+      } else if (/^\/api\/campaign-evidence-exports\/jobs\/job-/.test(pathname)) {
+        payload = { status: "completed" };
+      }
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
     },
+    hasCompleteEvidenceGroup: (groupItems) => groupItems.length > 0,
+    canonicalCommercialPi: (value) => String(value || ""),
+    completeCampaignExportGroupKey: (item) => `${item.piCodigo}:${item.competencia}`,
+    completeCampaignExportBlocker: () => "",
+    buildCampaignEvidenceExportDownloadUrl: (baseUrl, jobId) => `${baseUrl}/api/campaign-evidence-exports/jobs/${jobId}/download`,
+    publicJobDownloadUrl: (url) => url,
     targetDate: "2026-08-24",
-    competencia: "AGOSTO/2026",
   });
-  new vm.Script(`${apiDeclaration.getText(sourceFile)}\nthis.api = api;`).runInContext(context);
+  new vm.Script([
+    apiDeclaration.getText(sourceFile),
+    waitDeclaration.getText(sourceFile),
+    materializeDeclaration.getText(sourceFile),
+    "this.api = api;",
+    "this.materializeCompleteCampaignExports = materializeCompleteCampaignExports;",
+  ].join("\n")).runInContext(context);
   return { context, monthlySourceCall };
 }
 
 const apiRequests = [];
 const { context: reportApiContext, monthlySourceCall } = loadReportApi(report, apiRequests);
 await new vm.Script(`Promise.resolve(${monthlySourceCall})`).runInContext(reportApiContext);
-assert.equal(apiRequests[0].url, "https://public.invalid/api/campaign-operations/evidence-monthly-source?date=2026-08-24&competencia=AGOSTO%2F2026");
+assert.equal(apiRequests[0].url, "https://delivery.invalid/api/campaign-operations/evidence-monthly-source?date=2026-08-24&competencia=AGOSTO%2F2026");
 assert.equal(apiRequests[0].timeoutMs, 120_000, "monthly source uses the long source timeout");
 assert.equal(apiRequests[0].options.headers.authorization, "Bearer unit-test-only", "public source request preserves bearer auth");
 await reportApiContext.api("/api/ops/daily-print-status", { timeoutMs: 30_000, attempts: 1 });
-assert.equal(apiRequests[1].url, "https://operations.invalid/api/ops/daily-print-status", "other API calls retain operations base");
+assert.equal(apiRequests[1].url, "https://delivery.invalid/api/ops/daily-print-status", "default RPCs bypass the legacy bridge");
 assert.equal(apiRequests[1].timeoutMs, 30_000);
 assert.equal(apiRequests[1].options.headers.authorization, "Bearer unit-test-only");
+
+const batchRequests = [];
+const { context: batchContext } = loadReportApi(report, batchRequests);
+const campaignItems = ["98101", "98102", "98103"].map((piCodigo, index) => ({
+  id: index + 1,
+  piCodigo,
+  competencia: "AGOSTO/2026",
+  requiredDays: ["2026-08-24"],
+  evidenceDays: [{ date: "2026-08-24", status: "audited", url: `https://evidence.invalid/${piCodigo}.jpg` }],
+}));
+const batchResult = await batchContext.materializeCompleteCampaignExports(campaignItems, "2026-08-31");
+const batchRequest = batchRequests.find((request) => new URL(request.url).pathname === "/api/campaign-evidence-exports/jobs/batch");
+assert.ok(batchRequest, "the real batch caller issues the campaign export request");
+assert.equal(batchRequest.url, "https://delivery.invalid/api/campaign-evidence-exports/jobs/batch");
+assert.equal(batchRequest.options.method, "POST");
+assert.equal(batchRequest.timeoutMs, 360_000);
+assert.equal(batchRequest.options.headers.authorization, "Bearer unit-test-only");
+assert.deepEqual(batchRequest.parsedBody.campaigns, campaignItems.map(({ piCodigo }) => ({ piCodigo })));
+assert.equal(batchRequest.parsedBody.asOfDate, "2026-08-31");
+assert.equal(batchRequest.parsedBody.competencia, "AGOSTO/2026");
+assert.equal(batchRequest.parsedBody.mode, "prints-only");
+assert.equal(batchRequest.parsedBody.variant, "web");
+assert.equal(batchRequest.parsedBody.imageMaxWidth, 1600);
+assert.equal(batchRequest.parsedBody.imageQuality, 72);
+assert.equal(batchResult.urls.size, 3);
+for (const item of campaignItems) {
+  assert.equal(batchResult.urls.get(`${item.piCodigo}:${item.competencia}`),
+    `https://operations.invalid/api/campaign-evidence-exports/jobs/job-${item.piCodigo}/download`,
+    "download URLs continue using the operations/public base");
+}
+const pollRequests = batchRequests.filter((request) => /\/api\/campaign-evidence-exports\/jobs\/job-/.test(new URL(request.url).pathname));
+assert.equal(pollRequests.length, 3, "the caller polls every returned child job ID");
+assert.ok(pollRequests.every((request) => request.url.startsWith("https://delivery.invalid/")),
+  "every child status poll uses the direct RPC base");
+
+const overrideRequests = [];
+const { context: envOverrideContext } = loadReportApi(report, overrideRequests, {
+  operationsBase: "https://configured-operations.invalid",
+  env: { ADOPS_PUBLIC_API_BASE_URL: "https://configured-operations.invalid" },
+});
+await envOverrideContext.api("/api/ops/daily-print-status", { attempts: 1 });
+assert.equal(overrideRequests[0].url, "https://configured-operations.invalid/api/ops/daily-print-status",
+  "an explicit ADOPS_PUBLIC_API_BASE_URL remains the default RPC base");
+await envOverrideContext.api("/api/ops/daily-print-status", { baseUrl: "https://per-call.invalid", attempts: 1 });
+assert.equal(overrideRequests[1].url, "https://per-call.invalid/api/ops/daily-print-status",
+  "an explicit per-call baseUrl takes precedence");
 
 function loadAgeFunction(source, names) {
   const sourceFile = ts.createSourceFile("ops-source.ts", source, ts.ScriptTarget.Latest, true);
@@ -128,4 +213,4 @@ for (const [label, source, helpers] of watchdogSources) {
   assert.equal(getJobAgeMs(job({ updated_at: null, created_at: null, payload_json: "{}" }), testNow), 0, `${label}: absent timestamps remain safe`);
 }
 
-console.log("monthly report incremental refresh: 26 source checks + 7 API routing assertions + 20 watchdog-age cases passed");
+console.log("monthly report incremental refresh: monthly source/batch/poll routing, explicit overrides, 26 source checks and 20 watchdog-age cases passed");

@@ -1,5 +1,11 @@
 # Prints Retroativos
 
+## Continuação — 07/10/2026, 19:58 UTC
+
+As 53/237 correções confirmadas e o pacote PI91134/AFL permanecem preservados. A aplicação continua na release CD3: o deploy8f42 parou antes da troca dos serviços e restaurou o runner. Atualização de main/CI não comprova publicação.
+
+O relatório mensal77ca falhou por ZIPs completos ausentes após batch502/503, apesar de um GET200 da fonte. A correção seguinte deve remover a ponte de 60 s das RPCs padrão do gerador, sem mudar bases explicitamente configuradas, URLs de download, corte histórico ou idempotência. Publicação exige os ZIPs e readback; não relaxar o gate nem reenviar resultados desconhecidos.
+
 ## Contrato de apresentação v4 — decisão de 06/10/2026
 
 Para novas reconstruções `historical_recovery`, a proveniência v4 usa

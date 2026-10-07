@@ -1,6 +1,12 @@
 # SPEC — Reconstrução retroativa v4
 
-## Última conferência comprovada — 07/10, 18:26 UTC, CD3/checkpoint53
+## Correção compartilhada mensal — local, ainda não publicada
+
+Em `build-current-month-evidence-report.mjs`, `api()` deve priorizar `options.baseUrl`; sem override da chamada, respeitar `ADOPS_PUBLIC_API_BASE_URL` quando configurada. Sem essa configuração, usar `deliveryApiBase` diretamente para todas as RPCs. A ponte legada encaminha ao mesmo destino, mas aborta em 60000 ms, abaixo dos limites de 120000 ms da fonte e 360000 ms do batch. `apiBase` continua sendo a base das URLs públicas de download. Não alterar endpoints, payloads, lote de três PIs, `asOfDate`, fingerprint, idempotência ou polling.
+
+A tentativa de publicar main8f42 parou antes da troca; readback de 07/10 19:58 UTC confirma CD3 e quatro serviços running/sem pausa. O batch do job77ca falhou com 502/503 e a validação final recusou o relatório por falta de ZIPs completos. GET da fonte/POST aceito não são entrega. Preservar esse bloqueio e consultar IDs/chaves já criados antes de nova produção.
+
+## Histórico — 07/10, 18:26 UTC, CD3/checkpoint53
 
 CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada. Recibos `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json`: quatro serviços running/sem pausa, backup/restauração verificados, dez filtros, OpenAPI 174 operações/157 caminhos. Checkpoint53: **53/237 confirmadas; 184 restantes** (148 não-vídeo, 26 vídeo, uma retenção técnica #2278/27Aug, nove identidades #1944); sem novas capturas, 26 protegidos fora da execução.
 

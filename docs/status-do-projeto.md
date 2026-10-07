@@ -1,6 +1,15 @@
 # Estado confirmado do projeto AdOps
 
-## Última conferência comprovada — 07/10/2026, 18:26 UTC — CD3/checkpoint53
+## Última conferência comprovada — 07/10/2026, 19:58 UTC
+
+- Main8f42/PR125 e CI estão aprovadas; sua publicação falhou antes da troca dos serviços, durante o preparo do volume web.
+- CD3 permanece publicada. Os quatro serviços estão running/sem pausa; o runner foi restaurado com o mesmo PID. Backup e restauração completos de 8f42 foram verificados.
+- Permanecem **53/237 evidências confirmadas; 184 pendentes**. Nenhuma nova captura ou promoção nesta continuação; 26 protegidas fora do escopo.
+- O mensal77ca falhou em 19:44 UTC: fonte GET200, mas batch502/503 e ZIPs completos ausentes. A correção source-only do PR125 não basta; a correção local seguinte usa destino direto nas RPCs padrão, preservando overrides, downloads e contratos. Entrega mensal continua pendente.
+- PI91134/AFL continua entregue por seu job próprio, com 11 páginas/JPEGs e checksums verificados; a falha do mensal não invalida esse pacote.
+- #2278/27Aug continua retida: autorização de leitura/backup existe, mas o acesso SSH ainda recusou a leitura dos quatro arquivos. Não houve publicação WordPress.
+
+## Histórico — 07/10/2026, 18:26 UTC — CD3/checkpoint53
 
 Release CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` publicada e conferida. Recibos `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços running/sem pausa, backup/restauração verificados, dez filtros e OpenAPI com 174 operações/157 caminhos.
 
