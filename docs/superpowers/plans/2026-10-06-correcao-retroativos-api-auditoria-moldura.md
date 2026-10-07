@@ -10,6 +10,24 @@
 
 **Spec:** docs/adops/retroactive-proof-v4/{prd,spec,harness}.md.
 
+## Estado atual — 07/10/2026
+
+**24/263 confirmadas; 239 restantes.** Main d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 publicada, CI37582190457 e backup/restauração/readback integral conferidos às 07:54 UTC. Recibo privado `release-final-roo-afl-maintenance.json`. As tarefas abaixo conservam registros de etapas anteriores; publicação de código não encerra o lote.
+
+Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-retro-canary-followup-20261007`; checkout original preservado.
+
+### Task 16: Corrigir causas dos três canários d1
+
+**Owner:** Luna implementa pequenas alterações seriais no capturer/focais; Sol reproduz e revisa; root atualiza docs, integra, publica e opera. Sem nova dependência ou redução da auditoria.
+
+1. [x] AFL: conservar ID numérico da resposta WP; regressão usa fetch padrão/REST bruto/collector, com RED→GREEN e ID69702 real.
+2. [x] ROO: reconhecer somente espaços e zero/um comentário literal conhecido de AdRotate no perfil desktop-top-1. Preservar nós, rejeitar texto/comentários/elementos/âncoras inválidos; RED→GREEN.
+3. [x] VIDEO: dois passes do lock devem marcar ativo com valor `1`, removendo atributo dos inativos. Comparação pareada readonly confirmou causa; focal real conserva negativos de oclusão/ROI e siblings inativos.
+4. [x] Sol repetiu os três focais e aprovou os patches; sintaxe e diff-check passaram. Atualizar SPEC/HARNESS/PRD/manual com causa, escopo e estado real.
+5. [ ] CI do SHA exato, merge main, nova publicação com dump/restauração/rollback/readback e quatro serviços/fonte/JavaScript/OpenAPI.
+6. [ ] Repetir os três canários serialmente; conferir auditoria final e PNG individual, persistir revisão exata, promover pela API, conferir archive/hash/status/consumidor.
+7. [ ] Retomar os demais pares em grupos de até quatro, mantendo gates individuais. Checkpoint só cresce após entrega conferida; unknown e duplicidades sem fonte permanecem preservados.
+
 ## Global Constraints
 
 - Worktree: /Users/leandrobosaipo/.codex/worktrees/adops-retroativos-20261006/AdOps; branch codex/adops-retroativos-20261006. Não editar checkout original com 161 alterações.

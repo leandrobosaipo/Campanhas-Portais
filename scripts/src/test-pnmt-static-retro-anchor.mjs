@@ -384,10 +384,30 @@ try {
   const rooApplied = await applyPerrengueStaticRetroAd(page, rooMapping, media, "banner.svg", rooCandidateOptions);
   assert.equal(rooApplied.applied, true);
   assert.equal(await page.locator("header .omt-header-top .hidden.lg\\:block #block-8 > .g.g-1[data-adops-reconstructed-slot='1']").count(), 1);
+  const knownAdRotateComment = "Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!";
+  const rooCommentAnchor = rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'> \n<!-- " + knownAdRotateComment + " -->\n </div>");
+  await page.setContent(rooCommentAnchor);
+  const rooCommentApplied = await applyPerrengueStaticRetroAd(page, rooMapping, media, "banner.svg", rooCandidateOptions);
+  assert.equal(rooCommentApplied.applied, true, "ROO v4 may rebuild beside the known AdRotate-unavailable marker");
+  assert.deepEqual(await page.locator("header .omt-header-top .hidden.lg\\:block #block-8").evaluate((host) =>
+    Array.from(host.childNodes).map((node) => ({
+      type: node.nodeType,
+      text: node.nodeType === Node.COMMENT_NODE ? node.nodeValue.trim() : node.nodeType === Node.TEXT_NODE ? node.nodeValue : null,
+      reconstructedSlot: node instanceof HTMLElement && node.matches(".g.g-1[data-adops-reconstructed-slot='1']"),
+    }))),
+  [
+    { type: 3, text: " \n", reconstructedSlot: false },
+    { type: 8, text: knownAdRotateComment, reconstructedSlot: false },
+    { type: 3, text: "\n ", reconstructedSlot: false },
+    { type: 1, text: null, reconstructedSlot: true },
+  ], "the original AdRotate comment must remain in place before the reconstructed slot");
   for (const [index, html] of [
     rooEmptyAnchor.replace("<header>", "<div>"),
     rooEmptyAnchor.replace("display:block;width:944px", "display:none;width:944px"),
     rooEmptyAnchor + rooEmptyAnchor,
+    rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><!-- unrelated --></div>"),
+    rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'>not whitespace</div>"),
+    rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><!-- " + knownAdRotateComment + " --><!-- " + knownAdRotateComment + " --></div>"),
     rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><span>occupied</span></div>"),
     rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><div class='g g-1'></div></div>"),
     rooEmptyAnchor + "<header><div class='omt-header-top'></div></header>",

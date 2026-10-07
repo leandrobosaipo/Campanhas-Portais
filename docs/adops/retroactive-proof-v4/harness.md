@@ -1,5 +1,17 @@
 # HARNESS — Reconstrução retroativa v4
 
+## Checkpoint atual — 07/10/2026
+
+Às 07:54 UTC, main/release d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 e CI 37582190457 conferidas: backup novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI. **24/263 evidências confirmadas, 239 restantes**. Os checkpoints abaixo são registros históricos; não substituem este estado. Recibo privado `release-final-roo-afl-maintenance.json`.
+
+Os três canários d1 falharam antes da promoção, com originais preservados:
+
+- AFL #2692/21Aug, job1791359711274-xcytml: o fetch descartava o ID WP. A regressão usa resposta REST bruta, caminho padrão de fetch e collector real, exigindo ID69702; posts ausentes continuam recusados.
+- ROO #2641/23Aug, job1791359993006-on5gzx: `#block-8` continha comentário literal de indisponibilidade AdRotate. Focal ROO/PNMT admite apenas espaços e zero/um comentário conhecido, preservando nós e ordem; recusa comentário desconhecido/duplicado, texto, elementos e âncoras inválidas.
+- VIDEO #3064/01Oct, job1791360198866-54n4dk: os dois passes de lock criavam atributo ativo vazio, enquanto CSS exigia `"1"`. Comparação somente leitura no mesmo DOM assinado: vazio→falha/pointer none; valor1→timeline clear; vazio restaurado→falha. A fixture executa `forceMatchedAdVisible` com dois criativos e CSS real; confirma valor1 inicial/periódico, sibling inativo, timeline nativa aprovada e negativos de cobertura/recorte/barra artificial intactos.
+
+Os focais AFL, ROO/PNMT e vídeo nativo passaram com revisão independente Sol. Sintaxe/diff-check passaram. Essas três correções seguem locais: exigir nova CI/release/readback e repetir canários, auditoria, revisão individual do PNG, promoção/archive/hash/consumidor antes de contabilizar. As comparações locais não são uma captura produtiva concluída. Nenhum gate de oclusão/editorial foi reduzido.
+
 ## Verificação local
 
 Executar na branch isolada baseada em e11c7cc37a27f0787fdead8381d32f06c1b17acc, usando lockfile existente. Registrar comando, SHA e resultado; uma etapa skip não prova sua propriedade.

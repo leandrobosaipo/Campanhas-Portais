@@ -22,7 +22,7 @@ Reutilizar o GET de status da evidência canônica. Inserção/data/sourceJobId,
 
 ## ROO/home/grupo1: fonte legada de posição e criativo
 
-Extensão em implementação, ainda não publicada. Somente roonoticias.com, home, grupo1, slot/contexto `.g.g-1`, candidato histórico v4 sem gravação canônica, referência explícita igual à fonte e ao preview assinado, data contratual dentro de período encerrado. Reutilizar o GET canônico: original com audit/checklist totalmente aprovados, não preliminar, zero bloqueadores, inserção/data/job/URL alcançável/mídia/contexto/pixels/identidade/visibilidade correlacionados. Hash e bytes reais do original permanecem nos guards de preparação/promoção.
+Contrato publicado na release d1e1974; o canário #2641/23Aug falhou antes do upload e não foi promovido. Somente roonoticias.com, home, grupo1, slot/contexto `.g.g-1`, candidato histórico v4 sem gravação canônica, referência explícita igual à fonte e ao preview assinado, data contratual dentro de período encerrado. Reutilizar o GET canônico: original com audit/checklist totalmente aprovados, não preliminar, zero bloqueadores, inserção/data/job/URL alcançável/mídia/contexto/pixels/identidade/visibilidade correlacionados. Hash e bytes reais do original permanecem nos guards de preparação/promoção.
 
 A fonte parcial aceita exclusivamente retroContentProof ausente/null e timeline empty_samples, com zero amostras e zero datas interpretadas. Ausência não equivale a aprovação editorial. Fonte editorial rejeitada, falha de relógio ou qualquer outro bloqueador não entram nessa exceção. Preservar o contrato e o arquivo legados. Reutilizar `reconstruction.sourceEvidence`, acrescentando `proofScope:position_only` e `sourceEditorialProofStatus:missing_legacy`; URL/job/origem continuam identificando o original. Não duplicar objetos de prova nem atribuir manifest hash editorial à fonte sem prova.
 
@@ -32,11 +32,15 @@ Antes do upload, exigir marker de preview ativo e data-cutoff real equivalente a
 
 Antes do upload, o candidato novo produz a prova editorial existente: retroContentManifest, editorialSamples, retroContentProof. Exigir pelo menos três posts esperados, três amostras válidas e três matches, zero conteúdo futuro, hash de 64 hexadecimais e status aprovado. Não reduzir o mínimo por feed escasso nessa extensão. Prova ausente/rejeitada bloqueia a nova captura; não aproveitar o checklist legado como prova editorial nova. Os demais gates finais, auditoria/revisão visual/promoção/CAS/readback continuam obrigatórios. PNG sem carimbo e historicalDisplayConfirmed=false.
 
-PERR9/PPMT1 mantêm a prova editorial original estrita e os códigos temporais autorizados; não ampliar late_publication_recovery, alterar configuração ou reinterpretar originais. Main be10 publicada e CI aprovada; essa extensão ainda não integra a release publicada.
+PERR9/PPMT1 mantêm a prova editorial original estrita e os códigos temporais autorizados; não ampliar late_publication_recovery, alterar configuração ou reinterpretar originais.
+
+Somente no perfil `roo-desktop-top-1`, âncora vazia permite nós de texto com espaços e no máximo um comentário literal do AdRotate: `Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!`. Preservar esses nós ao acrescentar o slot. Texto não vazio, outro comentário, comentário duplicado ou elemento filho bloqueiam. A presença desse comentário não comprova veiculação nem dispensa fonte, preview e prova editorial.
 
 A API final também verifica o contrato position_only, antes da promoção. Exige perfil ROO/home/grupo1/historical_recovery/v4, configuração allowAuditedReconstruction/requireRetroContentProof habilitada e sourceEditorialProofStatus=missing_legacy. Recalcula pelo menos três matches de URLs HTTPS da origem ROO, datas esperadas/amostras válidas sem futuras e contagens inteiras mínimas; hash64 e status aprovado permanecem obrigatórios. Ausência/divergência gera partial_source_editorial_unverified e common.ok=false; não confiar só no status declarado pelo capturer.
 
 ## Coleta AFL e diagnóstico de falha
+
+O fetch WordPress deve conservar o ID numérico real do post na normalização. Testar a resposta REST bruta pelo caminho de fetch padrão, sem injetar posts já normalizados. ID ausente/zero continua bloqueado; não gerar um ID substituto.
 
 O collector AFL/article reconstruído deve persistir expectedPosts e editorialSamples da mesma matéria selecionada pela URL efetivamente aberta e título verificado. A lista geral do WordPress não pode manter outro post em expectedPosts[0]. Validar origem HTTPS configurada, pathname real, post identificado e fonte afl-wp-rest; ausência/divergência falha com retro_content_article_identity_unverified. A API mantém article_context_mismatch, inclusive quando o PNG é coerente mas o manifest esperado é de outra matéria.
 
@@ -65,6 +69,8 @@ Inventário implementado e revisado: GET `/api/insertions/capture-proof/audit?sc
 Inclui históricos aprovados e origens desconhecidas separadamente; não infere histórico por data UTC. A correlação usa log/URL/job e, quando aplicável, recibo final aprovado de identidade/hash/bytes exatos. Logs ficam limitados aos 50 mais recentes por par; status pending/unknown não é uma auditoria viva recomputada. A consulta não executa captura, auditoria remota por item, enriquecimento global nem retorna DOM/base64/secrets. Sem scope, a auditoria legada continua com seu próprio contrato. Antes de substituir uma evidência, usar os gates vivos de candidato/promoção e o canário do harness.
 
 ## Player de vídeo
+
+O bloqueio de rotação usa `data-adops-capture-active-ad="1"` no criativo selecionado. Os dois passes de `forceMatchedAdVisible` devem gravar esse valor exato e remover o atributo dos inativos. Atributo vazio não satisfaz o seletor CSS e mantém `pointer-events:none` no player. Não corrigir esse erro relaxando a auditoria de oclusão ou reativando anúncios inativos.
 
 Para reconstrução VIDEO com `reconstruction.provenanceVersion=4`, `videoProof` isolado não basta. `nativeProgressAudit` no topo da metadata tem `version=1`, `source=chromium_ua_shadow_timeline`, identifica o INPUT range de pseudo `-webkit-media-controls-timeline` dentro do vídeo correto e mede value/max contra currentTime/duration com tolerância de 0,25 segundo. A visibilidade considera ancestrais, opacidade efetiva, viewport, limites do vídeo e oclusão exatamente `clear`; `visibleRatio` é a menor fração entre largura/altura após clipping e deve ser finita, pelo menos 0,95. O vídeo é pausado antes da captura e `videoProof` recebe tempo/duração/paused/controls medidos no mesmo estado final. `artificialOverlayCount=0` é medido no DOM. Não usar `aria-valuetext`, que ficou desatualizado na fixture Chromium, nem o atributo `controls` como prova de pixels.
 

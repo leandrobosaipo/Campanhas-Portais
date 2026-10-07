@@ -717,6 +717,7 @@ async function fetchAflRetroPosts(captureAt) {
     const terms = Array.isArray(embedded["wp:term"]) ? embedded["wp:term"].flat() : [];
     const category = terms.find((term) => term?.taxonomy === "category") || null;
     return {
+      id: Number(item?.id || 0),
       title: stripHtml(item?.title?.rendered || item?.title || ""),
       excerpt: stripHtml(item?.excerpt?.rendered || ""),
       slug: String(item?.slug || ""),
@@ -1364,7 +1365,8 @@ async function forceMatchedAdVisible(page) {
       for (const item of items) {
         if (!(item instanceof HTMLElement)) continue;
         const isMatch = item === activeItem;
-        item.toggleAttribute("data-adops-capture-active-ad", isMatch);
+        if (isMatch) item.setAttribute("data-adops-capture-active-ad", "1");
+        else item.removeAttribute("data-adops-capture-active-ad");
         item.style.setProperty("display", isMatch ? "block" : "none", "important");
         item.style.setProperty("opacity", isMatch ? "1" : "0", "important");
         item.style.setProperty("visibility", isMatch ? "visible" : "hidden", "important");
@@ -1403,7 +1405,8 @@ async function forceMatchedAdVisible(page) {
       for (const item of currentItems) {
         if (!(item instanceof HTMLElement)) continue;
         const isMatch = item === currentActive;
-        item.toggleAttribute("data-adops-capture-active-ad", isMatch);
+        if (isMatch) item.setAttribute("data-adops-capture-active-ad", "1");
+        else item.removeAttribute("data-adops-capture-active-ad");
         item.style.setProperty("display", isMatch ? "block" : "none", "important");
         item.style.setProperty("opacity", isMatch ? "1" : "0", "important");
         item.style.setProperty("visibility", isMatch ? "visible" : "hidden", "important");
@@ -3345,6 +3348,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
   if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2 && !auditedCandidateReconstruction) return false;
   if (auditedCandidateReconstruction && !["perrengue-popup-9", "ppmt-desktop-top-1", "roo-desktop-top-1"].includes(options.auditedCandidateReconstruction.profile)) return false;
   return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan, auditedCandidateReconstruction }) => {
+    const knownAdRotateUnavailableComment = "Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!";
     const normalizeSelector = (value) => String(value || "").trim();
     const createMissingInternalSlot = () => {
       const selector = normalizeSelector(slotSelector);
@@ -3489,8 +3493,20 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       if (hosts.length !== 1) return null;
       const host = hosts[0];
       if (!(host instanceof HTMLElement)) return null;
-      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
-        && (host.id !== "block-8" || host.children.length !== 0 || host.childNodes.length !== 0)) return null;
+      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1") {
+        if (host.id !== "block-8" || host.children.length !== 0) return null;
+        let knownCommentCount = 0;
+        for (const child of Array.from(host.childNodes)) {
+          if (child.nodeType === Node.TEXT_NODE && !String(child.nodeValue || "").trim()) continue;
+          if (child.nodeType === Node.COMMENT_NODE
+            && String(child.nodeValue || "").trim() === knownAdRotateUnavailableComment
+            && knownCommentCount === 0) {
+            knownCommentCount += 1;
+            continue;
+          }
+          return null;
+        }
+      }
       const desktopHost = host.closest("div.hidden.lg\\:block");
       if (!(desktopHost instanceof HTMLElement)) return null;
       const style = window.getComputedStyle(desktopHost);
@@ -3520,7 +3536,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
         let hasAdRotateUnavailableComment = false;
         while (walker.nextNode()) {
-          if (String(walker.currentNode.nodeValue || "").trim() === "Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!") {
+          if (String(walker.currentNode.nodeValue || "").trim() === knownAdRotateUnavailableComment) {
             hasAdRotateUnavailableComment = true;
             break;
           }
@@ -9627,6 +9643,7 @@ if (require.main === module) {
 } else {
   module.exports = {
     validateCaptureChecklist,
+    forceMatchedAdVisible,
     applyAflRetroPreview,
     stabilizeVisibleRetroDatesBeforeCapture,
     applyOmtRetroPreview,
