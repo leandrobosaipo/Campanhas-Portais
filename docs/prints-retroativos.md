@@ -21,7 +21,7 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
-### ROO/home/grupo1: fonte parcial e canário pendente
+### ROO/home/grupo1: fonte parcial e canário conferido
 
 Um original legado totalmente aprovado para posição/criativo, sem prova editorial
 e com empty_samples/zero amostras, pode sustentar apenas essa parte da reconstrução
@@ -32,7 +32,9 @@ explícita, período encerrado, fonte exata e anchor desktop único/vazio/visív
 antes do upload deve produzir três posts/amostras/matches, zero futuros, hash64 e
 prova editorial aprovada. Sem carimbo ou alegação de veiculação passada.
 
-O contrato foi publicado em d1e1974. O canário ROO #2641/23Aug falhou antes do upload: a âncora contém o comentário literal de indisponibilidade do AdRotate. A correção local permite apenas esse comentário único e espaços, preservando os nós; demais conteúdos continuam bloqueados. Nova release, captura, auditoria, revisão e promoção ainda são necessárias.
+O contrato foi publicado em d1e1974. A correção04cd98ba906e permite somente espaços e zero/um comentário literal conhecido de indisponibilidade AdRotate na âncora, preservando nós; demais conteúdos continuam bloqueados. ROO #2641/23Aug foi auditado, revisado e promovido, com original arquivado, hash/status e miniatura/modal conferidos.
+
+Em vídeo, slot_captured inclui a última recaptura nativa e sua medição. capturedAt/reconstructedAt registram esse instante real; final_composed começa depois. O job #3064/01Oct em04cd foi recusado no registro porque a etapa fechava 2071 ms antes dessa recaptura. Correção em andamento; original preservado, sem promoção ou alteração retroativa da metadata.
 PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação tardia.
 Critérios completos e negativos estão na SPEC/HARNESS acima.
 

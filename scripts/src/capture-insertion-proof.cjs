@@ -8708,12 +8708,6 @@ async function main() {
       await page.screenshot({ path: viewportPng });
       stampCaptureInstant();
     }
-    trace.finish(slotCapturedStage, "ok", {
-      slotVisibility,
-      viewportImagesLoaded: visualAudit?.viewportImagesLoaded ?? null,
-      slotImagesLoaded: visualAudit?.slotImagesLoaded ?? null,
-    });
-
     const finalPageUrl = targetUrl || page.url();
 
     const pageDateSelectors = mergePageDateSelectors(mapping.pageDateSelectors);
@@ -8889,6 +8883,12 @@ async function main() {
         capturedAt: new Date().toISOString(),
       };
     }
+
+    trace.finish(slotCapturedStage, "ok", {
+      slotVisibility,
+      viewportImagesLoaded: visualAudit?.viewportImagesLoaded ?? null,
+      slotImagesLoaded: visualAudit?.slotImagesLoaded ?? null,
+    });
 
     const finalComposedStage = trace.start("final_composed");
     if (reconstruction) {

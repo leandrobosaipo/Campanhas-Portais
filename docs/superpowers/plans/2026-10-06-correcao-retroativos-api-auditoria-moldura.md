@@ -12,9 +12,9 @@
 
 ## Estado atual — 07/10/2026
 
-**24/263 confirmadas; 239 restantes.** Main d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 publicada, CI37582190457 e backup/restauração/readback integral conferidos às 07:54 UTC. Recibo privado `release-final-roo-afl-maintenance.json`. As tarefas abaixo conservam registros de etapas anteriores; publicação de código não encerra o lote.
+**26/263 confirmadas; 237 restantes.** Main04cd98ba906ec57efc86ffd1a44390b5c666c5c2 publicada pelo PR117, CI37594453308 e backup/restauração/readback integral conferidos às08:50:26 UTC. Recibo privado `release-final-retro-canary-followup.json`. AFL2692/21Aug e ROO2641/23Aug promovidas com consumidor conferido. As tarefas abaixo conservam registros anteriores; publicação de código não encerra o lote.
 
-Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-retro-canary-followup-20261007`; checkout original preservado.
+Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-native-final-capture-stage-20261007`; checkout original preservado.
 
 ### Task 16: Corrigir causas dos três canários d1
 
@@ -24,9 +24,22 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 2. [x] ROO: reconhecer somente espaços e zero/um comentário literal conhecido de AdRotate no perfil desktop-top-1. Preservar nós, rejeitar texto/comentários/elementos/âncoras inválidos; RED→GREEN.
 3. [x] VIDEO: dois passes do lock devem marcar ativo com valor `1`, removendo atributo dos inativos. Comparação pareada readonly confirmou causa; focal real conserva negativos de oclusão/ROI e siblings inativos.
 4. [x] Sol repetiu os três focais e aprovou os patches; sintaxe e diff-check passaram. Atualizar SPEC/HARNESS/PRD/manual com causa, escopo e estado real.
-5. [ ] CI do SHA exato, merge main, nova publicação com dump/restauração/rollback/readback e quatro serviços/fonte/JavaScript/OpenAPI.
-6. [ ] Repetir os três canários serialmente; conferir auditoria final e PNG individual, persistir revisão exata, promover pela API, conferir archive/hash/status/consumidor.
+5. [x] CI do SHA exato, merge main, nova publicação com dump/restauração/rollback/readback e quatro serviços/fonte/JavaScript/OpenAPI (PR117/04cd).
+6. [ ] Repetidos os três canários: AFL e ROO conferidos e promovidos; VIDEO completou PNG mas registro409 por fechamento antecipado de slot_captured. Sem promoção; seguir Task17.
 7. [ ] Retomar os demais pares em grupos de até quatro, mantendo gates individuais. Checkpoint só cresce após entrega conferida; unknown e duplicidades sem fonte permanecem preservados.
+
+### Task 17: Fechar a captura depois da recaptura final nativa
+
+**Owner:** Luna possui capturer/teste focal; Sol revisa e qualifica helper privado de repetição; root possui docs/Git/publicação/API/consumidor. Sem dependências novas.
+
+1. [x] Diagnóstico Sol: job1791363572087-igd8ad completou PNG, mas capturedAt=09:00:07.378Z ultrapassou slot_captured.finishedAt=09:00:05.307Z. Validator real11/12, diferença2071ms; nenhum candidato registrado. Preservar job/artifact/canônico.
+2. [x] Luna moveu o mesmo finish da etapa para após a última screenshot/medição e antes de final_composed. Não alterar relógios, policy ou validator.
+3. [x] Regressão RED→GREEN no teste existente: ordem das chamadas e recusa/aceite do mesmo instante real conforme janela da etapa. Focal5/5, nativo10, syntax/diff-check aprovados por Luna.
+4. [ ] Revisão independente Sol; typecheck com runtime existente; documentação consistente.
+5. [ ] Qualificar opt-in privado separado para job completado sem candidato por esse erro409 exato. Exigir tuple/release/referência/bytes/hash/diagnóstico, lista completa sem candidato e ausência de aprovação/promoção; canonicalCAS. Não fingir rejeição visual ou falha do job.
+6. [ ] PR/CI do SHA exato/main; nova publicação com backup/restauração e readback integral. Não publicar enquanto houver captura ativa.
+7. [ ] Novo canário VIDEO, auditoria final, revisão individual, promoção/archive/hash/status/miniatura/modal. Só então aumentar a contagem.
+8. [ ] Continuar grupos até263; pacotes PI/portal somente pela API assíncrona. PI textual “PI - TCE” depende da escolha solicitada ao usuário; não inventar número.
 
 ## Global Constraints
 

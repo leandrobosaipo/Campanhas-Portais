@@ -23,7 +23,7 @@ A v3 legada mostra a referência histórica na página e o instante real na mold
 
 ## Checkpoint
 
-Em 07/10/2026 às 07:54 UTC: **24/263 correções confirmadas; 239 restantes**. Main d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 publicada; CI 37582190457 aprovada, dump novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI conferidos (`release-final-roo-afl-maintenance.json` privado). Os três canários d1 falharam e não foram promovidos: AFL #2692/21Aug perdeu ID no fetch; ROO #2641/23Aug encontrou comentário AdRotate na âncora; VIDEO #3064/01Oct recebeu atributo ativo vazio. Correções dessas causas seguem em branch local, com regressões e revisão independente. Não contar testes locais como entrega de evidências.
+Em 07/10/2026: **26/263 correções confirmadas; 237 restantes**. Main04cd98ba906ec57efc86ffd1a44390b5c666c5c2 publicada pelo PR117, CI37594453308 aprovada; dump novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI conferidos às08:50:26 UTC (`release-final-retro-canary-followup.json` privado). AFL #2692/21Aug e ROO #2641/23Aug auditadas, revisadas, promovidas e conferidas no consumidor. VIDEO #3064/01Oct continua sem promoção: a recaptura final ocorreu 2071 ms após o fechamento de slot_captured; API recusou o registro. Corrigir a ordem das etapas, sem alterar instante real ou relaxar proveniência. Não contar testes locais ou PNG concluído como entrega de evidências.
 
 ## Fora do escopo
 

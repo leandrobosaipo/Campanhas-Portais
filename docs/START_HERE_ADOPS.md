@@ -2,6 +2,8 @@
 
 Relatório dinâmico de evidências: [`docs/adops/relatorio-dinamico-evidencias.md`](adops/relatorio-dinamico-evidencias.md).
 
+Reconstruções retroativas atuais: [contrato v4](adops/retroactive-proof-v4/spec.md), [validação](adops/retroactive-proof-v4/harness.md) e [plano de correção](superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md). Estado de07/10/2026: main/release04cd98ba906e conferida;26/263 imagens corrigidas,237 restantes. Os relógios visuais são históricos; origem e criação reais permanecem nos dados/relatório. PNG sem carimbo adicional. Consultar [status atual](status-do-projeto.md) antes de usar os registros históricos abaixo.
+
 > Estado: vigente
 > Público: equipe operacional e agentes
 > Última validação: 2026-08-26

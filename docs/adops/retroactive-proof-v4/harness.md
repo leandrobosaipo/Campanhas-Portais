@@ -2,7 +2,7 @@
 
 ## Checkpoint atual — 07/10/2026
 
-Às 07:54 UTC, main/release d1e1974c5583573e5cd38f3e6d9ecc4b4c52dc35 e CI 37582190457 conferidas: backup novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI. **24/263 evidências confirmadas, 239 restantes**. Os checkpoints abaixo são registros históricos; não substituem este estado. Recibo privado `release-final-roo-afl-maintenance.json`.
+Main/release `04cd98ba906ec57efc86ffd1a44390b5c666c5c2`, PR117 e CI37594453308 conferidos. Readback em 08:50:26 UTC: backup novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI. **26/263 evidências confirmadas, 237 restantes**. AFL #2692/21Aug e ROO #2641/23Aug passaram em auditoria final, PNG individual, promoção, archive/hash/status e miniatura/modal. Recibos privados `release-final-retro-canary-followup.json` e `checkpoint-26-confirmed.json`. Os checkpoints abaixo são históricos.
 
 Os três canários d1 falharam antes da promoção, com originais preservados:
 
@@ -10,7 +10,13 @@ Os três canários d1 falharam antes da promoção, com originais preservados:
 - ROO #2641/23Aug, job1791359993006-on5gzx: `#block-8` continha comentário literal de indisponibilidade AdRotate. Focal ROO/PNMT admite apenas espaços e zero/um comentário conhecido, preservando nós e ordem; recusa comentário desconhecido/duplicado, texto, elementos e âncoras inválidas.
 - VIDEO #3064/01Oct, job1791360198866-54n4dk: os dois passes de lock criavam atributo ativo vazio, enquanto CSS exigia `"1"`. Comparação somente leitura no mesmo DOM assinado: vazio→falha/pointer none; valor1→timeline clear; vazio restaurado→falha. A fixture executa `forceMatchedAdVisible` com dois criativos e CSS real; confirma valor1 inicial/periódico, sibling inativo, timeline nativa aprovada e negativos de cobertura/recorte/barra artificial intactos.
 
-Os focais AFL, ROO/PNMT e vídeo nativo passaram com revisão independente Sol. Sintaxe/diff-check passaram. Essas três correções seguem locais: exigir nova CI/release/readback e repetir canários, auditoria, revisão individual do PNG, promoção/archive/hash/consumidor antes de contabilizar. As comparações locais não são uma captura produtiva concluída. Nenhum gate de oclusão/editorial foi reduzido.
+Os focais AFL, ROO/PNMT e vídeo nativo passaram com revisão independente Sol, sintaxe/diff-check e CI; publicados no PR117. Nenhum gate de oclusão/editorial foi reduzido.
+
+### Recaptura final nativa: bloqueio de proveniência
+
+VIDEO #3064/01Oct, job1791363572087-igd8ad na release04cd: PNG concluído e timeline nativa aprovada, mas registro HTTP409 `candidate_provenance_blocked`/`candidate_metadata_provenance_mismatch`. O validator puro aplicado à metadata real aprovou 11/12 condições: capturedAt=reconstructedAt=09:00:07.378Z ultrapassou slot_captured.finishedAt=09:00:05.307Z em 2071 ms. A etapa fechava antes da recaptura final nativa. Sem candidato registrado ou promoção; original preservado.
+
+Correção em branch: fechar slot_captured somente após a última screenshot e medição, antes de iniciar final_composed. Preservar instantes reais e validator estrito. Regressão executável, revisão Sol, CI/publicação e novo canário são gates distintos. Nunca ajustar a metadata antiga nem registrar rejeição visual fictícia para repetir a captura.
 
 ## Verificação local
 
