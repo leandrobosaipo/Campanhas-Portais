@@ -2,11 +2,11 @@
 
 ## Estado publicado e atualização mensal
 
-Release `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119/CI37608283896/37608827821, conferida em 07/10 às10:55:27 UTC. O canário VIDEO3064/01Oct passou auditoria final, revisão individual, promoção/archive/hash/status e miniatura/modal: checkpoint32/237 confirmados,205 restantes (169 não vídeo,27 vídeo,9 identidades1944 retidas). Os26 protegidos e1157 unknown não entram na execução.
+Release API `64b4f560309fccc8386b19bf9333b039bda5263a`, PR119/CI37608283896/37608827821, conferida em 07/10 às10:55:27 UTC. O canário VIDEO3064/01Oct passou auditoria final, revisão individual, promoção/archive/hash/status e miniatura/modal. Checkpoint36:36/237 confirmados,201 restantes:164 não vídeo liberados,1 não vídeo retido tecnicamente (#2278/27Aug),27 vídeos retidos até a Task22 e9 identidades1944 retidas. Inclui quatro datas2278/22–25Aug com consumidor confirmado. Os26 protegidos e1157 unknown não entram na execução.
 
-Correção local ainda não publicada: resposta mensal `private, no-store`; o fetch único usado em carga, filtros, paginação e “Atualizar” usa `cache:'no-store'` mantendo `credentials:'include'`. Não mudar sessão, consulta, contagens ou criar nonce. A política publicada anterior (`public, max-age=30, stale-while-revalidate=120`) permite reutilização de snapshot antigo por até150s; publicação do código e leitura fresca do consumidor são gates distintos.
+Main `11e674ba6cd94bf6d8ea70d446343572e1444bb8` integrada pelo PR120, CI37613541656/37614027155 aprovadas. HTML com `cache:'no-store'` publicado às11:31:46 UTC, hash normalizado474f67f7e24812b5b50913b73dbd80346fbcdfce2af9e7af8ed075859ccbb165; sessão, filtros, paginação e “Atualizar” preservados. A resposta mensal API `private, no-store` ainda aguarda publicação conjunta com a Task22. A API publicada ainda emite `public, max-age=30, stale-while-revalidate=120`; essa política permite reutilização de snapshot antigo por até150s. Não mudar consulta/contagens nem criar nonce; publicação e leitura fresca do consumidor são gates distintos.
 
-Agenda de vídeo ainda pendente: `ready_video` em snapshot imutável próprio com hash/release e prova do canário, excluindo3064 já confirmado. Não renomear como ready_nonvideo, relaxar proteção de arquivo/substituição, identidade1944 ou origem desconhecida. Liberação significa somente elegibilidade para candidato; auditoria final, revisão de cada PNG, CAS/promoção e consumer readback permanecem obrigatórios.
+Agenda `ready_video` qualificada:27 pares/10 grupos em snapshot imutável próprio com hash/release64b4 e prova do canário, excluindo3064 já confirmado. O primeiro grupo parou após AFL2645/24Aug falhar antes do upload;25/26Aug não foram executados. Não renomear como ready_nonvideo, relaxar proteção de arquivo/substituição, identidade1944 ou origem desconhecida. Liberação significa somente elegibilidade para candidato; auditoria final, revisão de cada PNG, CAS/promoção e consumer readback permanecem obrigatórios.
 
 ## Elegibilidade operacional da inserção
 
@@ -83,6 +83,8 @@ Inventário implementado e revisado: GET `/api/insertions/capture-proof/audit?sc
 Inclui históricos aprovados e origens desconhecidas separadamente; não infere histórico por data UTC. A correlação usa log/URL/job e, quando aplicável, recibo final aprovado de identidade/hash/bytes exatos. Logs ficam limitados aos 50 mais recentes por par; status pending/unknown não é uma auditoria viva recomputada. A consulta não executa captura, auditoria remota por item, enriquecimento global nem retorna DOM/base64/secrets. Sem scope, a auditoria legada continua com seu próprio contrato. Antes de substituir uma evidência, usar os gates vivos de candidato/promoção e o canário do harness.
 
 ## Player de vídeo
+
+No hit-test CDP, converter somente o centro da timeline de coordenadas viewport para documento, somando scrollX/scrollY medidos junto ao retângulo no mesmo Runtime.callFunctionOn. Conservar `nativeProgressAudit.box` no viewport para a ROI do PNG; não somar scroll à comparação de pixels. Oclusão desconhecida ou cobertura real continuam bloqueadas. A Task22 corrige essa conversão, sem mudar o piso0.82, a proveniência ou o contrato da API.
 
 O bloqueio de rotação usa `data-adops-capture-active-ad="1"` no criativo selecionado. Os dois passes de `forceMatchedAdVisible` devem gravar esse valor exato e remover o atributo dos inativos. Atributo vazio não satisfaz o seletor CSS e mantém `pointer-events:none` no player. Não corrigir esse erro relaxando a auditoria de oclusão ou reativando anúncios inativos.
 

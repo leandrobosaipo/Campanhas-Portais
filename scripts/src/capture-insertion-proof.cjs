@@ -4443,6 +4443,8 @@ async function auditNativeVideoProgress(page, adSelector) {
       functionDeclaration: `function () {
         const rect = this.getBoundingClientRect();
         const box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        const scrollX = window.scrollX || 0;
+        const scrollY = window.scrollY || 0;
         let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
         let effectiveOpacity = 1, effectiveVisible = true;
         let node = this;
@@ -4483,6 +4485,8 @@ async function auditNativeVideoProgress(page, adSelector) {
           max: Number(this.max),
           ariaLabel: this.getAttribute('aria-label'),
           box,
+          scrollX,
+          scrollY,
           display: style.display,
           visibility: style.visibility,
           opacity: Number(style.opacity),
@@ -4501,8 +4505,8 @@ async function auditNativeVideoProgress(page, adSelector) {
     let occlusion = "unavailable";
     try {
       const hit = await session.send("DOM.getNodeForLocation", {
-        x: Math.round(timeline.box.x + timeline.box.width / 2),
-        y: Math.round(timeline.box.y + timeline.box.height / 2),
+        x: Math.round(timeline.box.x + timeline.box.width / 2 + timeline.scrollX),
+        y: Math.round(timeline.box.y + timeline.box.height / 2 + timeline.scrollY),
         includeUserAgentShadowDOM: true,
         ignorePointerEventsNone: false,
       });

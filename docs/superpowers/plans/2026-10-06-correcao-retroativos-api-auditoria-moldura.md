@@ -12,11 +12,11 @@
 
 ## Estado atual — 07/10/2026
 
-**Checkpoint32 de 07/10:32/237 confirmadas;205 restantes.** Main64b4f560309fccc8386b19bf9333b039bda5263a publicada pelo PR119, CI37608283896/37608827821 e backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI174/157 conferidos às10:55:27 UTC. Gate idle_no_pause/fila0, sem PAUSE/UNPAUSE executados. Restam169 pares não-vídeo liberados,27 de vídeo aguardando agenda própria e9 de #1944 retidos por identidade. Os26 protegidos1826/1860 ficam fora dos237. VIDEO3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7, passou auditoria final/PNG individual/promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b/archive/hash/status/miniatura/modal. Prova privada `video-canary-64b4-completion-proof.json`, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. O checkpoint30 anterior incluía as quatro datasAFL1842/22–25Aug; seus recibos permanecem. Publicação de código e canário não encerram o lote.
+**Checkpoint36 de 07/10:36/237 confirmadas;201 restantes.** API64b4f560309fccc8386b19bf9333b039bda5263a publicada pelo PR119, CI37608283896/37608827821 e backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI174/157 conferidos às10:55:27 UTC. Gate idle_no_pause/fila0, sem PAUSE/UNPAUSE executados. Restam164 não-vídeo liberados,1 não-vídeo retido tecnicamente (#2278/27Aug),27 vídeos retidos até Task22 e9 de #1944 retidos por identidade. Os26 protegidos1826/1860 ficam fora dos237. VIDEO3064/01Oct, job1791370618360-irjtai/candidato452e8465-2651-4eac-b5fa-fa2ab47a59b7, passou auditoria final/PNG individual/promoçãoa4012955-4f98-4b5e-926f-aa2a574b253b/archive/hash/status/miniatura/modal. Prova privada `video-canary-64b4-completion-proof.json`, SHA256a1a35cd1b150f2c9fd1bc67d4c53e980a26887f48cd626474af82625fd7547f6. Quatro datas2278/22–25Aug tiveram consumidor confirmado depois do checkpoint32. Recibos anteriores permanecem imutáveis. Publicação de código e canário não encerram o lote.
 
 O recibo imutável do canário conserva o checkpoint31. AFL1842/27Aug teve promoção e miniatura/modal confirmados depois, compondo o checkpoint32. Não regravar a prova anterior.
 
-Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-monthly-refresh-cache-20261007`; checkout original preservado. Correção de cache está local; produção continua64b4.
+Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-position-20261007/AdOps`, branch `codex/adops-native-timeline-scroll-20261007`, base main11e674ba6cd94bf6d8ea70d446343572e1444bb8; checkout original preservado. PR120/CI37613541656/37614027155 aprovadas. HTML cache:no-store publicado às11:31:46 UTC, hash normalizado474f67f7e24812b5b50913b73dbd80346fbcdfce2af9e7af8ed075859ccbb165. API permanece64b4; publicar cacheAPI e correção Task22 juntos, com backup/restauração/readback frescos. O publisher API11 preparado não foi aplicado.
 
 ### Task 16: Corrigir causas dos três canários d1
 
@@ -72,16 +72,28 @@ Worktree atual: `/Users/leandrobosaipo/.codex/worktrees/adops-roo-legacy-positio
 1. [x] Diagnóstico readonly: mensal publicado emite public,max-age=30,stale-while-revalidate=120; único fetch do load não declara cache. Snapshot antigo no consumidor durante revalidação não prova falha de promoção. GET11:04:48 retornou3064 com novo job1791370618360-irjtai; consumidor posterior confirmado.
 2. [x] Patch local mínimo: API private,no-store; fetch cache:no-store conservando credentials:include/paginação/abort. Não adicionar nonce nem retirar sessão.
 3. [x] Sol revisou o diff mínimo e os options da carga; root confirmou19/19 testes do relatório e buildAPI. Sessão, abort e paginação permanecem. Correção local ainda não publicada.
-4. [ ] PR/CI/main exata, publicação API e HTML pelo fluxo existente com baseline/backup/hash novos; verificar resposta fresca e Atualizar no consumidor. Não reutilizar intent/backup de publicação anterior.
+4. [x] PR120/CI37613541656/mainCI37614027155 e main11 exata; publicação HTML pelo fluxo existente com baseline503f/novo backup/hash474f. Consumidor das quatro datas2278/22–25Aug confirmado.
+5. [ ] Publicar API private,no-store junto com Task22 e conferir resposta fresca/Atualizar; fluxo existente, backup/restauração/readback novos. Publisher API11 preparado não aplicado; não reutilizar intent/backup de publicação anterior.
 
 ### Task 21: Agenda separada para os vídeos restantes
 
 **Owner:** Luna cria cópia privada/agenda/testes; Sol revisa; root aplica depois do ACK de ausência de produtor concorrente e opera os grupos.
 
 1. [x] Canary64b4 comprovado no checkpoint31. Inventário da agenda antiga contém28 vídeos/11grupos, incluindo3064 uma vez; excluir o par já confirmado deixa27/10.
-2. [ ] Criar agenda imutável ready_video, vinculada à release64b4 e hash da prova real do canário; preservar refs/IDs, grupos≤4 e agenda nonvideo. Não incluir1944/protegidos/unknown nem confirmar imagem por elegibilidade.
-3. [ ] Reutilizar produtor com opt-in --video e testes offline: sem prova/hash/release válidos ou grupo qualificado, falhar; defaultnonvideo permanece intacto. Revisão independente antes de aplicar helper compartilhado.
+2. [x] Criar agenda imutável ready_video, vinculada à release64b4 e hash da prova real do canário; preservar refs/IDs, grupos≤4 e agenda nonvideo. Não incluir1944/protegidos/unknown nem confirmar imagem por elegibilidade.
+3. [x] Cópia privada do produtor com opt-in --video e19 cenários offline, dry-run10 grupos/27 pares/defaultnonvideo; revisão independente passou. Sem prova/hash/release válidos ou grupo qualificado, falhar; defaultnonvideo permanece intacto.
 4. [ ] Operar serialmente candidatos/auditorias; revisar cada PNG, promover com CAS/archive/hash e conferir consumidor. Falha interrompe grupo; não contabilizar conclusão apenas por audit/ACK.
+
+### Task 22: Corrigir o hit-test da timeline após scroll
+
+**Owner:** Luna CJS/teste nativo existente; Sol diagnóstico/revisão/SPEC/HARNESS; root integração/publicação/operação. Base11, API publicada64b4. Sem nova dependência ou redução de gate.
+
+1. [x] Confirmar AFL2645/24Aug job1791372488685-01ncti: três tentativas falhas antes do upload/registro, source log/metadata correlatos, scrollY1579. Timeline válida, mas CDP recebeu ponto viewport(436,696) em vez de documento(436,2275); occlusion unavailable impediu ROI. Original intacto;25/26Aug não executados.
+2. [x] Reproduzir localmente com Chromium154.0.8037.99, viewport1660×1200/DPR2 e geometria real. Somar scroll no hit-test dá clear/ok; scroll0 mantém resultado; cobertura real continua bloqueada. Recibos privados dos logs e fixture, sem produção mutável.
+3. [x] Medir scrollX/Y junto ao box no mesmo Runtime.callFunctionOn; converter somente CDP.getNodeForLocation. Conservar box viewport na ROI, piso0.82, oclusão clear obrigatória e todos gates API/proveniência. Patch Luna revisado independentemente por Sol.
+4. [x] Teste nativo existente RED→GREEN: scroll0, scroll1579 e cobertura real rolada; comparação de ROI/cross-layer reais. Sol repetiu12 cenários com Pillow existente: PASS, score1/crop960×48/helper API aprovado; sintaxe/diff-check limpos. Gates de release/regras permanecem antes da publicação.
+5. [ ] Integrar CI/main e publicar fix+cacheAPI com backup fresco/restauração/readback dos quatro serviços/fonte/asset/OpenAPI; requalificar agenda para release nova antes de capturar.
+6. [ ] Novo candidato AFL2645/24Aug, auditoria final/PNG individual/promoção/archive/CAS/hash/consumidor. Preservar logs/artefatos/job anterior, sem reescrever como aprovado. Lote permanece aberto.
 
 ## Global Constraints
 
