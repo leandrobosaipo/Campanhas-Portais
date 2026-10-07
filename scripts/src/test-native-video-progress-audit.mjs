@@ -66,16 +66,19 @@ const server = createServer((req, res) => {
   const overlay = req.url === "/overlay";
   const occluded = req.url === "/occluded";
   const clipped = req.url === "/clipped";
+  const scrolled = req.url === "/scrolled" || req.url === "/scrolled-occluded";
+  const scrolledOccluded = req.url === "/scrolled-occluded";
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(`<!doctype html><style>body{margin:0}#clip{width:480px;height:${clipped ? "258px" : "270px"};overflow:${clipped ? "hidden" : "visible"}}#ad{position:relative;width:480px;height:270px;${hidden ? "opacity:0" : ""}}video{width:480px;height:270px;display:block}.cover{position:absolute;left:0;right:0;bottom:0;height:28px;background:#fff}</style><div id="clip"><div id="ad"><video ${noControls ? "" : "controls"} muted playsinline src="/fixture.mp4"></video>${overlay ? '<div data-adops-video-overlay="1"></div>' : ""}${occluded ? '<div class="cover"></div>' : ""}</div></div>`);
+  res.end(`<!doctype html><style>body{margin:0}#clip{width:480px;height:${clipped ? "258px" : "270px"};overflow:${clipped ? "hidden" : "visible"}}#ad{position:relative;width:480px;height:270px;${hidden ? "opacity:0" : ""}}video{width:480px;height:270px;display:block}.cover{position:absolute;left:0;right:0;bottom:0;height:28px;background:#fff}</style>${scrolled ? '<div style="height:2012px"></div>' : ""}<div id="clip"><div id="ad"><video ${noControls ? "" : "controls"} muted playsinline src="/fixture.mp4"></video>${overlay ? '<div data-adops-video-overlay="1"></div>' : ""}${occluded || scrolledOccluded ? '<div class="cover"></div>' : ""}</div></div>${scrolled ? '<div style="height:500px"></div>' : ""}`);
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const baseUrl = `http://127.0.0.1:${server.address().port}`;
 const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const browser = await chromium.launch({ headless: true, ...(existsSync(chromePath) ? { executablePath: chromePath } : {}) });
 
-async function auditFixture(route, screenshotPath = null) {
-  const page = await browser.newPage({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 });
+async function auditFixture(route, screenshotPath = null, options = {}) {
+  const viewport = options.viewport || { width: 640, height: 400 };
+  const page = await browser.newPage({ viewport, deviceScaleFactor: 2 });
   try {
     await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
     await page.locator("video").evaluate((video) => new Promise((resolve) => {
@@ -87,6 +90,7 @@ async function auditFixture(route, screenshotPath = null) {
       await new Promise((resolve) => video.addEventListener("seeked", resolve, { once: true }));
       video.pause();
     });
+    if (Number.isFinite(options.scrollY)) await page.evaluate((scrollY) => window.scrollTo(0, scrollY), options.scrollY);
     const box = await page.locator("video").boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForTimeout(100);
@@ -155,16 +159,17 @@ try {
   assert.equal(noControls.ok, false, "missing native controls must fail closed");
   const screenshotCases = [
     { route: "/positive", key: "positive" },
+    { route: "/scrolled", key: "scrolled", options: { viewport: { width: 640, height: 1200 }, scrollY: 1579 } },
     { route: "/hidden", key: "hidden" },
     { route: "/occluded", key: "occluded" },
     { route: "/clipped", key: "clipped" },
   ];
   const screenshotAudits = {};
   const frameMetas = {};
-  for (const { route, key } of screenshotCases) {
+  for (const { route, key, options = {} } of screenshotCases) {
     const viewportPath = path.join(workDir, `${key}-viewport.png`);
     const finalPath = path.join(workDir, `${key}-final.png`);
-    screenshotAudits[key] = await auditFixture(route, viewportPath);
+    screenshotAudits[key] = await auditFixture(route, viewportPath, options);
     frameMetas[key] = composeDesktopProof(viewportPath, finalPath, {
       osLabel: "Google Chrome",
       systemDateTime: "06/10/2026 12:00:00",
@@ -173,43 +178,49 @@ try {
       hostLabel: "127.0.0.1",
       addressText: "127.0.0.1/native-video-controls",
       proofStyle: "viewport_only",
-      scrollMetrics: { viewportWidth: 640, viewportHeight: 400, scrollbarRendered: false },
+      scrollMetrics: { viewportWidth: 640, viewportHeight: options.viewport?.height || 400, scrollbarRendered: false },
     });
     screenshotAudits[key].viewportPath = viewportPath;
     screenshotAudits[key].finalPath = finalPath;
   }
   assert.deepEqual(screenshotAudits.positive.box, positive.box, "screenshot and CDP audit must describe the same player geometry");
+  assert.equal(screenshotAudits.positive.scrollY, 0, "top-of-page player remains a zero-scroll regression case");
+  assert.equal(screenshotAudits.scrolled.scrollY, 1579, "scrolled fixture must preserve the actual page scroll offset");
+  assert.equal(screenshotAudits.scrolled.box.y, 679, "scrolled timeline remains in viewport coordinates for final-PNG ROI mapping");
+  assert.equal(screenshotAudits.scrolled.ok, true, `native timeline must pass when hit-tested at document coordinates: ${JSON.stringify(screenshotAudits.scrolled)}`);
+  const scrolledOccluded = await auditFixture("/scrolled-occluded", null, { viewport: { width: 640, height: 1200 }, scrollY: 1579 });
+  assert.equal(scrolledOccluded.ok, false, "page element overlay must remain blocked on scrolled pages");
   const actualFinalRoi = auditFinalPngVideoProgress(
-    screenshotAudits.positive.finalPath,
-    screenshotAudits.positive.viewportPath,
-    screenshotAudits.positive,
-    frameMetas.positive,
+    screenshotAudits.scrolled.finalPath,
+    screenshotAudits.scrolled.viewportPath,
+    screenshotAudits.scrolled,
+    frameMetas.scrolled,
     { viewportWidthCss: 640, minSimilarity: 0.48 },
   );
   assert.equal(actualFinalRoi.ok, true, `actual native-control screenshot ROI must pass production defaults: ${JSON.stringify(actualFinalRoi)}`);
   assert.equal(actualFinalRoi.minSimilarity, 0.82, "native progress ROI must not inherit the lower generic slot threshold");
   const stricterFinalRoi = auditFinalPngVideoProgress(
-    screenshotAudits.positive.finalPath,
-    screenshotAudits.positive.viewportPath,
-    screenshotAudits.positive,
-    frameMetas.positive,
+    screenshotAudits.scrolled.finalPath,
+    screenshotAudits.scrolled.viewportPath,
+    screenshotAudits.scrolled,
+    frameMetas.scrolled,
     { viewportWidthCss: 640, minSimilarity: 0.91 },
   );
   assert.equal(stricterFinalRoi.ok, true, `native progress ROI must retain a stricter configured threshold: ${JSON.stringify(stricterFinalRoi)}`);
   assert.equal(stricterFinalRoi.minSimilarity, 0.91);
   const actualMetadata = {
     reconstruction: { provenanceVersion: 4 },
-    chromeFrameHeight: frameMetas.positive.chromeFrameHeight,
-    nativeProgressAudit: screenshotAudits.positive,
+    chromeFrameHeight: frameMetas.scrolled.chromeFrameHeight,
+    nativeProgressAudit: screenshotAudits.scrolled,
     finalPngProgressAudit: actualFinalRoi,
     videoProof: {
       ok: true,
-      controls: screenshotAudits.positive.controls,
-      paused: screenshotAudits.positive.paused,
-      currentTime: screenshotAudits.positive.currentTime,
-      duration: screenshotAudits.positive.duration,
+      controls: screenshotAudits.scrolled.controls,
+      paused: screenshotAudits.scrolled.paused,
+      currentTime: screenshotAudits.scrolled.currentTime,
+      duration: screenshotAudits.scrolled.duration,
       overlayInjected: false,
-      artificialOverlayCount: screenshotAudits.positive.artificialOverlayCount,
+      artificialOverlayCount: screenshotAudits.scrolled.artificialOverlayCount,
       progressVisible: true,
     },
   };
@@ -249,21 +260,21 @@ try {
   assert.ok(crop?.width > 0 && crop?.height > 0, "actual native ROI must expose its scaled final crop");
   execFileSync(python, ["-c", `
 from PIL import Image, ImageDraw
-final = Image.open(${JSON.stringify(screenshotAudits.positive.finalPath)}).convert('RGB')
+final = Image.open(${JSON.stringify(screenshotAudits.scrolled.finalPath)}).convert('RGB')
 ImageDraw.Draw(final).rectangle((${crop.left}, ${crop.top}, ${crop.left + crop.width - 1}, ${crop.top + crop.height - 1}), fill='#000000')
 final.save(${JSON.stringify(damagedPng)})
 `]);
 const changedRoi = auditFinalPngVideoProgress(
   damagedPng,
-  screenshotAudits.positive.viewportPath,
-  screenshotAudits.positive,
-  frameMetas.positive,
+  screenshotAudits.scrolled.viewportPath,
+  screenshotAudits.scrolled,
+  frameMetas.scrolled,
   { viewportWidthCss: 640, minSimilarity: 0.48 },
 );
 assert.equal(changedRoi.ok, false, "changed native timeline pixels in resized final ROI must fail");
 assert.equal(changedRoi.minSimilarity, 0.82, "tampered ROI must still be judged against the native threshold");
 
-  console.log(JSON.stringify({ ok: true, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["native_timeline", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed"] }, null, 2));
+  console.log(JSON.stringify({ ok: true, positive: { pseudo: screenshotAudits.positive.pseudo, box: screenshotAudits.positive.box, value: screenshotAudits.positive.value, max: screenshotAudits.positive.max, occlusion: screenshotAudits.positive.occlusion, visibleRatio: screenshotAudits.positive.visibleRatio }, scrolled: { scrollY: screenshotAudits.scrolled.scrollY, box: screenshotAudits.scrolled.box, occlusion: screenshotAudits.scrolled.occlusion, finalRoiSimilarity: actualFinalRoi.similarityScore, finalRoiSize: actualFinalRoi.cropSize, apiProgressSource: JSON.parse(apiCrossLayer).progressSource }, cases: ["zero_scroll_regression", "scrolled_native_hit_test", "scrolled_page_overlay_still_rejected", "missing_controls", "hidden_ancestor", "clipped_timeline", "occluded_timeline", "artificial_overlay", "actual_screenshot_final_roi", "api_cross_layer_gate", "actual_hidden_occluded_clipped_roi_rejected", "actual_final_roi_changed"] }, null, 2));
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
