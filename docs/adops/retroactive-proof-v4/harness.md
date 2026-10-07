@@ -1,6 +1,16 @@
 # HARNESS — Reconstrução retroativa v4
 
-## Checkpoint atual — 07/10/2026
+## Última conferência comprovada — 07/10, 18:26 UTC, CD3/checkpoint53
+
+CD3 `cd3a1d3708faa34e27a96edaf37278d0f7721f6b` está publicada. `release-final-openapi-list-filters.json` e `openapi-list-filters-source-review.json` registram quatro serviços running/sem pausa, backup/restauração verificados, dez filtros e OpenAPI 174/157. O checkpoint atual é **53/237 confirmadas, 184 restantes** (148 não-vídeo, 26 vídeo, uma retenção técnica #2278/27Aug e nove identidades #1944); 26 protegidos permanecem fora e não houve novas capturas.
+
+C67 entregou o canário de vídeo #2645/24Aug após validar viewport final, relógio e pixels, com auditoria, revisão visual, promoção e leitura do consumidor confirmadas (`2645-c67-delivered-canary.json`, `2645-c67-canary-consumer-readback.json`). #2693/AFL/PI 91159/21–24Aug foi confirmada nas quatro datas. O pacote PI 91134/AFL foi entregue com 11 páginas PDF/JPEG, zero PNG e checksums conferidos. Os dois relógios permanecem históricos; a origem e a criação real ficam fora do PNG.
+
+Mensal: jobs `c216f66b-f253-4124-8a23-297088b8d995` e `5a7eb7ae-2b67-4476-9e16-e57750a8faa2` falharam com HTTP 503 na fonte de 24/08; nenhum equivale a entrega completa. No snapshot de 07/10 às 18:50 UTC, o job `657af4ff-2066-4f8b-9cf7-cb72054b7810` estava `ready_for_runner`, origem não confirmada. Uma conexão foi observada em 60184 ms sem `statusCode`, compatível com interrupção no limite de 60 s; a duração/conclusão da consulta à fonte não foi confirmada. A correção localizada do cliente está pendente. #2278/27Aug continua retida: tentativa real de leitura/backup SSH recusada apesar da autorização do usuário.
+
+Correção local do cliente: somente o GET de `evidence-monthly-source` usa `deliveryApiBase` pública e timeout de 120000 ms; `operationsBase`, demais rotas e URLs de download ficam inalterados. Teste VM do helper real confirma URL, timeout e autenticação por fetch simulado. Isso não demonstra resposta/latência ao vivo nem conclusão do relatório mensal.
+
+### Histórico — checkpoint38
 
 Main/aplicaçãoac4d, PR122 e CI37640504916/37641276727 aprovadas; readback15:13:29UTC confirmou quatro serviços ativos sem pausa, fontes reais, JavaScript público igual ao volume, OpenAPI174/157 e backup/restauração completos. Painel abriu no navegador. Checkpoint38/237,199 restantes=162 não vídeo+1 técnico2278/27Aug+27 vídeo+9 identidades1944;26 protegidos preservados.
 

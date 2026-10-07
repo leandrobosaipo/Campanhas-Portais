@@ -37,6 +37,55 @@ const materializeExportsIndex = report.indexOf("const exportLinks = await materi
 assert.ok(previousSnapshotIndex >= 0 && previousSnapshotIndex < reuseDownloadsIndex);
 assert.ok(reuseDownloadsIndex >= 0 && reuseDownloadsIndex < materializeExportsIndex);
 
+function loadReportApi(source, requests) {
+  const sourceFile = ts.createSourceFile("monthly-report.mjs", source, ts.ScriptTarget.Latest, true);
+  const apiDeclaration = sourceFile.statements.find((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "api",
+  );
+  assert.ok(apiDeclaration, "real monthly report api() declaration exists");
+
+  let monthlySourceCall;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(sourceFile) === "operationsRaw" &&
+      node.initializer && ts.isAwaitExpression(node.initializer) && ts.isCallExpression(node.initializer.expression)) {
+      monthlySourceCall = node.initializer.expression.getText(sourceFile);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  assert.ok(monthlySourceCall, "real evidence-monthly-source call site exists");
+
+  const context = vm.createContext({
+    apiBase: "https://operations.invalid",
+    deliveryApiBase: "https://public.invalid",
+    MONTHLY_REPORT_SOURCE_TIMEOUT_MS: 120_000,
+    apiRequestCount: 0,
+    apiResponseBytes: 0,
+    Buffer,
+    apiHeaders: () => ({ authorization: "Bearer unit-test-only" }),
+    isPartialCampaignExportBatch: () => false,
+    fetchWithTimeout: async (url, options, timeoutMs) => {
+      requests.push({ url, options, timeoutMs });
+      return { ok: true, status: 200, text: async () => "{}" };
+    },
+    targetDate: "2026-08-24",
+    competencia: "AGOSTO/2026",
+  });
+  new vm.Script(`${apiDeclaration.getText(sourceFile)}\nthis.api = api;`).runInContext(context);
+  return { context, monthlySourceCall };
+}
+
+const apiRequests = [];
+const { context: reportApiContext, monthlySourceCall } = loadReportApi(report, apiRequests);
+await new vm.Script(`Promise.resolve(${monthlySourceCall})`).runInContext(reportApiContext);
+assert.equal(apiRequests[0].url, "https://public.invalid/api/campaign-operations/evidence-monthly-source?date=2026-08-24&competencia=AGOSTO%2F2026");
+assert.equal(apiRequests[0].timeoutMs, 120_000, "monthly source uses the long source timeout");
+assert.equal(apiRequests[0].options.headers.authorization, "Bearer unit-test-only", "public source request preserves bearer auth");
+await reportApiContext.api("/api/ops/daily-print-status", { timeoutMs: 30_000, attempts: 1 });
+assert.equal(apiRequests[1].url, "https://operations.invalid/api/ops/daily-print-status", "other API calls retain operations base");
+assert.equal(apiRequests[1].timeoutMs, 30_000);
+assert.equal(apiRequests[1].options.headers.authorization, "Bearer unit-test-only");
+
 function loadAgeFunction(source, names) {
   const sourceFile = ts.createSourceFile("ops-source.ts", source, ts.ScriptTarget.Latest, true);
   const wanted = new Set(names);
@@ -79,4 +128,4 @@ for (const [label, source, helpers] of watchdogSources) {
   assert.equal(getJobAgeMs(job({ updated_at: null, created_at: null, payload_json: "{}" }), testNow), 0, `${label}: absent timestamps remain safe`);
 }
 
-console.log("monthly report incremental refresh: 26 source checks + 20 watchdog-age cases passed");
+console.log("monthly report incremental refresh: 26 source checks + 7 API routing assertions + 20 watchdog-age cases passed");

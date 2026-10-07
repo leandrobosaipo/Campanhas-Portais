@@ -274,7 +274,7 @@ async function api(pathname, options = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       apiRequestCount += 1;
-      const response = await fetchWithTimeout(`${apiBase}${pathname}`, {
+      const response = await fetchWithTimeout(`${options.baseUrl ?? apiBase}${pathname}`, {
         method: options.method || "GET",
         headers: {
           ...apiHeaders(),
@@ -2165,7 +2165,7 @@ async function main() {
   await mkdir(snapshotDir, { recursive: true });
 
   const sourceStartedAtMs = Date.now();
-  const operationsRaw = await api(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(targetDate)}&competencia=${encodeURIComponent(competencia)}`, { timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS });
+  const operationsRaw = await api(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(targetDate)}&competencia=${encodeURIComponent(competencia)}`, { baseUrl: deliveryApiBase, timeoutMs: MONTHLY_REPORT_SOURCE_TIMEOUT_MS });
   const dailyPrintStatus = await api("/api/ops/daily-print-status", { timeoutMs: 30_000 }).catch(() => null);
   const evidenceWindow = resolveEvidenceWindow({ reportDate: targetDate, now: generatedAt, dailyPrintStatus });
   const monthEndForEvidence = evidenceWindow.evidenceCutoffDate < bounds.end ? evidenceWindow.evidenceCutoffDate : bounds.end;
