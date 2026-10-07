@@ -1,6 +1,10 @@
 # SPEC — Reconstrução retroativa v4
 
-## Correção compartilhada mensal — local, ainda não publicada
+## Estado — 07/10, 20:57 UTC
+
+A correção compartilhada abaixo está integrada na main 674/PR126, com CI aprovada, mas ainda não publicada. A tentativa terminou com código 28 após o switch, durante a consulta de containers; rollback CD3 e quatro serviços ativos/sem pausa foram conferidos. O GET de leitura pós-switch deve reutilizar as tentativas limitadas de `portainer_get_json`; não reenviar PUT por resposta desconhecida. Checkpoint mantido em 53/237.
+
+## Correção compartilhada mensal — integrada, publicação pendente
 
 Em `build-current-month-evidence-report.mjs`, `api()` deve priorizar `options.baseUrl`; sem override da chamada, respeitar `ADOPS_PUBLIC_API_BASE_URL` quando configurada. Sem essa configuração, usar `deliveryApiBase` diretamente para todas as RPCs. A ponte legada encaminha ao mesmo destino, mas aborta em 60000 ms, abaixo dos limites de 120000 ms da fonte e 360000 ms do batch. `apiBase` continua sendo a base das URLs públicas de download. Não alterar endpoints, payloads, lote de três PIs, `asOfDate`, fingerprint, idempotência ou polling.
 
