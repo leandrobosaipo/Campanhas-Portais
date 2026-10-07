@@ -240,6 +240,49 @@ try {
   assert.equal(collectedArticle.manifest.expectedPosts[0].url, expoUrl);
   assert.equal(collectedArticle.manifest.visiblePosts[0].url, expoUrl);
   assert.equal(collectedArticle.retroContentProof.visibleMatchCount, 1);
+
+  const rawWpRows = articlePosts.map((post) => ({
+    id: post.url === expoUrl ? 69702 : post.id,
+    date: post.date,
+    modified: post.date,
+    link: post.url,
+    slug: post.slug,
+    title: { rendered: post.title },
+    excerpt: { rendered: "" },
+    _embedded: {
+      "wp:featuredmedia": [{ source_url: post.image }],
+      "wp:term": [[{ taxonomy: "category", name: post.category, slug: "primavera" }]],
+    },
+  }));
+  const originalFetch = globalThis.fetch;
+  let defaultFetchUrl = "";
+  let defaultFetchedArticle;
+  try {
+    globalThis.fetch = async (input) => {
+      defaultFetchUrl = String(input);
+      return { ok: true, json: async () => rawWpRows };
+    };
+    defaultFetchedArticle = await applyAflRetroPreview(page, {
+      domain: "afolhalivre.com",
+      homeUrl: "https://afolhalivre.com/",
+      page: "article",
+    }, "2026-08-21T18:14:00-04:00");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.match(defaultFetchUrl, /\/wp-json\/wp\/v2\/posts\?/);
+  assert.equal(defaultFetchedArticle.applied, true);
+  assert.equal(defaultFetchedArticle.expectedPosts[0].id, 69702,
+    "the default WordPress REST fetch must preserve the raw post ID through normalization");
+  const collectedDefaultFetch = await collectRetroContentEvidence(page, {
+    domain: "afolhalivre.com",
+    homeUrl: "https://afolhalivre.com/",
+    page: "article",
+    auditConfig: {},
+  }, "2026-08-21T18:14:00-04:00", defaultFetchedArticle);
+  assert.equal(collectedDefaultFetch.expectedPosts[0].id, 69702,
+    "the collector must accept the identity produced by the default raw-WordPress fetch path");
+
   await assert.rejects(collectRetroContentEvidence(page, {
     domain: "afolhalivre.com", homeUrl: "https://afolhalivre.com/", page: "article", auditConfig: {},
   }, "2026-08-21T18:14:00-04:00", { ...articleResult, expectedPosts: [] }), /retro_content_article_identity_unverified/);

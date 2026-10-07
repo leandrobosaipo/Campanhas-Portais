@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const python = process.env.ADOPS_CAPTURE_PYTHON || "python3";
-const { auditNativeVideoProgress, auditFinalPngVideoProgress, composeDesktopProof } = require("./capture-insertion-proof.cjs");
+const { forceMatchedAdVisible, auditNativeVideoProgress, auditFinalPngVideoProgress, composeDesktopProof } = require("./capture-insertion-proof.cjs");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const captureSourcePath = path.join(projectRoot, "scripts/src/capture-insertion-proof.cjs");
 const captureProgram = ts.createProgram([captureSourcePath], {
@@ -108,6 +108,48 @@ try {
   assert.ok(Math.abs(positive.value - positive.currentTime) <= 0.25);
   assert.ok(Math.abs(positive.max - positive.duration) <= 0.25);
   assert.equal(positive.artificialOverlayCount, 0);
+
+  const activeAdPage = await browser.newPage({ viewport: { width: 640, height: 400 } });
+  try {
+    await activeAdPage.goto(`${baseUrl}/positive`, { waitUntil: "domcontentloaded" });
+    await activeAdPage.locator("video").evaluate((video) => new Promise((resolve) => {
+      if (video.readyState >= 1) resolve();
+      else video.addEventListener("loadedmetadata", resolve, { once: true });
+    }));
+    await activeAdPage.locator("#ad").evaluate((ad) => {
+      ad.innerHTML = `<div data-adops-capture-slot="1" data-adops-capture-locked="1">
+        <div class="g-dyn" data-adops-capture-ad="1">${ad.querySelector("video").outerHTML}</div>
+        <div class="g-dyn" data-inactive="1"><img alt="other creative"></div>
+      </div>`;
+    });
+    const locked = await forceMatchedAdVisible(activeAdPage);
+    assert.equal(locked.ok, true);
+    const activeState = await activeAdPage.locator("[data-adops-capture-ad='1']").evaluate((node) => ({
+      activeAttribute: node.getAttribute("data-adops-capture-active-ad"),
+      pointerEvents: getComputedStyle(node).pointerEvents,
+      display: getComputedStyle(node).display,
+      inactivePointerEvents: getComputedStyle(document.querySelector("[data-inactive='1']")).pointerEvents,
+    }));
+    assert.equal(activeState.activeAttribute, "1");
+    assert.notEqual(activeState.pointerEvents, "none", "the selected creative must not match the inactive AdRotate CSS rule");
+    assert.equal(activeState.inactivePointerEvents, "none", "the sibling creative must remain inactive");
+    await activeAdPage.waitForTimeout(150);
+    assert.equal(await activeAdPage.locator("[data-adops-capture-ad='1']").getAttribute("data-adops-capture-active-ad"), "1",
+      "the periodic lock must reapply the value-form active marker");
+    await activeAdPage.locator("video").evaluate(async (video) => {
+      video.currentTime = 1;
+      await new Promise((resolve) => video.addEventListener("seeked", resolve, { once: true }));
+      video.pause();
+    });
+    const videoBox = await activeAdPage.locator("video").boundingBox();
+    await activeAdPage.mouse.move(videoBox.x + videoBox.width / 2, videoBox.y + videoBox.height / 2);
+    await activeAdPage.waitForTimeout(100);
+    const activeNativeAudit = await auditNativeVideoProgress(activeAdPage, "#ad");
+    assert.equal(activeNativeAudit.ok, true, `native audit must remain clear on the active creative: ${JSON.stringify(activeNativeAudit)}`);
+    assert.equal(activeNativeAudit.artificialOverlayCount, 0);
+  } finally {
+    await activeAdPage.close();
+  }
 
   const noControls = await auditFixture("/no-controls");
   assert.equal(noControls.ok, false, "missing native controls must fail closed");

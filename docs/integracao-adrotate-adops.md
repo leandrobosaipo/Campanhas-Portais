@@ -72,10 +72,11 @@ O endpoint `integrations/adrotate/planned` entrega, por inserção:
 
 ## Contrato da moldura atual
 
-- Versão: `windows11-chrome-light-similar-v4`.
+- Versão vigente da apresentação: `windows11-chrome-light-similar-v5`; o contrato de proveniência retroativa é v4, conforme [SPEC](adops/retroactive-proof-v4/spec.md).
 - Topo claro do Chrome sem conteúdo estático de outro site.
 - Aba ativa renderizada dinamicamente com `tabSurface`, `tabIcon` e `tabTitle`.
-- Rodapé preserva data/hora do sistema operacional.
+- Na reconstrução retroativa, o relógio do rodapé e a data/hora visível do portal usam a mesma referência histórica `requestedCaptureAt`.
+- A origem reconstruída e o instante real de criação permanecem nos dados da API e nos detalhes do relatório. Não acrescentar carimbos ao PNG; a moldura é uma composição gráfica, sem comprovar exibição histórica por si só.
 - Barra de rolagem preserva posição real do site.
 - A mudança de moldura não altera AdRotate, seleção de frame, preview retroativo ou auditoria de slot.
 
