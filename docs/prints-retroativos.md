@@ -21,6 +21,21 @@ Contrato e validação: [PRD](./adops/retroactive-proof-v4/prd.md),
 [SPEC](./adops/retroactive-proof-v4/spec.md),
 [HARNESS](./adops/retroactive-proof-v4/harness.md).
 
+### ROO/home/grupo1: extensão de fonte parcial em implementação
+
+Um original legado totalmente aprovado para posição/criativo, sem prova editorial
+e com empty_samples/zero amostras, pode sustentar apenas essa parte da reconstrução
+ROO/home/grupo1. A origem e a ausência editorial antigas permanecem registradas em
+reconstruction.sourceEvidence (proofScope=position_only,
+sourceEditorialProofStatus=missing_legacy). O candidato v4 novo exige referência
+explícita, período encerrado, fonte exata e anchor desktop único/vazio/visível;
+antes do upload deve produzir três posts/amostras/matches, zero futuros, hash64 e
+prova editorial aprovada. Sem carimbo ou alegação de veiculação passada.
+
+Esse fluxo ainda não foi publicado nem recapturado para ROO #2641/23Aug.
+PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação tardia.
+Critérios completos e negativos estão na SPEC/HARNESS acima.
+
 ## Objetivo
 Permitir gerar provas visuais retroativas com data e hora simuladas, para que o print mostre:
 - a primeira dobra completa do site

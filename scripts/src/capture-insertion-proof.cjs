@@ -317,6 +317,16 @@ function parseCaptureDate(value) {
   return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
+function hasMatchingPreviewCutoff(previewActive, previewCutoff, requestedCaptureAt) {
+  if (previewActive !== true || typeof previewCutoff !== "string" || typeof requestedCaptureAt !== "string") return false;
+  const isSupportedInstant = (value) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)
+    || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
+  if (!isSupportedInstant(previewCutoff) || !isSupportedInstant(requestedCaptureAt)) return false;
+  const observed = parseCaptureDate(previewCutoff);
+  const requested = parseCaptureDate(requestedCaptureAt);
+  return Boolean(observed && requested && observed.getTime() === requested.getTime());
+}
+
 function appendPreviewParams(urlString, captureAt, previewSignature) {
   if (!captureAt) return urlString;
   const url = new URL(urlString);
@@ -3106,14 +3116,23 @@ async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
     || false;
 }
 
-function buildStaticRetroSlotPlan(mapping) {
+function buildStaticRetroSlotPlan(mapping, { rooHistoricalCandidateV4 = false } = {}) {
   const domain = String(mapping?.domain || "").toLowerCase();
   if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com", "perrenguematogrosso.com"]).has(domain)) return null;
   if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
   const slotSelector = String(mapping?.slotSelector || "").trim();
   const configuredContextSelector = String(mapping?.contextSelector || "").trim();
   const isPnmtDesktopTop = new Set(["portalnortemt.com", "portalpantanalmt.com"]).has(domain) && slotSelector === "div.hidden.lg\\:block .g.g-1";
-  let contextSelector = domain === "afolhalivre.com" && slotSelector === ".g.g-1"
+  const isRooDesktopTop = domain === "roonoticias.com"
+    && rooHistoricalCandidateV4 === true
+    && mapping?.groupId === 1
+    && slotSelector === ".g.g-1"
+    && configuredContextSelector === ".g.g-1"
+    && mapping?.auditConfig?.allowAuditedReconstruction === true
+    && mapping?.auditConfig?.requireRetroContentProof === true;
+  let contextSelector = isRooDesktopTop
+    ? "header .omt-header-top div.hidden.lg\\:block > div.flex.justify-center > #block-8"
+    : domain === "afolhalivre.com" && slotSelector === ".g.g-1"
     ? "header .omt-header-top #block-8"
     : isPnmtDesktopTop
       ? "div.hidden.lg\\:block #block-8"
@@ -3141,7 +3160,12 @@ function buildStaticRetroSlotPlan(mapping) {
   if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
   if (domain === "portalpantanalmt.com" && !isPnmtDesktopTop) return null;
   if (domain === "roonoticias.com" && groupId !== 1) return null;
-  return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
+  if (domain === "roonoticias.com"
+    && rooHistoricalCandidateV4 === true
+    && mapping?.auditConfig?.allowAuditedReconstruction === true
+    && mapping?.auditConfig?.requireRetroContentProof === true
+    && !isRooDesktopTop) return null;
+  return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop || isRooDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
 }
 
 function currentDateInCuiaba(now = new Date()) {
@@ -3166,7 +3190,10 @@ function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart
 }
 
 function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate, captureAt, currentDate = currentDateInCuiaba(), captureClass, provenanceVersion, candidateOnly = false, saveEvidence = true, status }) {
-  const plan = buildStaticRetroSlotPlan(mapping);
+  const plan = buildStaticRetroSlotPlan(mapping, {
+    rooHistoricalCandidateV4: candidateOnly === true && saveEvidence === false
+      && captureClass === "historical_recovery" && provenanceVersion === 4,
+  });
   const domain = String(mapping?.domain || "").toLowerCase();
   const profile = domain === "perrenguematogrosso.com"
     && mapping?.groupId === 9
@@ -3183,6 +3210,16 @@ function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate
       && plan?.groupId === 1
       && plan?.requireUniqueVisibleAnchor === true
       ? "ppmt-desktop-top-1"
+      : domain === "roonoticias.com"
+        && mapping?.groupId === 1
+        && mapping?.slotSelector === ".g.g-1"
+        && mapping?.contextSelector === ".g.g-1"
+        && mapping?.page === "home"
+        && mapping?.auditConfig?.allowAuditedReconstruction === true
+        && mapping?.auditConfig?.requireRetroContentProof === true
+        && plan?.groupId === 1
+        && plan?.requireUniqueVisibleAnchor === true
+        ? "roo-desktop-top-1"
       : null;
   const target = String(targetDate || "").slice(0, 10);
   const start = String(insertion?.periodoInicio || "").slice(0, 10);
@@ -3219,8 +3256,26 @@ function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate
   const visualIdentityOk = proof?.visualsOk === true && proof?.visualAudit?.identityFrameOk === true;
   const visibility = proof?.slotVisibility;
   const visibleEnough = visibility?.fullyVisible === true && Number.isFinite(Number(visibility?.visibleRatio)) && Number(visibility.visibleRatio) >= 0.95;
-  const manifestHash = proof?.retroContentProof?.manifestHash;
+  const retroContentProof = proof?.retroContentProof;
+  const manifestHash = retroContentProof?.manifestHash;
   const validManifestHash = typeof manifestHash === "string" && /^[a-f0-9]{64}$/i.test(manifestHash);
+  const sourceEditorialProofApproved = retroContentProof?.status === "approved"
+    && retroContentProof?.futureCount === 0
+    && validManifestHash;
+  const legacyEmptyEditorialSource = profile === "roo-desktop-top-1"
+    && (retroContentProof === null || typeof retroContentProof === "undefined")
+    && proof?.contentTimeline?.reason === "empty_samples"
+    && proof?.contentTimeline?.sampleCount === 0
+    && proof?.contentTimeline?.parsedCount === 0
+    && proof?.contentTimeline?.targetDateMatches === false
+    && proof?.contentTimeline?.maxObserved === null
+    && Array.isArray(proof?.contentTimeline?.matchingTargetDateSamples)
+    && proof.contentTimeline.matchingTargetDateSamples.length === 0
+    && Array.isArray(proof?.contentTimeline?.futureSamples)
+    && proof.contentTimeline.futureSamples.length === 0
+    && Array.isArray(proof?.contentTimeline?.observedDates)
+    && proof.contentTimeline.observedDates.length === 0;
+  const sourceEditorialProofQualified = sourceEditorialProofApproved || legacyEmptyEditorialSource;
   const exactContext = context?.resolvedPage === "home"
     && context?.resolvedGroupId === plan.groupId
     && context?.resolvedSlotSelector === mapping.slotSelector
@@ -3244,11 +3299,9 @@ function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate
     && proof?.finalPngSlotAudit?.ok === true
     && visualIdentityOk && visibleEnough
     && proof?.pageMatches === true
-    && proof?.retroContentProof?.status === "approved"
-    && proof?.retroContentProof?.futureCount === 0
-    && validManifestHash
+    && sourceEditorialProofQualified
     && Array.isArray(auditIssues) && Array.isArray(blockingIssues)
-    && (globallyApproved || clockOnlyMismatch);
+    && (globallyApproved || (clockOnlyMismatch && !legacyEmptyEditorialSource));
   if (!qualified) return { ok: false, reason: "original_historical_proof_not_qualified" };
   const sourceIssueCodes = [...new Set([...auditIssues, ...blockingIssues])];
   return {
@@ -3258,8 +3311,12 @@ function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate
       url: status.arquivoUrl,
       sourceJobId: proof.sourceJobId,
       issueCodes: sourceIssueCodes,
-      manifestHash,
+      manifestHash: sourceEditorialProofApproved ? manifestHash : null,
       origin: "canonical_historical_evidence",
+      ...(legacyEmptyEditorialSource ? {
+        proofScope: "position_only",
+        sourceEditorialProofStatus: "missing_legacy",
+      } : {}),
     },
   };
 }
@@ -3280,11 +3337,13 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
   if (!url) return false;
 
   const missingSlotPlan = options.allowConfiguredSlotReconstruction === true
-    ? buildStaticRetroSlotPlan(mapping)
+    ? buildStaticRetroSlotPlan(mapping, {
+        rooHistoricalCandidateV4: options.auditedCandidateReconstruction?.profile === "roo-desktop-top-1",
+      })
     : null;
   if (missingSlotPlan?.requireUniqueVisibleAnchor === true && mapping?.auditConfig?.allowAuditedReconstruction !== true) return false;
   if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2 && !auditedCandidateReconstruction) return false;
-  if (auditedCandidateReconstruction && !["perrengue-popup-9", "ppmt-desktop-top-1"].includes(options.auditedCandidateReconstruction.profile)) return false;
+  if (auditedCandidateReconstruction && !["perrengue-popup-9", "ppmt-desktop-top-1", "roo-desktop-top-1"].includes(options.auditedCandidateReconstruction.profile)) return false;
   return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan, auditedCandidateReconstruction }) => {
     const normalizeSelector = (value) => String(value || "").trim();
     const createMissingInternalSlot = () => {
@@ -3430,6 +3489,8 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       if (hosts.length !== 1) return null;
       const host = hosts[0];
       if (!(host instanceof HTMLElement)) return null;
+      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+        && (host.id !== "block-8" || host.children.length !== 0 || host.childNodes.length !== 0)) return null;
       const desktopHost = host.closest("div.hidden.lg\\:block");
       if (!(desktopHost instanceof HTMLElement)) return null;
       const style = window.getComputedStyle(desktopHost);
@@ -3437,7 +3498,16 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       const header = desktopHost.closest(".omt-header-top");
       if (!(header instanceof HTMLElement)) return null;
       const headerRect = header.getBoundingClientRect();
-      if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0 || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
+      const semanticHeader = desktopHost.closest("header");
+      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+        && (document.querySelectorAll("header .omt-header-top").length !== 1 || document.querySelector("header .omt-header-top") !== header)) return null;
+      if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+        || (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+          && semanticHeader && !semanticHeader.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+        || (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+          && !desktopHost.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+        || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0
+        || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
       return host;
     };
     const createConfiguredHomeSlot = () => {
@@ -3446,7 +3516,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         ? resolveUniqueDesktopAnchor()
         : document.querySelector(missingSlotPlan.contextSelector);
       if (!(host instanceof HTMLElement)) return null;
-      if (missingSlotPlan.requireUniqueVisibleAnchor === true) {
+      if (missingSlotPlan.requireUniqueVisibleAnchor === true && auditedCandidateReconstruction?.profile !== "roo-desktop-top-1") {
         const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
         let hasAdRotateUnavailableComment = false;
         while (walker.nextNode()) {
@@ -3499,7 +3569,9 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     const slot = auditedCandidateReconstruction
       ? (auditedCandidateReconstruction.profile === "perrengue-popup-9" ? createMissingPopupSlot() : createConfiguredHomeSlot())
       : (slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot());
-    if (!slot) return { applied: false, reason: missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
+    if (!slot) return { applied: false, reason: auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+      ? "roo_desktop_anchor_missing_or_ambiguous"
+      : missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
     const basename = String(targetBasename || targetUrl.split("/").pop() || "").toLowerCase();
     if (slot.querySelector("[data-adops-static-retro-ad='1']")) {
       return { applied: false, reason: "static_retro_ad_already_present" };
@@ -3802,7 +3874,9 @@ function evaluateRetroContentProof(payload) {
   const editorialSamples = Array.isArray(payload.editorialSamples) ? payload.editorialSamples.slice(0, 25) : [];
   const expectedPosts = Array.isArray(payload.expectedPosts) ? payload.expectedPosts.slice(0, 25) : [];
   const minimumConfigured = Math.max(1, Math.min(25, Number(payload.minimumRequired || (payload.pageType === "article" ? 1 : 3))));
-  const minimumRequired = expectedPosts.length > 0 ? Math.min(minimumConfigured, expectedPosts.length) : minimumConfigured;
+  const minimumRequired = payload.strictMinimumRequired === true
+    ? Math.max(3, minimumConfigured)
+    : expectedPosts.length > 0 ? Math.min(minimumConfigured, expectedPosts.length) : minimumConfigured;
   const contentTimeline = evaluateContentTimeline(editorialSamples.map((item) => item.date).filter(Boolean), requestedCaptureAt);
   const expectedPaths = new Set(expectedPosts.map((item) => normalizeEditorialUrl(item.url || item.link)).filter(Boolean));
   const visiblePaths = new Set(editorialSamples.map((item) => normalizeEditorialUrl(item.url)).filter(Boolean));
@@ -6350,7 +6424,7 @@ function compactMetadataForPersistence(metadata) {
   };
 }
 
-async function collectRetroContentEvidence(page, mapping, captureAt, retroPreview) {
+async function collectRetroContentEvidence(page, mapping, captureAt, retroPreview, { strictMinimumRequired = false } = {}) {
   const configuredCardSelectors = Array.isArray(mapping.auditConfig?.retroContentCardSelectors)
     ? mapping.auditConfig.retroContentCardSelectors
     : [];
@@ -6504,20 +6578,49 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     collected.expectedPosts = retroPreview.expectedPosts.slice(0, 25);
     collected.expectedSource = "wordpress_admin_api_reconstruction";
   }
-  if (
-    reconstructed &&
-    mapping.page === "article" &&
-    retroPreview.articleVerified === true &&
-    Array.isArray(retroPreview.expectedPosts) &&
-    retroPreview.expectedPosts[0]
-  ) {
+  if (reconstructed && mapping.page === "article" && retroPreview.articleVerified === true
+    && Array.isArray(retroPreview.expectedPosts) && retroPreview.expectedPosts[0]) {
     const primary = retroPreview.expectedPosts[0];
-    collected.editorialSamples = [{
-      title: String(primary.title || "").slice(0, 240),
-      url: new URL(primary.url || retroPreview.expectedArticlePath, mapping.homeUrl).toString(),
-      date: String(primary.date || ""),
-      source: "audited_article_reconstruction",
-    }];
+    if (mapping.domain === "afolhalivre.com") {
+      const currentPageUrl = new URL(page.url());
+      let configuredHomeUrl = null;
+      try { configuredHomeUrl = new URL(mapping.homeUrl); } catch {}
+      let primaryUrl = null;
+      try { primaryUrl = new URL(primary.url || ""); } catch {}
+      const normalizePath = (value) => String(value || "").replace(/\/+$/, "") || "/";
+      const expectedArticlePath = String(retroPreview.expectedArticlePath || "");
+      if (retroPreview.source !== "afl-wp-rest"
+        || !Number.isInteger(Number(primary.id)) || Number(primary.id) <= 0
+        || !primaryUrl
+        || primaryUrl.protocol !== "https:"
+        || primaryUrl.username || primaryUrl.password
+        || primaryUrl.origin !== currentPageUrl.origin
+        || !configuredHomeUrl
+        || currentPageUrl.origin !== configuredHomeUrl.origin
+        || normalizePath(primaryUrl.pathname) !== normalizePath(currentPageUrl.pathname)
+        || normalizePath(expectedArticlePath) !== normalizePath(currentPageUrl.pathname)
+        || !String(primary.title || "").trim()
+        || !String(primary.date || "").trim()) {
+        throw new Error("retro_content_article_identity_unverified");
+      }
+      collected.expectedPosts = [{ ...primary, url: primaryUrl.href }];
+      collected.expectedSource = "audited_article_reconstruction";
+      collected.editorialSamples = [{
+        title: String(primary.title || "").slice(0, 240),
+        url: primaryUrl.href,
+        date: String(primary.date || ""),
+        source: "audited_article_reconstruction",
+      }];
+    } else {
+      collected.editorialSamples = [{
+        title: String(primary.title || "").slice(0, 240),
+        url: new URL(primary.url || retroPreview.expectedArticlePath, mapping.homeUrl).toString(),
+        date: String(primary.date || ""),
+        source: "audited_article_reconstruction",
+      }];
+    }
+  } else if (reconstructed && mapping.domain === "afolhalivre.com" && mapping.page === "article") {
+    throw new Error("retro_content_article_identity_unverified");
   }
   if (
     collected.editorialSamples.length === 0 &&
@@ -6549,7 +6652,10 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
   const retroContentProof = evaluateRetroContentProof({
     requestedCaptureAt: captureAt,
     pageType: mapping.page,
-    minimumRequired: mapping.page === "article" ? 1 : mapping.auditConfig?.minRetroContentMatches,
+    minimumRequired: strictMinimumRequired
+      ? Math.max(3, Number(mapping.auditConfig?.minRetroContentMatches) || 3)
+      : mapping.page === "article" ? 1 : mapping.auditConfig?.minRetroContentMatches,
+    strictMinimumRequired,
     requireSignedPreview: mapping.auditConfig?.requireSignedRetroPreview !== false,
     previewActive: collected.previewActive,
     reconstructed,
@@ -8003,6 +8109,8 @@ async function main() {
   let retroContentProof = null;
   let retroGate = null;
   let retroPreview = null;
+  let nativeProgressAudit = null;
+  let finalPngProgressAudit = null;
   let verifiedEditorialDateReplacements = [];
   let pendingLogFlush = { flushed: 0, kept: 0 };
   let logPersistence = { status: "skipped", queued: false, error: null };
@@ -8042,7 +8150,10 @@ async function main() {
 
   try {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
-    const staticSlotPlan = buildStaticRetroSlotPlan(mapping);
+    const staticSlotPlan = buildStaticRetroSlotPlan(mapping, {
+      rooHistoricalCandidateV4: args.candidateOnly === true && args.saveEvidence === false
+        && Boolean(args.captureAt) && captureClass === "historical_recovery",
+    });
     const exactCandidateSlotMapping = (mapping.domain === "perrenguematogrosso.com"
         && mapping.page === "home"
         && mapping.groupId === 9
@@ -8056,7 +8167,16 @@ async function main() {
           && mapping.slotSelector === "div.hidden.lg\\:block .g.g-1"
           && mapping.contextSelector === "div.hidden.lg\\:block .g.g-1"
           && staticSlotPlan?.groupId === 1
-          && staticSlotPlan?.requireUniqueVisibleAnchor === true);
+          && staticSlotPlan?.requireUniqueVisibleAnchor === true)
+      || (mapping.auditConfig?.allowAuditedReconstruction === true
+        && mapping.domain === "roonoticias.com"
+        && mapping.page === "home"
+        && mapping.groupId === 1
+        && mapping.slotSelector === ".g.g-1"
+        && mapping.contextSelector === ".g.g-1"
+        && mapping.auditConfig?.requireRetroContentProof === true
+        && staticSlotPlan?.groupId === 1
+        && staticSlotPlan?.requireUniqueVisibleAnchor === true);
     const targetDay = String(isoDate);
     const contractStart = String(insertion.periodoInicio || "").slice(0, 10);
     const contractEnd = String(insertion.periodoFim || "").slice(0, 10);
@@ -8238,8 +8358,6 @@ async function main() {
     }
     const gifSourceAllowed = !videoMedia && gifFrameSelectionMode !== "dom_only" && gifSourceUrl;
     let videoProof = null;
-    let nativeProgressAudit = null;
-    let finalPngProgressAudit = null;
     if (videoMedia) {
       const videoSeed = buildStableNumber(`${insertion.id}:${effectiveCaptureAt || isoDate}:${insertion.mediaUrl}`, 1000);
       videoProof = await prepareVideoProof(page, matchedAdSelector, videoSeed);
@@ -8633,14 +8751,32 @@ async function main() {
     });
     const shouldCollectEditorialEvidence = isHistoricalCapture
       || mapping.auditConfig?.requireAbsoluteEditorialDates === true;
+    const strictRooCandidateEditorialProof = args.candidateOnly === true
+      && args.saveEvidence === false
+      && typeof args.captureAt === "string"
+      && captureClass === "historical_recovery"
+      && reconstruction?.provenanceVersion === 4
+      && mapping.domain === "roonoticias.com"
+      && mapping.page === "home"
+      && mapping.groupId === 1
+      && mapping.slotSelector === ".g.g-1"
+      && mapping.contextSelector === ".g.g-1"
+      && mapping.auditConfig?.allowAuditedReconstruction === true
+      && mapping.auditConfig?.requireRetroContentProof === true;
     const retroContentEvidence = shouldCollectEditorialEvidence
-      ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview)
+      ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview, {
+          strictMinimumRequired: strictRooCandidateEditorialProof,
+        })
       : {
           editorialSamples: [],
           contentRelativeTimeSamples: [],
           manifest: null,
           retroContentProof: null,
         };
+    if (strictRooCandidateEditorialProof
+      && !hasMatchingPreviewCutoff(retroContentEvidence.previewActive, retroContentEvidence.previewCutoff, effectiveCaptureAt)) {
+      throw new Error("roo_candidate_preview_cutoff_unverified");
+    }
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
     contentRelativeTimeSamples = isHistoricalCapture && Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
@@ -9525,6 +9661,7 @@ if (require.main === module) {
     auditHeaderAdPolicy,
     normalizeMediaIdentityUrl,
     parseIsoLikeDate,
+    hasMatchingPreviewCutoff,
     evaluateContentTimeline,
     evaluateRelativeContentTimeline,
     buildVerifiedEditorialDateReplacements,

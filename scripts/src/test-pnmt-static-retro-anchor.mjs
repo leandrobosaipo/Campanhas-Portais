@@ -3,7 +3,14 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
-const { applyPerrengueStaticRetroAd, evaluateAuditedRetroSlotReconstruction, buildStaticRetroSlotPlan } = require("./capture-insertion-proof.cjs");
+const {
+  applyPerrengueStaticRetroAd,
+  evaluateAuditedRetroSlotReconstruction,
+  buildStaticRetroSlotPlan,
+  hasMatchingPreviewCutoff,
+  evaluateRetroContentProof,
+  evaluateRetroCaptureGate,
+} = require("./capture-insertion-proof.cjs");
 const browser = await chromium.launch({ headless: true });
 const mapping = {
   domain: "portalnortemt.com",
@@ -25,6 +32,14 @@ const ppmtMapping = {
   contextSelector: "div.hidden.lg\\:block .g.g-1",
   auditConfig: { allowAuditedReconstruction: true },
 };
+const rooMapping = {
+  groupId: 1,
+  domain: "roonoticias.com",
+  page: "home",
+  slotSelector: ".g.g-1",
+  contextSelector: ".g.g-1",
+  auditConfig: { allowAuditedReconstruction: true, requireRetroContentProof: true },
+};
 const perrMapping = {
   groupId: 9,
   domain: "perrenguematogrosso.com",
@@ -33,7 +48,7 @@ const perrMapping = {
   contextSelector: "#cod5-bottom-popup-ad",
   auditConfig: {},
 };
-const auditFixture = (mapping, { clockOnly = false } = {}) => ({
+const auditFixture = (mapping, { clockOnly = false, legacyPositionOnly = false } = {}) => ({
     insertionId: 1861,
     date: "2026-08-22",
     inPeriod: true,
@@ -68,7 +83,23 @@ const auditFixture = (mapping, { clockOnly = false } = {}) => ({
     visualAudit: { identityFrameOk: true },
     slotVisibility: { fullyVisible: true, visibleRatio: 0.98 },
     pageMatches: true,
-    retroContentProof: { status: "approved", futureCount: 0, manifestHash: "a".repeat(64) },
+    ...(legacyPositionOnly
+      ? {
+          retroContentProof: null,
+          contentTimeline: {
+            reason: "empty_samples",
+            sampleCount: 0,
+            parsedCount: 0,
+            targetDateMatches: false,
+            maxObserved: null,
+            matchingTargetDateSamples: [],
+            futureSamples: [],
+            observedDates: [],
+          },
+        }
+      : {
+          retroContentProof: { status: "approved", futureCount: 0, manifestHash: "a".repeat(64) },
+        }),
     issues: clockOnly ? [{ code: "desktop_time_mismatch" }] : [],
   },
 });
@@ -86,6 +117,7 @@ const proofInputs = (mapping, status = auditFixture(mapping)) => ({
 });
 const media = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='825' height='120'/>";
 const anchor = "<div class='omt-header-top' style='height:128px;width:1216px'><div class='hidden lg:block flex-1 min-w-0' style='display:block;width:944px;height:0'><div class='flex justify-center'><div id='block-8'><!-- Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização! --></div></div></div></div>";
+const rooEmptyAnchor = "<header><div class='omt-header-top' style='height:128px;width:1216px'><div class='row' style='display:flex;width:1216px'><div class='hidden lg:block flex-1 min-w-0' style='display:block;width:944px;height:0'><div class='flex justify-center' style='display:flex;width:100%;height:0'><div id='block-8'></div></div></div></div></div></header><div class='lg:hidden'><div id='block-8'></div></div>";
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 try {
   await page.setContent("<main></main>");
@@ -145,6 +177,107 @@ try {
     const clockOnly = evaluateAuditedRetroSlotReconstruction(proofInputs(targetMapping, auditFixture(targetMapping, { clockOnly: true })));
     assert.equal(clockOnly.ok, true, targetMapping.domain + " clock-only fixture: " + (clockOnly.reason || "unexpected rejection"));
   }
+  const rooLegacyConfiguredPlan = buildStaticRetroSlotPlan(rooMapping);
+  assert.deepEqual(rooLegacyConfiguredPlan, { contextSelector: "header, main", groupClass: "g g-1", groupId: 1 },
+    "the same configured ROO mapping keeps its generic legacy plan unless the v4 candidate lane opts in");
+  const rooPlan = buildStaticRetroSlotPlan(rooMapping, { rooHistoricalCandidateV4: true });
+  const requestedRooAt = "2026-08-22T20:00:00-04:00";
+  assert.equal(hasMatchingPreviewCutoff(true, "2026-08-23T00:00:00Z", requestedRooAt), true,
+    "the signed preview cutoff may use an equivalent timezone representation");
+  for (const [active, cutoff] of [
+    [false, "2026-08-22T20:00:00-04:00"],
+    [true, null],
+    [true, "not-a-date"],
+    [true, "2026-08-22T20:00:00.000"],
+    [true, "2026-08-22T21:00:00-04:00"],
+    [true, "2026-08-23T01:00:00Z"],
+  ]) {
+    assert.equal(hasMatchingPreviewCutoff(active, cutoff, requestedRooAt), false,
+      "ROO v4 candidate requires an active, valid, equivalent preview cutoff");
+  }
+  assert.deepEqual(rooPlan, {
+    contextSelector: "header .omt-header-top div.hidden.lg\\:block > div.flex.justify-center > #block-8",
+    groupClass: "g g-1",
+    groupId: 1,
+    requireUniqueVisibleAnchor: true,
+  });
+  const rooLegacyInput = proofInputs(rooMapping, auditFixture(rooMapping, { legacyPositionOnly: true }));
+  const rooLegacyProof = evaluateAuditedRetroSlotReconstruction(rooLegacyInput);
+  assert.equal(rooLegacyProof.ok, true, "ROO legacy source should qualify only as source-position evidence");
+  assert.equal(rooLegacyProof.profile, "roo-desktop-top-1");
+  assert.equal(rooLegacyProof.sourceEvidence.proofScope, "position_only");
+  assert.equal(rooLegacyProof.sourceEvidence.sourceEditorialProofStatus, "missing_legacy");
+  assert.equal(rooLegacyProof.sourceEvidence.manifestHash, null);
+  const rooClockOnlyLegacy = evaluateAuditedRetroSlotReconstruction(
+    proofInputs(rooMapping, auditFixture(rooMapping, { clockOnly: true, legacyPositionOnly: true })),
+  );
+  assert.equal(rooClockOnlyLegacy.ok, false, "legacy position-only source cannot use the clock-only exception");
+  const rooSourceWithoutLegacyField = structuredClone(rooLegacyInput.status);
+  delete rooSourceWithoutLegacyField.audit.retroContentProof;
+  assert.equal(evaluateAuditedRetroSlotReconstruction({ ...rooLegacyInput, status: rooSourceWithoutLegacyField }).ok, true,
+    "ROO legacy source may omit retroContentProof only with the explicit empty timeline marker");
+  for (const status of [
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, retroContentProof: { status: "rejected", futureCount: 0 } } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, retroContentProof: {} } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, retroContentProof: "malformed" } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, contentTimeline: { ...rooLegacyInput.status.audit.contentTimeline, reason: "future_samples" } } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, contentTimeline: { ...rooLegacyInput.status.audit.contentTimeline, sampleCount: 1 } } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, contentTimeline: { ...rooLegacyInput.status.audit.contentTimeline, futureSamples: [{}] } } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, contentTimeline: { ...rooLegacyInput.status.audit.contentTimeline, matchingTargetDateSamples: [{}] } } },
+    { ...rooLegacyInput.status, audit: { ...rooLegacyInput.status.audit, contentTimeline: { reason: "empty_samples", sampleCount: 0, parsedCount: 0 } } },
+  ]) {
+    assert.equal(evaluateAuditedRetroSlotReconstruction({ ...rooLegacyInput, status }).ok, false);
+  }
+  assert.equal(evaluateAuditedRetroSlotReconstruction(proofInputs(rooMapping)).ok, true, "ROO source with ordinary approved editorial proof remains valid");
+  for (const invalidMapping of [
+    { ...rooMapping, groupId: 2 },
+    { ...rooMapping, page: "article" },
+    { ...rooMapping, slotSelector: ".g.g-2", contextSelector: ".g.g-2" },
+    { ...rooMapping, contextSelector: "header, main" },
+  ]) {
+    assert.equal(buildStaticRetroSlotPlan(invalidMapping, { rooHistoricalCandidateV4: true }), null);
+    assert.equal(evaluateAuditedRetroSlotReconstruction(proofInputs(invalidMapping)).ok, false);
+  }
+  assert.equal(evaluateAuditedRetroSlotReconstruction(proofInputs({ ...rooMapping, auditConfig: {} })).ok, false);
+  assert.equal(evaluateAuditedRetroSlotReconstruction(proofInputs({
+    ...rooMapping,
+    auditConfig: { allowAuditedReconstruction: true, requireRetroContentProof: false },
+  })).ok, false, "ROO candidate profile requires the editorial-proof config gate");
+  const rooLegacyPlan = buildStaticRetroSlotPlan({ ...rooMapping, auditConfig: { allowAuditedReconstruction: true } });
+  assert.deepEqual(rooLegacyPlan, { contextSelector: "header, main", groupClass: "g g-1", groupId: 1 },
+    "ROO configurations outside the new lane retain their previous generic legacy slot plan");
+
+  const sparseRooPayload = {
+    requestedCaptureAt: "2026-08-22T20:00:00-04:00",
+    pageType: "home",
+    minimumRequired: 3,
+    reconstructed: true,
+    manifestHash: "b".repeat(64),
+    expectedPosts: [
+      { url: "https://roonoticias.com/post-1" },
+      { url: "https://roonoticias.com/post-2" },
+    ],
+    editorialSamples: [
+      { url: "https://roonoticias.com/post-1", date: "2026-08-21" },
+      { url: "https://roonoticias.com/post-2", date: "2026-08-20" },
+    ],
+  };
+  assert.equal(evaluateRetroContentProof(sparseRooPayload).status, "approved",
+    "the former capped minimum would have allowed two posts");
+  const sparseRooProof = evaluateRetroContentProof({ ...sparseRooPayload, strictMinimumRequired: true });
+  assert.equal(sparseRooProof.status, "rejected", "two expected/matched posts cannot satisfy the ROO candidate pre-upload gate");
+  assert.equal(sparseRooProof.minimumRequired, 3);
+  assert.equal(sparseRooProof.visibleMatchCount, 2);
+  const sparseRooGate = evaluateRetroCaptureGate({
+    requestedCaptureAt: "2026-08-22T20:00:00-04:00",
+    systemDateTime: "20:00\n22/08/2026",
+    pageDateObserved: "22/08/2026",
+    contentDateSamples: ["2026-08-21", "2026-08-20"],
+    retroContentProof: sparseRooProof,
+    requireRetroContentProof: true,
+  });
+  assert.equal(sparseRooGate.ok, false, "sparse ROO proof fails the gate evaluated before upload");
+  assert.ok(sparseRooGate.issues.some((issue) => issue.code === "retro_content_expected_mismatch"));
   for (const groupId of [1, 2, 11]) {
     const unrelatedPerrengueMapping = {
       ...perrMapping,
@@ -228,6 +361,41 @@ try {
   assert.equal((await applyPerrengueStaticRetroAd(page, ppmtMapping, media, "banner.svg", auditedSlotOptions)).reason, "pnmt_desktop_anchor_missing_or_ambiguous");
   await page.setContent(anchor + "<div class='hidden lg:block'><div id='block-8' class='g g-1'></div></div>");
   assert.equal((await applyPerrengueStaticRetroAd(page, ppmtMapping, media, "banner.svg", auditedSlotOptions)).reason, "candidate_slot_must_be_missing");
+
+  const rooCandidateOptions = {
+    allowConfiguredSlotReconstruction: true,
+    reconstructionReason: null,
+    reconstructionProvenanceVersion: 4,
+    candidateOnly: true,
+    auditedCandidateReconstruction: { ok: true, profile: "roo-desktop-top-1" },
+  };
+  await page.setContent(rooEmptyAnchor);
+  const rooV2LegacyApplied = await applyPerrengueStaticRetroAd(page, rooMapping, media, "banner.svg", {
+    ...options,
+    allowConfiguredSlotReconstruction: true,
+    reconstructionReason: "late_publication_recovery",
+    reconstructionProvenanceVersion: 2,
+  });
+  assert.equal(rooV2LegacyApplied.applied, true, "v2 with the current ROO audit flags still uses the legacy header/main path");
+  assert.equal(await page.locator("header > .g.g-1[data-adops-reconstructed-slot='1']").count(), 1);
+  assert.equal(await page.locator("header .omt-header-top #block-8 > .g.g-1[data-adops-reconstructed-slot='1']").count(), 0);
+
+  await page.setContent(rooEmptyAnchor);
+  const rooApplied = await applyPerrengueStaticRetroAd(page, rooMapping, media, "banner.svg", rooCandidateOptions);
+  assert.equal(rooApplied.applied, true);
+  assert.equal(await page.locator("header .omt-header-top .hidden.lg\\:block #block-8 > .g.g-1[data-adops-reconstructed-slot='1']").count(), 1);
+  for (const [index, html] of [
+    rooEmptyAnchor.replace("<header>", "<div>"),
+    rooEmptyAnchor.replace("display:block;width:944px", "display:none;width:944px"),
+    rooEmptyAnchor + rooEmptyAnchor,
+    rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><span>occupied</span></div>"),
+    rooEmptyAnchor.replace("<div id='block-8'></div>", "<div id='block-8'><div class='g g-1'></div></div>"),
+    rooEmptyAnchor + "<header><div class='omt-header-top'></div></header>",
+  ].entries()) {
+    await page.setContent(html);
+    assert.equal((await applyPerrengueStaticRetroAd(page, rooMapping, media, "banner.svg", rooCandidateOptions)).applied, false, `ROO unsafe anchor fixture ${index}`);
+    assert.equal(await page.locator("[data-adops-reconstructed-slot='1']").count(), 0);
+  }
 } finally {
   await page.close();
   await browser.close();

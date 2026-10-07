@@ -127,9 +127,11 @@ Campanha encerrada não deve ser reativada para produzir evidência. Use backfil
 
 O relatório mensal deve continuar mostrando a campanha depois do encerramento. O endpoint diário `campaign-operations/active` não serve para montar o histórico do mês; use `campaign-operations/evidence-monthly-source`.
 
-Use `print-backfill` somente após publicação real. Datas críticas rodam em série, com captura concorrência 1. Para evidência inválida, refaça a data individual com `replace=true`; não sobrescreva evidência válida sem motivo.
+Use print-backfill somente após publicação real. Datas críticas rodam em série, com captura concorrência 1. Para atualizar a apresentação de evidência histórica no contrato v4, preservar o original e usar candidato com promote=false/replace=false, auditoria final, revisão visual individual, promoção persistida com archive/CAS e readback; não apagar o canônico para gerar outro. O fluxo de backfill legado mantém seu contrato. Ver [SPEC v4](./adops/retroactive-proof-v4/spec.md).
 
 Reconstrução histórica só é aceita quando a auditoria confirma que a prova representa o slot, mídia, data e contexto esperados. Caso contrário, registre blocker por portal, formato e data.
+
+A extensão ROO/home/grupo1 ainda em implementação admite fonte legada totalmente aprovada com prova editorial ausente apenas como posição/criativo. A origem antiga permanece registrada; o candidato novo deve produzir três notícias/amostras/matches válidos, zero futuros, hash64 e prova editorial aprovada antes do upload. A API final também recusa partial_source_editorial_unverified. Não reclassificar o original, inventar publicação tardia, ampliar PERR/PPMT ou dispensar revisão/promoção/readback.
 
 Quando um anúncio encerrado não aparece mais no HTML do AdRotate, o capturador pode usar a reconstrução auditada explicitamente habilitada no runner. Para OMT e AFL, ela consulta o WordPress REST com corte na data pedida, reescreve somente os cards de notícia visíveis e recria o slot apenas em uma âncora conhecida do tema. A mídia vem da `mediaUrl` canônica da inserção. Esse fallback não altera WordPress, AdRotate ou cache público. Falhe sem gerar evidência se a âncora não for única, houver menos de três notícias históricas, aparecer conteúdo posterior ao corte ou a identidade visual do banner divergir.
 

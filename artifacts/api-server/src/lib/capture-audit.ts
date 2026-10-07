@@ -803,6 +803,38 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
   const contentTimelineOk = contentTimeline.ok ||
     (contentTimeline.reason === "empty_samples" && (isScheduledLikeCaptureClass || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
+  const sourceEvidence = reconstruction?.sourceEvidence as Record<string, unknown> | undefined;
+  let partialSourceEditorialOk = true;
+  if (sourceEvidence?.proofScope === "position_only") {
+    const manifest = metadata.retroContentManifest ?? {};
+    const normalizePost = (value: unknown): string | null => {
+      try {
+        const url = new URL(String(value ?? ""));
+        return url.protocol === "https:" && url.origin === "https://roonoticias.com" && !url.username && !url.password
+          ? url.pathname.replace(/\/+$/, "") || "/" : null;
+      } catch { return null; }
+    };
+    const expected = new Set((Array.isArray(manifest.expectedPosts) ? manifest.expectedPosts : [])
+      .map((post: any) => normalizePost(post?.url)).filter(Boolean));
+    const allSamples = Array.isArray(metadata.editorialSamples) ? metadata.editorialSamples : [];
+    const editorialTimeline = evaluateContentTimeline(allSamples.map((sample: any) => sample?.date), requestedCaptureAt);
+    const expectedTimeline = evaluateContentTimeline((Array.isArray(manifest.expectedPosts) ? manifest.expectedPosts : [])
+      .map((post: any) => post?.date), requestedCaptureAt);
+    const samples = allSamples
+      .filter((sample: any) => normalizePost(sample?.url) && evaluateContentTimeline([sample?.date], requestedCaptureAt).ok);
+    const matched = new Set(samples.map((sample: any) => normalizePost(sample.url)).filter((url: string) => expected.has(url)));
+    partialSourceEditorialOk = siteSigla === "ROO" && normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
+      && reconstructionProvenanceV4 && resolvedMapping?.page === "home" && resolvedMapping?.groupId === 1
+      && effectiveAuditConfig.allowAuditedReconstruction === true && effectiveAuditConfig.requireRetroContentProof === true
+      && sourceEvidence.sourceEditorialProofStatus === "missing_legacy"
+      && Number.isInteger(retroContentProof?.expectedCount) && Number.isInteger(retroContentProof?.visibleMatchCount)
+      && Number.isInteger(retroContentProof?.minimumRequired)
+      && retroContentProof?.status === "approved" && retroContentProof?.expectedCount >= 3
+      && retroContentProof?.visibleMatchCount >= 3 && retroContentProof?.minimumRequired >= 3
+      && retroContentProof?.futureCount === 0 && /^[a-f0-9]{64}$/i.test(retroContentProof?.manifestHash ?? "")
+      && expected.size >= 3 && matched.size >= 3 && contentTimeline.parsedCount >= 3
+      && editorialTimeline.ok && editorialTimeline.parsedCount >= 3 && expectedTimeline.ok && expectedTimeline.parsedCount >= 3;
+  }
   // Gates added after an evidence was captured cannot invalidate its persisted contract.
   // New captures explicitly declare every gate they were produced to satisfy.
   const requireAbsoluteEditorialDates = effectiveAuditConfig.requireAbsoluteEditorialDates === true &&
@@ -931,6 +963,10 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
         });
       }
     }
+  }
+  if (!partialSourceEditorialOk) {
+    issues.push({ code: "partial_source_editorial_unverified", label: "Prova editorial nova incompleta",
+      detail: "A fonte legada comprova somente a posição; o candidato ROO v4 exige três notícias válidas, zero futuras e hash editorial." });
   }
   if (requireSlotVisibleInViewport && !slotMostlyVisible) {
     issues.push({
@@ -1156,7 +1192,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string, now =
     playerProofOk,
     visualsOk,
     issues,
-    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && partialSourceEditorialOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 
