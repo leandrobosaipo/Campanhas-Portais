@@ -2,11 +2,13 @@
 
 ## Reconstruções v4 e moldura v5 — estado de 07/10/2026
 
-Main e aplicação: `04cd98ba906ec57efc86ffd1a44390b5c666c5c2`, PR117 integrado, CI37594453308 aprovado. Publicação conferida às08:50:26 UTC com dump novo, restauração completa, quatro serviços, fonte real do capturador, JavaScript público e OpenAPI174/157. **26/263 evidências corrigidas e confirmadas; 237 restantes.** AFL2692/21Aug e ROO2641/23Aug tiveram revisão individual, promoção com original arquivado, hash/status e miniatura/modal conferidos.
+Main e aplicação: `04cd98ba906ec57efc86ffd1a44390b5c666c5c2`, PR117 integrado, CI37594453308 aprovado. Publicação conferida às08:50:26 UTC com dump novo, restauração completa, quatro serviços, fonte real do capturador, JavaScript público e OpenAPI174/157. **26/237 evidências corrigidas e confirmadas; 211 restantes.** AFL2692/21Aug e ROO2641/23Aug tiveram revisão individual, promoção com original arquivado, hash/status e miniatura/modal conferidos.
 
 VIDEO3064/01Oct segue preservado: PNG concluído, registroHTTP409 por etapa slot_captured fechada2071ms antes da recaptura final. Correção de ordem e teste em branch; não relaxar proveniência, reescrever metadata antiga ou contar esse PNG como entrega. Próximos gates: revisão independente, CI/main/publicação, novo candidato e consumidor. Demais alvos seguem em grupos pequenos, com aprovação individual;1157 origens desconhecidas e possíveis duplicidades sem fonte permanecem preservadas.
 
 Os dois relógios do PNG usam a referência histórica. Origem reconstruída e instante real ficam nos dados/detalhes do relatório, sem carimbo adicional na imagem. A reconstrução gráfica não comprova sozinha a veiculação passada. Estado detalhado: [plano](./superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md), [SPEC](./adops/retroactive-proof-v4/spec.md), [HARNESS](./adops/retroactive-proof-v4/harness.md). Os registros abaixo são históricos; não substituem este checkpoint.
+
+Qualificação atual dos53 IDs por API:263 pares históricos =237 operáveis +26 protegidos (#1826 arquivada/substituída:12; #1860 com vínculo de substituição:14). #1860 e sucessora2192 diferem em mídia/formato, sem prova de duplicidade idêntica. Quatro reconstruções1826/01–04Aug já promovidas foram preservadas como histórico, sem contar como entrega no relatório. Preparo deixou passar esse estado; guard privado corrigido, proteção no capturador em implementação. Preservar originais/arquivamento/vínculos/sucessoras, sem transferir imagens ou reativar.
 
 ## Histórico — 06/10/2026, release inicial e hotfix do favicon
 

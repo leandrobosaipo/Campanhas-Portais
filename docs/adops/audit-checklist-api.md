@@ -16,6 +16,8 @@ Para ROO/home/grupo1, reconstruction.sourceEvidence com proofScope=position_only
 
 O instante real capturedAt=reconstructedAt deve permanecer dentro de slot_captured. O fechamento dessa etapa ocorre após a última screenshot/medição, inclusive controles nativos. HTTP409 por violação dessa correlação bloqueia registro e promoção; não corrigir o resultado alterando timestamps, ignorando o validator ou simulando rejeição visual.
 
+Elegibilidade operacional precede a imagem/auditoria: archivedAt ou supersededByInsertionId presente bloqueia nova execução de captura. Isso não elimina a prova antiga nem invalida automaticamente seus recibos; manter GET/readback e vínculo da sucessora. O inventário histórico não autoriza repetir captura de todos os seus registros.
+
 O checklist tambem e o gate obrigatorio antes de baixar o `arquivoUrl`, montar a
 pasta do cliente ou criar `telegram-send-evidence`. Consulte o fluxo completo em
 [`evidence-print-delivery-api.md`](./evidence-print-delivery-api.md).

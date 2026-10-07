@@ -39,6 +39,8 @@ PERR/PPMT mantêm prova editorial original estrita; não ampliar publicação ta
 Critérios completos e negativos estão na SPEC/HARNESS acima.
 
 ## Objetivo
+
+Antes de gerar um novo print, conferir a inserção atual: registros arquivados ou com supersededByInsertionId ficam fora do lote operacional. O capturador bloqueia esses marcadores antes de abrir o navegador. Preservar provas antigas e GET/readback; não reativar ou copiar a imagem para a sucessora. Inventário histórico pode incluir esses registros e deve ser qualificado antes da execução.
 Permitir gerar provas visuais retroativas com data e hora simuladas, para que o print mostre:
 - a primeira dobra completa do site
 - o banner correto da insercao

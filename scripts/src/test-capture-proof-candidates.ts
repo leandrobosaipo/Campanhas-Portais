@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import * as ts from "typescript";
@@ -9,6 +10,11 @@ import {
   validateCandidateMetadata,
   validateCandidateReadback,
 } from "../../artifacts/api-server/src/lib/capture-proof-candidate-provenance.mjs";
+
+const require = createRequire(import.meta.url);
+const capture = require("./capture-insertion-proof.cjs") as {
+  assertInsertionOperable: (insertion: Record<string, unknown>) => void;
+};
 
 const jobId = "1790894999713-zz1efr";
 const insertionId = 3024;
@@ -126,6 +132,21 @@ test("keeps the v4 slot capture stage open through the final native video recapt
     "a stage closed before the real final capture instant must be rejected");
   assert.equal(validateCandidateMetadata(v4, { ...identity, captureStageFinishedAt: "2026-10-07T09:00:07.500Z" }).ok, true,
     "the same candidate is valid when slot_captured encloses its actual capture instant");
+});
+
+test("blocks only explicitly archived or superseded insertions before capture setup", () => {
+  assert.doesNotThrow(() => capture.assertInsertionOperable({ id: 1, archivedAt: null, supersededByInsertionId: null }));
+  assert.doesNotThrow(() => capture.assertInsertionOperable({ id: 2 }));
+  assert.throws(() => capture.assertInsertionOperable({ id: 3, archivedAt: "2026-08-07T12:00:00.000Z" }), /insertion_not_operable/);
+  assert.throws(() => capture.assertInsertionOperable({ id: 4, supersededByInsertionId: 1841 }), /insertion_not_operable/);
+
+  const captureSource = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "capture-insertion-proof.cjs"), "utf8");
+  const fetchAt = captureSource.indexOf("const insertion = await fetchInsertion(args.apiBase, args.insertionId);");
+  const guardAt = captureSource.indexOf("assertInsertionOperable(insertion);", fetchAt);
+  const mappingAt = captureSource.indexOf("const mapping = await getMapping(insertion, args.apiBase);", fetchAt);
+  const launchAt = captureSource.indexOf("const browser = await chromium.launch(launchOptions);", fetchAt);
+  assert.ok(fetchAt >= 0 && guardAt > fetchAt && mappingAt > guardAt && launchAt > guardAt,
+    "operability must be checked after insertion readback and before mapping or browser launch");
 });
 
 test("blocks forged job identity, timestamps, non-candidate paths and metadata provenance", () => {

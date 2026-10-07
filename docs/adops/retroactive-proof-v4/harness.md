@@ -2,7 +2,9 @@
 
 ## Checkpoint atual — 07/10/2026
 
-Main/release `04cd98ba906ec57efc86ffd1a44390b5c666c5c2`, PR117 e CI37594453308 conferidos. Readback em 08:50:26 UTC: backup novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI. **26/263 evidências confirmadas, 237 restantes**. AFL #2692/21Aug e ROO #2641/23Aug passaram em auditoria final, PNG individual, promoção, archive/hash/status e miniatura/modal. Recibos privados `release-final-retro-canary-followup.json` e `checkpoint-26-confirmed.json`. Os checkpoints abaixo são históricos.
+Main/release `04cd98ba906ec57efc86ffd1a44390b5c666c5c2`, PR117 e CI37594453308 conferidos. Readback em 08:50:26 UTC: backup novo/restauração completa/quatro serviços/fonte/JavaScript público/OpenAPI. **26/237 evidências confirmadas, 211 restantes**. AFL #2692/21Aug e ROO #2641/23Aug passaram em auditoria final, PNG individual, promoção, archive/hash/status e miniatura/modal. Recibos privados `release-final-retro-canary-followup.json` e `checkpoint-26-confirmed.json`. Os checkpoints abaixo são históricos.
+
+Qualificação posterior por GET das53 inserções: zero desconhecidos/divergências de campanha/site/período/formato. Inventário263 =237 pares operáveis +26 protegidos. #1826 arquivada e substituída por1841 (12pares); #1860 com vínculo de substituição para2192 (14pares). Nenhum protegido pertence às26 entregas confirmadas. #1860 e sucessora diferem em formato/mídia/identityKey: não declarar duplicidade idêntica nem transferir provas. As quatro reconstruções1826/01–04Aug foram promovidas antes dessa qualificação, com originais preservados, mas não contam como entrega no consumidor; relatório exclui1826 corretamente. Guard privado exige marcadores explícitos nulos antes de preparar/capturar. Proteger também execução comum antes de abrir navegador. Recibos privados de identidade/qualificação e exceção conservados; nenhuma reativação, remoção ou alteração de sucessora.
 
 Os três canários d1 falharam antes da promoção, com originais preservados:
 

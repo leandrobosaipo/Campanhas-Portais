@@ -565,6 +565,12 @@ async function fetchInsertion(apiBase, insertionId) {
   return response.json();
 }
 
+function assertInsertionOperable(insertion) {
+  if (insertion?.archivedAt != null || insertion?.supersededByInsertionId != null) {
+    throw new Error(`insertion_not_operable: a inserção ${insertion?.id ?? "desconhecida"} está arquivada ou substituída.`);
+  }
+}
+
 function stripHtml(value) {
   return String(value || "")
     .replace(/<[^>]*>/g, " ")
@@ -8015,6 +8021,7 @@ async function main() {
     throw new Error("candidate_promotion_requires_persisted_approval: candidate capture must use --saveEvidence false; promote only the audited stored artifact.");
   }
   const insertion = await fetchInsertion(args.apiBase, args.insertionId);
+  assertInsertionOperable(insertion);
   const captureDate = parseCaptureDate(args.captureAt) ?? new Date();
 
   if (!insertion.mediaUrl) {
@@ -9642,6 +9649,7 @@ if (require.main === module) {
   });
 } else {
   module.exports = {
+    assertInsertionOperable,
     validateCaptureChecklist,
     forceMatchedAdVisible,
     applyAflRetroPreview,

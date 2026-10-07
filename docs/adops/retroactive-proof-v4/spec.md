@@ -1,5 +1,11 @@
 # SPEC — Reconstrução retroativa v4
 
+## Elegibilidade operacional da inserção
+
+Antes de preparar/regenerar, ler a inserção atual. archivedAt não nulo ou supersededByInsertionId não nulo bloqueiam nova captura antes de abrir navegador/gerar mídia, para todos os callers do capturador. GET/readback e provas já persistidas permanecem acessíveis; não reescrever jobs anteriores. O operador exige os dois marcadores explicitamente nulos; o capturador conserva compatibilidade dos DTOs antigos sem esses campos, mas recusa qualquer marcador presente. Status/mídia/formato/identidade continuam sujeitos aos gates existentes.
+
+Inventário é histórico e inclui registros protegidos; não equivale ao conjunto executável. #1826→1841 confirma arquivamento/substituição; #1860→2192 tem mídia/formato diferentes e exige preservar essa diferença. Nunca copiar PNG para a sucessora nem reativar/apagar registros por inferência.
+
 ## Identidade e relógios
 
 Novas reconstruções usam reconstruction.provenanceVersion=4. Não criar um timestamp concorrente: requestedCaptureAt é a referência de apresentação (screenshot date/time), targetDate/date é o dia contratual, capturedAt e reconstruction.reconstructedAt são o instante real ISO com timezone. Os dois últimos continuam iguais e dentro do estágio slot_captured do job original. Fechar esse estágio somente após a última screenshot e medição do viewport, inclusive recaptura dos controles nativos; iniciar final_composed depois. Não retroceder o timestamp para caber numa etapa encerrada. historicalDisplayConfirmed=false significa que não houve comprovação independente de veiculação passada; não descreve a aparência dos relógios.
