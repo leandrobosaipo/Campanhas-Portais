@@ -9,9 +9,46 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const require = createRequire(import.meta.url);
+const ts = require("typescript");
 const python = process.env.ADOPS_CAPTURE_PYTHON || "python3";
 const { auditNativeVideoProgress, auditFinalPngVideoProgress, composeDesktopProof } = require("./capture-insertion-proof.cjs");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const captureSourcePath = path.join(projectRoot, "scripts/src/capture-insertion-proof.cjs");
+const captureProgram = ts.createProgram([captureSourcePath], {
+  allowJs: true,
+  checkJs: true,
+  noEmit: true,
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.CommonJS,
+  skipLibCheck: true,
+});
+const captureSource = captureProgram.getSourceFile(captureSourcePath);
+const captureChecker = captureProgram.getTypeChecker();
+let captureMain = null;
+function findCaptureMain(node) {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === "main") captureMain = node;
+  ts.forEachChild(node, findCaptureMain);
+}
+findCaptureMain(captureSource);
+assert.ok(captureMain, "capture main function must exist");
+const captureTry = captureMain.body.statements.find(ts.isTryStatement);
+assert.ok(captureTry?.catchClause, "capture main failure path must exist");
+for (const name of ["nativeProgressAudit", "finalPngProgressAudit"]) {
+  const references = [];
+  function findCatchReferences(node) {
+    if (ts.isShorthandPropertyAssignment(node) && node.name.text === name) references.push(node);
+    ts.forEachChild(node, findCatchReferences);
+  }
+  findCatchReferences(captureTry.catchClause.block);
+  assert.ok(references.length > 0, `${name} must be consumed by the failure diagnostics`);
+  const referenceSymbols = references.map((reference) => captureChecker.getShorthandAssignmentValueSymbol(reference));
+  assert.ok(referenceSymbols.every(Boolean), `${name} references in catch must bind to an in-scope variable`);
+  assert.ok(referenceSymbols.every((symbol) => symbol === referenceSymbols[0]), `${name} catch references must resolve consistently`);
+  const declaration = referenceSymbols[0].valueDeclaration || referenceSymbols[0].declarations?.[0];
+  assert.ok(declaration && ts.isVariableDeclaration(declaration), `${name} must have a variable declaration visible to catch`);
+  assert.equal(declaration.parent?.parent?.parent, captureMain.body,
+    `${name} must be declared in main scope outside the protected try block`);
+}
 const workDir = mkdtempSync(path.join(tmpdir(), "adops-native-progress-"));
 const videoPath = path.join(workDir, "fixture.mp4");
 const damagedPng = path.join(workDir, "damaged.png");

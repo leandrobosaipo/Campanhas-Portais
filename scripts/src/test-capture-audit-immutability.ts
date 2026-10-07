@@ -77,6 +77,56 @@ function buildMetadata({
   });
 }
 
+test("ROO com fonte parcial exige prova editorial completa na auditoria final", () => {
+  const targetDate = "2026-08-24";
+  const requestedCaptureAt = `${targetDate}T10:00:00-04:00`;
+  const metadata: any = buildMetadata({
+    captureClass: "historical_recovery", targetDate, requestedCaptureAt,
+    contentDateSamples: Array(3).fill(`${targetDate}T09:00:00-04:00`),
+    capturedAt: "2026-10-07T04:00:00Z", captureTime: requestedCaptureAt,
+    reconstruction: { provenanceVersion: 4, reconstructedAt: "2026-10-07T04:00:00Z",
+      sourceEvidence: { proofScope: "position_only", sourceEditorialProofStatus: "missing_legacy" } },
+    retroContentProof: { status: "approved", expectedCount: 3, visibleMatchCount: 3,
+      minimumRequired: 3, futureCount: 0, manifestHash: "a".repeat(64) },
+  });
+  metadata.format = "MEGABANNER TOPO";
+  metadata.slotSelector = ".g.g-1";
+  metadata.contextSelector = ".g.g-1";
+  metadata.pageLabel = "Home";
+  metadata.pageUrl = "https://roonoticias.com/";
+  const posts = [1, 2, 3].map(id => ({ url: `https://roonoticias.com/news-${id}/`, date: `${targetDate}T09:00:00-04:00` }));
+  metadata.retroContentManifest = { expectedPosts: structuredClone(posts), visiblePosts: structuredClone(posts) };
+  metadata.editorialSamples = structuredClone(posts);
+  const audit = (value: any) => evaluateCaptureMetadata(value, targetDate, new Date("2026-10-07T04:01:00Z"));
+  assert.equal(audit(metadata).issues.some(issue => issue.code === "partial_source_editorial_unverified"), false);
+  assert.equal(audit(metadata).ok, true, JSON.stringify(audit(metadata).issues));
+  for (const change of [
+    (m: any) => { m.retroContentProof.expectedCount = 2; },
+    (m: any) => { m.retroContentProof.visibleMatchCount = 2; },
+    (m: any) => { m.retroContentProof.minimumRequired = 2; },
+    (m: any) => { m.contentDateSamples = [m.contentDateSamples[0]]; },
+    (m: any) => { m.retroContentProof.futureCount = 1; },
+    (m: any) => { m.retroContentProof.manifestHash = "invalid"; },
+    (m: any) => { m.retroContentProof.status = "rejected"; },
+    (m: any) => { m.reconstruction.sourceEvidence.sourceEditorialProofStatus = "approved"; },
+    (m: any) => { m.siteSigla = "OMT"; },
+    (m: any) => { m.reconstruction.provenanceVersion = 3; },
+    (m: any) => { m.retroContentManifest.expectedPosts = m.retroContentManifest.expectedPosts.slice(0, 2); },
+    (m: any) => { m.editorialSamples = m.editorialSamples.slice(0, 2); },
+    (m: any) => { m.editorialSamples[0].date = "2026-08-25T09:00:00-04:00"; },
+    (m: any) => { m.editorialSamples[0].url = "https://example.com/foreign/"; },
+    (m: any) => { m.editorialSamples.push({ url: "https://roonoticias.com/future/", date: "2026-08-25T09:00:00-04:00" }); },
+    (m: any) => { m.retroContentManifest.expectedPosts[0].date = "2026-08-25T09:00:00-04:00"; },
+    (m: any) => { m.retroContentProof.expectedCount = "3"; },
+  ]) {
+    const changed = structuredClone(metadata);
+    change(changed);
+    const result = audit(changed);
+    assert.equal(result.ok, false);
+    assert.ok(result.issues.some(issue => issue.code === "partial_source_editorial_unverified"));
+  }
+});
+
 test("captura do dia contratado pode ser reavaliada no dia seguinte sem virar retroativa", () => {
   const captureDate = "2026-08-24";
   const nextDate = "2026-08-25";

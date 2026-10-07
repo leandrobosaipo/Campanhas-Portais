@@ -9,7 +9,12 @@ import {
 } from "../../artifacts/api-server/src/lib/adrotate-sites.ts";
 import captureModule from "./capture-insertion-proof.cjs";
 
-const { applyAflRetroPreview, applyPerrengueStaticRetroAd, stabilizeVisibleRetroDatesBeforeCapture } = captureModule;
+const {
+  applyAflRetroPreview,
+  collectRetroContentEvidence,
+  applyPerrengueStaticRetroAd,
+  stabilizeVisibleRetroDatesBeforeCapture,
+} = captureModule;
 
 const portalDefaults = {
   requireSignedRetroPreview: true,
@@ -201,6 +206,7 @@ try {
   }];
   const articleResult = await applyAflRetroPreview(page, {
     domain: "afolhalivre.com",
+    homeUrl: "https://afolhalivre.com/",
     page: "article",
   }, "2026-08-21T18:14:00-04:00", {
     posts: articlePosts,
@@ -215,6 +221,34 @@ try {
   assert.equal(await page.locator(".entry-content").textContent(), expoBody);
   assert.equal(await page.title(), expoTitle + " - A Folha Livre");
   assert.equal(new URL(page.url()).pathname, "/expo-primavera/");
+  await page.route("https://afolhalivre.com/wp-json/wp/v2/posts**", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([
+      { id: 123, date: articlePosts[0].date, link: articlePosts[0].url, title: { rendered: articlePosts[0].title } },
+      { id: 124, date: articlePosts[1].date, link: articlePosts[1].url, title: { rendered: articlePosts[1].title } },
+    ]),
+  }));
+  const collectedArticle = await collectRetroContentEvidence(page, {
+    domain: "afolhalivre.com",
+    homeUrl: "https://afolhalivre.com/",
+    page: "article",
+    auditConfig: {},
+  }, "2026-08-21T18:14:00-04:00", articleResult);
+  assert.deepEqual(collectedArticle.expectedPosts.map((post) => post.id), [124],
+    "article manifest expectedPosts must select the opened URL rather than the first REST post");
+  assert.equal(collectedArticle.editorialSamples[0].url, expoUrl);
+  assert.equal(collectedArticle.manifest.expectedPosts[0].url, expoUrl);
+  assert.equal(collectedArticle.manifest.visiblePosts[0].url, expoUrl);
+  assert.equal(collectedArticle.retroContentProof.visibleMatchCount, 1);
+  await assert.rejects(collectRetroContentEvidence(page, {
+    domain: "afolhalivre.com", homeUrl: "https://afolhalivre.com/", page: "article", auditConfig: {},
+  }, "2026-08-21T18:14:00-04:00", { ...articleResult, expectedPosts: [] }), /retro_content_article_identity_unverified/);
+  await assert.rejects(collectRetroContentEvidence(page, {
+    domain: "afolhalivre.com", homeUrl: "https://afolhalivre.com/", page: "article", auditConfig: {},
+  }, "2026-08-21T18:14:00-04:00", {
+    ...articleResult,
+    expectedPosts: [{ ...articleResult.expectedPosts[0], url: "https://other.example/expo-primavera/" }],
+  }), /retro_content_article_identity_unverified/);
   const reconstructedHtml = await page.locator("main article").innerHTML();
   await assert.rejects(applyAflRetroPreview(page, { domain: "afolhalivre.com", page: "article" }, "2026-08-21T18:14:00-04:00", { posts: [articlePosts[0]] }), /article_identity_mismatch/);
   assert.equal(await page.locator("main article").innerHTML(), reconstructedHtml, "unknown article identity must fail before mutation");
