@@ -11,7 +11,7 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Meses antigos usam a mesma página pelo seletor ou por `?mes=AAAA-MM`.
 - Busca e filtros consultam `GET /api/reports/evidences/monthly`.
 - A paginação é por campanha; uma campanha não pode ser dividida entre páginas.
-- A listagem só aparece depois de carregar todas as páginas. O limite total da consulta é 90 segundos; se excedido, nenhum resultado parcial é apresentado e o botão `Atualizar` permite tentar novamente.
+- A listagem só aparece depois de carregar todas as páginas. O limite total da consulta é 45 segundos; se excedido, nenhum resultado parcial é apresentado e o botão `Atualizar` permite tentar novamente.
 - Miniaturas usam o endpoint de evidência com `preview=1`, disposição inline, ETag e cache público.
 - O download explícito de JPEG continua como anexo.
 - O ZIP da campanha continua no fluxo assíncrono `/api/pi-site-exports/jobs`.
@@ -41,6 +41,7 @@ URL pública única: `https://sites.codigo5.com.br/reports/adops-evidencias/`.
 - Resumo, ZIP e inserções por campanha.
 - Mídia, estados, progresso, ações e trilha de evidências por inserção.
 - Modal de evidência com navegação por data, detalhes e ações.
+- A imagem fica alinhada ao topo e centralizada horizontalmente, preservando a proporção e o PNG completo. A referência histórica e o instante real da reconstrução ficam nos detalhes, fora da imagem; nenhum carimbo é acrescentado ao PNG.
 - Barra de geração acessível com `role=progressbar`, valor de 0 a 100 e texto da etapa; sucesso e falha não dependem apenas de cor.
 - Filtro móvel e controles com altura mínima de 44 px.
 
