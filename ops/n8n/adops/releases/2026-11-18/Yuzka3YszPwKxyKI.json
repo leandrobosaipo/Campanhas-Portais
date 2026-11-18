@@ -1,0 +1,262 @@
+{
+  "id": "Yuzka3YszPwKxyKI",
+  "name": "ADOPS — Acompanhar trabalho",
+  "active": true,
+  "versionId": "fd3f58b7-5af4-4479-99d5-8c515fbd0de3",
+  "nodes": [
+    {
+      "id": "ea5d4487-d369-4cd2-a441-d9dd038b3614",
+      "name": "Receber trabalho",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        80
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "jobId",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f8c5f27d-84f6-478b-8be2-609e8b9cdf51",
+      "name": "Consultar o mesmo trabalho",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Receber trabalho\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f0a13163-553c-455e-a119-00d68ca3cda7",
+      "name": "Trabalho em andamento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\",\"ready_for_runner\",\"running\"].includes($(\"Consultar o mesmo trabalho\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2a77ccbf-73b8-40bd-a6bc-dee3d35178e7",
+      "name": "Aguardar sem reenviar",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "webhookId": "e8590752-a4a3-4764-b11d-a76df80d6d48"
+    },
+    {
+      "id": "0432bf0d-f3eb-42ba-a1d0-11925e0aef46",
+      "name": "Execução concluída?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar o mesmo trabalho\").item.json.status }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "completed"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "0cc47845-3f16-4722-8099-187ece7b1f68",
+      "name": "Retornar recibo do trabalho",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        176
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "jobId",
+              "name": "jobId",
+              "type": "string",
+              "value": "={{ $(\"Receber trabalho\").first().json.jobId }}"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "meaning",
+              "name": "meaning",
+              "type": "string",
+              "value": "Execução encerrada. A aprovação da evidência depende da auditoria canônica; este recibo não comprova publicação."
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fa479bee-9a33-4e59-bbfd-255606ebf549",
+      "name": "Preservar falha e solicitar revisão",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        896,
+        368
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"O trabalho \" + $(\"Receber trabalho\").first().json.jobId + \" terminou com status \" + $(\"Consultar o mesmo trabalho\").item.json.status + \". Não reenviar sem consultar os registros.\" }}"
+      }
+    }
+  ],
+  "connections": {
+    "Receber trabalho": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo trabalho",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar o mesmo trabalho": {
+      "main": [
+        [
+          {
+            "node": "Trabalho em andamento?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trabalho em andamento?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execução concluída?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo trabalho",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execução concluída?": {
+      "main": [
+        [
+          {
+            "node": "Retornar recibo do trabalho",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar falha e solicitar revisão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

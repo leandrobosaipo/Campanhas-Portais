@@ -1,0 +1,247 @@
+{
+  "id": "gRSMPctoutOPPqix",
+  "name": "ADOPS — Conferir provas e preparar fechamento",
+  "active": true,
+  "versionId": "ee97c242-53b9-4e20-8053-4015c63ed5ca",
+  "nodes": [
+    {
+      "id": "4d0aecd4-815b-4b46-bf59-2b35a036859f",
+      "name": "Conferir após a rotina e no fechamento",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 18-21 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 0 19-21 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 20 22 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d1069fd0-928e-4a14-8fd6-c10fa119bbee",
+      "name": "Definir data e fechamento de Cuiabá",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $now.setZone(\"America/Cuiaba\").toISODate() }}"
+            },
+            {
+              "id": "final",
+              "name": "final",
+              "type": "boolean",
+              "value": "={{ $now.setZone(\"America/Cuiaba\").hour >= 22 }}"
+            },
+            {
+              "id": "dryRun",
+              "name": "dryRun",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "summaryOnly",
+              "name": "summaryOnly",
+              "type": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6f121140-6d7b-4733-92ec-823fa3055402",
+      "name": "Unificar pedido de conferência",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "22f5cdaf-c14e-4faf-8303-226f1c545f53",
+      "name": "Auditar provas e preparar avisos únicos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence-reviews",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Unificar pedido de conferência\").first().json }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "776073c7-1b7b-43dd-a7e1-f2de19e07f48",
+      "name": "Prévia manual sem enviar",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "77006942-8164-45b6-90dc-ab05b50ebce8",
+      "name": "Definir prévia segura sem caixa de saída",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $now.setZone(\"America/Cuiaba\").toISODate() }}"
+            },
+            {
+              "id": "final",
+              "name": "final",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "dryRun",
+              "name": "dryRun",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "summaryOnly",
+              "name": "summaryOnly",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Conferir após a rotina e no fechamento": {
+      "main": [
+        [
+          {
+            "node": "Definir data e fechamento de Cuiabá",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir data e fechamento de Cuiabá": {
+      "main": [
+        [
+          {
+            "node": "Unificar pedido de conferência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unificar pedido de conferência": {
+      "main": [
+        [
+          {
+            "node": "Auditar provas e preparar avisos únicos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prévia manual sem enviar": {
+      "main": [
+        [
+          {
+            "node": "Definir prévia segura sem caixa de saída",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir prévia segura sem caixa de saída": {
+      "main": [
+        [
+          {
+            "node": "Unificar pedido de conferência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240
+  }
+}

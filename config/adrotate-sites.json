@@ -8,6 +8,7 @@
     "articleFallbackUrl": "https://perrenguematogrosso.com/festa-celebracao-307-anos-cuiaba-parque-das-aguas-video/",
     "browserTitle": "Perrengue Mato Grosso",
     "hostLabel": "perrenguematogrosso.com",
+    "drivePathAliases": ["/PERRENGUE"],
     "originIp": "186.209.113.107",
     "disableOriginOverride": true,
     "previewSecret": "adops-preview-perr-2026-c5",
@@ -44,27 +45,42 @@
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 2000,
       "viewportTrimBottomPx": 0,
-      "requireSignedRetroPreview": true,
-      "requireRetroContentProof": true,
-      "minRetroContentMatches": 3,
-      "allowAuditedReconstruction": true,
-      "retroContentCardSelectors": [],
-      "retroContentDateSelectors": []
+      "readinessMode": "strict-visible",
+      "criticalContentSelectors": [],
+      "readinessTimeoutMs": 45000,
+      "layoutStableSamples": 3,
+      "layoutStableIntervalMs": 350,
+      "captureRetryCount": 2,
+      "requireCriticalContentPainted": false
     },
     "formatMappings": [
       {
         "groupId": 1,
         "aliases": [
-          "MEGABANNER TOPO"
+          "MEGABANNER TOPO",
+          "MEGABANNER",
+          "MEGABANNER TOPO — HEADER — 825x120"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": "#header-ads-row",
         "scrollMode": "top",
+        "operationalMediaProfile": {
+          "width": 825,
+          "height": 120,
+          "formats": ["GIF"],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
+        },
         "auditOverrides": {
           "gifFrameSelection": "source_preferred",
           "postVisualWaitMs": 2400,
-          "allowViewportImageMisses": 1,
           "requireStableFrame": false,
           "requireLegibleFrame": true,
           "preferBestLegibleFrame": true,
@@ -82,8 +98,14 @@
         "aliases": [
           "BANNER TOPO LATERAL",
           "TOPO LATERAL",
-          "MEGA BANNER LATERAL"
+          "MEGA BANNER LATERAL",
+          "TOPO LATERAL — HEADER — 380x120"
         ],
+        "operationalMediaProfile": {
+          "width": 380,
+          "height": 120,
+          "formats": ["GIF", "PNG", "JPEG"]
+        },
         "page": "home",
         "slotSelector": ".g.g-10",
         "contextSelector": "#header-ads-row",
@@ -96,15 +118,37 @@
           "HOME 1",
           "MEGABANNER HOME 1",
           "MEGABANNER HOME1",
-          "MEGABANNER HOME 01"
+          "MEGABANNER HOME 01",
+          "HOME 01 — 728x90"
         ],
         "page": "home",
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 670,
+          "height": 90,
+          "formats": ["GIF", "MP4"],
+          "deliveryTransforms": {
+            "MP4": {
+              "mode": "contain-pad",
+              "sourceWidth": 824,
+              "sourceHeight": 120,
+              "contentWidth": 618,
+              "contentHeight": 90,
+              "targetWidth": 670,
+              "targetHeight": 90,
+              "videoCodec": "h264",
+              "pixelFormat": "yuv420p",
+              "faststart": true
+            }
+          }
+        },
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "slotScrollViewportOffsetRatio": 0.5,
           "finalViewportTargetOffsetRatio": 0.5,
           "viewportTrimBottomPx": 160
@@ -114,12 +158,14 @@
         "groupId": 3,
         "aliases": [
           "HOME 2",
-          "SEGUNDA DOBRA"
+          "SEGUNDA DOBRA",
+          "HOME 02 — 728x90"
         ],
         "page": "home",
         "slotSelector": ".g.g-3",
         "contextSelector": ".g.g-3",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "width": 670, "height": 90, "formats": ["GIF", "MP4"] },
         "auditOverrides": {
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4
@@ -128,7 +174,8 @@
       {
         "groupId": 4,
         "aliases": [
-          "HOME 3"
+          "HOME 3",
+          "HOME 03 — 728x90"
         ],
         "page": "home",
         "slotSelector": ".g.g-4",
@@ -136,12 +183,31 @@
         "scrollMode": "slot"
       },
       {
+        "groupId": 5,
+        "aliases": [
+          "HOME 4",
+          "HOME 04",
+          "MEGABANNER HOME 4",
+          "MEGABANNER HOME 04",
+          "HOME 04 — 728x90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-5",
+        "contextSelector": ".g.g-5",
+        "scrollMode": "slot"
+      },
+      {
         "groupId": 6,
         "aliases": [
           "VIDEO",
           "VIDEO LATERAL",
+          "PUBLI VIDEO 60",
+          "PUBLI VIDEO 60S",
+          "PUBLI VIDEO DE 60",
+          "PUBLI VIDEO DE 60S",
           "LATERAL",
-          "LATERAL PRIMEIRA DOBRA"
+          "LATERAL PRIMEIRA DOBRA",
+          "VIDEO — LATERAL 01 — SIDEBAR — 300x250"
         ],
         "page": "home",
         "slotSelector": ".g.g-6",
@@ -162,19 +228,70 @@
         }
       },
       {
+        "groupId": 7,
+        "aliases": [
+          "BANNER LATERAL SEGUNDA DOBRA",
+          "LATERAL 02",
+          "LATERAL SEGUNDA DOBRA",
+          "SEGUNDA DOBRA SIDEBAR",
+          "LATERAL 02 — SIDEBAR — 300x250"
+        ],
+        "inputAliases": ["SEGUNDA DOBRA LATERAL"],
+        "page": "home",
+        "slotSelector": ".g.g-7",
+        "contextSelector": ".g.g-7",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only",
+        "auditOverrides": {
+          "animatedBannerDelayMs": 2200,
+          "postVisualWaitMs": 2600,
+          "viewportTrimBottomPx": 120,
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
+          "criticalContentSelectors": [],
+          "requireCriticalContentPainted": false,
+          "requireStableFrame": false,
+          "requireLegibleFrame": true,
+          "preferBestLegibleFrame": true,
+          "finalPngSlotMinSimilarity": 0.26,
+          "finalPngSlotMinContentStddev": 4
+        }
+      },
+      {
+        "groupId": 8,
+        "aliases": [
+          "LATERAL 03",
+          "LATERAL STICKY",
+          "ULTIMO LATERAL",
+          "ULTIMA POSICAO SIDEBAR",
+          "LATERAL 03 — SIDEBAR STICKY — 300x250"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-8",
+        "contextSelector": ".g.g-8",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
         "groupId": 9,
         "aliases": [
           "POP UP",
           "POPUP",
           "BANNER - 970X90",
           "BANNER 970X90",
-          "970X90"
+          "970X90",
+          "POP UP — SITEWIDE — 970x90"
         ],
         "page": "home",
         "slotSelector": "#cod5-bottom-popup-ad .g.g-9",
         "contextSelector": "#cod5-bottom-popup-ad",
         "scrollMode": "top",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 970,
+          "height": 90,
+          "formats": ["GIF"]
+        },
         "auditOverrides": {
           "animatedBannerDelayMs": 2400,
           "postVisualWaitMs": 3000,
@@ -189,14 +306,23 @@
           "BANNER INTERNO NOTICIAS",
           "INTERNO DE NOTICIAS",
           "INTERNO DE NOTICIA",
-          "INTERNO NOTICIA"
+          "INTERNO NOTICIA",
+          "INTERNO — MATÉRIA — 728x90"
         ],
         "page": "article",
         "slotSelector": ".g.g-11",
         "contextSelector": ".g.g-11",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "preferArticleFallbackForRetro": true,
+          "criticalContentSelectors": [
+            "[data-adops-retro-primary-article=\"1\"] img"
+          ],
+          "requireCriticalContentPainted": true,
+          "requireAbsoluteEditorialDates": true,
+          "requireEditorialDateMatchTarget": true,
+          "requireVisiblePageDate": true,
           "gifFrameSelection": "source_preferred",
           "allowViewportImageMisses": 1,
           "requireStableFrame": false,
@@ -210,6 +336,51 @@
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4
         }
+      },
+      {
+        "groupId": 12,
+        "aliases": [
+          "HOME 5",
+          "HOME 05",
+          "MEGABANNER HOME 5",
+          "MEGABANNER HOME 05",
+          "HOME 05 — 728x90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-12",
+        "contextSelector": ".g.g-12",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
+        "groupId": 13,
+        "aliases": [
+          "HOME 6",
+          "HOME 06",
+          "MEGABANNER HOME 6",
+          "MEGABANNER HOME 06",
+          "HOME 06 — 728x90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-13",
+        "contextSelector": ".g.g-13",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
+      },
+      {
+        "groupId": 14,
+        "aliases": [
+          "HOME 7",
+          "HOME 07",
+          "MEGABANNER HOME 7",
+          "MEGABANNER HOME 07",
+          "HOME 07 — 728x90"
+        ],
+        "page": "home",
+        "slotSelector": ".g.g-14",
+        "contextSelector": ".g.g-14",
+        "scrollMode": "slot",
+        "proofStyle": "viewport_only"
       }
     ]
   },
@@ -222,7 +393,9 @@
     "articleFallbackUrl": "https://omatogrossense.com/motociclista-e-ferido-por-linha-de-pipa-e-acaba-hospitalizado-em-cuiaba-veja-video/",
     "browserTitle": "O Matogrossense",
     "hostLabel": "omatogrossense.com",
-    "originIp": "93.127.210.71",
+    "drivePathAliases": ["/O MATOGROSSENSE", "/OMT"],
+    "originIp": "66.253.112.200",
+    "disableOriginOverride": true,
     "previewSecret": "adops-preview-omt-2026-c5",
     "pageDateSelectors": [
       "time[data-omt-live-datestamp='1']",
@@ -279,6 +452,7 @@
           "MEGABANER TOPO",
           "MEGABANNER TPO"
         ],
+        "operationalMediaProfile": { "width": 825, "height": 120, "formats": ["GIF"] },
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".header-top-banner",
@@ -380,7 +554,8 @@
         "page": "article",
         "slotSelector": ".g.g-9",
         "contextSelector": ".g.g-9",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ]
   },
@@ -393,7 +568,9 @@
     "articleFallbackUrl": "https://afolhalivre.com/horoscopo/",
     "browserTitle": "A Folha Livre",
     "hostLabel": "afolhalivre.com",
-    "originIp": "93.127.210.71",
+    "drivePathAliases": ["/AFL"],
+    "originIp": "66.253.112.200",
+    "disableOriginOverride": true,
     "previewSecret": "adops-preview-afl-2026-c5",
     "pageDateSelectors": [
       "time.js-topbar-datetime",
@@ -423,6 +600,8 @@
       ]
     },
     "auditConfig": {
+      "requireAbsoluteEditorialDates": true,
+      "requireVisiblePageDate": true,
       "animatedBannerDelayMs": 1800,
       "postVisualWaitMs": 2000,
       "viewportTrimBottomPx": 0,
@@ -441,11 +620,26 @@
           "MEGABANNER",
           "MEGABANNER TPO"
         ],
+        "inputAliases": ["TOPO", "MEGA BANNER TOPO - 825 X 120"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".g.g-1",
         "scrollMode": "top",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 825,
+          "height": 120,
+          "formats": [
+            "GIF"
+          ],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
+        },
         "auditOverrides": {
           "animatedBannerDelayMs": 3200,
           "postVisualWaitMs": 3800,
@@ -470,11 +664,13 @@
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "animatedBannerDelayMs": 2200,
           "postVisualWaitMs": 2600,
           "viewportTrimBottomPx": 180,
           "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4,
           "finalPngStickyHeaderMinContentStddev": 8,
@@ -514,6 +710,16 @@
         "slotSelector": ".g.g-6",
         "contextSelector": ".g.g-6",
         "scrollMode": "slot",
+        "operationalMediaProfile": {
+          "formats": [
+            "MP4"
+          ],
+          "deliveryTransforms": {
+            "MP4": {
+              "mode": "passthrough"
+            }
+          }
+        },
         "auditOverrides": {
           "finalPngSlotMinSimilarity": 0.26,
           "finalPngSlotMinContentStddev": 4,
@@ -533,6 +739,7 @@
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "postVisualWaitMs": 2600,
           "gifFrameSelection": "source_preferred",
@@ -553,9 +760,10 @@
     "domain": "portalnortemt.com",
     "homeUrl": "https://portalnortemt.com/",
     "adminBaseUrl": "https://portalnortemt.com/wp/wp-admin",
-    "articleFallbackUrl": "https://portalnortemt.com/operacao-opus-nequam-mira-faccao-investigada-por-trafico-e-lavagem-de-dinheiro-em-mato-grosso/",
+    "articleFallbackUrl": "https://portalnortemt.com/ex-jogadores-do-manchester-united-criticam-postura-da-argentina-na-final-da-copa/",
     "browserTitle": "Portal Norte MT",
     "hostLabel": "portalnortemt.com",
+    "drivePathAliases": ["/PNMT"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-pnmt-2026-c5",
     "pageDateSelectors": [
@@ -603,6 +811,8 @@
           "MEGABANNER TOPO",
           "MEGABANNER"
         ],
+        "inputAliases": ["TOPO"],
+        "operationalMediaProfile": { "width": 825, "height": 120, "formats": ["GIF"] },
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
@@ -618,7 +828,9 @@
           "finalPngSlotMinContentStddev": 4,
           "bestEffortAllowed": true,
           "allowViewportImageMisses": 1,
-          "requireSlotVisibleInViewport": true
+          "requireSlotVisibleInViewport": true,
+          "requireAbsoluteEditorialDates": true,
+          "requireVisiblePageDate": true
         }
       },
       {
@@ -633,6 +845,8 @@
         "contextSelector": ".g.g-2",
         "scrollMode": "slot",
         "auditOverrides": {
+          "gifFrameSelection": "source_preferred",
+          "forceReferenceFrameOnSlot": true,
           "requireStickyHeaderInViewport": true,
           "stickyHeaderExpected": "logo_menu_datetime"
         }
@@ -679,7 +893,8 @@
         "page": "article",
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ],
     "disableOriginOverride": true
@@ -693,6 +908,7 @@
     "articleFallbackUrl": "https://portalpantanalmt.com/prefeitura-compra-cacau-por-r-77-a-embalagem-de-500-g-preco-supera-valor-cobrado-pela-propria-fabricante/",
     "browserTitle": "Portal Pantanal MT",
     "hostLabel": "portalpantanalmt.com",
+    "drivePathAliases": ["/PMMT", "/PPMT"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-ppmt-2026-c5",
     "pageDateSelectors": [
@@ -739,6 +955,8 @@
         "aliases": [
           "MEGABANNER TOPO"
         ],
+        "inputAliases": ["TOPO"],
+        "operationalMediaProfile": { "width": 825, "height": 120, "formats": ["GIF"] },
         "page": "home",
         "slotSelector": "div.hidden.lg\\:block .g.g-1",
         "contextSelector": "div.hidden.lg\\:block .g.g-1",
@@ -842,7 +1060,8 @@
         "page": "article",
         "slotSelector": ".g.g-14",
         "contextSelector": ".g.g-14",
-        "scrollMode": "slot"
+        "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] }
       }
     ]
   },
@@ -855,6 +1074,7 @@
     "articleFallbackUrl": "https://roonoticias.com/sete-atletas-de-rondonopolis-disputam-vaga-na-selecao-mato-grossense-de-volei-sub-18/",
     "browserTitle": "Roo Notícias",
     "hostLabel": "roonoticias.com",
+    "drivePathAliases": ["/ROO NOTICIAS", "/ROO"],
     "originIp": "93.127.210.71",
     "previewSecret": "adops-preview-roo-2026-c5",
     "pageDateSelectors": [
@@ -902,11 +1122,26 @@
           "MEGABANNER TOPO",
           "MEGABANNER"
         ],
+        "inputAliases": ["TOPO"],
         "page": "home",
         "slotSelector": ".g.g-1",
         "contextSelector": ".g.g-1",
         "scrollMode": "top",
         "proofStyle": "viewport_only",
+        "operationalMediaProfile": {
+          "width": 825,
+          "height": 120,
+          "formats": [
+            "GIF"
+          ],
+          "deliveryTransform": {
+            "mode": "pad-horizontal",
+            "sourceWidth": 820,
+            "sourceHeight": 120,
+            "targetWidth": 825,
+            "targetHeight": 120
+          }
+        },
         "auditOverrides": {
           "preferArticleFallbackForRetro": false,
           "animatedBannerDelayMs": 6500,
@@ -928,6 +1163,7 @@
           "MEGABANNER HOME 1",
           "BANNER 728 X 90"
         ],
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "page": "home",
         "slotSelector": ".g.g-2",
         "contextSelector": ".g.g-2",
@@ -985,6 +1221,7 @@
         "slotSelector": ".g.g-8",
         "contextSelector": ".g.g-8",
         "scrollMode": "slot",
+        "operationalMediaProfile": { "formats": ["GIF", "PNG", "JPEG"] },
         "auditOverrides": {
           "allowViewportImageMisses": 1,
           "gifAllowedFrameRanges": [

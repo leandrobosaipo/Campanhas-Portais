@@ -1,0 +1,1260 @@
+{
+  "id": "54fuGL9hSCJzhGCR",
+  "name": "ADOPS — Publicar inserção autorizada",
+  "active": true,
+  "versionId": "648eb573-25e9-4662-ae22-8aed173c3edc",
+  "nodes": [
+    {
+      "id": "06b3b72e-ea74-4938-abfe-7681ab99d159",
+      "name": "Iniciar publicação autorizada",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b63df1bc-724e-45a0-9bec-ecd72bc53786",
+      "name": "Definir valores vazios seguros",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "previewJobId",
+              "name": "previewJobId",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "93ac32c7-63d6-4005-a3ec-6573c69b865d",
+      "name": "Normalizar alvo autorizado",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        288
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($json.insertionId || 0) }}"
+            },
+            {
+              "id": "previewJobId",
+              "name": "previewJobId",
+              "type": "string",
+              "value": "={{ $json.previewJobId || \"\" }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "832cdd6c-c903-409c-a9e7-460ed410cb3d",
+      "name": "ID permitido e preview informado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        288
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [3112, 3113, 3115, 3116].includes(Number($json.insertionId)) && Number($json.insertionId) > 0 && String($json.previewJobId || \"\").trim().length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7ef24f32-08ff-4b26-bc66-44ed3aa9f08f",
+      "name": "Ler preview autorizado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.previewJobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "b0d7dc3a-6d9c-48de-b487-1c51c82ec1a1",
+      "name": "Preview concluído e sem apply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Ler preview autorizado\").item.json.status === \"completed\" && $(\"Ler preview autorizado\").item.json.kind === \"adrotate-publish\" && $(\"Ler preview autorizado\").item.json.payload?.apply === false && Number($(\"Ler preview autorizado\").item.json.payload?.insertionId) === Number($(\"Normalizar alvo autorizado\").first().json.insertionId) && $(\"Ler preview autorizado\").item.json.result?.execution?.mode === \"preview\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "040611ed-80a9-4a28-be08-6191bd38e253",
+      "name": "Verificar jobs ativos da fila",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=adrotate-publish&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "4ab01492-35a8-43f5-b3ad-a6755e4a5454",
+      "name": "Já existe publicação ativa para a inserção?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.items || []).some(job => job.kind === \"adrotate-publish\" && [\"queued\", \"ready_for_runner\", \"running\"].includes(job.status) && job.payload?.apply === true && Number(job.payload?.insertionId) === Number($(\"Normalizar alvo autorizado\").first().json.insertionId)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "8f952b61-0a88-4c6c-a763-fcb56eb0de2e",
+      "name": "Não reenviar publicação ativa",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Publicação não iniciada: já existe job adrotate-publish ativo para a inserção \" + String($(\"Normalizar alvo autorizado\").first().json.insertionId) + \". Consultar o job existente; não reenviar.\" }}"
+      }
+    },
+    {
+      "id": "a0fe56c1-5ec4-498c-8df3-163e9b25966e",
+      "name": "Consultar estado atual da inserção",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "1246e50d-d45f-4dbb-ac7c-aabc2e60ef98",
+      "name": "Inserção já marcada como publicada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2016,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar estado atual da inserção\").item.json.bannerPublicadoNoSite === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f897b6d0-7c03-469a-bf8f-16782a279d24",
+      "name": "Ler relação AdRotate já existente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/integrations/adrotate/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) + \"/relation\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "39fa6b68-6a00-41d0-a88e-1eae773fe9fc",
+      "name": "Retornar relação sem nova publicação",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo autorizado\").first().json.insertionId) }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $(\"Ler relação AdRotate já existente\").item.json.rotation?.expectedMediaObserved === true ? \"already_published\" : \"existing_flag_unverified\" }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ null }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Ler relação AdRotate já existente\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "727d8d2c-5245-4ef1-8ecd-6a213063c566",
+      "name": "Publicar após preview e guardas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        288
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs/adrotate-publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-publish:\" + String($(\"Normalizar alvo autorizado\").first().json.insertionId) + \":\" + String($(\"Normalizar alvo autorizado\").first().json.previewJobId) }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {insertionId:Number($(\"Normalizar alvo autorizado\").first().json.insertionId),apply:true,replaceExisting:true,purgeCache:false,generateEvidence:false} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "ddfab359-797c-42af-94a9-e1bcaaa72021",
+      "name": "Consultar o mesmo job de publicação",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2464,
+        288
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Publicar após preview e guardas\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "161ebfb5-9303-474c-898e-4a4b3fb8b142",
+      "name": "Mesmo job ainda está em execução?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2688,
+        224
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"ready_for_runner\", \"running\"].includes($(\"Consultar o mesmo job de publicação\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f5951b27-0faa-4da4-b583-d24ef04b016a",
+      "name": "Aguardar 15 segundos sem reenviar",
+      "webhookId": "9ae63658-0111-41e5-a9b2-b000525f5902",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2912,
+        288
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "e9b9489f-3ac8-4178-9ffc-fb39938a979c",
+      "name": "Confirmar relação AdRotate após qualquer terminal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2912,
+        480
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/integrations/adrotate/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) + \"/relation\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "24e4ac26-0bab-43f4-a3e7-b3b82eb388b5",
+      "name": "Retornar sem confirmar cache ou mídia",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3584,
+        672
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo autorizado\").first().json.insertionId) }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json.state === \"future_unverified\" ? \"future_unverified\" : ([\"failed\",\"canceled\",\"cancelled\"].includes($(\"Consultar o mesmo job de publicação\").item.json.status) ? \"publication_failed_cache_unconfirmed\" : \"cache_or_relation_unconfirmed\") }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de publicação\").item.json }}"
+            },
+            {
+              "id": "cache",
+              "name": "cache",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json.relation }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d07655b7-5116-4276-942a-5623388e580f",
+      "name": "Preservar preview não aprovado",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        288
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Publicação bloqueada: preview \" + String($(\"Normalizar alvo autorizado\").first().json.previewJobId) + \" não está completed/adrotate-publish/apply=false para a mesma inserção com execution.mode=preview.\" }}"
+      }
+    },
+    {
+      "id": "005390aa-2459-49ea-a015-16a66e39b388",
+      "name": "Bloquear entrada não autorizada",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        896,
+        384
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Operação bloqueada: informe insertionId 3112, 3113, 3115 ou 3116 e o jobId de um preview aprovado."
+      }
+    },
+    {
+      "id": "270fcd24-0007-4916-98d2-cf06a0a5c36c",
+      "name": "Receber inserção e preview aprovado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        384
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "insertionId",
+              "type": "number"
+            },
+            {
+              "name": "previewJobId",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "39207d5d-70d9-4447-9a4f-fd40724e467e",
+      "name": "Manter cache sem republicar",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3136,
+        480
+      ],
+      "parameters": {
+        "operation": "call_workflow",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hHNPwZhND1LdDwoo"
+        },
+        "mode": "once",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "insertionId": "={{ Number($(\"Normalizar alvo autorizado\").first().json.insertionId) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "insertionId",
+              "displayName": "insertionId",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "3c23b19d-514f-44ca-886d-42c238325a90",
+      "name": "Cache e relação confirmam a mídia pública?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3360,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Manter cache sem republicar\").item.json.state === \"confirmed\" && $(\"Manter cache sem republicar\").item.json.relation?.rotation?.expectedMediaObserved === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e37da8c8-e43e-4c3a-a3b6-ebc184eccf5c",
+      "name": "Ler inserção antes de reconciliar flag",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3584,
+        384
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "cdf6bfa9-5956-45cf-b6b2-bb22bc843bf5",
+      "name": "Flag ausente e período vigente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3808,
+        384
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Ler inserção antes de reconciliar flag\").item.json.bannerPublicadoNoSite === false && String($(\"Ler inserção antes de reconciliar flag\").item.json.periodoInicio || \"\") <= $now.setZone(\"America/Cuiaba\").toISODate() && String($(\"Ler inserção antes de reconciliar flag\").item.json.periodoFim || \"\") >= $now.setZone(\"America/Cuiaba\").toISODate() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "3614fe71-7727-454d-b454-ec3029143176",
+      "name": "Reconciliar flag de publicação confirmada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4032,
+        288
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {bannerPublicadoNoSite:true,statusNormalizado:\"ativo\",expectedRowVersion:String($(\"Ler inserção antes de reconciliar flag\").item.json.rowVersion)} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "3b2678d7-38d4-4d66-90d2-b3c5eb65fc78",
+      "name": "Confirmar flag reconciliada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        4256,
+        288
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo autorizado\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "c77d2fb4-bdaa-4adc-af5d-15631ded3473",
+      "name": "Retornar reconciliação com recibos preservados",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4480,
+        288
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo autorizado\").first().json.insertionId) }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ (() => { const target=Number($(\"Normalizar alvo autorizado\").first().json.insertionId); const i=$(\"Confirmar flag reconciliada\").item.json; const c=$(\"Manter cache sem republicar\").item.json; const today=$now.setZone(\"America/Cuiaba\").toISODate(); const original=$(\"Consultar o mesmo job de publicação\").item.json.status; const period=String(i.periodoInicio||\"\")<=today&&String(i.periodoFim||\"\")>=today; const verified=Number(i.id)===target&&i.bannerPublicadoNoSite===true&&period&&c.state===\"confirmed\"&&c.relation?.rotation?.expectedMediaObserved===true; if(!verified)return \"flag_readback_unconfirmed\"; return [\"failed\",\"canceled\",\"cancelled\"].includes(original)?\"confirmed_with_preserved_job_failure\":\"confirmed\"; })() }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de publicação\").item.json }}"
+            },
+            {
+              "id": "cache",
+              "name": "cache",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json.relation }}"
+            },
+            {
+              "id": "insertion",
+              "name": "insertion",
+              "type": "object",
+              "value": "={{ $(\"Confirmar flag reconciliada\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "96ac4633-5b72-40a3-b3b3-f7c5ffbea2ee",
+      "name": "Retornar sem alterar flag",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4032,
+        480
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo autorizado\").first().json.insertionId) }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ (() => { const c=$(\"Manter cache sem republicar\").item.json; const r=c.relation?.rotation?.expectedMediaObserved===true; const i=$(\"Ler inserção antes de reconciliar flag\").item.json; const today=$now.setZone(\"America/Cuiaba\").toISODate(); const original=$(\"Consultar o mesmo job de publicação\").item.json.status; if([\"failed\",\"canceled\",\"cancelled\"].includes(original)&&c.state===\"confirmed\"&&r)return \"confirmed_with_preserved_job_failure\"; if(String(i.periodoInicio||\"\")>today)return \"future_unverified\"; if(c.state===\"confirmed\"&&r&&i.bannerPublicadoNoSite===true)return \"confirmed_without_flag_change\"; return [\"failed\",\"canceled\",\"cancelled\"].includes(original)?\"publication_failed_cache_unconfirmed\":\"cache_or_relation_unconfirmed\"; })() }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de publicação\").item.json }}"
+            },
+            {
+              "id": "cache",
+              "name": "cache",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Manter cache sem republicar\").item.json.relation }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ef258cd9-6ace-497a-b0cd-b02545a481a6",
+      "name": "Período futuro da inserção?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2400,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar estado atual da inserção\").item.json.periodoInicio > $now.setZone(\"America/Cuiaba\").toISODate() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "35295ae9-9b7d-4da3-aeed-8f58185443d8",
+      "name": "Conferir agenda do mesmo anúncio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2630,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ $(\"Normalizar alvo autorizado\").first().json.insertionId }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de publicação\").item.json }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ (() => {\n    const job=$(\"Consultar o mesmo job de publicação\").item.json;\n    const i=$(\"Consultar estado atual da inserção\").item.json;\n    const preview=$(\"Ler preview autorizado\").item.json.result.execution.publishPayload;\n    const e=job.result?.execution, wp=e?.wpCliResult;\n    const positive=id=>Number.isSafeInteger(Number(id))&&Number(id)>0;\n    if(job.status!==\"completed\")return \"publication_failed_schedule_unconfirmed\";\n    return job.kind===\"adrotate-publish\"&&job.payload?.apply===true&&e?.apply===true&&e?.scheduled===true&&wp?.schedule_verified===true&&\n      Number(job.payload.insertionId)===Number(i.id)&&Number(wp.insertion_id)===Number(i.id)&&positive(wp.ad_id)&&positive(wp.schedule_id)&&\n      positive(preview?.group_id)&&Number(wp.group_id)===Number(preview.group_id)&&\n      wp.period_start===i.periodoInicio&&wp.period_end===i.periodoFim&&wp.period_start===preview.period_start&&wp.period_end===preview.period_end\n        ?\"scheduled\":\"future_unverified\";\n  })() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Iniciar publicação autorizada": {
+      "main": [
+        [
+          {
+            "node": "Definir valores vazios seguros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir valores vazios seguros": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar alvo autorizado": {
+      "main": [
+        [
+          {
+            "node": "ID permitido e preview informado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID permitido e preview informado?": {
+      "main": [
+        [
+          {
+            "node": "Ler preview autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear entrada não autorizada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler preview autorizado": {
+      "main": [
+        [
+          {
+            "node": "Preview concluído e sem apply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview concluído e sem apply?": {
+      "main": [
+        [
+          {
+            "node": "Verificar jobs ativos da fila",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar preview não aprovado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verificar jobs ativos da fila": {
+      "main": [
+        [
+          {
+            "node": "Já existe publicação ativa para a inserção?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já existe publicação ativa para a inserção?": {
+      "main": [
+        [
+          {
+            "node": "Não reenviar publicação ativa",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar estado atual da inserção",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar estado atual da inserção": {
+      "main": [
+        [
+          {
+            "node": "Inserção já marcada como publicada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserção já marcada como publicada?": {
+      "main": [
+        [
+          {
+            "node": "Ler relação AdRotate já existente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publicar após preview e guardas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler relação AdRotate já existente": {
+      "main": [
+        [
+          {
+            "node": "Retornar relação sem nova publicação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publicar após preview e guardas": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de publicação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar o mesmo job de publicação": {
+      "main": [
+        [
+          {
+            "node": "Mesmo job ainda está em execução?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo job ainda está em execução?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar 15 segundos sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Período futuro da inserção?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar 15 segundos sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de publicação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber inserção e preview aprovado": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar relação AdRotate após qualquer terminal": {
+      "main": [
+        [
+          {
+            "node": "Manter cache sem republicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manter cache sem republicar": {
+      "main": [
+        [
+          {
+            "node": "Cache e relação confirmam a mídia pública?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cache e relação confirmam a mídia pública?": {
+      "main": [
+        [
+          {
+            "node": "Ler inserção antes de reconciliar flag",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retornar sem confirmar cache ou mídia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler inserção antes de reconciliar flag": {
+      "main": [
+        [
+          {
+            "node": "Flag ausente e período vigente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag ausente e período vigente?": {
+      "main": [
+        [
+          {
+            "node": "Reconciliar flag de publicação confirmada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Retornar sem alterar flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconciliar flag de publicação confirmada": {
+      "main": [
+        [
+          {
+            "node": "Confirmar flag reconciliada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar flag reconciliada": {
+      "main": [
+        [
+          {
+            "node": "Retornar reconciliação com recibos preservados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Período futuro da inserção?": {
+      "main": [
+        [
+          {
+            "node": "Conferir agenda do mesmo anúncio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmar relação AdRotate após qualquer terminal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 1800,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

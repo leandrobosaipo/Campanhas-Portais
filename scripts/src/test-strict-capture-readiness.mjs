@@ -1,0 +1,199 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { chromium } from "playwright";
+
+const require = createRequire(import.meta.url);
+const bundledPython = "/Users/leandrobosaipo/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3";
+const pythonBin = process.env.ADOPS_CAPTURE_PYTHON || (existsSync(bundledPython) ? bundledPython : "python3");
+process.env.ADOPS_CAPTURE_PYTHON = pythonBin;
+const {
+  applyPerrengueStaticRetroPreview,
+  auditFinalPngSlotPixels,
+  auditVisibleMediaPixels,
+  captureStrictReadinessCandidate,
+  resolveFinalPngSlotAuditBox,
+} = require("./capture-insertion-proof.cjs");
+const workDir = mkdtempSync(path.join(tmpdir(), "adops-readiness-"));
+const colorPng = path.join(workDir, "color.png");
+const blankPng = path.join(workDir, "blank.png");
+const viewportPng = path.join(workDir, "viewport.png");
+const composedPng = path.join(workDir, "composed.png");
+
+execFileSync(pythonBin, ["-c", `
+from PIL import Image, ImageDraw
+color = Image.new("RGB", (320, 180), "#b51f34")
+draw = ImageDraw.Draw(color)
+for x in range(0, 320, 16):
+    draw.rectangle((x, 0, x + 7, 179), fill=(20 + x % 180, 80, 170))
+draw.rectangle((40, 40, 280, 140), fill="#f4d35e")
+color.save(${JSON.stringify(colorPng)})
+Image.new("RGB", (320, 180), "#eeeeee").save(${JSON.stringify(blankPng)})
+viewport = Image.new("RGB", (800, 600), "#f2f2f2")
+viewport.paste(color.resize((300, 90)), (20, 40))
+viewport.save(${JSON.stringify(viewportPng)})
+composed = Image.new("RGB", (800, 700), "#ffffff")
+composed.paste(viewport, (0, 100))
+composed.save(${JSON.stringify(composedPng)})
+`]);
+
+const colorBuffer = readFileSync(colorPng);
+const blankBuffer = readFileSync(blankPng);
+const pages = {
+  delayed: `<!doctype html><main><div class="hero"><img class="featured" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" data-src="/color.png" /></div><div id="slot"><img src="/color.png"></div><div class="background-proof"></div><video class="video-proof" poster="/color.png" muted></video><img class="offscreen" loading="lazy" src="/never.png"></main>`,
+  blank: `<!doctype html><main><div class="hero"><img class="featured" src="/blank.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
+  broken: `<!doctype html><main><div class="hero"><img class="featured" src="/missing.png" /></div><div id="slot"><img src="/color.png"></div></main>`,
+  missing: `<!doctype html><main><div class="hero"></div><div id="slot"><img src="/color.png"></div></main>`,
+  abortedVideo: `<!doctype html><main><div class="hero"><img class="featured" src="/color.png" /></div><div id="slot"><img src="/color.png"></div><video class="video-proof" src="/aborted.mp4" muted></video></main>`,
+  dynamicHeight: `<!doctype html><main><div class="hero"><img class="featured" src="/color.png" /></div><div id="slot"><img src="/color.png"></div><div id="offscreen" style="height:2200px"></div><script>setInterval(() => { document.querySelector('#offscreen').style.height = document.querySelector('#offscreen').style.height === '2200px' ? '2300px' : '2200px'; }, 80)</script></main>`,
+  retro: `<!doctype html><main><section><article class="group"><a href="/"><div data-cod5-pagespeed-frame="home-hero"><img class="wp-post-image" src="/color.png"></div><h3>Atual</h3></a></article></section><div class="cod5-home-now-list"><ol></ol></div><div id="slot"><img src="/color.png"></div></main>`,
+};
+
+const server = createServer((req, res) => {
+  if (req.url === "/color.png") {
+    setTimeout(() => {
+      res.writeHead(200, { "Content-Type": "image/png", "Content-Length": colorBuffer.length });
+      res.end(colorBuffer);
+    }, 350);
+    return;
+  }
+  if (req.url === "/blank.png") {
+    res.writeHead(200, { "Content-Type": "image/png", "Content-Length": blankBuffer.length });
+    res.end(blankBuffer);
+    return;
+  }
+  if (req.url === "/missing.png") {
+    res.writeHead(404).end("missing");
+    return;
+  }
+  if (req.url === "/never.png") return;
+  if (req.url === "/aborted.mp4") {
+    req.socket.destroy();
+    return;
+  }
+  const key = String(req.url || "").slice(1);
+  if (pages[key]) {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<style>body{margin:0}.hero,#slot,.background-proof,.video-proof{display:block;width:320px;height:180px}.hero img,#slot img{display:block;width:100%;height:100%;object-fit:cover}.background-proof{background-image:url('/color.png');background-size:cover}.offscreen{display:block;margin-top:2200px;width:320px;height:180px}</style>${pages[key]}`);
+    return;
+  }
+  res.writeHead(404).end("not found");
+});
+
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const address = server.address();
+const baseUrl = `http://127.0.0.1:${address.port}`;
+const systemChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const browser = await chromium.launch({
+  headless: true,
+  ...(existsSync(systemChrome) ? { executablePath: systemChrome } : {}),
+});
+
+const config = {
+  readinessMode: "strict-visible",
+  criticalContentSelectors: [".hero img.featured"],
+  readinessTimeoutMs: 5000,
+  layoutStableSamples: 2,
+  layoutStableIntervalMs: 120,
+  captureRetryCount: 0,
+  requireCriticalContentPainted: true,
+};
+
+async function runFixture(name) {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
+  try {
+    await page.goto(`${baseUrl}/${name}`, { waitUntil: "domcontentloaded" });
+    return await captureStrictReadinessCandidate(page, path.join(workDir, `${name}.png`), "#slot", config, []);
+  } finally {
+    await page.close();
+  }
+}
+
+try {
+  const largeDataSource = `data:image/png;base64,${"A".repeat(1024 * 1024)}`;
+  const largePayloadAudit = auditVisibleMediaPixels(colorPng, [{
+    kind: "image",
+    source: largeDataSource,
+    box: { left: 0, top: 0, width: 320, height: 180 },
+    paintRequired: true,
+  }], {
+    viewportWidthCss: 320,
+    minContentStddev: 4,
+  });
+  assert.equal(largePayloadAudit.ok, true, "fontes data: grandes devem ser auditadas sem exceder o limite de argumentos do sistema");
+
+  const delayed = await runFixture("delayed");
+  assert.equal(delayed.approved, true, "imagem lazy atrasada e mídia fora da tela devem ser aceitas");
+  assert.equal(delayed.layoutStable, true);
+  assert.equal(delayed.criticalElementsLoaded, delayed.criticalElementsTotal);
+  assert.ok(delayed.elements.some((item) => item.kind === "background" && item.loaded));
+  assert.ok(delayed.elements.some((item) => item.kind === "video" && item.loaded));
+
+  const abortedVideo = await runFixture("abortedVideo");
+  assert.equal(abortedVideo.approved, true, "vídeo editorial não crítico abortado não deve bloquear imagens e slot críticos");
+
+  const dynamicHeight = await runFixture("dynamicHeight");
+  assert.equal(dynamicHeight.approved, true, "mudança fora do viewport não deve reprovar um quadro final estável");
+
+  const finalPngAudit = auditFinalPngSlotPixels(
+    composedPng,
+    viewportPng,
+    { left: 20, top: 40, width: 300, height: 90 },
+    { chromeFrameHeight: 100, frameTemplateSize: { width: 800 } },
+    { finalProofStyle: "viewport_only", viewportWidthCss: 800, referenceIsViewport: true, comparedTo: "viewportPng" },
+  );
+  assert.equal(finalPngAudit.ok, true, "PNG final deve corresponder ao mesmo recorte do viewport, inclusive para mídia animada");
+
+  const finalBox = { left: 20, top: 40, width: 300, height: 90 };
+  assert.equal(
+    resolveFinalPngSlotAuditBox(
+      { box: finalBox },
+      { targetInsideBoxes: [{ left: 20, top: 240, width: 300, height: 90 }], slotBox: null },
+    ),
+    finalBox,
+    "auditoria final deve usar a posição posterior ao último scroll",
+  );
+
+  const blank = await runFixture("blank");
+  assert.equal(blank.approved, false, "imagem carregada no DOM, mas visualmente vazia, deve ser reprovada");
+  assert.ok(blank.pixelAudit.elements.some((item) => item.painted === false));
+
+  const broken = await runFixture("broken");
+  assert.equal(broken.approved, false, "imagem crítica quebrada deve ser reprovada");
+  assert.ok(broken.criticalElementsLoaded < broken.criticalElementsTotal || broken.layoutStable === false);
+
+  const missing = await runFixture("missing");
+  assert.equal(missing.approved, false, "seletor de imagem crítica ausente deve reprovar a captura");
+  assert.deepEqual(missing.missingCriticalSelectors, [".hero img.featured"]);
+
+  const retroPage = await browser.newPage({ viewport: { width: 800, height: 600 }, deviceScaleFactor: 1 });
+  try {
+    await retroPage.goto(`${baseUrl}/retro`, { waitUntil: "domcontentloaded" });
+    const retro = await applyPerrengueStaticRetroPreview(
+      retroPage,
+      { domain: "perrenguematogrosso.com", page: "home" },
+      "2026-07-16T19:00:00-04:00",
+      {
+        adminRetroPosts: [
+          { title: "Capa quebrada", slug: "capa-quebrada", date: "2026-07-16T18:00:00-04:00", category: "Notícias", categorySlug: "noticias", image: `${baseUrl}/missing.png` },
+          { title: "Capa válida", slug: "capa-valida", date: "2026-07-16T17:00:00-04:00", category: "Notícias", categorySlug: "noticias", image: `${baseUrl}/color.png` },
+        ],
+      },
+    );
+    assert.equal(retro.applied, true, "preview retroativo deve descartar capa quebrada e usar mídia válida");
+    assert.deepEqual(retro.invalidImagePosts, ["capa-quebrada"]);
+    assert.equal(await retroPage.locator('[data-cod5-pagespeed-frame="home-hero"] img').getAttribute("src"), `${baseUrl}/color.png`);
+  } finally {
+    await retroPage.close();
+  }
+
+  console.log(JSON.stringify({ ok: true, cases: ["large_data_source", "delayed_lazy", "background", "video_poster", "aborted_noncritical_video", "dynamic_document_height", "final_png_viewport_crop", "final_viewport_box", "blank_painted", "broken_visible", "missing_critical_selector", "retro_image_fallback", "offscreen_ignored"] }, null, 2));
+} finally {
+  await browser.close();
+  await new Promise((resolve) => server.close(resolve));
+  rmSync(workDir, { recursive: true, force: true });
+}

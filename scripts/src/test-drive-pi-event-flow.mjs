@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const workerSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/index.ts");
+const bridgeSourcePath = path.join(repoRoot, "ops/cloudflare-public-api/src/bridge.ts");
 const apiOpsRoutePath = path.join(repoRoot, "artifacts/api-server/src/routes/ops.ts");
 const wranglerConfigPath = path.join(repoRoot, "ops/cloudflare-public-api/wrangler.jsonc");
 const portainerVolumeComposePath = path.join(repoRoot, "ops/portainer/adops-stack/docker-compose.volume.yml");
@@ -17,6 +17,10 @@ const API_BASE = process.env.ADOPS_PUBLIC_API_BASE_URL || "https://adops-api.cod
 const EXPECTED_RUNNER_ID = process.env.ADOPS_EXPECTED_RUNNER_ID || "runner-1";
 const liveSmokeReportRoot = path.join(repoRoot, "docs/harness-reports/drive-pi-live-smoke");
 const results = [];
+
+// Regression guard: operational-minimum intake may use an explicit canonical
+// campaign/insertion when the legacy sheet row has no PI code yet.
+const runnerSourcePath = path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs");
 
 function read(filePath) {
   return fs.readFileSync(filePath, "utf8");
@@ -63,6 +67,14 @@ function assertIncludes(content, markers, label) {
   assert(missing.length === 0, `${label} sem marcador(es): ${missing.join(", ")}`);
 }
 
+await check("operational-minimum-explicit-sheet-target-fallback", async () => {
+  const source = read(runnerSourcePath);
+  assert(source.includes("explicit_operational_target"), "runner sem fallback explícito de alvo operacional");
+  assert(source.includes("sheet_target_ambiguous"), "runner não pode remover o bloqueio estrito de ambiguidade");
+  assert(source.includes("preflightFolderId || resolvedFolderId"), "runner não reutiliza a pasta validada pelo preflight");
+  return { guarded: true };
+});
+
 function timestampForPath(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
 }
@@ -107,24 +119,34 @@ async function fetchJson(url, init = {}) {
   return { response, payload };
 }
 
-await check("worker-main-usa-typescript", async () => {
+await check("ponte-publica-usa-typescript", async () => {
   const config = read(wranglerConfigPath);
-  assert(config.includes('"main": "src/index.ts"'), "wrangler precisa publicar src/index.ts, nao arquivo compilado antigo");
-  return { main: "src/index.ts" };
+  assert(config.includes('"main": "src/bridge.ts"'), "wrangler precisa publicar a ponte TypeScript sem o Worker D1 antigo");
+  return { main: "src/bridge.ts" };
 });
 
-await check("worker-allowlists-incluem-drive-pi-ingest", async () => {
-  const source = read(workerSourcePath);
+await check("ponte-publica-encaminha-para-o-mac-mini", async () => {
+  const source = read(bridgeSourcePath);
   assertIncludes(source, [
-    "drive-pi-ingest",
-    "reconcile-adrotate",
-    "adrotate-link",
-    "telegram-send-evidence",
-    "runtime-readiness-probe",
-    "const OPS_JOB_KINDS",
-    "OPS_JOB_KINDS.includes",
-    'if (path === "/api/ops/drive-pi-events")',
-  ], "Worker Drive PI");
+    "PRIVATE_ADOPS_API_BASE_URL",
+    "https://adops-api.codigo5.com.br",
+    "x-cod5-control-plane",
+    "macmini-postgresql",
+    "idempotency-key",
+  ], "Ponte pública do Mac Mini");
+  assert(!/\bD1\b|createOpsJob|getOpsJob|adops_ops/.test(source), "ponte pública não pode manter banco ou fila D1");
+  return { ok: true };
+});
+
+await check("api-cria-jobs-drive-no-postgresql", async () => {
+  const source = read(apiOpsRoutePath);
+  assertIncludes(source, [
+    'router.post("/ops/drive-pi-events"',
+    'router.post("/ops/jobs/drive-pi-reconcile"',
+    'createIdempotentOpsJob("drive-pi-reconcile"',
+    "insertionId",
+    "idempotencyKey",
+  ], "API operacional PostgreSQL");
   return { ok: true };
 });
 
@@ -139,6 +161,39 @@ await check("runner-executa-runtime-readiness-probe", async () => {
     "TELEGRAM_BOT_TOKEN",
     "ADOPS_PERRENGUE_SSH_KEY_PATH",
   ], "Runner runtime readiness probe");
+  return { ok: true };
+});
+
+await check("runner-expõe-candidatos-de-midia-no-preflight", async () => {
+  const source = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  const finalReturnStart = source.indexOf("return {\n    stage: finalStatus");
+  assert(finalReturnStart >= 0, "Retorno final do Drive PI não encontrado");
+  const finalReturn = source.slice(finalReturnStart, finalReturnStart + 1800);
+  assertIncludes(finalReturn, [
+    "mediaCandidates:",
+    "packageContext?.media",
+    "driveFileId: item?.driveFileId",
+    "webViewLink: item?.webViewLink",
+  ], "Retorno final Drive PI media candidates");
+  return { ok: true };
+});
+
+await check("reconcile-valida-arquivo-por-atestado-do-preflight", async () => {
+  const runner = read(path.join(repoRoot, "ops/cloudflare-remote-runner/src/runner.mjs"));
+  assert(/cod5_driveResult\?\.stage === "needs_review"[\s\S]*throw new Error\(`drive_pi_publish exige revisão:/.test(runner),
+    "reconcile pai deve falhar quando o ingest filho exige revisão");
+  const api = read(apiOpsRoutePath);
+  assertIncludes(runner, [
+    "sourcePreflightJobId",
+    "preflightJob?.kind !== \"drive-pi-ingest\"",
+    "execution?.preflightOnly !== true",
+    "preflightFolderId !== resolvedFolderId",
+    "preflightCandidates.find",
+  ], "Runner preflight attestation");
+  assertIncludes(api, [
+    "const sourcePreflightJobId = readOptionalString(req.body?.sourcePreflightJobId)",
+    "sourcePreflightJobId,",
+  ], "API preflight attestation");
   return { ok: true };
 });
 
@@ -158,9 +213,11 @@ await check("compose-volume-isola-credencial-drive-no-monitor", async () => {
   const source = read(portainerVolumeComposePath);
   assertIncludes(source, [
     "container_name: adops-drive-pi-monitor-stack",
-    "OPS_JOB_KINDS: drive-pi-ingest,drive-inventory-refresh",
+    "OPS_JOB_KINDS: campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh",
     "GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE: /data/secrets/google-drive-service-account.json",
     "adops_drive_pi_monitor_data:/data",
+    "poppler-utils",
+    "command -v pdftotext",
     "curl -fsS http://127.0.0.1:4012/healthz",
   ], "Compose volume monitor Google Drive");
   const generalRunner = source.split("  adops-runner:")[1].split("  adops-drive-pi-monitor:")[0];

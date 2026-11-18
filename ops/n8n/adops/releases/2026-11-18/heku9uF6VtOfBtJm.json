@@ -1,0 +1,78 @@
+{
+  "id": "heku9uF6VtOfBtJm",
+  "name": "ADOPS — Monitorar planilha",
+  "active": true,
+  "versionId": "08d00d3a-120a-4ac5-b7a2-27cc1e7a4f58",
+  "nodes": [
+    {
+      "id": "559f9803-1097-4ef0-bba1-cd7efaedeb8a",
+      "name": "A cada 5 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */5 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "28ac8348-b312-4b88-8775-7d12e8a585c6",
+      "name": "Ler planilha e atualizar checklist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/planilha/scans",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "A cada 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Ler planilha e atualizar checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240
+  }
+}

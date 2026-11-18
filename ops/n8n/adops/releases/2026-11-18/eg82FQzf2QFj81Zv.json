@@ -1,0 +1,69 @@
+{
+  "id": "eg82FQzf2QFj81Zv",
+  "name": "ADOPS — Conferir WhatsApp",
+  "active": false,
+  "versionId": "e613bb4e-dde4-458d-b0fc-b5be760304b2",
+  "nodes": [
+    {
+      "id": "14f8243f-e24c-40be-a15c-3354dffdb831",
+      "name": "Conferir envios e respostas",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2cd49be7-bdb9-4a09-afbd-0e32ee3baa85",
+      "name": "Consultar recibos e respostas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Conferir envios e respostas": {
+      "main": [
+        [
+          {
+            "node": "Consultar recibos e respostas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240
+  }
+}

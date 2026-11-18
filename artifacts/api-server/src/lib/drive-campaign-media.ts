@@ -2,7 +2,8 @@ import { createSign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { extractPiDigits, normalizeForMatch } from "./current-sheet-campaigns";
-import { listCurrentDriveInventoryItems } from "./drive-inventory";
+import { getDriveInventoryStatus, listCurrentDriveInventoryItems } from "./drive-inventory";
+import { hydrateDriveInventoryPaths, scoreDrivePeriodPath, selectDriveInventorySource } from "./drive-inventory-source";
 
 export const DRIVE_CAMPAIGN_MEDIA_VERSION = "drive-campaign-media-v1" as const;
 
@@ -22,7 +23,7 @@ const IMAGE_EXTENSIONS = new Set(["gif", "png", "jpg", "jpeg", "webp"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm"]);
 const TEXT_EXTENSIONS = new Set(["txt", "docx"]);
 
-type DriveRawItem = {
+export type DriveRawItem = {
   id: string;
   name: string;
   mimeType: string;
@@ -42,7 +43,17 @@ export type DriveCampaignFile = {
   path: string;
   webViewLink: string | null;
   modifiedTime: string | null;
+  size: string | null;
+  md5Checksum: string | null;
   kind: "image" | "video" | "pdf" | "text" | "folder" | "other";
+};
+
+export type DriveCampaignCandidate = {
+  folderPath: string;
+  folderId: string | null;
+  score: number;
+  matchMethod: "folder_pi" | "file_pi" | "campaign_tokens";
+  fileCount: number;
 };
 
 export type DriveCampaignMediaMatch = {
@@ -55,8 +66,78 @@ export type DriveCampaignMediaMatch = {
   pdfFiles: DriveCampaignFile[];
   textFiles: DriveCampaignFile[];
   otherFiles: DriveCampaignFile[];
+  folderItemCount: number;
+  inventoryScanId: string | null;
+  resolutionReason: string;
+  mediaStatus: "candidate_found" | "missing";
+  documentStatus: "candidate_found" | "missing";
+  candidates: DriveCampaignCandidate[];
+  matchMethod: DriveCampaignCandidate["matchMethod"] | "none";
+  safeToApply: boolean;
+  sourceIdentity: {
+    requestedPi: string | null;
+    folderPiCandidates: string[];
+    pdfPiCandidates: string[];
+    mediaPiCandidates: string[];
+    exactPiFolder: boolean;
+    piConflict: boolean;
+  };
   warnings: string[];
 };
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+export function extractDrivePiCandidates(value: string | null | undefined) {
+  const normalized = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  const normalizePi = (digits: string | null | undefined) => {
+    const value = String(digits ?? "");
+    return value.length >= 3 ? value : null;
+  };
+  const explicit = [...normalized.matchAll(/\bPI\s*[-_:]?\s*(\d{3,})\b/g)].map((match) => normalizePi(match[1]));
+  const bareSegments = normalized
+    .split(/[\\/]/)
+    .map((segment) => normalizePi(segment.match(/^\s*(\d{3,})\s*$/)?.[1]));
+  return uniqueStrings([...explicit, ...bareSegments]);
+}
+
+function canonicalDrivePath(path: string) {
+  const pieces = path.split("/").filter(Boolean).map((piece) => piece.trim().replace(/\s+/g, " "));
+  return pieces.length ? `/${pieces.join("/")}` : "/";
+}
+
+function campaignFolderPath(path: string, itemIsFolder = false) {
+  const canonicalPath = canonicalDrivePath(path);
+  const pieces = canonicalPath.split("/").filter(Boolean);
+  const folderPieces = itemIsFolder ? pieces : pieces.slice(0, -1);
+  const piIndex = folderPieces.findIndex((piece) => extractDrivePiCandidates(piece).length > 0);
+  if (piIndex >= 0) return `/${pieces.slice(0, piIndex + 1).join("/")}`;
+  return itemIsFolder ? canonicalPath : nearestFolderPath(canonicalPath);
+}
+
+function sourceIdentity(
+  requestedPi: string | null,
+  folderPath: string | null,
+  mediaFiles: DriveCampaignFile[],
+  pdfFiles: DriveCampaignFile[],
+) {
+  const folderPiCandidates = extractDrivePiCandidates(folderPath);
+  const pdfPiCandidates = uniqueStrings(pdfFiles.flatMap((file) => extractDrivePiCandidates(file.name)));
+  const mediaPiCandidates = uniqueStrings(mediaFiles.flatMap((file) => extractDrivePiCandidates(file.name)));
+  const observed = uniqueStrings([...folderPiCandidates, ...pdfPiCandidates, ...mediaPiCandidates]);
+  return {
+    requestedPi,
+    folderPiCandidates,
+    pdfPiCandidates,
+    mediaPiCandidates,
+    exactPiFolder: Boolean(requestedPi && folderPiCandidates.includes(requestedPi)),
+    piConflict: observed.length > 1 || Boolean(requestedPi && observed.length && observed.some((candidate) => candidate !== requestedPi)),
+  };
+}
 
 function extension(name: string) {
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
@@ -82,6 +163,8 @@ function normalizeDriveItem(item: DriveRawItem): DriveCampaignFile {
     path: item.path ?? `/${item.name}`,
     webViewLink: item.webViewLink ?? null,
     modifiedTime: item.modifiedTime ?? null,
+    size: item.size ?? null,
+    md5Checksum: item.md5Checksum ?? null,
     kind: classify(item),
   };
 }
@@ -214,7 +297,7 @@ async function listLiveDriveItems(rootFolderId: string) {
 function portalItems(items: DriveRawItem[], siteSigla: string) {
   const aliases = PORTAL_PATH_ALIASES[siteSigla] ?? [`/${siteSigla}`];
   return items.filter((item) => {
-    const path = item.path ?? "";
+    const path = canonicalDrivePath(item.path ?? "");
     return aliases.some((alias) => path === alias || path.startsWith(`${alias}/`));
   });
 }
@@ -236,31 +319,64 @@ function scoreCampaignItem(item: DriveRawItem, input: { piCodigo: string; campai
   return 0;
 }
 
+function scoreCampaignFolder(folderPath: string, files: DriveRawItem[], input: { piCodigo: string; campaignName: string; siteSigla: string; periodStart?: string | null }) {
+  const requestedPi = extractPiDigits(input.piCodigo);
+  const folderPis = extractDrivePiCandidates(folderPath);
+  if (requestedPi && folderPis.includes(requestedPi)) return 1_000;
+  const filePis = uniqueStrings(files.flatMap((item) => extractDrivePiCandidates(`${item.path ?? ""} ${item.name}`)));
+  if (requestedPi && filePis.includes(requestedPi)) return 800;
+  return scoreDrivePeriodPath(folderPath, input.periodStart) + Math.max(0, ...files.map((item) => scoreCampaignItem(item, input)));
+}
+
+function campaignMatchMethod(score: number): DriveCampaignCandidate["matchMethod"] {
+  if (score >= 1_000) return "folder_pi";
+  if (score >= 800) return "file_pi";
+  return "campaign_tokens";
+}
+
 export async function findDriveCampaignMedia(input: {
   siteSigla: string;
   piCodigo: string;
   campaignName: string;
+  periodStart?: string | null;
   refreshDrive?: boolean;
+  inventoryItems?: DriveRawItem[];
 }): Promise<DriveCampaignMediaMatch> {
   const rootFolderId = process.env.DRIVE_PI_MONITOR_ROOT_FOLDER_ID ?? DEFAULT_ROOT_FOLDER_ID;
   const warnings: string[] = [];
   let items: DriveRawItem[] = [];
   let source: "cache" | "live" | "snapshot" | "none" = "none";
+  const inventoryStatus = input.inventoryItems
+    ? { stale: false, scanId: null, snapshotAgeSeconds: null }
+    : await getDriveInventoryStatus();
 
-  if (process.env.DRIVE_INTEGRATION_MODE === "monitor") {
-    try {
-      items = await listCurrentDriveInventoryItems();
-      if (items.length) source = "snapshot";
-      else warnings.push("Snapshot do Drive ainda não possui itens.");
-    } catch (error) {
-      warnings.push(`Snapshot do Drive indisponível: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  if (input.inventoryItems) {
+    items = hydrateDriveInventoryPaths(input.inventoryItems);
+    source = "snapshot";
   }
 
-  if (!items.length && input.refreshDrive && process.env.DRIVE_INTEGRATION_MODE !== "monitor") {
+  if (!items.length) try {
+    items = hydrateDriveInventoryPaths(await listCurrentDriveInventoryItems());
+    if (items.length && !inventoryStatus.stale) source = "snapshot";
+    else if (items.length) warnings.push(`Snapshot do Drive vencido (${inventoryStatus.snapshotAgeSeconds ?? "idade desconhecida"}s); ele não será usado como fonte atual.`);
+    else warnings.push("Snapshot do Drive ainda não possui itens.");
+  } catch (error) {
+    warnings.push(`Snapshot do Drive indisponível: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const selectedSource = selectDriveInventorySource({
+    snapshotItems: items.length,
+    snapshotFresh: !inventoryStatus.stale,
+    refreshDrive: Boolean(input.refreshDrive),
+    directCredentials: Boolean(process.env.GOOGLE_DRIVE_ACCESS_TOKEN || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || process.env.GOOGLE_APPLICATION_CREDENTIALS),
+  });
+
+  if (selectedSource !== "snapshot") items = [];
+
+  if (selectedSource === "live") {
     try {
       const live = await listLiveDriveItems(rootFolderId);
-      items = live.items;
+      items = hydrateDriveInventoryPaths(live.items);
       warnings.push(...live.warnings);
       if (items.length) source = "live";
     } catch (error) {
@@ -270,7 +386,7 @@ export async function findDriveCampaignMedia(input: {
 
   if (!items.length) {
     const cached = await readCachedDriveItems();
-    items = cached.items;
+    items = hydrateDriveInventoryPaths(cached.items);
     warnings.push(...cached.warnings);
     if (items.length) source = "cache";
   }
@@ -286,15 +402,33 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      folderItemCount: 0,
+      inventoryScanId: inventoryStatus.scanId ?? null,
+      resolutionReason: "inventory_unavailable",
+      mediaStatus: "missing",
+      documentStatus: "missing",
+      candidates: [],
+      matchMethod: "none",
+      safeToApply: false,
+      sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
   }
 
   const scoped = portalItems(items, input.siteSigla);
-  const scored = scoped
-    .map((item) => ({ item, score: scoreCampaignItem(item, input) }))
+  const grouped = new Map<string, DriveRawItem[]>();
+  for (const item of scoped) {
+    const normalized = normalizeDriveItem(item);
+    const folderPath = campaignFolderPath(normalized.path, normalized.kind === "folder");
+    if (!folderPath) continue;
+    const current = grouped.get(folderPath) ?? [];
+    current.push(item);
+    grouped.set(folderPath, current);
+  }
+  const scored = Array.from(grouped.entries())
+    .map(([folderPath, files]) => ({ folderPath, files, score: scoreCampaignFolder(folderPath, files, input) }))
     .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || (a.item.path ?? "").localeCompare(b.item.path ?? ""));
+    .sort((a, b) => b.score - a.score || a.folderPath.localeCompare(b.folderPath));
 
   if (!scored.length) {
     return {
@@ -307,32 +441,55 @@ export async function findDriveCampaignMedia(input: {
       pdfFiles: [],
       textFiles: [],
       otherFiles: [],
+      folderItemCount: 0,
+      inventoryScanId: inventoryStatus.scanId ?? null,
+      resolutionReason: "campaign_folder_not_found",
+      mediaStatus: "missing",
+      documentStatus: "missing",
+      candidates: [],
+      matchMethod: "none",
+      safeToApply: false,
+      sourceIdentity: sourceIdentity(extractPiDigits(input.piCodigo), null, [], []),
       warnings,
     };
   }
 
   const bestScore = scored[0]!.score;
   const best = scored.filter((entry) => entry.score === bestScore);
-  const folderPaths = Array.from(new Set(best.map((entry) => {
-    const file = normalizeDriveItem(entry.item);
-    return file.kind === "folder" ? file.path : nearestFolderPath(file.path);
-  }).filter((value): value is string => Boolean(value))));
-  const folderPath = folderPaths.length === 1 ? folderPaths[0]! : nearestFolderPath(normalizeDriveItem(best[0]!.item).path);
-  const folderId = scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && item.path === folderPath)?.id ?? null;
+  const candidates = scored.slice(0, 10).map((entry) => ({
+    folderPath: entry.folderPath,
+    folderId: scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && canonicalDrivePath(item.path ?? `/${item.name}`) === entry.folderPath)?.id ?? null,
+    score: entry.score,
+    matchMethod: campaignMatchMethod(entry.score),
+    fileCount: entry.files.length,
+  }));
+  const exactIdentityMatch = best.length === 1 && bestScore >= 800;
+  const folderPaths = best.map((entry) => entry.folderPath);
+  const folderPath = exactIdentityMatch ? folderPaths[0] ?? null : null;
+  const folderId = scoped.find((item) => item.mimeType === "application/vnd.google-apps.folder" && canonicalDrivePath(item.path ?? `/${item.name}`) === folderPath)?.id ?? null;
   const folderPrefix = folderPath ? `${folderPath}/` : "";
-  const files = scoped
-    .filter((item) => item.path === folderPath || item.path?.startsWith(folderPrefix))
-    .map(normalizeDriveItem)
-    .filter((item) => item.kind !== "folder");
+  const files = folderPath
+    ? scoped
+      .filter((item) => {
+        const itemPath = canonicalDrivePath(item.path ?? `/${item.name}`);
+        return itemPath === folderPath || itemPath.startsWith(folderPrefix);
+      })
+      .map(normalizeDriveItem)
+      .filter((item) => item.kind !== "folder")
+    : [];
 
   const mediaFiles = files.filter((item) => item.kind === "image" || item.kind === "video");
   const pdfFiles = files.filter((item) => item.kind === "pdf");
   const textFiles = files.filter((item) => item.kind === "text");
   const otherFiles = files.filter((item) => item.kind === "other");
+  const identity = sourceIdentity(extractPiDigits(input.piCodigo), folderPath, mediaFiles, pdfFiles);
+  if (identity.piConflict) {
+    warnings.push(`Divergência de PI detectada entre planilha/pedido e nomes da pasta ou arquivos: solicitado ${identity.requestedPi ?? "sem PI"}; pasta ${identity.folderPiCandidates.join(", ") || "sem PI"}; PDF ${identity.pdfPiCandidates.join(", ") || "sem PI"}.`);
+  }
 
   return {
     version: DRIVE_CAMPAIGN_MEDIA_VERSION,
-    status: folderPaths.length > 1 ? "ambiguous" : "matched",
+    status: exactIdentityMatch && !identity.piConflict ? "matched" : "ambiguous",
     source,
     folderPath,
     folderId,
@@ -340,11 +497,27 @@ export async function findDriveCampaignMedia(input: {
     pdfFiles,
     textFiles,
     otherFiles,
+    folderItemCount: files.length,
+    inventoryScanId: inventoryStatus.scanId ?? null,
+    resolutionReason: folderPaths.length > 1 ? "multiple_equal_score_folders" : "best_scored_folder",
+    mediaStatus: mediaFiles.length ? "candidate_found" : "missing",
+    documentStatus: pdfFiles.length ? "candidate_found" : "missing",
+    candidates,
+    matchMethod: campaignMatchMethod(bestScore),
+    safeToApply: exactIdentityMatch && !identity.piConflict,
+    sourceIdentity: identity,
     warnings,
   };
 }
 
-export function driveMediaMatchesFormat(mediaFiles: DriveCampaignFile[], normalizedFormat: string) {
+export function driveMediaMatchesFormat(mediaFiles: DriveCampaignFile[], normalizedFormat: string, allowedFormats: string[] | null = null) {
+  if (Array.isArray(allowedFormats) && allowedFormats.length) {
+    const allowed = new Set(allowedFormats.map((value) => String(value).toUpperCase()));
+    return mediaFiles.some((file) => (
+      (file.kind === "video" && allowed.has("MP4"))
+      || (file.kind === "image" && allowed.has("GIF"))
+    ));
+  }
   if (normalizeForMatch(normalizedFormat).includes("VIDEO")) {
     return mediaFiles.some((file) => file.kind === "video");
   }

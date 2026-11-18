@@ -1,0 +1,132 @@
+{
+  "id": "Cr7a6T27RlnpMJC1",
+  "name": "ADOPS — Atualizar relatório",
+  "active": true,
+  "versionId": "cb13658a-4415-4083-9f31-15544ee2286b",
+  "nodes": [
+    {
+      "id": "2409f772-ae1e-4fcb-af2e-01b7bc1e0100",
+      "name": "Relatório às 22h15",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 15 22 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c1dddda2-e64e-4713-b610-f760a5783a14",
+      "name": "Atualizar relatório sem duplicar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence/dispatch",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {routine:\"evidence-monthly-report\",targetDate:$now.setZone(\"America/Cuiaba\").toISODate(),dispatchWindow:\"22:15\"} }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "55f2961d-b700-41ff-bb47-92b51d46c29e",
+      "name": "Acompanhar atualização do relatório",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Yuzka3YszPwKxyKI"
+        },
+        "mode": "once",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "jobId": "={{ $(\"Atualizar relatório sem duplicar\").first().json.jobId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Relatório às 22h15": {
+      "main": [
+        [
+          {
+            "node": "Atualizar relatório sem duplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar relatório sem duplicar": {
+      "main": [
+        [
+          {
+            "node": "Acompanhar atualização do relatório",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  }
+}

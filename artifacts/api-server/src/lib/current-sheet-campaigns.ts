@@ -1,9 +1,12 @@
 import * as XLSX from "xlsx";
+import { createHash } from "node:crypto";
+import { normalizeLocalFormato, resolveSiteFormat, type SiteFormatResolution } from "./adrotate-sites";
 
 export const CAMPAIGN_SHEET_VERSION = "current-sheet-campaigns-v1" as const;
 
 const DEFAULT_EXPORT_URL =
   "https://docs.google.com/spreadsheets/d/1FDNefBX-bENUqj4GVVWDAKoHI0YONVcu/export?format=xlsx";
+export const campaignSheetExportUrl = () => process.env.PLANILHA_XLSX_URL ?? DEFAULT_EXPORT_URL;
 
 const SITE_NAMES: Record<string, string> = {
   OMT: "OMT",
@@ -60,11 +63,22 @@ export type CurrentSheetCampaignRow = {
   periodoFim: string | null;
   localFormato: string;
   localFormatoNormalizado: string;
+  formatResolution: SiteFormatResolution;
   status: string;
   processoRealizado: string;
   processoEnviado: string;
   dataEnvioAgencia: string;
+  cellMetadata: CurrentSheetCampaignRowCellMetadata | null;
 };
+export type CurrentSheetCampaignCellCoordinate = { columnIndex: number; column: string; a1: string; headerA1: string; headerValue: string };
+export type CurrentSheetCampaignRowCellMetadata = { piCodigo: CurrentSheetCampaignCellCoordinate; campaignName: CurrentSheetCampaignCellCoordinate; periodoOriginal: CurrentSheetCampaignCellCoordinate; localFormato: CurrentSheetCampaignCellCoordinate };
+export function indexToColumnLabel(index: number) { return XLSX.utils.encode_col(index); }
+export function resolveCurrentSheetCampaignRowMetadata(args: { rowNumber: number; headerRowNumber: number; blockStart: number; headers: string[] }) {
+  const find = (name: string) => args.headers.map((header, index) => ({ header, index })).filter((item) => normalizeForMatch(item.header).includes(name));
+  const coordinate = (offset: number) => { const columnIndex = args.blockStart + offset; const column = XLSX.utils.encode_col(columnIndex); return { columnIndex, column, a1: `${column}${args.rowNumber}`, headerA1: `${column}${args.headerRowNumber}`, headerValue: args.headers[offset] ?? "" }; };
+  const field = (name: string) => { const matches = find(name); if (matches.length !== 1) throw new Error(matches.length ? `Campo ambíguo no cabeçalho: ${name}` : `Campo obrigatório não encontrado no cabeçalho: ${name}`); return coordinate(matches[0]!.index); };
+  return { piCodigo: field("PECA"), campaignName: field("CAMPANHA"), periodoOriginal: field("PERIODO"), localFormato: field("LOCAL") };
+}
 
 export type CurrentSheetCampaignResult = {
   version: typeof CAMPAIGN_SHEET_VERSION;
@@ -72,9 +86,11 @@ export type CurrentSheetCampaignResult = {
   sheetName: string;
   rows: CurrentSheetCampaignRow[];
   upcomingRows: CurrentSheetCampaignRow[];
+  allRows: CurrentSheetCampaignRow[];
   source: {
     exportUrl: string;
     downloadedAt: string;
+    sha256: string;
   };
 };
 
@@ -245,17 +261,6 @@ function findHeaderOffset(headers: string[], candidates: string[]) {
   return headers.findIndex((header) => candidates.some((candidate) => normalizeForMatch(header).includes(candidate)));
 }
 
-function readBlockSite(siteRow: string[] | null, start: number, nextStart: number) {
-  if (!siteRow) return null;
-  const from = Math.max(0, start - 2);
-  const to = Math.min(siteRow.length, nextStart + 3);
-  for (let index = from; index < to; index += 1) {
-    const site = canonicalSite(siteRow[index]);
-    if (site) return site;
-  }
-  return null;
-}
-
 function rowHasSite(cells: string[]) {
   return cells.some((cell) => canonicalSite(cell));
 }
@@ -274,51 +279,68 @@ export async function loadCurrentSheetCampaigns(options: {
   siteSigla?: string | null;
   includeUpcoming?: boolean;
   upcomingDays?: number;
+  scope?: "daily" | "monthly";
 } = {}): Promise<CurrentSheetCampaignResult> {
   const targetDate = options.date ?? todayInCuiaba();
   const expectedSheet = currentSheetNameForDate(targetDate);
   const upcomingDays = Math.max(0, Math.min(options.upcomingDays ?? 45, 370));
   const upcomingLimit = addDays(targetDate, upcomingDays);
-  const exportUrl = options.exportUrl ?? process.env.PLANILHA_XLSX_URL ?? DEFAULT_EXPORT_URL;
+  const targetMonthStart = `${targetDate.slice(0, 7)}-01`;
+  const nextMonthStart = `${addDays(targetMonthStart, 32).slice(0, 7)}-01`;
+  const targetMonthEnd = addDays(nextMonthStart, -1);
+  const exportUrl = options.exportUrl ?? campaignSheetExportUrl();
   const response = await fetch(exportUrl);
   if (!response.ok) throw new Error(`Falha ao baixar planilha: HTTP ${response.status}`);
   const buffer = Buffer.from(await response.arrayBuffer());
+  const sourceSha256 = createHash("sha256").update(buffer).digest("hex");
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const sheetName = workbook.SheetNames.find((name) => normalizeForMatch(name) === normalizeForMatch(expectedSheet));
   if (!sheetName) throw new Error(`Aba corrente não encontrada: ${expectedSheet}`);
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) throw new Error(`Aba corrente vazia: ${sheetName}`);
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, blankrows: false, raw: false }).map(rowToStrings);
+  const physicalRange = XLSX.utils.decode_range(worksheet["!ref"] ?? "A1");
+  physicalRange.s = { r: 0, c: 0 };
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, range: physicalRange, blankrows: true, raw: false }).map(rowToStrings);
 
   const parsedRows: CurrentSheetCampaignRow[] = [];
   const upcomingRows: CurrentSheetCampaignRow[] = [];
-  let siteRowCells: string[] | null = null;
-  let blockStarts: number[] = [];
-  let blockSites: Array<string | null> = [];
-  let blockHeaders: string[][] = [];
+  const allRows: CurrentSheetCampaignRow[] = [];
+  const blockStarts = [...new Set(rows.flatMap(rowHeaderStarts))].sort((left, right) => left - right);
+  const pendingSites = new Map<number, string>();
+  const blocks = new Map<number, { site: string | null; headers: string[]; headerRowNumber: number }>();
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const cells = rows[rowIndex] ?? [];
     const headerStarts = rowHeaderStarts(cells);
-    if (headerStarts.length > 0) {
-      blockStarts = headerStarts;
-      blockSites = headerStarts.map((start, index) => readBlockSite(siteRowCells, start, headerStarts[index + 1] ?? cells.length));
-      blockHeaders = headerStarts.map((start, index) => cells.slice(start, headerStarts[index + 1] ?? cells.length));
-      continue;
-    }
+    const siteTitleStarts = new Set<number>();
     if (rowHasSite(cells)) {
-      siteRowCells = cells;
-      continue;
+      cells.forEach((cell, column) => {
+        const site = canonicalSite(cell);
+        if (!site || !blockStarts.length) return;
+        const start = blockStarts.reduce((closest, candidate) => Math.abs(candidate - column) < Math.abs(closest - column) ? candidate : closest);
+        pendingSites.set(start, site);
+        siteTitleStarts.add(start);
+      });
     }
-    if (!blockStarts.length) continue;
+    headerStarts.forEach((start) => {
+      const index = blockStarts.indexOf(start);
+      blocks.set(start, {
+        site: pendingSites.get(start) ?? null,
+        headers: cells.slice(start, blockStarts[index + 1] ?? cells.length),
+        headerRowNumber: rowIndex + 1,
+      });
+    });
 
     blockStarts.forEach((start, index) => {
-      const site = blockSites[index];
-      if (!site) return;
+      if (headerStarts.includes(start) || siteTitleStarts.has(start)) return;
+      const block = blocks.get(start);
+      const site = block?.site;
+      if (!block || !site) return;
       if (options.siteSigla && normalizeForMatch(options.siteSigla) !== site) return;
       const nextStart = blockStarts[index + 1] ?? cells.length;
       const slice = cells.slice(start, nextStart);
-      const headers = blockHeaders[index] ?? [];
+      const headers = block.headers;
+      const headerRowNumber = block.headerRowNumber;
       const offPiece = findHeaderOffset(headers, ["PECA"]);
       const offAgency = findHeaderOffset(headers, ["AGENCIA"]);
       const offCampaign = findHeaderOffset(headers, ["CAMPANHA"]);
@@ -345,6 +367,9 @@ export async function loadCurrentSheetCampaigns(options: {
       const parsedPeriod = parsePeriodo(periodoOriginal, sheetName);
       if (!parsedPeriod.inicio || !parsedPeriod.fim) return;
 
+      const formatResolution = resolveSiteFormat(site, localFormato);
+      let cellMetadata: CurrentSheetCampaignRowCellMetadata | null = null;
+      try { cellMetadata = resolveCurrentSheetCampaignRowMetadata({ rowNumber: rowIndex + 1, headerRowNumber, blockStart: start, headers }); } catch { /* correction requires unambiguous headers */ }
       const parsedRow: CurrentSheetCampaignRow = {
         version: CAMPAIGN_SHEET_VERSION,
         sheetName,
@@ -357,16 +382,21 @@ export async function loadCurrentSheetCampaigns(options: {
         periodoInicio: parsedPeriod.inicio,
         periodoFim: parsedPeriod.fim,
         localFormato,
-        localFormatoNormalizado: normalizeFormato(localFormato),
+        localFormatoNormalizado: formatResolution.canonicalFormat ?? normalizeLocalFormato(localFormato),
+        formatResolution,
         status,
         processoRealizado,
         processoEnviado,
         dataEnvioAgencia,
+        cellMetadata,
       };
+      allRows.push(parsedRow);
 
-      if (parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
+      if (options.scope === "monthly" && parsedPeriod.inicio <= targetMonthEnd && parsedPeriod.fim >= targetMonthStart) {
         parsedRows.push(parsedRow);
-      } else if (options.includeUpcoming && parsedPeriod.inicio > targetDate && parsedPeriod.inicio <= upcomingLimit) {
+      } else if (options.scope !== "monthly" && parsedPeriod.inicio <= targetDate && parsedPeriod.fim >= targetDate) {
+        parsedRows.push(parsedRow);
+      } else if (options.scope !== "monthly" && options.includeUpcoming && parsedPeriod.inicio > targetDate && parsedPeriod.inicio <= upcomingLimit) {
         upcomingRows.push(parsedRow);
       }
     });
@@ -378,9 +408,11 @@ export async function loadCurrentSheetCampaigns(options: {
     sheetName,
     rows: parsedRows,
     upcomingRows,
+    allRows,
     source: {
       exportUrl,
       downloadedAt: new Date().toISOString(),
+      sha256: sourceSha256,
     },
   };
 }
@@ -394,8 +426,8 @@ function addDays(dateKey: string, days: number) {
 
 export function extractPiDigits(value: string | null | undefined) {
   const normalized = normalizeForMatch(value);
-  const piMatch = normalized.match(/\bPI\s*0*([0-9]+)\b/);
+  const piMatch = normalized.match(/\bPI\s*([0-9]+)\b/);
   if (piMatch) return piMatch[1] ?? null;
-  const anyMatch = normalized.match(/\b0*([0-9]{3,})\b/);
+  const anyMatch = normalized.match(/\b([0-9]{3,})\b/);
   return anyMatch?.[1] ?? null;
 }

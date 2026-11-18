@@ -1,7 +1,9 @@
 const { execFileSync } = require("node:child_process");
-const { mkdirSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync, rmSync, existsSync, statSync } = require("node:fs");
 const crypto = require("node:crypto");
+const historicalReferencePolicy = require('../../ops/shared/historical-capture-reference.cjs');
 const path = require("node:path");
+const os = require("node:os");
 const { createRequire } = require("node:module");
 const { getSiteIntegration, getFormatMapping, normalizeFormat } = require("./adrotate-sites.cjs");
 
@@ -12,7 +14,6 @@ const WINDOWS_FRAME_KIT_DIR = process.env.ADOPS_WINDOWS_FRAME_TEMPLATE_DIR
 const WINDOWS_FRAME_FONT = process.env.ADOPS_WINDOWS_FRAME_FONT
   ? path.resolve(process.env.ADOPS_WINDOWS_FRAME_FONT)
   : path.resolve(__dirname, "../assets/desktop-frame/fonts/selawik.ttf");
-const SITE_LOGOS_DIR = path.resolve(__dirname, "../../artifacts/adops/public/site-logos");
 const runtimeRuleL1Cache = new Map();
 const runtimeRuleL1TtlMs = Number(process.env.ADOPS_CAPTURE_RULE_L1_TTL_MS || 45_000);
 
@@ -63,11 +64,28 @@ function parseArgs(argv) {
     candidateOnly: options.candidateOnly === true || options.candidateOnly === "true",
     replaceExisting: options.replaceExisting === true || options.replaceExisting === "true",
     captureAt: options.captureAt ? String(options.captureAt) : null,
+    capturePurpose: options.capturePurpose === "publication_acceptance" ? "publication_acceptance" : null,
+    reconstructionReason: options.reconstructionReason === "late_publication_recovery"
+      ? "late_publication_recovery"
+      : null,
     previewSignature: options.previewSignature ? String(options.previewSignature) : null,
+    historicalReference: options.historicalReference ? JSON.parse(String(options.historicalReference)) : null,
     jobId: options.jobId ? String(options.jobId) : null,
     runnerJobId: options.runnerJobId ? String(options.runnerJobId) : null,
     diagnosticMode: options.diagnosticMode === true || options.diagnosticMode === "true",
+    captureAttempt: Math.max(1, Number(options.captureAttempt || 1)),
   };
+}
+
+function appendCaptureRetryQuery(value, attempt, bypassLiveCache = false) {
+  if (!value || (Number(attempt) <= 1 && !bypassLiveCache)) return value;
+  try {
+    const parsed = new URL(value);
+    parsed.searchParams.set("_adops_capture_retry", String(bypassLiveCache ? Date.now() : attempt));
+    return parsed.toString();
+  } catch {
+    return value;
+  }
 }
 
 function loadPlaywright() {
@@ -201,6 +219,17 @@ function getMediaBasename(urlString) {
   return path.basename(explicitFilename || url.pathname);
 }
 
+function normalizeMediaIdentityUrl(value, baseUrl = "https://adops.invalid/") {
+  const raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, baseUrl);
+    return `${parsed.origin}${decodeURIComponent(parsed.pathname)}`.toLowerCase();
+  } catch {
+    return raw.split(/[?#]/)[0].toLowerCase();
+  }
+}
+
 function isGifUrl(value) {
   const raw = String(value || "");
   return /^data:image\/gif/i.test(raw) || /(?:[?&#]|^)filename=[^&#]+\.gif/i.test(raw) || /\.gif(?:[?#].*)?$/i.test(raw);
@@ -209,13 +238,28 @@ function isGifUrl(value) {
 function resolveReachableMediaUrl(value) {
   if (!value) return value;
   try {
-    const url = new URL(String(value).startsWith("//") ? `https:${value}` : String(value));
+    const raw = String(value);
+    const protocolRelative = raw.startsWith("//");
+    const url = new URL(protocolRelative ? `https:${raw}` : raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.username || url.password) return null;
     if (url.hostname === "perrenguematogrosso.com" && url.pathname.startsWith("/app/uploads/")) {
       url.hostname = "admin.perrenguematogrosso.com";
       return url.toString();
     }
+    if (protocolRelative) return url.toString();
   } catch {}
   return value;
+}
+
+function resolveMatchedGifSourceUrl(candidateUrl, expectedUrl) {
+  if (!candidateUrl || !isGifUrl(candidateUrl)) return null;
+  const normalizedCandidate = resolveReachableMediaUrl(candidateUrl);
+  const normalizedExpected = resolveReachableMediaUrl(expectedUrl);
+  if (!normalizedCandidate || !normalizedExpected) return null;
+  return normalizeMediaIdentityUrl(normalizedCandidate) === normalizeMediaIdentityUrl(normalizedExpected)
+    ? normalizedCandidate
+    : null;
 }
 
 function slugify(value) {
@@ -272,6 +316,11 @@ function formatCaptureAtForPreview(date = new Date()) {
   return `${take("year")}-${take("month")}-${take("day")}T${take("hour")}:${take("minute")}`;
 }
 
+function requiresRetroEditorialProof(captureIsoDate, now = new Date()) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(captureIsoDate || ""))
+    && captureIsoDate < getDateLabel(now).isoDate;
+}
+
 function parseCaptureDate(value) {
   if (!value) return null;
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value)) {
@@ -284,6 +333,16 @@ function parseCaptureDate(value) {
 
   const fallback = new Date(`${value}:00`);
   return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function hasMatchingPreviewCutoff(previewActive, previewCutoff, requestedCaptureAt) {
+  if (previewActive !== true || typeof previewCutoff !== "string" || typeof requestedCaptureAt !== "string") return false;
+  const isSupportedInstant = (value) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)
+    || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
+  if (!isSupportedInstant(previewCutoff) || !isSupportedInstant(requestedCaptureAt)) return false;
+  const observed = parseCaptureDate(previewCutoff);
+  const requested = parseCaptureDate(requestedCaptureAt);
+  return Boolean(observed && requested && observed.getTime() === requested.getTime());
 }
 
 function appendPreviewParams(urlString, captureAt, previewSignature) {
@@ -524,6 +583,12 @@ async function fetchInsertion(apiBase, insertionId) {
   return response.json();
 }
 
+function assertInsertionOperable(insertion) {
+  if (insertion?.archivedAt != null || insertion?.supersededByInsertionId != null) {
+    throw new Error(`insertion_not_operable: a inserção ${insertion?.id ?? "desconhecida"} está arquivada ou substituída.`);
+  }
+}
+
 function stripHtml(value) {
   return String(value || "")
     .replace(/<[^>]*>/g, " ")
@@ -545,10 +610,27 @@ function categoryClassFromSlug(slug) {
   const normalized = String(slug || "").toLowerCase();
   if (normalized.includes("esporte")) return "badge-cat badge-cat--esportes";
   if (normalized.includes("politica")) return "badge-cat badge-cat--politica";
-  if (normalized.includes("vovo")) return "badge-cat badge-cat--vovo-de-olho";
   if (normalized.includes("meme")) return "badge-cat badge-cat--memes-do-vovo";
+  if (normalized.includes("vovo")) return "badge-cat badge-cat--vovo-de-olho";
   return "badge-cat";
 }
+
+function normalizePerrengueWpRestBefore(captureAt) {
+  const raw = String(captureAt || "").trim();
+  if (!raw) return "";
+  const withoutZone = raw
+    .replace(/[zZ]$/, "")
+    .replace(/[+-]\d{2}:?\d{2}$/, "")
+    .replace(" ", "T");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(withoutZone)) return `${withoutZone}T23:59:59`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(withoutZone)) return `${withoutZone}:00`;
+  const match = withoutZone.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+  return match?.[1] || "";
+}
+
+const perrengueAdminRetroPostsCache = new Map();
+const aflRetroPostsCache = new Map();
+const omtRetroPostsCache = new Map();
 
 async function fetchPerrengueAdminRetroPosts(captureAt) {
   const cutoff = parseIsoLikeDate(captureAt);
@@ -557,8 +639,12 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
   const after = `${monthStart.toISOString().slice(0, 10)}T00:00:00`;
-  const before = String(captureAt).replace(/[+-]\d{2}:?\d{2}$/, "").replace(/Z$/, "");
+  const before = normalizePerrengueWpRestBefore(captureAt);
+  if (!before) throw new Error(`perrengue_admin_retro_posts_failed: invalid_capture_at=${captureAt}`);
   const host = process.env.ADOPS_PERRENGUE_ADMIN_WP_API_BASE || "https://admin.perrenguematogrosso.com/wp-json/wp/v2/posts";
+  const cacheKey = `${host}|${after}|${before}`;
+  const cachedPosts = perrengueAdminRetroPostsCache.get(cacheKey);
+  if (Array.isArray(cachedPosts)) return cachedPosts;
   const posts = [];
   for (let pageNo = 1; pageNo <= 5; pageNo += 1) {
     const url = new URL(host);
@@ -572,12 +658,20 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
       response = await fetch(url, {
         headers: { "user-agent": "adops-capture-retro-preview/1.0" },
       });
-    } catch {
+    } catch (error) {
+      if (pageNo === 1) {
+        throw new Error(`perrengue_admin_retro_posts_failed: request_error=${error instanceof Error ? error.message : String(error)}`);
+      }
       break;
     }
-    if (response.status === 400 || response.status === 404) break;
-    if (!response.ok) break;
-    const items = await response.json().catch(() => []);
+    if ((response.status === 400 || response.status === 404) && pageNo > 1) break;
+    if (!response.ok) {
+      throw new Error(`perrengue_admin_retro_posts_failed: http_${response.status}; before=${before}`);
+    }
+    const items = await response.json().catch(() => null);
+    if (!Array.isArray(items)) {
+      throw new Error(`perrengue_admin_retro_posts_failed: invalid_json; before=${before}`);
+    }
     if (!Array.isArray(items) || items.length === 0) break;
     for (const item of items) {
       const embedded = item?._embedded || {};
@@ -606,12 +700,208 @@ async function fetchPerrengueAdminRetroPosts(captureAt) {
         excerpt: stripHtml(item?.excerpt?.rendered || ""),
       });
     }
+    const editorialPosts = posts.filter((post) => post.categorySlug !== "memes-do-vovo");
+    const editorialPostsWithImage = editorialPosts.filter((post) => post.image);
+    if (editorialPosts.length >= 24 && editorialPostsWithImage.length >= 6) break;
     if (items.length < 100) break;
   }
+  perrengueAdminRetroPostsCache.set(cacheKey, posts);
   return posts;
 }
 
-async function resolvePageUrls(page, mapping, previewOptions) {
+async function fetchAflRetroPosts(captureAt) {
+  const before = normalizePerrengueWpRestBefore(captureAt);
+  if (!before) throw new Error(`afl_retro_posts_failed: invalid_capture_at=${captureAt}`);
+  const host = process.env.ADOPS_AFL_WP_API_BASE || "https://afolhalivre.com/wp-json/wp/v2/posts";
+  const cacheKey = `${host}|${before}`;
+  const cachedPosts = aflRetroPostsCache.get(cacheKey);
+  if (Array.isArray(cachedPosts)) return cachedPosts;
+
+  const url = new URL(host);
+  url.searchParams.set("before", before);
+  url.searchParams.set("per_page", "20");
+  url.searchParams.set("orderby", "date");
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("_embed", "1");
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: { "user-agent": "adops-capture-retro-preview/1.0" },
+    });
+  } catch (error) {
+    throw new Error(`afl_retro_posts_failed: request_error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) throw new Error(`afl_retro_posts_failed: http_${response.status}; before=${before}`);
+  const items = await response.json().catch(() => null);
+  if (!Array.isArray(items)) throw new Error(`afl_retro_posts_failed: invalid_json; before=${before}`);
+
+  const posts = normalizeRetroEditorialPosts(items.map((item) => {
+    const embedded = item?._embedded || {};
+    const media = Array.isArray(embedded["wp:featuredmedia"]) ? embedded["wp:featuredmedia"][0] : null;
+    const terms = Array.isArray(embedded["wp:term"]) ? embedded["wp:term"].flat() : [];
+    const category = terms.find((term) => term?.taxonomy === "category") || null;
+    return {
+      id: Number(item?.id || 0),
+      title: stripHtml(item?.title?.rendered || item?.title || ""),
+      excerpt: stripHtml(item?.excerpt?.rendered || ""),
+      slug: String(item?.slug || ""),
+      url: String(item?.link || ""),
+      image: String(media?.source_url || ""),
+      date: String(item?.date || item?.date_gmt || ""),
+      modified: String(item?.modified || item?.modified_gmt || ""),
+      category: stripHtml(category?.name || "Notícias"),
+      categorySlug: String(category?.slug || "noticias"),
+    };
+  }), captureAt);
+  aflRetroPostsCache.set(cacheKey, posts);
+  return posts;
+}
+
+function normalizeRetroEditorialPosts(items, captureAt) {
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff || !Array.isArray(items)) return [];
+  return items
+    .map((item) => ({
+      ...item,
+      _date: parseIsoLikeDate(String(item?.date || item?.localDate || item?.publishedAt || "")),
+      _modified: item?.modified ? parseIsoLikeDate(String(item.modified)) : null,
+    }))
+    .filter((item) => item._date && item._date.getTime() <= cutoff.getTime() && item._modified && item._modified.getTime() <= cutoff.getTime() && item.slug && item.title)
+    .sort((left, right) => right._date.getTime() - left._date.getTime());
+}
+
+async function fetchOmtRetroPosts(captureAt) {
+  const before = normalizePerrengueWpRestBefore(captureAt);
+  if (!before) throw new Error(`omt_retro_posts_failed: invalid_capture_at=${captureAt}`);
+  const host = process.env.ADOPS_OMT_WP_API_BASE || "https://omatogrossense.com/wp-json/wp/v2/posts";
+  const cacheKey = `${host}|${before}`;
+  const cachedPosts = omtRetroPostsCache.get(cacheKey);
+  if (Array.isArray(cachedPosts)) return cachedPosts;
+
+  const url = new URL(host);
+  url.searchParams.set("before", before);
+  url.searchParams.set("per_page", "25");
+  url.searchParams.set("orderby", "date");
+  url.searchParams.set("order", "desc");
+  url.searchParams.set("_embed", "1");
+  let response;
+  try {
+    response = await fetch(url, { headers: { "user-agent": "adops-capture-retro-preview/1.0" } });
+  } catch (error) {
+    throw new Error(`omt_retro_posts_failed: request_error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) throw new Error(`omt_retro_posts_failed: http_${response.status}; before=${before}`);
+  const items = await response.json().catch(() => null);
+  if (!Array.isArray(items)) throw new Error(`omt_retro_posts_failed: invalid_json; before=${before}`);
+
+  const posts = normalizeRetroEditorialPosts(items.map((item) => {
+    const embedded = item?._embedded || {};
+    const media = Array.isArray(embedded["wp:featuredmedia"]) ? embedded["wp:featuredmedia"][0] : null;
+    const terms = Array.isArray(embedded["wp:term"]) ? embedded["wp:term"].flat() : [];
+    const category = terms.find((term) => term?.taxonomy === "category") || null;
+    return {
+      id: Number(item?.id || 0),
+      title: stripHtml(item?.title?.rendered || item?.title || ""),
+      excerpt: stripHtml(item?.excerpt?.rendered || ""),
+      slug: String(item?.slug || ""),
+      url: String(item?.link || ""),
+      image: String(media?.source_url || ""),
+      date: String(item?.date || item?.date_gmt || ""),
+      modified: String(item?.modified || item?.modified_gmt || ""),
+      category: stripHtml(category?.name || "Notícias"),
+      categorySlug: String(category?.slug || "noticias"),
+    };
+  }), captureAt);
+  omtRetroPostsCache.set(cacheKey, posts);
+  return posts;
+}
+
+function buildWordPressArticleApiUrl(mapping, captureAt) {
+  if (!mapping?.homeUrl) return null;
+  let apiUrl;
+  try {
+    apiUrl = new URL(mapping.articleApiUrl || "/wp-json/wp/v2/posts", mapping.homeUrl);
+  } catch {
+    return null;
+  }
+  const rawCaptureAt = String(captureAt || "").trim();
+  if (rawCaptureAt) {
+    const before = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(rawCaptureAt)
+      ? `${rawCaptureAt}:59`
+      : rawCaptureAt;
+    apiUrl.searchParams.set("before", before);
+  }
+  apiUrl.searchParams.set("per_page", "12");
+  apiUrl.searchParams.set("order", "desc");
+  apiUrl.searchParams.set("orderby", "date");
+  apiUrl.searchParams.set("status", "publish");
+  apiUrl.searchParams.set("_fields", "link,date,status");
+  return apiUrl.toString();
+}
+
+async function fetchWordPressArticleCandidates(mapping, captureAt, previewSignature, fetchImpl = fetch) {
+  const apiUrl = buildWordPressArticleApiUrl(mapping, captureAt);
+  if (!apiUrl) return [];
+  try {
+    const response = await fetchImpl(apiUrl, {
+      headers: { "user-agent": "adops-capture-article-resolver/1.0" },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok) return [];
+    const items = await response.json().catch(() => []);
+    if (!Array.isArray(items)) return [];
+    const portalOrigin = new URL(mapping.homeUrl).origin;
+    return items
+      .filter((item) => item?.status === "publish" && item?.link)
+      .map((item) => {
+        try {
+          const articleUrl = new URL(item.link, mapping.homeUrl);
+          return articleUrl.origin === portalOrigin ? articleUrl.toString() : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .map((url) => appendPreviewParams(url, captureAt, previewSignature));
+  } catch {
+    return [];
+  }
+}
+
+function isRejectedArticleCandidateUrl(candidateUrl, mapping) {
+  try {
+    const current = new URL(candidateUrl);
+    const expected = new URL(mapping.homeUrl);
+    if (current.origin !== expected.origin) return true;
+    return /\/cgi-sys\/|suspendedpage\.cgi|\/wp-login\.php|\/wp-admin\//i.test(current.pathname);
+  } catch {
+    return true;
+  }
+}
+
+async function auditArticleCandidatePage(page, mapping) {
+  if (mapping?.page !== "article" && mapping?.pageUrl !== "__LATEST_ARTICLE__") {
+    return { ok: true, skipped: true };
+  }
+  const currentUrl = page.url();
+  if (isRejectedArticleCandidateUrl(currentUrl, mapping)) {
+    return { ok: false, reason: "invalid_article_url", currentUrl };
+  }
+  const audit = await page.evaluate(() => {
+    const title = String(document.title || "").trim();
+    const bodyText = String(document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+    const hasEditorialContent = Boolean(document.querySelector(
+      "main article, article, .entry-content, [itemtype*='Article'], [itemtype*='NewsArticle']",
+    ));
+    const suspended = /account suspended|suspended page|conta suspensa|site suspenso/i.test(`${title} ${bodyText}`);
+    return { title, hasEditorialContent, suspended };
+  });
+  if (audit.suspended) return { ok: false, reason: "suspended_article_page", currentUrl, ...audit };
+  if (!audit.hasEditorialContent) return { ok: false, reason: "article_content_missing", currentUrl, ...audit };
+  return { ok: true, currentUrl, ...audit };
+}
+
+async function resolvePageUrls(page, mapping, previewOptions, fetchArticleCandidates = fetchWordPressArticleCandidates) {
   if (mapping.domain === "perrenguematogrosso.com" && mapping.page === "article" && previewOptions.captureAt) {
     const retroPosts = await fetchPerrengueAdminRetroPosts(previewOptions.captureAt);
     const historicalUrls = retroPosts
@@ -628,16 +918,36 @@ async function resolvePageUrls(page, mapping, previewOptions) {
       return historicalUrls.map((url) => appendPreviewParams(url, previewOptions.captureAt, previewOptions.previewSignature));
     }
   }
-  if (mapping.auditConfig?.preferArticleFallbackForRetro === true && mapping.articleFallbackUrl) {
+  if (previewOptions.captureAt && mapping.auditConfig?.preferArticleFallbackForRetro === true && mapping.articleFallbackUrl) {
     return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
   }
   if (mapping.pageUrl !== "__LATEST_ARTICLE__") {
     return [appendPreviewParams(mapping.pageUrl, previewOptions.captureAt, previewOptions.previewSignature)];
   }
 
+  const apiCandidates = await fetchArticleCandidates(
+    mapping,
+    previewOptions.captureAt,
+    previewOptions.previewSignature,
+  );
+  if (apiCandidates.length > 0) return apiCandidates;
+
   await page.goto(appendPreviewParams(mapping.homeUrl, previewOptions.captureAt, previewOptions.previewSignature), { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForTimeout(1200);
-  const articleCandidates = await page.evaluate((domain) => {
+  let canonicalHostname = null;
+  try {
+    const canonicalHome = new URL(mapping.homeUrl);
+    const configuredDomain = String(mapping.domain || "").trim().toLowerCase();
+    if ((canonicalHome.protocol === "http:" || canonicalHome.protocol === "https:")
+      && !canonicalHome.username && !canonicalHome.password
+      && (canonicalHome.hostname.toLowerCase() === configuredDomain
+        || canonicalHome.hostname.toLowerCase() === `www.${configuredDomain}`)) {
+      canonicalHostname = canonicalHome.hostname.toLowerCase();
+    }
+  } catch {
+    canonicalHostname = null;
+  }
+  const articleCandidates = await page.evaluate(({ canonicalHostname }) => {
     const selectors = [
       "main article h1 a[href]",
       "main article h2 a[href]",
@@ -662,17 +972,27 @@ async function resolvePageUrls(page, mapping, previewOptions) {
       for (const node of candidates) {
         const href = node.getAttribute("href");
         if (!href) continue;
-        if (!href.startsWith("http")) continue;
-        if (!href.includes(domain)) continue;
-        if (href === `https://${domain}/` || href === `https://${domain}`) continue;
-        if (href.includes("/category/") || href.includes("/tag/") || href.includes("/author/") || href.includes("/wp-json/")) continue;
-        if (!urls.includes(href)) urls.push(href);
-        results.push({ url: href, dateText: extractDateText(node) });
+        let articleUrl;
+        try {
+          articleUrl = new URL(href, window.location.href);
+        } catch {
+          continue;
+        }
+        if (articleUrl.protocol !== "http:" && articleUrl.protocol !== "https:") continue;
+        if (articleUrl.username || articleUrl.password) continue;
+        if (articleUrl.origin !== window.location.origin) continue;
+        if (!canonicalHostname || articleUrl.hostname.toLowerCase() !== canonicalHostname) continue;
+        if (articleUrl.pathname === "/") continue;
+        if (/\/category\/|\/tag\/|\/author\/|\/wp-json\/|\/cgi-sys\/|suspendedpage\.cgi|\/wp-login\.php|\/wp-admin\//i.test(articleUrl.pathname)) continue;
+        const canonicalUrl = articleUrl.toString();
+        if (urls.includes(canonicalUrl)) continue;
+        urls.push(canonicalUrl);
+        results.push({ url: canonicalUrl, dateText: extractDateText(node) });
         if (urls.length >= 12) return results;
       }
     }
     return results;
-  }, mapping.domain);
+  }, { domain: mapping.domain, canonicalHostname });
 
   if (Array.isArray(articleCandidates) && articleCandidates.length > 0) {
     const captureAtDate = parseIsoLikeDate(previewOptions.captureAt);
@@ -692,14 +1012,33 @@ async function resolvePageUrls(page, mapping, previewOptions) {
       });
     return sortedCandidates.map((item) => appendPreviewParams(item.url, previewOptions.captureAt, previewOptions.previewSignature));
   }
-  if (mapping.articleFallbackUrl) return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
+  if (previewOptions.captureAt && mapping.articleFallbackUrl) return [appendPreviewParams(mapping.articleFallbackUrl, previewOptions.captureAt, previewOptions.previewSignature)];
   throw new Error("Não foi possível localizar uma matéria para capturar o banner interno.");
 }
 
-async function findCreativeMatch(page, slotSelector, mediaBasename) {
+async function findCreativeMatch(page, slotSelector, mediaBasename, expectedMediaUrl = null) {
+  const expectedMediaKey = normalizeMediaIdentityUrl(expectedMediaUrl);
   return await page.evaluate(function (payload) {
     var slotSelector = payload.slotSelector;
     var mediaBasename = payload.mediaBasename;
+    var expectedMediaKey = payload.expectedMediaKey;
+    function normalizeMediaKey(value) {
+      var raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+      if (!raw) return "";
+      try {
+        var parsed = new URL(raw, window.location.href);
+        return (parsed.origin + decodeURIComponent(parsed.pathname)).toLowerCase();
+      } catch {
+        return raw.split(/[?#]/)[0].toLowerCase();
+      }
+    }
+    function mediaMatch(value) {
+      var normalized = normalizeMediaKey(value);
+      return {
+        exact: Boolean(expectedMediaKey && normalized === expectedMediaKey),
+        basename: Boolean(mediaBasename && String(value || "").toLowerCase().indexOf(String(mediaBasename).toLowerCase()) !== -1),
+      };
+    }
     function visibilityMetrics(node) {
       if (!(node instanceof HTMLElement)) {
         return {
@@ -837,7 +1176,8 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
           mediaNode.getAttribute("data-lazy-srcset") ||
           mediaNode.getAttribute("poster") ||
           "";
-        if (!mediaValue || String(mediaValue).indexOf(mediaBasename) === -1) continue;
+        var directMatch = mediaMatch(mediaValue);
+        if (!mediaValue || (expectedMediaKey ? !directMatch.exact : !directMatch.basename)) continue;
         var carrier = mediaNode.closest(".g-dyn, .g-single") || mediaNode.closest(".g") || mediaNode;
         if (!(carrier instanceof HTMLElement)) continue;
         var mediaRect = mediaNode.getBoundingClientRect();
@@ -850,6 +1190,7 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
           slot: slot,
           item: carrier,
           mediaMatched: true,
+          exactMediaMatched: directMatch.exact,
           hasAdClass: hasAdClass(carrier),
           score: scoreInfo.score + scoreBoost,
           slotMetrics: scoreInfo.slotMetrics,
@@ -861,18 +1202,24 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
         var item = items[i];
         var content = collect(item);
         var mediaValues = collectMediaValues(item);
-        var mediaMatched = mediaValues.some(function(value) {
-          return String(value || "").indexOf(mediaBasename) !== -1;
+        var exactMediaMatched = mediaValues.some(function(value) {
+          return mediaMatch(value).exact;
         });
+        var mediaMatched = expectedMediaKey
+          ? exactMediaMatched
+          : mediaValues.some(function(value) {
+              return mediaMatch(value).basename;
+            });
         var adClassCandidate = hasAdClass(item);
         available.push(content);
-        if ((mediaMatched || (adClassCandidate && content.indexOf(mediaBasename) !== -1))
+        if ((mediaMatched || (!expectedMediaKey && adClassCandidate && content.indexOf(mediaBasename) !== -1))
         ) {
           var candidateScore = scoreMatch(slot, item);
           matchedCandidates.push({
             slot: slot,
             item: item,
             mediaMatched: mediaMatched,
+            exactMediaMatched: exactMediaMatched,
             hasAdClass: adClassCandidate,
             score: candidateScore.score,
             slotMetrics: candidateScore.slotMetrics,
@@ -890,6 +1237,9 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       return { ok: false, reason: placeholderOnly ? "placeholder_only" : "creative_not_found", available: available };
     }
     matchedCandidates.sort(function (a, b) {
+      if (Number(b.exactMediaMatched) !== Number(a.exactMediaMatched)) {
+        return Number(b.exactMediaMatched) - Number(a.exactMediaMatched);
+      }
       if (Number(b.mediaMatched) !== Number(a.mediaMatched)) {
         return Number(b.mediaMatched) - Number(a.mediaMatched);
       }
@@ -980,12 +1330,16 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       var urls = collectMediaUrls(mediaNodes[mediaIndex]);
       for (var urlIndex = 0; urlIndex < urls.length; urlIndex += 1) {
         if (!mediaUrl) mediaUrl = urls[urlIndex];
-        if (urls[urlIndex].toLowerCase().indexOf(mediaBasename) !== -1) {
+        var currentMatch = mediaMatch(urls[urlIndex]);
+        if ((expectedMediaKey && currentMatch.exact) || (!expectedMediaKey && currentMatch.basename)) {
           mediaUrl = urls[urlIndex];
           break;
         }
       }
-      if (mediaUrl && mediaUrl.toLowerCase().indexOf(mediaBasename) !== -1) break;
+      if (mediaUrl) {
+        var selectedMatch = mediaMatch(mediaUrl);
+        if ((expectedMediaKey && selectedMatch.exact) || (!expectedMediaKey && selectedMatch.basename)) break;
+      }
     }
 
     Array.prototype.slice.call(document.querySelectorAll("[data-adops-capture-slot]")).forEach(function (node) {
@@ -1004,12 +1358,13 @@ async function findCreativeMatch(page, slotSelector, mediaBasename) {
       slotSelector: '[data-adops-capture-slot="1"]',
       contextSelector: '[data-adops-capture-context="1"]',
       mediaUrl: mediaUrl,
+      exactMediaMatched: matchedCandidates[0].exactMediaMatched === true,
       matchScore: matchedCandidates[0].score,
       slotTop: matchedCandidates[0].slotMetrics.top,
       slotVisibleRatio: matchedCandidates[0].slotMetrics.visibleRatio,
       slotInFooter: matchedCandidates[0].slotMetrics.inFooter,
     };
-  }, { slotSelector, mediaBasename });
+  }, { slotSelector, mediaBasename, expectedMediaKey });
 }
 
 async function forceMatchedAdVisible(page) {
@@ -1057,7 +1412,8 @@ async function forceMatchedAdVisible(page) {
       for (const item of items) {
         if (!(item instanceof HTMLElement)) continue;
         const isMatch = item === activeItem;
-        item.toggleAttribute("data-adops-capture-active-ad", isMatch);
+        if (isMatch) item.setAttribute("data-adops-capture-active-ad", "1");
+        else item.removeAttribute("data-adops-capture-active-ad");
         item.style.setProperty("display", isMatch ? "block" : "none", "important");
         item.style.setProperty("opacity", isMatch ? "1" : "0", "important");
         item.style.setProperty("visibility", isMatch ? "visible" : "hidden", "important");
@@ -1096,7 +1452,8 @@ async function forceMatchedAdVisible(page) {
       for (const item of currentItems) {
         if (!(item instanceof HTMLElement)) continue;
         const isMatch = item === currentActive;
-        item.toggleAttribute("data-adops-capture-active-ad", isMatch);
+        if (isMatch) item.setAttribute("data-adops-capture-active-ad", "1");
+        else item.removeAttribute("data-adops-capture-active-ad");
         item.style.setProperty("display", isMatch ? "block" : "none", "important");
         item.style.setProperty("opacity", isMatch ? "1" : "0", "important");
         item.style.setProperty("visibility", isMatch ? "visible" : "hidden", "important");
@@ -1156,9 +1513,10 @@ async function forceMatchedAdVisible(page) {
   });
 }
 
-async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) {
+async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename, expectedMediaUrl = null) {
   const allowSameMediaOutsideSlot = process.env.ADOPS_CAPTURE_ALLOW_SAME_MEDIA_OUTSIDE_SLOT === "1";
-  return await page.evaluate(({ slotSelector, mediaBasename, allowSameMediaOutsideSlot }) => {
+  const expectedMediaKey = normalizeMediaIdentityUrl(expectedMediaUrl);
+  return await page.evaluate(({ slotSelector, mediaBasename, expectedMediaKey, allowSameMediaOutsideSlot }) => {
     const basename = String(mediaBasename || "").toLowerCase();
     const issues = [];
     const toBox = (node) => {
@@ -1221,6 +1579,26 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
 	        ""
 	      );
 	    };
+    const normalizeMediaKey = (value) => {
+      const raw = String(value || "").trim().split(",")[0].trim().split(/\s+/)[0].trim();
+      if (!raw) return "";
+      try {
+        const parsed = new URL(raw, window.location.href);
+        return `${parsed.origin}${decodeURIComponent(parsed.pathname)}`.toLowerCase();
+      } catch {
+        return raw.split(/[?#]/)[0].toLowerCase();
+      }
+    };
+    const isTargetMedia = (node) => {
+      const value = mediaValue(node);
+      if (expectedMediaKey) return normalizeMediaKey(value) === expectedMediaKey;
+      return value.toLowerCase().includes(basename);
+    };
+    const isPerrengueInstitutionalSublogo = (node) => {
+      const value = mediaValue(node).toLowerCase();
+      const rect = node.getBoundingClientRect();
+      return value.includes("/assets/perrengue-sublogo.png") && rect.width <= 100 && rect.height <= 100;
+    };
     const slot = document.querySelector(slotSelector);
     if (!(slot instanceof HTMLElement)) {
       return {
@@ -1236,9 +1614,9 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
     const allMedia = Array.from(document.querySelectorAll("img, video")).filter((node) => node instanceof HTMLElement);
     const slotMedia = allMedia.filter((node) => slot.contains(node));
     const visibleSlotMedia = slotMedia.filter(isVisible);
-    const visibleTargetsInside = visibleSlotMedia.filter((node) => mediaValue(node).toLowerCase().includes(basename));
-    const visibleConflictsInside = visibleSlotMedia.filter((node) => !mediaValue(node).toLowerCase().includes(basename));
-    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && mediaValue(node).toLowerCase().includes(basename));
+    const visibleTargetsInside = visibleSlotMedia.filter(isTargetMedia);
+    const visibleConflictsInside = visibleSlotMedia.filter((node) => !isTargetMedia(node) && !isPerrengueInstitutionalSublogo(node));
+    const visibleTargetsOutside = allMedia.filter((node) => !slot.contains(node) && isVisible(node) && viewportVisibleRatio(node) >= 0.25 && isTargetMedia(node));
 
     if (visibleTargetsInside.length !== 1) {
       issues.push({
@@ -1264,6 +1642,7 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
       issues,
       slotSelector,
       mediaBasename,
+      expectedMediaKey,
       slotBox,
       targetInsideCount: visibleTargetsInside.length,
       conflictInsideCount: visibleConflictsInside.length,
@@ -1279,16 +1658,16 @@ async function auditMatchedCreativePlacement(page, slotSelector, mediaBasename) 
         mediaValue: mediaValue(node).slice(0, 500),
       })).slice(0, 8),
     };
-  }, { slotSelector, mediaBasename, allowSameMediaOutsideSlot });
+  }, { slotSelector, mediaBasename, expectedMediaKey, allowSameMediaOutsideSlot });
 }
 
-async function auditMatchedCreativePlacementWithRetry(page, slotSelector, mediaBasename, options = {}) {
+async function auditMatchedCreativePlacementWithRetry(page, slotSelector, mediaBasename, expectedMediaUrl = null, options = {}) {
   const attempts = Math.max(1, Number(options.attempts ?? 4));
   const waitMs = Math.max(0, Number(options.waitMs ?? 550));
   let audit = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     await forceMatchedAdVisible(page);
-    audit = await auditMatchedCreativePlacement(page, slotSelector, mediaBasename);
+    audit = await auditMatchedCreativePlacement(page, slotSelector, mediaBasename, expectedMediaUrl);
     audit.attempts = attempt;
     if (audit.ok) return audit;
     if (attempt < attempts) {
@@ -1401,6 +1780,190 @@ function uploadToSpaces(env, bucket, key, localFile) {
   return `https://${bucket}.${env.region}.digitaloceanspaces.com/${key}`;
 }
 
+function buildEvidenceReplacementArchivePlan({ evidenceUrl, bucket, competencia, campaignId, insertionId, targetDate }) {
+  if (!evidenceUrl || !bucket) return null;
+  let url;
+  try {
+    url = new URL(evidenceUrl);
+  } catch {
+    return null;
+  }
+  if (!url.hostname.startsWith(`${bucket}.`)) return null;
+  const sourceKey = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+  if (!sourceKey || sourceKey.includes("..")) return null;
+  const fileName = path.basename(sourceKey);
+  const version = String(url.searchParams.get("v") || "unversioned").replace(/[^A-Za-z0-9._-]/g, "");
+  const archiveKey = [
+    "adops-evidence-originals",
+    slugify(competencia || "sem-competencia").toUpperCase(),
+    String(campaignId),
+    String(insertionId),
+    targetDate,
+    `${version}-${fileName}`,
+  ].join("/");
+  return { sourceKey, archiveKey };
+}
+
+function archiveEvidenceBeforeReplacement(env, bucket, plan) {
+  const awsEnv = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: env.accessKeyId,
+    AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
+    AWS_DEFAULT_REGION: env.region,
+  };
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "adops-evidence-replacement-"));
+  try {
+    const sourcePath = path.join(tempDir, "source");
+    const archivePath = path.join(tempDir, "archive");
+    try {
+      execFileSync("aws", [
+        "--endpoint-url",
+        env.endpoint,
+        "s3",
+        "cp",
+        `s3://${bucket}/${plan.sourceKey}`,
+        sourcePath,
+      ], { env: awsEnv, stdio: "pipe" });
+    } catch {
+      throw new Error("evidence_replacement_archive_failed: não foi possível ler o objeto canônico.");
+    }
+
+    const sourceBytes = readFileSync(sourcePath);
+    const contentHash = crypto.createHash("sha256").update(sourceBytes).digest("hex");
+    plan.sha256 = contentHash;
+    plan.bytes = sourceBytes.length;
+    const archiveName = path.basename(plan.archiveKey).replace(/^[a-f0-9]{64}-/, "");
+    plan.archiveKey = `${path.dirname(plan.archiveKey)}/${contentHash}-${archiveName}`;
+
+    execFileSync("aws", [
+      "--endpoint-url",
+      env.endpoint,
+      "s3",
+      "cp",
+      `s3://${bucket}/${plan.sourceKey}`,
+      `s3://${bucket}/${plan.archiveKey}`,
+      "--acl",
+      "private",
+    ], { env: awsEnv, stdio: "pipe" });
+
+    try {
+      execFileSync("aws", [
+        "--endpoint-url",
+        env.endpoint,
+        "s3",
+        "cp",
+        `s3://${bucket}/${plan.archiveKey}`,
+        archivePath,
+      ], { env: awsEnv, stdio: "pipe" });
+    } catch {
+      throw new Error("evidence_replacement_archive_failed: não foi possível ler de volta os objetos para validação.");
+    }
+
+    const archiveBytes = readFileSync(archivePath);
+    const sourceSha256 = crypto.createHash("sha256").update(sourceBytes).digest("hex");
+    const archiveSha256 = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    if (sourceBytes.length !== archiveBytes.length || sourceSha256 !== archiveSha256) {
+      throw new Error("evidence_replacement_archive_failed: SHA-256 ou tamanho diverge entre a evidência canônica e o arquivo privado.");
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  return plan;
+}
+
+function restoreEvidenceFromArchive(env, bucket, plan) {
+  if (!env?.endpoint || !env?.accessKeyId || !env?.secretAccessKey || !env?.region) {
+    throw new Error("evidence_restore_failed: configuração de storage incompleta.");
+  }
+  const safeKey = (value) => typeof value === "string" && value.length > 0 && !value.includes("..") && !value.startsWith("/");
+  if (!safeKey(plan?.sourceKey) || !safeKey(plan?.archiveKey) || plan.sourceKey === plan.archiveKey
+    || !plan.archiveKey.startsWith("adops-evidence-originals/")
+    || !/^[a-f0-9]{64}$/.test(plan.sha256 || "")
+    || !Number.isSafeInteger(plan.bytes) || plan.bytes < 1) {
+    throw new Error("evidence_restore_failed: alvo, arquivo ou checksum inválido.");
+  }
+
+  const awsEnv = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: env.accessKeyId,
+    AWS_SECRET_ACCESS_KEY: env.secretAccessKey,
+    AWS_DEFAULT_REGION: env.region,
+  };
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "adops-evidence-restore-"));
+  const archivePath = path.join(tempDir, "archive");
+  const currentPath = path.join(tempDir, "current");
+  const restoredPath = path.join(tempDir, "restored");
+  const objectUri = (key) => `s3://${bucket}/${key}`;
+  const digest = (filePath) => {
+    const bytes = readFileSync(filePath);
+    return { bytes: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
+  };
+  const copy = (source, destination, options = []) => execFileSync("aws", [
+    "--endpoint-url", env.endpoint, "s3", "cp", source, destination, ...options,
+  ], { env: awsEnv, stdio: "pipe" });
+
+  try {
+    try {
+      copy(objectUri(plan.archiveKey), archivePath);
+    } catch {
+      throw new Error("evidence_restore_failed: não foi possível ler o arquivo privado.");
+    }
+    const archived = digest(archivePath);
+    if (archived.sha256 !== plan.sha256 || archived.bytes !== plan.bytes) {
+      throw new Error("evidence_restore_failed: SHA-256 ou tamanho do arquivo privado diverge do manifesto.");
+    }
+    try {
+      copy(objectUri(plan.sourceKey), currentPath);
+    } catch {
+      throw new Error("evidence_restore_failed: alvo canônico não existe para permitir rollback seguro.");
+    }
+    const previous = digest(currentPath);
+    const extension = path.extname(plan.sourceKey).toLowerCase();
+    const contentType = extension === ".png" ? "image/png"
+      : [".jpg", ".jpeg"].includes(extension) ? "image/jpeg"
+        : extension === ".webp" ? "image/webp" : "application/octet-stream";
+
+    const readTarget = () => {
+      try {
+        copy(objectUri(plan.sourceKey), restoredPath);
+        return digest(restoredPath);
+      } catch {
+        return null;
+      }
+    };
+    const rollback = () => {
+      copy(currentPath, objectUri(plan.sourceKey), ["--acl", "public-read", "--content-type", contentType]);
+      const readback = readTarget();
+      if (!readback || readback.sha256 !== previous.sha256 || readback.bytes !== previous.bytes) {
+        throw new Error("evidence_restore_rollback_failed: readback do objeto anterior diverge.");
+      }
+    };
+
+    try {
+      copy(archivePath, objectUri(plan.sourceKey), ["--acl", "public-read", "--content-type", contentType]);
+      const readback = readTarget();
+      if (!readback || readback.sha256 !== plan.sha256 || readback.bytes !== plan.bytes) {
+        throw new Error("evidence_restore_failed: readback do alvo diverge do arquivo original.");
+      }
+      return {
+        sourceKey: plan.sourceKey,
+        archiveKey: plan.archiveKey,
+        sha256: readback.sha256,
+        bytes: readback.bytes,
+        previousTargetSha256: previous.sha256,
+        previousTargetBytes: previous.bytes,
+        restoredVerified: true,
+      };
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function persistCaptureLog(apiBase, insertionId, payload) {
   const response = await fetch(`${apiBase}/insertions/${insertionId}/capture-proof/logs`, {
     method: "POST",
@@ -1504,7 +2067,152 @@ async function fetchCaptureAuditStatus(apiBase, insertionId, targetDate) {
   return response.json().catch(() => null);
 }
 
-function createStageRecorder() {
+async function collectCapturePageHealthMetadata(page, navigationResponse, options = {}) {
+  const pageStatus = typeof navigationResponse?.status === "function"
+    ? Number(navigationResponse.status())
+    : NaN;
+  if (!Number.isInteger(pageStatus) || pageStatus < 100 || pageStatus > 599) {
+    throw new Error("capture_audit_failed: page_status_unavailable");
+  }
+
+  let domAudit;
+  try {
+    domAudit = await page.evaluate(({ slotSelector, preserveBottomPopup }) => {
+      const normalize = (value) => String(value || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden"
+          && Number(style.opacity || "1") > 0 && rect.width > 0 && rect.height > 0
+          && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+      };
+      const headings = Array.from(document.querySelectorAll("h1")).filter(isVisible).map((node) => node.innerText || node.textContent || "");
+      const pageLabels = [document.title || "", ...headings].map(normalize).map((text) => text.replace(/[—–]/g, "-"));
+      const isExactNotFoundLabel = (text) => /^(?:page not found|not found|pagina nao encontrada|pagina nao encontrado|conteudo nao encontrado|conteudo nao encontrada)$/.test(text)
+        || /^404(?:\s*[-:|]\s*(?:page not found|not found|pagina nao encontrada|pagina nao encontrado|conteudo nao encontrado))?$/.test(text);
+      const errorMarker = [document.body?.id, document.body?.className, document.documentElement?.id, document.documentElement?.className]
+        .filter((value) => typeof value === "string")
+        .join(" ");
+      const pageLooks404 = /(?:^|[\s_-])error[_-]?404(?:$|[\s_-])/i.test(errorMarker)
+        || pageLabels.some(isExactNotFoundLabel);
+
+      const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+      const markerPattern = /(modal|popup|lightbox|fancybox|magnific|mfp-|overlay|backdrop|dialog|newsletter|share|cookie|consent|privacy|privacidade|lgpd)/i;
+      const selectors = "dialog, [role='dialog'], [aria-modal='true'], .modal, .modal-backdrop, .mfp-wrap, .mfp-bg, .fancybox-container, .popup, .lightbox, .overlay";
+      const slot = typeof slotSelector === "string" && slotSelector ? document.querySelector(slotSelector) : null;
+      const slotRect = slot && isVisible(slot) ? slot.getBoundingClientRect() : null;
+      const candidates = Array.from(document.querySelectorAll(selectors));
+      for (const node of Array.from(document.body.querySelectorAll("body > div, body > section, body > aside"))) {
+        const marker = `${node.id || ""} ${typeof node.className === "string" ? node.className : ""}`;
+        const style = window.getComputedStyle(node);
+        if (markerPattern.test(marker) || ["fixed", "sticky"].includes(style.position)) candidates.push(node);
+      }
+      const unique = Array.from(new Set(candidates)).filter((node) => {
+        if (!isVisible(node)) return false;
+        if (node.closest('[data-adops-reference-frame-overlay="1"], [data-adops-video-overlay="1"]')) return false;
+        if (preserveBottomPopup && node.closest("#cod5-bottom-popup-ad")) return false;
+        if (node.matches("header, #site-header, .site-header, .omt-sticky-shell, .omt-header")) return false;
+        const marker = `${node.id || ""} ${typeof node.className === "string" ? node.className : ""}`;
+        if (/(site-header|header-menu|omt-header|omt-sticky|navbar|main-header)/i.test(marker)
+          && node.querySelector("nav, [class*='menu'], img")) return false;
+        return true;
+      });
+      const blocking = [];
+      for (const node of unique) {
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        const areaRatio = (rect.width * rect.height) / viewportArea;
+        const zIndex = Number.parseInt(style.zIndex || "0", 10);
+        const marker = `${node.id || ""} ${typeof node.className === "string" ? node.className : ""}`;
+        const fixedOverlay = ["fixed", "sticky"].includes(style.position) && areaRatio > 0.18 && zIndex >= 10;
+        const markedOverlay = markerPattern.test(marker) && areaRatio > 0.08;
+        const consentBar = ["fixed", "sticky"].includes(style.position) && markerPattern.test(marker) && areaRatio > 0.025 && zIndex >= 1;
+        let coversSlot = false;
+        if (slotRect) {
+          const left = Math.max(rect.left, slotRect.left);
+          const right = Math.min(rect.right, slotRect.right);
+          const top = Math.max(rect.top, slotRect.top);
+          const bottom = Math.min(rect.bottom, slotRect.bottom);
+          if (right > left && bottom > top) {
+            const x = Math.min(window.innerWidth - 1, Math.max(0, (left + right) / 2));
+            const y = Math.min(window.innerHeight - 1, Math.max(0, (top + bottom) / 2));
+            const topNode = document.elementFromPoint(x, y);
+            coversSlot = topNode === node || node.contains(topNode);
+          }
+        }
+        if (fixedOverlay || markedOverlay || consentBar || coversSlot) {
+          blocking.push({ code: "blocking_overlay_visible", areaRatio: Number(areaRatio.toFixed(4)) });
+        }
+      }
+      return { pageLooks404, blocking };
+    }, {
+      slotSelector: typeof options.slotSelector === "string" ? options.slotSelector : "",
+      preserveBottomPopup: options.preserveBottomPopup === true,
+    });
+  } catch {
+    throw new Error("capture_audit_failed: page_health_unavailable");
+  }
+
+  if (!domAudit || typeof domAudit.pageLooks404 !== "boolean" || !Array.isArray(domAudit.blocking)) {
+    throw new Error("capture_audit_failed: page_health_unavailable");
+  }
+  const overlayAudit = {
+    checked: true,
+    ok: domAudit.blocking.length === 0,
+    blockingCount: domAudit.blocking.length,
+    issues: domAudit.blocking,
+  };
+  return {
+    pageStatus,
+    pageLooks404: domAudit.pageLooks404,
+    overlayAudit,
+  };
+}
+
+function trackMainFrameNavigationResponses(page, onResponse) {
+  if (!page || typeof page.on !== "function" || typeof onResponse !== "function") {
+    throw new Error("capture_audit_failed: navigation_response_tracker_unavailable");
+  }
+  page.on("response", (response) => {
+    try {
+      const request = response.request();
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) onResponse(response);
+    } catch {
+      // Some browser responses (for example, service-worker responses) do not
+      // expose a frame. They cannot replace the current document's status.
+    }
+  });
+}
+
+function sanitizeChecklistErrorCodes(details) {
+  const issues = Array.isArray(details) ? details : [details];
+  const codes = issues
+    .map((issue) => typeof issue === "string" ? issue : issue?.code)
+    .filter((code) => typeof code === "string" && /^[a-z0-9][a-z0-9_.:-]{0,99}$/i.test(code));
+  return codes.length ? codes.join(",") : "checklist_rejected";
+}
+
+async function validateCaptureChecklist(apiBase, insertionId, targetDate, metadata, allowRejected = false) {
+  const response = await fetch(`${apiBase}/audit-checklists/validate-proof`, {
+    method: "POST",
+    headers: buildApiHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ insertionId, date: targetDate, metadata, phase: "pre_upload" }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || (!allowRejected && payload?.approved !== true)) {
+    const details = payload?.blockingIssues || payload?.issues || payload?.error || `HTTP ${response.status}`;
+    throw new Error(`capture_audit_failed: checklist_pre_upload_failed: ${sanitizeChecklistErrorCodes(details)}`);
+  }
+  return payload;
+}
+
+function createStageRecorder(onProgress = null) {
   const stages = [];
   return {
     stages,
@@ -1520,6 +2228,7 @@ function createStageRecorder() {
         errorDetail: null,
       };
       stages.push(entry);
+      onProgress?.({ stage: name, status: "running", updatedAt: entry.startedAt });
       return entry;
     },
     finish(entry, status, summary = {}, errorCode = null, errorDetail = null) {
@@ -1529,6 +2238,7 @@ function createStageRecorder() {
       entry.summary = summary;
       entry.errorCode = errorCode;
       entry.errorDetail = errorDetail;
+      onProgress?.({ stage: entry.stage, status, updatedAt: entry.finishedAt });
       return entry;
     },
   };
@@ -1590,36 +2300,33 @@ function extractPageTimeParts(value) {
 }
 
 function pageTextMatchesRequestedCaptureAt(pageDateText, requestedCaptureAt) {
-  const normalizedPageText = normalizePtText(pageDateText);
-  const normalizedCaptureAt = normalizePtText(requestedCaptureAt);
-  if (normalizedPageText.startsWith(normalizedCaptureAt)) return true;
-
-  const parts = extractPageDateParts(pageDateText);
-  const [targetDate, targetTimeRaw = ""] = String(requestedCaptureAt || "").split("T");
-  const [year, month, day] = targetDate.split("-");
-  if (!parts || !(parts.year === year && parts.month === month && parts.day === day)) return false;
-
-  const [hourRaw = "", minuteRaw = ""] = targetTimeRaw.split(":");
-  const expectedHour = Number(hourRaw);
-  const expectedMinute = Number(minuteRaw);
-  if (!Number.isFinite(expectedHour) || !Number.isFinite(expectedMinute)) return false;
-
-  const timeParts = extractPageTimeParts(pageDateText);
-  if (!timeParts) {
-    const expectedTime = requestedCaptureAt.slice(11, 16);
-    return expectedTime ? normalizedPageText.includes(expectedTime) : false;
-  }
-
-  const expectedSeconds = expectedHour * 3600 + expectedMinute * 60;
-  const actualSeconds = timeParts.hour * 3600 + timeParts.minute * 60 + timeParts.second;
-  return Math.abs(actualSeconds - expectedSeconds) <= 90;
+  // Visible clocks must agree at the precision displayed by the taskbar.
+  // Parse zoned timestamps in Cuiaba before comparing; UTC is not a mismatch.
+  const minuteKey = (value) => {
+    const text = String(value || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+      const instant = new Date(text);
+      if (Number.isNaN(instant.getTime())) return null;
+      return new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(instant).replace(" ", "T");
+    }
+    const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})T/i);
+    const date = isoDate ? { year: isoDate[1], month: isoDate[2], day: isoDate[3] } : extractPageDateParts(text);
+    if (/^\d{4}-\d{2}-\d{2}T/i.test(text) && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/i.test(text)) return null;
+    const time = text.match(/(?:^|[T\s,])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\dA-Za-z])/i);
+    if (!date || !time || Number(time[1]) > 23 || Number(time[2]) > 59 || Number(time[3] || 0) > 59) return null;
+    const key = date.year + "-" + date.month + "-" + date.day;
+    const parsed = new Date(key + "T00:00:00Z");
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== key) return null;
+    return key + "T" + time[1].padStart(2, "0") + ":" + time[2];
+  };
+  const expected = minuteKey(requestedCaptureAt);
+  return expected !== null && minuteKey(pageDateText) === expected;
 }
-
 function buildFrozenPageDateLabels(captureAt) {
   const raw = String(captureAt || "").trim();
   if (!raw) return null;
   const normalized = raw.includes("T") && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
-    ? `${raw}:00-04:00`
+    ? `${raw.length === 16 ? `${raw}:00` : raw}-04:00`
     : raw;
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return null;
@@ -1656,7 +2363,7 @@ function buildFrozenPageDateLabels(captureAt) {
     timeZone: "America/Cuiaba",
   }).format(date).replace(",", "");
   return {
-    iso: `${raw.length === 16 ? `${raw}:00` : raw}-04:00`.replace(/([+-]\d{2}:?\d{2})-04:00$/, "$1"),
+    iso: normalized,
     full: long,
     short: `${shortWeekday}, ${shortDate}`,
     perrengueShort: `${day2}/${month2} ${timeNoSeconds}`,
@@ -1669,6 +2376,7 @@ const DEFAULT_PAGE_DATE_SELECTORS = [
   ".header-datestamp-short",
   "time[data-omt-live-datestamp='1']",
   "time.js-topbar-datetime",
+  ".cod5-adops-frozen-datestamp",
   "[data-omt-localtime]",
   "[data-omt-localtime-el]",
   "[data-omt-localtime-full]",
@@ -1690,6 +2398,7 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
   const mergedSelectors = mergePageDateSelectors(selectors);
   return await page.evaluate(({ selectors, labels: frozen, siteDomain: rawSiteDomain }) => {
     const siteDomain = String(rawSiteDomain || "");
+    const isAfl = siteDomain.includes("afolhalivre.com");
     const shortLabel = siteDomain.includes("perrenguematogrosso.com")
       ? frozen.perrengueShort
       : siteDomain.includes("omatogrossense.com")
@@ -1697,13 +2406,40 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
         : frozen.short;
     const apply = () => {
       for (const selector of selectors) {
-        for (const el of Array.from(document.querySelectorAll(selector))) {
+        for (let el of Array.from(document.querySelectorAll(selector))) {
           if (!el) continue;
+          // The Perrengue legacy shell keeps references to these nodes and
+          // rewrites them with Date.now() every 30s, ignoring preview metadata.
+          // Detach those references in the capture page; preserve responsive
+          // classes and selectors for the visible historical-clock audit.
+          if (siteDomain.includes("perrenguematogrosso.com")
+            && el.matches("[data-perr-datetime]")
+            && el.getAttribute("data-adops-frozen-perr-clock") !== "1") {
+            const frozenClock = el.cloneNode(true);
+            frozenClock.setAttribute("data-adops-frozen-perr-clock", "1");
+            el.replaceWith(frozenClock);
+            el = frozenClock;
+          }
           if (el.tagName === "TIME") {
             el.setAttribute("datetime", frozen.iso);
             el.setAttribute("data-preview-active", "1");
           }
           el.setAttribute("data-omt-preview-at", frozen.iso);
+          if (isAfl && el.matches("time.js-topbar-datetime")) {
+            el.setAttribute("data-adops-frozen-visible-label", frozen.full);
+            el.style.setProperty("display", "none", "important");
+            let frozenLabel = el.parentElement?.querySelector(":scope > .cod5-adops-frozen-datestamp");
+            if (!frozenLabel && el.parentElement) {
+              frozenLabel = document.createElement("span");
+              frozenLabel.className = "cod5-adops-frozen-datestamp";
+              el.insertAdjacentElement("afterend", frozenLabel);
+            }
+            if (frozenLabel) {
+              frozenLabel.textContent = frozen.full;
+              frozenLabel.setAttribute("data-omt-preview-at", frozen.iso);
+              frozenLabel.setAttribute("data-adops-frozen-visible-label", frozen.full);
+            }
+          }
           const attrText = `${el.className || ""} ${Array.from(el.attributes || []).map((attr) => `${attr.name}=${attr.value || ""}`).join(" ")}`;
           if (/short/i.test(attrText)) {
             el.textContent = shortLabel;
@@ -1721,14 +2457,20 @@ async function freezePreviewDatestamp(page, selectors, captureAt, siteDomain = "
 }
 
 async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt) {
-  if (!captureAt || !String(mapping?.domain || "").includes("omatogrossense.com")) {
+  const requireVisiblePageDate =
+    String(mapping?.domain || "").includes("omatogrossense.com") ||
+    mapping?.auditConfig?.requireVisiblePageDate === true;
+  if (!captureAt || !requireVisiblePageDate) {
     return { ok: true, skipped: true };
   }
-  const [targetDate] = String(captureAt).split("T");
+  const targetDate = dateInCuiaba(captureAt) || String(captureAt).split("T")[0];
+  if (targetDate === getDateLabel().isoDate) {
+    return { ok: true, skipped: true, reason: "live_same_day" };
+  }
   const [year, month, day] = targetDate.split("-");
   const expectedDate = `${day}/${month}/${year}`;
   const labels = buildFrozenPageDateLabels(captureAt);
-  const expectedTexts = [expectedDate, labels?.full, labels?.omtShort].filter(Boolean);
+  const expectedTexts = [expectedDate, labels?.full, labels?.short, labels?.omtShort].filter(Boolean);
   const selectors = mergePageDateSelectors(mapping.pageDateSelectors);
   const audit = await page.evaluate(({ selectors: rawSelectors, expectedDate: rawExpectedDate, expectedTexts: rawExpectedTexts }) => {
     const isVisible = (el) => {
@@ -1736,7 +2478,7 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       const style = window.getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") === 0) return false;
       const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight;
+      return rect.width > 0 && rect.height > 0;
     };
     const values = [];
     for (const selector of rawSelectors) {
@@ -1748,22 +2490,372 @@ async function assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping,
       }
     }
     return {
-      ok: values.some((item) => item.ok),
+      ok: values.length > 0 && values.every((item) => item.ok),
       expectedDate: rawExpectedDate,
       expectedTexts: rawExpectedTexts,
       values: values.slice(0, 20),
     };
   }, { selectors, expectedDate, expectedTexts });
+  audit.ok = audit.values.length > 0 && audit.values.every((item) => pageTextMatchesRequestedCaptureAt(item.text, captureAt));
   if (!audit.ok) {
-    throw new Error(`capture_audit_failed: omt_visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
+    throw new Error(`capture_audit_failed: visible_page_time_mismatch: expected=${(audit.expectedTexts || [audit.expectedDate]).join(" | ")}; visible=${JSON.stringify(audit.values || []).slice(0, 900)}`);
   }
   return audit;
 }
 
-async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
+async function auditVisiblePageDateClock(page, mapping, requestedCaptureAt, viewportPng, finalPng, desktopFrameMetadata) {
+  const selectors = mergePageDateSelectors(mapping?.pageDateSelectors);
+  const measured = await page.evaluate((rawSelectors) => {
+    const finiteRect = (rect) => [rect.left, rect.top, rect.width, rect.height].every(Number.isFinite)
+      && rect.width > 0 && rect.height > 0;
+    const candidates = [];
+    for (const selector of rawSelectors) {
+      let nodes = [];
+      try { nodes = Array.from(document.querySelectorAll(selector)); } catch {}
+      for (const element of nodes) {
+        if (!(element instanceof HTMLElement)) continue;
+        const renderedText = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+        if (!renderedText) continue;
+        const rect = element.getBoundingClientRect();
+        const box = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+        let effectiveOpacity = 1;
+        let effectiveVisible = finiteRect(rect);
+        let visibleLeft = Math.max(0, rect.left);
+        let visibleTop = Math.max(0, rect.top);
+        let visibleRight = Math.min(window.innerWidth, rect.right);
+        let visibleBottom = Math.min(window.innerHeight, rect.bottom);
+        for (let ancestor = element; ancestor instanceof HTMLElement; ancestor = ancestor.parentElement) {
+          const style = window.getComputedStyle(ancestor);
+          effectiveOpacity *= Number(style.opacity || "1");
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse"
+            || style.contentVisibility === "hidden" || !Number.isFinite(effectiveOpacity) || effectiveOpacity <= 0.01) {
+            effectiveVisible = false;
+          }
+          const ancestorRect = ancestor.getBoundingClientRect();
+          const clipsX = /(hidden|clip|auto|scroll)/.test(style.overflowX);
+          const clipsY = /(hidden|clip|auto|scroll)/.test(style.overflowY);
+          if (clipsX) {
+            visibleLeft = Math.max(visibleLeft, ancestorRect.left);
+            visibleRight = Math.min(visibleRight, ancestorRect.right);
+          }
+          if (clipsY) {
+            visibleTop = Math.max(visibleTop, ancestorRect.top);
+            visibleBottom = Math.min(visibleBottom, ancestorRect.bottom);
+          }
+        }
+        const fullyInsideViewport = finiteRect(rect)
+          && rect.left >= 0 && rect.top >= 0 && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight;
+        const fullyInsideAncestors = visibleLeft <= rect.left + 0.5 && visibleTop <= rect.top + 0.5
+          && visibleRight >= rect.right - 0.5 && visibleBottom >= rect.bottom - 0.5;
+        let hitTestClear = effectiveVisible && fullyInsideViewport && fullyInsideAncestors;
+        if (hitTestClear) {
+          const insetX = Math.min(2, rect.width / 4);
+          const insetY = Math.min(2, rect.height / 4);
+          const points = [
+            [rect.left + rect.width / 2, rect.top + rect.height / 2],
+            [rect.left + insetX, rect.top + insetY],
+            [rect.right - insetX, rect.top + insetY],
+            [rect.left + insetX, rect.bottom - insetY],
+            [rect.right - insetX, rect.bottom - insetY],
+          ];
+          hitTestClear = points.every(([x, y]) => {
+            const hit = document.elementFromPoint(x, y);
+            return hit === element || (hit instanceof Node && element.contains(hit));
+          });
+        }
+        candidates.push({
+          renderedText: renderedText.slice(0, 240),
+          box,
+          fullyInsideViewport,
+          fullyInsideAncestors,
+          effectiveVisible,
+          effectiveOpacity,
+          hitTestClear,
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            scrollX: window.scrollX,
+            scrollY: window.scrollY,
+          },
+        });
+      }
+    }
+    return candidates;
+  }, selectors);
+  const textCandidates = measured.filter((item) => pageTextMatchesRequestedCaptureAt(item.renderedText, requestedCaptureAt));
+  const selected = textCandidates.find((item) => item.effectiveVisible && item.fullyInsideViewport && item.fullyInsideAncestors && item.hitTestClear)
+    || textCandidates[0]
+    || measured[0]
+    || null;
+  const issues = [];
+  if (!selected) issues.push({ code: "page_clock_missing" });
+  else {
+    if (!pageTextMatchesRequestedCaptureAt(selected.renderedText, requestedCaptureAt)) issues.push({ code: "page_clock_text_mismatch" });
+    if (selected.effectiveVisible !== true) issues.push({ code: "page_clock_not_visible" });
+    if (selected.fullyInsideViewport !== true || selected.fullyInsideAncestors !== true) issues.push({ code: "page_clock_outside_viewport" });
+    if (selected.hitTestClear !== true) issues.push({ code: "page_clock_occluded" });
+  }
+  const box = selected?.box || null;
+  let pixelAudit;
+  if (box) {
+    pixelAudit = auditFinalPngSlotPixels(finalPng, viewportPng, {
+      left: box.x,
+      top: box.y,
+      width: box.width,
+      height: box.height,
+    }, desktopFrameMetadata, {
+      finalProofStyle: "viewport_only",
+      minSimilarity: 0.82,
+      minContentStddev: 4,
+      comparedTo: "viewportPng_page_clock_roi",
+      referenceIsViewport: true,
+      viewportWidthCss: Number(selected.viewport?.width ?? 0),
+    });
+  } else {
+    pixelAudit = { ok: false, issues: [{ code: "page_clock_box_missing" }] };
+  }
+  pixelAudit = {
+    ...pixelAudit,
+    source: "auditFinalPngSlotPixels_page_clock_roi",
+  };
+  if (pixelAudit.ok !== true) issues.push({ code: "page_clock_pixels_unverified" });
+  return {
+    version: 2,
+    source: "final_viewport_page_clock",
+    ok: issues.length === 0,
+    skipped: false,
+    requestedCaptureAt,
+    renderedText: selected?.renderedText || "",
+    box,
+    viewport: selected?.viewport || null,
+    fullyInsideViewport: selected?.fullyInsideViewport === true && selected?.fullyInsideAncestors === true,
+    effectiveVisible: selected?.effectiveVisible === true,
+    occlusion: selected?.hitTestClear === true ? "clear" : "blocked",
+    pixelAudit,
+    issues,
+  };
+}
+
+async function ensureFinalPageClockViewport(page, mapping, requestedCaptureAt, targetSelector) {
+  const selectors = mergePageDateSelectors(mapping?.pageDateSelectors);
+  const matchesClock = (text) => requestedCaptureAt
+    ? pageTextMatchesRequestedCaptureAt(text, requestedCaptureAt)
+    : pageTextMatchesRequestedCaptureAt(text, text);
+  const measure = async () => await page.evaluate(async ({ dateSelectors, mediaSelector }) => {
+    window.scrollTo({ left: 0, top: 0, behavior: "instant" });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const clocks = [];
+    for (const selector of dateSelectors) {
+      let nodes = [];
+      try { nodes = Array.from(document.querySelectorAll(selector)); } catch {}
+      for (const node of nodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const text = String(node.innerText || node.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const rect = node.getBoundingClientRect();
+        clocks.push({
+          text: text.slice(0, 240),
+          top: rect.top + window.scrollY,
+          bottom: rect.bottom + window.scrollY,
+          left: rect.left + window.scrollX,
+          right: rect.right + window.scrollX,
+        });
+      }
+    }
+    let target = null;
+    try {
+      const node = document.querySelector(mediaSelector);
+      if (node instanceof HTMLElement) {
+        const rect = node.getBoundingClientRect();
+        target = {
+          top: rect.top + window.scrollY,
+          bottom: rect.bottom + window.scrollY,
+          left: rect.left + window.scrollX,
+          right: rect.right + window.scrollX,
+        };
+      }
+    } catch {}
+    return {
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        deviceScaleFactor: window.devicePixelRatio || 1,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+      },
+      clocks,
+      target,
+    };
+  }, { dateSelectors: selectors, mediaSelector: targetSelector });
+  const initial = await measure();
+  const matchingClocks = initial.clocks.filter((item) => matchesClock(item.text));
+  if (!matchingClocks.length || !initial.target) {
+    return { ok: false, reason: !matchingClocks.length ? "page_clock_not_found" : "proof_target_not_found", initial };
+  }
+  const requiredBottom = Math.max(...matchingClocks.map((item) => item.bottom), initial.target.bottom);
+  if (![requiredBottom, initial.viewport.width, initial.viewport.height, initial.viewport.deviceScaleFactor].every(Number.isFinite)
+    || requiredBottom <= 0 || initial.viewport.scrollY !== 0 || initial.viewport.scrollX !== 0) {
+    return { ok: false, reason: "viewport_geometry_invalid", initial };
+  }
+  const outputScale = Math.max(2, initial.viewport.deviceScaleFactor);
+  const outputWidthPx = Math.ceil(initial.viewport.width * outputScale);
+  let frameChromePixels;
+  try {
+    const layout = JSON.parse(readFileSync(path.join(WINDOWS_FRAME_KIT_DIR, "layout.json"), "utf8"));
+    const referenceWidth = Number(layout?.referenceWidth);
+    const chromeTopHeight = Number(layout?.chromeTopHeight);
+    const taskbarHeight = Number(layout?.taskbarHeight);
+    if (![referenceWidth, chromeTopHeight, taskbarHeight].every(Number.isFinite)
+      || referenceWidth <= 0 || chromeTopHeight <= 0 || taskbarHeight <= 0) {
+      throw new Error("layout_geometry_invalid");
+    }
+    const frameScale = outputWidthPx / referenceWidth;
+    frameChromePixels = Math.max(1, Math.round(chromeTopHeight * frameScale))
+      + Math.max(1, Math.round(taskbarHeight * frameScale));
+  } catch {
+    return { ok: false, reason: "page_clock_viewport_frame_layout_unavailable", initial };
+  }
+  const maxHeightByPixelBudget = Math.floor((40_000_000 / Math.max(1, outputWidthPx) - frameChromePixels) / outputScale);
+  const geometry = (measurement) => ({
+    viewport: measurement.viewport,
+    target: measurement.target,
+    clockBounds: measurement.clocks.filter((item) => matchesClock(item.text))
+      .map(({ top, bottom, left, right }) => ({ top, bottom, left, right })),
+  });
+  const measurements = [geometry(initial)];
+  let final = initial;
+  let stable = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const clocks = final.clocks.filter((item) => matchesClock(item.text));
+    const bottom = Math.max(...clocks.map((item) => item.bottom), final.target?.bottom ?? NaN);
+    if (!clocks.length || !Number.isFinite(bottom) || bottom <= 0
+      || final.viewport.width !== initial.viewport.width
+      || final.viewport.deviceScaleFactor !== initial.viewport.deviceScaleFactor
+      || final.viewport.scrollX !== 0 || final.viewport.scrollY !== 0) {
+      return { ok: false, reason: "viewport_geometry_invalid", initial, final, measurements };
+    }
+    const requestedHeight = Math.max(final.viewport.height, Math.ceil(bottom + 40));
+    if (requestedHeight > maxHeightByPixelBudget) {
+      return { ok: false, reason: "page_clock_viewport_exceeds_pixel_budget", initial, final, requestedHeight, maxHeightByPixelBudget, measurements };
+    }
+    if (requestedHeight > final.viewport.height) {
+      await page.setViewportSize({ width: initial.viewport.width, height: requestedHeight });
+    }
+    const previous = final;
+    final = await measure();
+    measurements.push(geometry(final));
+    const near = (a, b) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.5;
+    const sameBox = (a, b) => a && b && ["top", "bottom", "left", "right"].every((key) => near(a[key], b[key]));
+    stable = final.viewport.height === previous.viewport.height
+      && final.viewport.width === initial.viewport.width
+      && final.viewport.deviceScaleFactor === initial.viewport.deviceScaleFactor
+      && sameBox(final.target, previous.target)
+      && final.clocks.some((clock) => matchesClock(clock.text)
+        && clocks.some((previousClock) => sameBox(clock, previousClock)));
+    const fits = final.target && final.target.top >= 0 && final.target.bottom <= final.viewport.height
+      && final.clocks.some((clock) => matchesClock(clock.text)
+        && clock.top >= 0 && clock.bottom <= final.viewport.height)
+      && final.viewport.scrollX === 0 && final.viewport.scrollY === 0;
+    if (stable && fits) break;
+  }
+  const resized = final.viewport.height > initial.viewport.height;
+  const finalMatchingClocks = final.clocks.filter((item) => matchesClock(item.text));
+  const targetAudit = final.target && final.viewport.scrollX === 0 && final.viewport.scrollY === 0
+    && final.target.top >= 0 && final.target.bottom <= final.viewport.height
+    ? {
+        ok: true,
+        selector: targetSelector,
+        box: {
+          top: Math.round(final.target.top),
+          left: Math.round(final.target.left),
+          width: Math.round(final.target.right - final.target.left),
+          height: Math.round(final.target.bottom - final.target.top),
+          bottom: Math.round(final.target.bottom),
+        },
+        scrollY: 0,
+      }
+    : { ok: false, reason: "proof_target_not_inside_final_viewport", selector: targetSelector };
+  const clocksFit = finalMatchingClocks.some((item) => item.top >= 0 && item.bottom <= final.viewport.height);
+  if (!targetAudit.ok || !clocksFit || final.viewport.scrollX !== 0 || final.viewport.scrollY !== 0) {
+    return { ok: false, reason: "page_clock_and_target_do_not_fit_final_viewport", initial, final, targetAudit, measurements };
+  }
+  if (!stable) {
+    return { ok: false, reason: "page_clock_viewport_layout_unstable", initial, final, targetAudit, measurements };
+  }
+  return {
+    ok: true,
+    resized,
+    resizedFromHeight: resized ? initial.viewport.height : null,
+    finalHeight: final.viewport.height,
+    viewportWidth: final.viewport.width,
+    deviceScaleFactor: final.viewport.deviceScaleFactor,
+    frameChromePixels,
+    layoutStable: true,
+    measurements,
+    scrollX: final.viewport.scrollX,
+    scrollY: final.viewport.scrollY,
+    estimatedFinalPixelCount: Math.ceil(outputWidthPx * (final.viewport.height * outputScale + frameChromePixels)),
+    targetAudit,
+  };
+}
+
+async function stabilizeVisibleRetroDatesBeforeCapture(page, mapping, captureAt) {
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  await page.waitForTimeout(180);
+  await freezePreviewDatestamp(page, mapping.pageDateSelectors, captureAt, mapping.domain);
+  await page.evaluate(() => window.__cod5NormalizeAflRetroDates?.());
+  return assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, captureAt);
+}
+
+async function stampFrozenPageDateIntoViewport(page, mapping, captureAt, viewportPng) {
+  if (!String(mapping?.domain || "").includes("afolhalivre.com")) return { applied: false, reason: "not_afl" };
+  const labels = buildFrozenPageDateLabels(captureAt);
+  if (!labels?.full) throw new Error("capture_audit_failed: afl_frozen_datestamp_label_missing");
+  const label = page.locator(".cod5-adops-frozen-datestamp").first();
+  if (await label.count() < 1 || !await label.isVisible()) {
+    throw new Error("capture_audit_failed: afl_frozen_datestamp_not_visible");
+  }
+  const box = await label.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport?.width) throw new Error("capture_audit_failed: afl_frozen_datestamp_box_missing");
+  const python = `
+import sys
+from PIL import Image, ImageDraw, ImageFont
+base_path, font_path, label, x_raw, y_raw, width_raw, height_raw, viewport_width_raw = sys.argv[1:]
+base = Image.open(base_path).convert("RGBA")
+scale = base.width / float(viewport_width_raw)
+x = round(float(x_raw) * scale)
+y = round(float(y_raw) * scale)
+width = round(float(width_raw) * scale)
+height = round(float(height_raw) * scale)
+draw = ImageDraw.Draw(base)
+draw.rectangle((x - 2, y - 1, x + width + 4, y + height + 1), fill=(255, 255, 255, 255))
+font = ImageFont.truetype(font_path, max(12, round(12 * scale)))
+bbox = draw.textbbox((0, 0), label, font=font)
+text_height = bbox[3] - bbox[1]
+text_y = y + max(0, round((height - text_height) / 2) - bbox[1])
+draw.text((x, text_y), label, font=font, fill=(82, 82, 91, 255))
+base.convert("RGB").save(base_path, format="PNG", optimize=True)
+`;
+  execFileSync(CAPTURE_PYTHON_BIN, [
+    "-c", python, viewportPng, WINDOWS_FRAME_FONT, labels.full,
+    String(box.x), String(box.y), String(box.width), String(box.height), String(viewport.width),
+  ], { stdio: ["ignore", "pipe", "pipe"] });
+  return { applied: true, box, label: labels.full };
+}
+
+async function applyPerrengueStaticRetroPreview(page, mapping, captureAt, options = {}) {
   if (!captureAt || mapping?.domain !== "perrenguematogrosso.com") return false;
-  const adminRetroPosts = await fetchPerrengueAdminRetroPosts(captureAt);
-  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts, pageType }) => {
+  if (!["home", "article"].includes(mapping?.page) && mapping?.pageLabel !== "Home") return false;
+  const adminRetroPosts = Array.isArray(options.adminRetroPosts)
+    ? options.adminRetroPosts
+    : await fetchPerrengueAdminRetroPosts(captureAt);
+  if (adminRetroPosts.length < 1 && options.requireAdminPosts !== false) {
+    throw new Error(`perrengue_static_retro_preview_failed: admin_retro_posts_unavailable; captureAt=${captureAt}`);
+  }
+  const requireEditorialTargets = options.requireEditorialTargets !== false;
+  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, adminRetroPosts, requireEditorialTargets, pageType }) => {
     const parseLocalDate = (value) => {
       const raw = String(value || "").trim();
       if (!raw) return null;
@@ -1797,12 +2889,39 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     for (const post of Array.isArray(adminRetroPosts) ? adminRetroPosts : []) pushUnique(post);
     for (const post of index) pushUnique(post);
 
-    const posts = combinedIndex
+    const allPosts = combinedIndex
       .map((post) => ({ ...post, _date: parseLocalDate(post.date || post.localDate || post.publishedAt) }))
       .filter((post) => post._date && post._date.getTime() <= cutoff.getTime())
       .sort((left, right) => right._date.getTime() - left._date.getTime());
+    if (allPosts.length < 1) return { applied: false, reason: "not_enough_retro_posts", posts: 0 };
+    const normalizeCategory = (value) => String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const isMemePost = (post) => {
+      const categorySlugs = [post.categorySlug, ...(Array.isArray(post.categorySlugs) ? post.categorySlugs : [])]
+        .map(normalizeCategory);
+      const categoryName = normalizeCategory(post.category || post.categoryName);
+      const categoryClass = normalizeCategory(post.categoryClass);
+      return categorySlugs.includes("memes-do-vovo")
+        || categoryName === "memes-do-vovo"
+        || categoryName.startsWith("memes-do-vovo-")
+        || categoryClass.includes("memes-do-vovo");
+    };
+    const posts = allPosts.filter((post) => !isMemePost(post));
+    const excludedMemePosts = allPosts.length - posts.length;
     const minRequiredPosts = 4;
-    if (posts.length < 1) return { applied: false, reason: "not_enough_retro_posts", posts: posts.length };
+    if (posts.length < 1) {
+      return {
+        applied: false,
+        reason: "not_enough_editorial_retro_posts",
+        posts: posts.length,
+        totalPosts: allPosts.length,
+        excludedMemePosts,
+      };
+    }
     const sparseMode = posts.length < minRequiredPosts;
     const pickPost = (index) => posts[index] || posts[index % posts.length] || null;
 
@@ -1824,6 +2943,9 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     };
     const categoryClass = (post) => post.categoryClass || "badge-cat";
     const text = (value) => String(value || "").trim();
+    const postSlug = (post) => text(post.slug || post.url)
+      .replace(/^https?:\/\/[^/]+/i, "")
+      .replace(/^\/+|\/+$/g, "");
     const absoluteUrl = (url) => {
       const raw = text(url);
       if (!raw) return "/";
@@ -1866,6 +2988,8 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
         time.textContent = `${parts.dateText} • ${parts.timeText}`;
       }
       article.setAttribute("data-adops-retro-post-date", post.date || post.localDate || post.publishedAt || "");
+      article.setAttribute("data-adops-retro-post-slug", postSlug(post));
+      article.setAttribute("data-adops-retro-category-slug", normalizeCategory(post.categorySlug || post.category));
       article.setAttribute("data-date", post.date || post.localDate || post.publishedAt || "");
       article.setAttribute("data-datetime", post.publishedAt || post.date || "");
       return true;
@@ -1922,6 +3046,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
         adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
         expectedPosts: [post].map((item) => ({
           id: Number(item.id || 0),
+          slug: postSlug(item),
           date: String(item.date || item.localDate || item.publishedAt || ""),
           url: String(item.url || `/${item.slug || ""}/`),
           title: String(item.title || "").slice(0, 240),
@@ -1934,7 +3059,43 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     const leadArticles = leadSection
       ? Array.from(leadSection.querySelectorAll("article.group")).slice(0, 6)
       : [];
-    const leadPosts = posts.filter((post) => post.image);
+    const imageLoadCache = new Map();
+    const imageLoads = async (value) => {
+      const source = text(value);
+      if (!source) return false;
+      if (typeof Image !== "function") return true;
+      if (imageLoadCache.has(source)) return imageLoadCache.get(source);
+      const promise = new Promise((resolve) => {
+        const image = new Image();
+        let settled = false;
+        const done = (loaded) => {
+          if (settled) return;
+          settled = true;
+          resolve(loaded === true && image.naturalWidth > 1 && image.naturalHeight > 1);
+        };
+        image.onload = () => done(true);
+        image.onerror = () => done(false);
+        window.setTimeout(() => done(false), 5000);
+        image.src = source;
+      });
+      imageLoadCache.set(source, promise);
+      return promise;
+    };
+    const leadPosts = [];
+    const invalidImagePosts = [];
+    for (const post of posts.filter((candidate) => candidate.image)) {
+      if (await imageLoads(post.image)) leadPosts.push(post);
+      else invalidImagePosts.push(postSlug(post));
+      if (leadPosts.length >= Math.max(leadArticles.length, 6)) break;
+    }
+    if (leadPosts.length < 1) {
+      return {
+        applied: false,
+        reason: "retro_editorial_images_unavailable",
+        invalidImagePosts: invalidImagePosts.slice(0, 12),
+        posts: posts.length,
+      };
+    }
     leadArticles.forEach((article, index) => updateArticle(article, leadPosts[index] || pickPost(index), { hero: index === 0 }));
 
     const nowList = document.querySelector(".cod5-home-now-list ol");
@@ -1943,7 +3104,7 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
     if (nowList && nowPosts.length > 0) {
       nowList.innerHTML = nowPosts.map((post) => {
         const parts = formatParts(post);
-        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}">
+        return `<li data-adops-retro-post-date="${String(post.date || post.publishedAt || "").replace(/"/g, "&quot;")}" data-adops-retro-post-slug="${postSlug(post)}" data-adops-retro-category-slug="${normalizeCategory(post.categorySlug || post.category)}">
           <a class="group flex min-h-[44px] items-center gap-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white" href="${absoluteUrl(post.url || `/${post.slug || ""}/`)}">
             <span class="w-14 shrink-0 text-xs font-semibold text-secondary-500 tabular-nums" title="Atualizado em ${parts.label}">${parts.timeText}</span>
             <span class="min-w-0 flex-1">
@@ -1966,28 +3127,110 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
       if (candidate && updateArticle(article, candidate)) offset += 1;
     });
 
+    const editorialMemeLeaks = [];
+    const findMemeLeaks = (root, area) => {
+      if (!root) return;
+      const candidates = root.matches?.("article,li")
+        ? [root]
+        : Array.from(root.querySelectorAll("article,li"));
+      for (const candidate of candidates) {
+        const badgeText = normalizeCategory(candidate.querySelector(".badge-cat")?.textContent);
+        const categorySlug = normalizeCategory(candidate.getAttribute("data-adops-retro-category-slug"));
+        const memeClass = candidate.querySelector(".badge-cat--memes-do-vovo");
+        const memeCategoryLink = candidate.querySelector('a[href*="/categoria/memes-do-vovo/"]');
+        if (categorySlug === "memes-do-vovo" || badgeText === "memes-do-vovo" || memeClass || memeCategoryLink) {
+          editorialMemeLeaks.push({
+            area,
+            categorySlug,
+            badgeText,
+            href: candidate.querySelector("a[href]")?.getAttribute("href") || "",
+          });
+        }
+      }
+    };
+    leadArticles.forEach((article) => findMemeLeaks(article, "destaques"));
+    findMemeLeaks(nowList, "agora");
+    if (editorialMemeLeaks.length > 0) {
+      return {
+        applied: false,
+        reason: "retro_editorial_meme_leak",
+        editorialMemeLeaks: editorialMemeLeaks.slice(0, 12),
+        posts: posts.length,
+        totalPosts: allPosts.length,
+        excludedMemePosts,
+      };
+    }
+
+    if (requireEditorialTargets && (leadArticles.length < 1 || !nowList)) {
+      return {
+        applied: false,
+        reason: "retro_editorial_targets_missing",
+        leadArticles: leadArticles.length,
+        nowListFound: Boolean(nowList),
+      };
+    }
+    const expectedLeadSlugs = leadArticles
+      .map((_, index) => leadPosts[index] || pickPost(index))
+      .filter(Boolean)
+      .map(postSlug);
+    const renderedLeadSlugs = leadArticles.map((article) => text(article.getAttribute("data-adops-retro-post-slug")));
+    const expectedNowSlugs = nowPosts.map(postSlug);
+    const renderedNowSlugs = nowList
+      ? Array.from(nowList.querySelectorAll("li")).map((item) => text(item.getAttribute("data-adops-retro-post-slug")))
+      : [];
+    const editorialContentMatches = JSON.stringify(expectedLeadSlugs) === JSON.stringify(renderedLeadSlugs)
+      && JSON.stringify(expectedNowSlugs) === JSON.stringify(renderedNowSlugs);
+    if (requireEditorialTargets && !editorialContentMatches) {
+      return {
+        applied: false,
+        reason: "retro_editorial_content_mismatch",
+        expectedLeadSlugs,
+        renderedLeadSlugs,
+        expectedNowSlugs,
+        renderedNowSlugs,
+      };
+    }
+
     document.documentElement.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
     document.documentElement.setAttribute("data-adops-static-retro-preview-sparse", sparseMode ? "1" : "0");
     document.documentElement.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
+    document.documentElement.setAttribute("data-adops-static-retro-memes-excluded", String(excludedMemePosts));
     document.body?.setAttribute("data-adops-static-retro-preview", rawCaptureAt);
     document.body?.setAttribute("data-adops-static-retro-preview-sparse", sparseMode ? "1" : "0");
     document.body?.setAttribute("data-adops-static-retro-posts-available", String(posts.length));
+    document.body?.setAttribute("data-adops-static-retro-memes-excluded", String(excludedMemePosts));
     return {
       applied: true,
       cutoff: rawCaptureAt,
       posts: posts.length,
       sparse: sparseMode,
       postsAvailable: posts.length,
+      totalPostsAvailable: allPosts.length,
+      excludedMemePosts,
+      editorialMemeLeaks: [],
+      source: "admin-wp+search-index",
+      expectedLeadSlugs,
+      renderedLeadSlugs,
+      expectedNowSlugs,
+      renderedNowSlugs,
+      editorialContentMatches,
       postsRequired: minRequiredPosts,
       adminPosts: Array.isArray(adminRetroPosts) ? adminRetroPosts.length : 0,
+      invalidImagePosts: invalidImagePosts.slice(0, 12),
       expectedPosts: posts.slice(0, 25).map((post) => ({
         id: Number(post.id || 0),
+        slug: postSlug(post),
         date: String(post.date || post.localDate || post.publishedAt || ""),
         url: String(post.url || `/${post.slug || ""}/`),
         title: String(post.title || "").slice(0, 240),
       })),
     };
-  }, { captureAt, adminRetroPosts, pageType: mapping?.page === "article" ? "article" : "home" });
+  }, {
+    captureAt,
+    adminRetroPosts,
+    requireEditorialTargets,
+    pageType: mapping?.page === "article" ? "article" : "home",
+  });
 
   if (!result || result.applied !== true) {
     const reason = result && typeof result === "object" ? result.reason || JSON.stringify(result) : "unknown";
@@ -1997,15 +3240,703 @@ async function applyPerrengueStaticRetroPreview(page, mapping, captureAt) {
   return result;
 }
 
-async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasename) {
-  const allowExplicitStaticInjection = process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1";
-  if (!allowExplicitStaticInjection) return false;
-  if (mapping?.domain !== "perrenguematogrosso.com" && !allowExplicitStaticInjection) return false;
-  if (!allowExplicitStaticInjection && mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
+async function applyAflRetroPreview(page, mapping, captureAt, options = {}) {
+  if (!captureAt || mapping?.domain !== "afolhalivre.com") return false;
+  if (!["home", "article"].includes(mapping?.page) && mapping?.pageLabel !== "Home") return false;
+  const posts = Array.isArray(options.posts) ? options.posts : await fetchAflRetroPosts(captureAt);
+  if (!posts.length) throw new Error(`afl_retro_preview_failed: posts_unavailable; captureAt=${captureAt}`);
+
+  const result = await page.evaluate(({ captureAt: rawCaptureAt, retroPosts, pageType }) => {
+    const text = (value) => String(value || "").trim();
+    const absoluteUrl = (value) => {
+      try { return new URL(text(value), window.location.origin).href; } catch { return text(value) || "/"; }
+    };
+    const setImage = (container, post, eager = false) => {
+      if (!container || !post?.image) return;
+      const picture = container.querySelector("picture");
+      const img = container.querySelector("img");
+      if (!img) return;
+      picture?.querySelectorAll("source").forEach((source) => source.remove());
+      img.src = post.image;
+      img.removeAttribute("srcset");
+      img.removeAttribute("sizes");
+      img.removeAttribute("data-src");
+      img.removeAttribute("data-lazy-src");
+      img.alt = post.title;
+      img.loading = eager ? "eager" : "lazy";
+    };
+    const setLink = (article, post) => {
+      const link = article?.querySelector("a[href]");
+      if (link) link.href = absoluteUrl(post.url || `/${post.slug}/`);
+    };
+    const setCategory = (article, post) => {
+      const badge = article?.querySelector(".tp-cat-pill, [style*='background-color']");
+      if (badge) badge.textContent = post.category || "Notícias";
+    };
+    const formatDate = (value) => {
+      const date = new Date(`${String(value || "").replace(/Z$/, "")}-04:00`);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+        timeZone: "America/Cuiaba",
+      }).format(date).replace(",", "");
+    };
+    const isEditorialDateText = (value) => {
+      const normalized = text(value).replace(/\s+/g, " ");
+      return /^(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}(?:\/\d{4})?(?:\s+\d{1,2}:\d{2})?$/i.test(normalized)
+        || /^\d{1,2}\/\d{1,2}:\d{2}$/i.test(normalized);
+    };
+    const normalizeArticleDate = (article, postDate) => {
+      const absoluteDate = formatDate(postDate);
+      if (!article || !absoluteDate) return 0;
+      const candidates = new Set(Array.from(article.querySelectorAll(
+        "[data-adops-retro-date-node='1'], time, [datetime], .post-date, .entry-date, .posted-on, [data-date], [data-datetime], .text-xs span",
+      )));
+      for (const node of Array.from(article.querySelectorAll("*"))) {
+        if (node instanceof HTMLElement && node.children.length === 0 && isEditorialDateText(node.textContent)) {
+          candidates.add(node);
+        }
+      }
+      let rewritten = 0;
+      for (const node of candidates) {
+        if (!(node instanceof HTMLElement)) continue;
+        const tagged = node.getAttribute("data-adops-retro-date-node") === "1";
+        if (!tagged && !isEditorialDateText(node.textContent) && !node.matches("time,[datetime],.post-date,.entry-date,.posted-on,[data-date],[data-datetime]")) continue;
+        node.textContent = absoluteDate;
+        node.setAttribute("data-adops-retro-date-node", "1");
+        if (node.hasAttribute("datetime")) node.setAttribute("datetime", postDate);
+        if (node.hasAttribute("data-date")) node.setAttribute("data-date", postDate);
+        if (node.hasAttribute("data-datetime")) node.setAttribute("data-datetime", postDate);
+        rewritten += 1;
+      }
+      return rewritten;
+    };
+
+    if (pageType === "article") {
+      const article = document.querySelector("main article") || document.querySelector("article") || document.querySelector("main");
+      if (!article) return { applied: false, reason: "article_target_missing" };
+      const currentUrl = new URL(window.location.href);
+      const articlePath = currentUrl.pathname.replace(/\/+$/, "") || "/";
+      const post = retroPosts.find((candidate) => {
+        try {
+          const candidateUrl = new URL(candidate.url || `/${candidate.slug}/`, currentUrl.origin);
+          return candidateUrl.origin === currentUrl.origin
+            && (candidateUrl.pathname.replace(/\/+$/, "") || "/") === articlePath;
+        } catch { return false; }
+      });
+      if (!post) return { applied: false, reason: "article_identity_mismatch" };
+      const title = article.querySelector("h1,h2,.entry-title") || document.querySelector("main h1,h1.entry-title");
+      const normalizedText = (value) => text(value).replace(/\s+/g, " ").toLocaleLowerCase("pt-BR");
+      const expectedTitle = normalizedText(post.title);
+      if (!title || !expectedTitle || normalizedText(title.textContent) !== expectedTitle
+          || !normalizedText(document.title).includes(expectedTitle)) {
+        return { applied: false, reason: "article_content_mismatch" };
+      }
+      setImage(article, post, true);
+      let dateNodesUpdated = normalizeArticleDate(article, post.date);
+      if (dateNodesUpdated === 0) {
+        const time = document.createElement("time");
+        time.textContent = formatDate(post.date);
+        time.setAttribute("datetime", post.date);
+        time.setAttribute("data-adops-retro-date-node", "1");
+        article.prepend(time);
+        dateNodesUpdated = 1;
+      }
+      article.setAttribute("data-adops-retro-primary-article", "1");
+      article.setAttribute("data-adops-retro-post-slug", post.slug);
+      article.setAttribute("data-adops-retro-post-date", post.date);
+      document.documentElement.setAttribute("data-adops-afl-retro-preview", rawCaptureAt);
+      const expectedUrl = absoluteUrl(post.url || `/${post.slug}/`);
+      const visible = (node) => node instanceof HTMLElement && node.getBoundingClientRect().width > 8 && node.getBoundingClientRect().height > 8;
+      return {
+        applied: true,
+        source: "afl-wp-rest",
+        posts: retroPosts.length,
+        articleVerified: visible(title) && dateNodesUpdated > 0
+          && (new URL(expectedUrl).pathname.replace(/\/+$/, "") || "/") === articlePath
+          && normalizedText(title.textContent) === expectedTitle,
+        articlePath: currentUrl.pathname,
+        expectedArticlePath: new URL(expectedUrl).pathname,
+        expectedPosts: [post].map((item) => ({
+          id: Number(item.id || 0),
+          slug: item.slug,
+          date: item.date,
+          url: item.url,
+          title: item.title,
+        })),
+      };
+    }
+
+    const hero = document.querySelector("main .hero-section article.hero-post");
+    const heroPost = retroPosts.find((post) => post.image) || retroPosts[0];
+    if (!hero || !heroPost) return { applied: false, reason: "hero_target_missing" };
+    setLink(hero, heroPost);
+    setImage(hero, heroPost, true);
+    const heroTitle = hero.querySelector("h1,h2,h3");
+    if (heroTitle) heroTitle.textContent = heroPost.title;
+    const heroExcerpt = hero.querySelector("p");
+    if (heroExcerpt) heroExcerpt.textContent = heroPost.excerpt || "";
+    setCategory(hero, heroPost);
+    const heroDateText = formatDate(heroPost.date);
+    hero.setAttribute("data-adops-retro-post-slug", heroPost.slug);
+    hero.setAttribute("data-adops-retro-post-date", heroPost.date);
+    const heroDateNodesUpdated = normalizeArticleDate(hero, heroPost.date);
+
+    const latest = Array.from(document.querySelectorAll("main .hero-section aside article.post-card-compact"));
+    const sidebarPosts = retroPosts.filter((post) => post.slug !== heroPost.slug).slice(0, latest.length);
+    latest.forEach((article, index) => {
+      const post = sidebarPosts[index];
+      if (!post) return;
+      setLink(article, post);
+      setImage(article, post);
+      const title = article.querySelector("h1,h2,h3,h4");
+      if (title) title.textContent = post.title;
+      setCategory(article, post);
+      article.setAttribute("data-adops-retro-post-slug", post.slug);
+      article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
+    });
+
+    const rewriteRelativeDates = (root) => {
+      let rewritten = 0;
+      for (const node of Array.from(root?.querySelectorAll?.("*") || [])) {
+        if (!(node instanceof HTMLElement) || node.children.length > 0) continue;
+        const value = node.textContent?.replace(/\s+/g, " ").trim() || "";
+        if (!/\b(?:há|ha)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|meses?|anos?)\b/i.test(value)) continue;
+        const retroArticle = node.closest("[data-adops-retro-post-date]");
+        const postDate = retroArticle?.getAttribute("data-adops-retro-post-date") || "";
+        rewritten += normalizeArticleDate(retroArticle, postDate);
+      }
+      return rewritten;
+    };
+    const main = document.querySelector("main");
+    const relativeDatesRewritten = main ? rewriteRelativeDates(main) : 0;
+    if (main) {
+      window.__cod5AflRetroDateObserver?.disconnect?.();
+      window.__cod5AflRetroDateObserver = null;
+      const normalizeAllRetroDates = () => {
+        for (const article of Array.from(main.querySelectorAll("[data-adops-retro-post-date]"))) {
+          normalizeArticleDate(article, article.getAttribute("data-adops-retro-post-date") || "");
+        }
+      };
+      window.__cod5NormalizeAflRetroDates = normalizeAllRetroDates;
+      if (window.__cod5AflRetroDateInterval) window.clearInterval(window.__cod5AflRetroDateInterval);
+      window.__cod5AflRetroDateInterval = null;
+    }
+
+    const reservedArticles = new Set([hero, ...latest]);
+    const remainingArticles = Array.from(document.querySelectorAll("main article"))
+      .filter((article) => !reservedArticles.has(article));
+    let remainingOffset = 1 + sidebarPosts.length;
+    remainingArticles.forEach((article) => {
+      const post = retroPosts[remainingOffset % retroPosts.length];
+      remainingOffset += 1;
+      if (!post) return;
+      setLink(article, post);
+      setImage(article, post);
+      const title = article.querySelector("h1,h2,h3,h4,.entry-title");
+      if (title) title.textContent = post.title;
+      const excerpt = article.querySelector("p");
+      if (excerpt && post.excerpt) excerpt.textContent = post.excerpt;
+      setCategory(article, post);
+      article.setAttribute("data-adops-retro-post-slug", post.slug);
+      article.setAttribute("data-adops-retro-post-date", post.date);
+      normalizeArticleDate(article, post.date);
+    });
+
+    const renderedHeroSlug = hero.getAttribute("data-adops-retro-post-slug") || "";
+    const renderedLatestSlugs = latest.map((article) => article.getAttribute("data-adops-retro-post-slug") || "").filter(Boolean);
+    const expectedLatestSlugs = sidebarPosts.map((post) => post.slug);
+    const editorialContentMatches = renderedHeroSlug === heroPost.slug
+      && JSON.stringify(renderedLatestSlugs) === JSON.stringify(expectedLatestSlugs);
+    if (!editorialContentMatches) {
+      return {
+        applied: false,
+        reason: "retro_editorial_content_mismatch",
+        expectedHeroSlug: heroPost.slug,
+        renderedHeroSlug,
+        expectedLatestSlugs,
+        renderedLatestSlugs,
+      };
+    }
+    document.documentElement.setAttribute("data-adops-afl-retro-preview", rawCaptureAt);
+    return {
+      applied: true,
+      source: "afl-wp-rest",
+      posts: retroPosts.length,
+      expectedHeroSlug: heroPost.slug,
+      renderedHeroSlug,
+      expectedLatestSlugs,
+      renderedLatestSlugs,
+      rewrittenArticles: 1 + latest.length + remainingArticles.length,
+      heroDateText,
+      heroDateNodesUpdated,
+      relativeDatesRewritten,
+      relativeDateObserverActive: false,
+      editorialContentMatches,
+    };
+  }, { captureAt, retroPosts: posts, pageType: mapping?.page === "article" ? "article" : "home" });
+
+  if (!result || result.applied !== true) {
+    const reason = result && typeof result === "object" ? result.reason || JSON.stringify(result) : "unknown";
+    throw new Error(`afl_retro_preview_failed: ${reason}`);
+  }
+  return result;
+}
+
+async function applyOmtRetroPreview(page, mapping, captureAt, options = {}) {
+  if (!captureAt || mapping?.domain !== "omatogrossense.com") return false;
+  if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
+  if (options.allowReconstruction !== true) return false;
+  const posts = normalizeRetroEditorialPosts(
+    Array.isArray(options.posts) ? options.posts : await fetchOmtRetroPosts(captureAt),
+    captureAt,
+  );
+  if (posts.length < 3) throw new Error(`omt_retro_preview_failed: not_enough_retro_posts; captureAt=${captureAt}`);
+
+  const result = await page.evaluate(async ({ captureAt: rawCaptureAt, retroPosts }) => {
+    const text = (value) => String(value || "").replace(/\s+/g, " ").trim();
+    const absoluteUrl = (value) => {
+      try { return new URL(text(value), window.location.origin).href; } catch { return text(value) || "/"; }
+    };
+    const cards = Array.from(document.querySelectorAll([
+      ".omt-home-lead-card",
+      ".omt-home-side-card",
+      ".omt-home-latest-list li",
+      ".omt-home-editoria article",
+    ].join(","))).filter((card, index, all) => all.indexOf(card) === index);
+    if (cards.length < 3) return { applied: false, reason: "editorial_targets_missing", cards: cards.length };
+
+    const formatDate = (value) => {
+      const normalized = String(value || "").includes("T") && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(String(value || ""))
+        ? `${value}-04:00`
+        : value;
+      const date = new Date(normalized);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+        timeZone: "America/Cuiaba",
+      }).format(date).replace(",", "");
+    };
+    const chooseContentLink = (card) => {
+      const title = card.querySelector(".omt-home-lead-title,.omt-home-side-title,.omt-home-latest-copy > a:not(.omt-home-cat-pill),h1,h2,h3,h4");
+      return title?.closest("a[href]") || title?.querySelector("a[href]") || card.querySelector("a[href]:not(.omt-home-cat-pill)");
+    };
+    const rendered = [];
+    for (let index = 0; index < cards.length && index < retroPosts.length; index += 1) {
+      const card = cards[index];
+      const post = retroPosts[index];
+      const href = absoluteUrl(post.url || `/${post.slug}/`);
+      const contentLink = chooseContentLink(card);
+      if (contentLink) contentLink.href = href;
+      const image = card.querySelector("img");
+      if (image && post.image) {
+        image.src = post.image;
+        image.removeAttribute("srcset");
+        image.removeAttribute("sizes");
+        image.removeAttribute("data-lazy-src");
+        image.removeAttribute("data-lazy-src-webp");
+        image.loading = index === 0 ? "eager" : "lazy";
+        image.alt = post.title;
+        const imageLink = image.closest("a[href]");
+        if (imageLink) imageLink.href = href;
+      }
+      const title = card.querySelector(".omt-home-lead-title,.omt-home-side-title,.omt-home-latest-copy > a:not(.omt-home-cat-pill),h1,h2,h3,h4");
+      const titleTarget = title?.matches?.("a") ? title : title?.querySelector?.("a") || title;
+      if (titleTarget) titleTarget.textContent = post.title;
+      const time = card.querySelector("time");
+      if (time) {
+        time.setAttribute("datetime", post.date);
+        time.setAttribute("data-date", post.date);
+        time.textContent = formatDate(post.date);
+      }
+      card.setAttribute("data-adops-retro-post-slug", post.slug);
+      card.setAttribute("data-adops-retro-post-date", post.date);
+      rendered.push(post.slug);
+    }
+    const expected = retroPosts.slice(0, rendered.length).map((post) => post.slug);
+    if (rendered.length < 3 || JSON.stringify(rendered) !== JSON.stringify(expected)) {
+      return { applied: false, reason: "retro_editorial_content_mismatch", expected, rendered };
+    }
+    document.documentElement.setAttribute("data-adops-omt-retro-preview", rawCaptureAt);
+    document.body?.setAttribute("data-adops-omt-retro-preview", rawCaptureAt);
+    return {
+      applied: true,
+      source: "omt-wp-rest-reconstruction",
+      posts: retroPosts.length,
+      postsAvailable: retroPosts.length,
+      postsRequired: 3,
+      expectedPosts: retroPosts.slice(0, 25).map((post) => ({
+        id: Number(post.id || 0),
+        date: post.date,
+        modified: post.modified || null,
+        url: post.url,
+        title: post.title,
+      })),
+      expectedLeadSlugs: expected,
+      renderedLeadSlugs: rendered,
+      editorialContentMatches: true,
+    };
+  }, { captureAt, retroPosts: posts });
+
+  if (!result || result.applied !== true) {
+    const reason = result && typeof result === "object" ? result.reason || JSON.stringify(result) : "unknown";
+    throw new Error(`omt_retro_preview_failed: ${reason}`);
+  }
+  return result;
+}
+
+async function applyPortalRetroPreview(page, mapping, captureAt, options = {}) {
+  return await applyPerrengueStaticRetroPreview(page, mapping, captureAt)
+    || await applyOmtRetroPreview(page, mapping, captureAt, options)
+    || await applyAflRetroPreview(page, mapping, captureAt)
+    || false;
+}
+
+function buildStaticRetroSlotPlan(mapping, { rooHistoricalCandidateV4 = false } = {}) {
+  const domain = String(mapping?.domain || "").toLowerCase();
+  if (!new Set(["omatogrossense.com", "afolhalivre.com", "portalnortemt.com", "portalpantanalmt.com", "roonoticias.com", "perrenguematogrosso.com"]).has(domain)) return null;
+  if (mapping?.page !== "home" && mapping?.pageLabel !== "Home") return null;
+  const slotSelector = String(mapping?.slotSelector || "").trim();
+  const configuredContextSelector = String(mapping?.contextSelector || "").trim();
+  const isPnmtDesktopTop = new Set(["portalnortemt.com", "portalpantanalmt.com"]).has(domain) && slotSelector === "div.hidden.lg\\:block .g.g-1";
+  const isRooDesktopTop = domain === "roonoticias.com"
+    && rooHistoricalCandidateV4 === true
+    && mapping?.groupId === 1
+    && slotSelector === ".g.g-1"
+    && configuredContextSelector === ".g.g-1"
+    && mapping?.auditConfig?.allowAuditedReconstruction === true
+    && mapping?.auditConfig?.requireRetroContentProof === true;
+  let contextSelector = isRooDesktopTop
+    ? "header .omt-header-top div.hidden.lg\\:block > div.flex.justify-center > #block-8"
+    : domain === "afolhalivre.com" && slotSelector === ".g.g-1"
+    ? "header .omt-header-top #block-8"
+    : isPnmtDesktopTop
+      ? "div.hidden.lg\\:block #block-8"
+    : new Set(["afolhalivre.com", "portalnortemt.com"]).has(domain) && slotSelector === ".g.g-2"
+      ? "#block-9"
+      : configuredContextSelector;
+  if (slotSelector === contextSelector) {
+    contextSelector = domain === "omatogrossense.com"
+      ? ".homepage-banner-single"
+      : domain === "afolhalivre.com"
+        ? "#block-9, header"
+        : domain === "roonoticias.com"
+          ? "header, main"
+          : "#block-9, header";
+  }
+  if (!slotSelector || !contextSelector) return null;
+  const matches = Array.from(slotSelector.matchAll(/\.g-(\d+)\b/g));
+  if (matches.length !== 1) return null;
+  const groupId = Number(matches[0][1]);
+  if (!Number.isInteger(groupId) || groupId < 1) return null;
+  if (domain === "perrenguematogrosso.com"
+    && (groupId !== 9 || slotSelector !== "#cod5-bottom-popup-ad .g.g-9" || configuredContextSelector !== "#cod5-bottom-popup-ad")) return null;
+  if (domain === "omatogrossense.com" && ![1, 2].includes(groupId)) return null;
+  if (domain === "afolhalivre.com" && ![1, 2].includes(groupId)) return null;
+  if (domain === "portalnortemt.com" && groupId !== 2 && !isPnmtDesktopTop) return null;
+  if (domain === "portalpantanalmt.com" && !isPnmtDesktopTop) return null;
+  if (domain === "roonoticias.com" && groupId !== 1) return null;
+  if (domain === "roonoticias.com"
+    && rooHistoricalCandidateV4 === true
+    && mapping?.auditConfig?.allowAuditedReconstruction === true
+    && mapping?.auditConfig?.requireRetroContentProof === true
+    && !isRooDesktopTop) return null;
+  return { contextSelector, groupClass: `g g-${groupId}`, groupId, ...(isPnmtDesktopTop || isRooDesktopTop ? { requireUniqueVisibleAnchor: true } : {}) };
+}
+
+function currentDateInCuiaba(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const read = (type) => parts.find((part) => part.type === type)?.value || "";
+  return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
+function shouldAllowConfiguredRetroSlotReconstruction({ captureDate, periodStart, periodEnd, currentDate = currentDateInCuiaba(), explicitCaptureAt = false, reconstructionReason = null }) {
+  const capture = String(captureDate || "").slice(0, 10);
+  const start = String(periodStart || "").slice(0, 10);
+  const end = String(periodEnd || "").slice(0, 10);
+  const today = String(currentDate || "").slice(0, 10);
+  if (explicitCaptureAt !== true || ![capture, start, end, today].every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))) return false;
+  const authorizedLateRecovery = reconstructionReason === "late_publication_recovery";
+  return capture < today && start <= capture && capture <= end && (end < today || authorizedLateRecovery);
+}
+
+function evaluateAuditedRetroSlotReconstruction({ insertion, mapping, targetDate, captureAt, currentDate = currentDateInCuiaba(), captureClass, provenanceVersion, candidateOnly = false, saveEvidence = true, status }) {
+  const plan = buildStaticRetroSlotPlan(mapping, {
+    rooHistoricalCandidateV4: candidateOnly === true && saveEvidence === false
+      && captureClass === "historical_recovery" && provenanceVersion === 4,
+  });
+  const domain = String(mapping?.domain || "").toLowerCase();
+  const profile = domain === "perrenguematogrosso.com"
+    && mapping?.groupId === 9
+    && mapping?.slotSelector === "#cod5-bottom-popup-ad .g.g-9"
+    && mapping?.contextSelector === "#cod5-bottom-popup-ad"
+    && mapping?.page === "home"
+    && plan?.groupId === 9
+    ? "perrengue-popup-9"
+    : domain === "portalpantanalmt.com"
+      && mapping?.groupId === 1
+      && mapping?.slotSelector === "div.hidden.lg\\:block .g.g-1"
+      && mapping?.contextSelector === "div.hidden.lg\\:block .g.g-1"
+      && mapping?.page === "home"
+      && plan?.groupId === 1
+      && plan?.requireUniqueVisibleAnchor === true
+      ? "ppmt-desktop-top-1"
+      : domain === "roonoticias.com"
+        && mapping?.groupId === 1
+        && mapping?.slotSelector === ".g.g-1"
+        && mapping?.contextSelector === ".g.g-1"
+        && mapping?.page === "home"
+        && mapping?.auditConfig?.allowAuditedReconstruction === true
+        && mapping?.auditConfig?.requireRetroContentProof === true
+        && plan?.groupId === 1
+        && plan?.requireUniqueVisibleAnchor === true
+        ? "roo-desktop-top-1"
+      : null;
+  const target = String(targetDate || "").slice(0, 10);
+  const start = String(insertion?.periodoInicio || "").slice(0, 10);
+  const end = String(insertion?.periodoFim || "").slice(0, 10);
+  const today = String(currentDate || "").slice(0, 10);
+  const exactPerrengueProfile = profile === "perrengue-popup-9";
+  if (!candidateOnly || saveEvidence || !captureAt || captureClass !== "historical_recovery" || provenanceVersion !== 4 || !profile
+    || (mapping?.auditConfig?.allowAuditedReconstruction !== true && !exactPerrengueProfile)) return { ok: false, reason: "candidate_or_config_not_eligible" };
+  if (![target, start, end, today].every((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)) || target >= today || end >= today || target < start || target > end) return { ok: false, reason: "target_not_expired_historical_in_period" };
+  const proof = status?.audit;
+  const checklist = status?.checklistValidation;
+  const exactIssues = (items) => {
+    if (!Array.isArray(items)) return null;
+    const codes = items.map((item) => typeof item === "string" ? item : item?.code);
+    return codes.every((code) => typeof code === "string" && code.length > 0) ? codes : null;
+  };
+  const auditIssues = exactIssues(proof?.issues);
+  const blockingIssues = exactIssues(checklist?.blockingIssues);
+  const globallyApproved = checklist?.approved === true && checklist?.preliminary === false
+    && proof?.ok === true && ["audited", "audited_best_effort"].includes(status?.status)
+    && auditIssues?.length === 0 && blockingIssues?.length === 0;
+  const clockOnlyMismatch = auditIssues?.length === 1 && auditIssues[0] === "desktop_time_mismatch"
+    && blockingIssues?.length === 1 && blockingIssues[0] === "metadata_desktop_time_mismatch"
+    && checklist?.approved === false && checklist?.preliminary === false && status?.status === "invalid_audit";
+  const mediaProof = proof?.mediaProof;
+  const context = proof?.auditContext;
+  let sourceUrlIsSafe = false;
+  try {
+    const sourceUrl = new URL(status?.arquivoUrl);
+    sourceUrlIsSafe = sourceUrl.protocol === "https:" && !sourceUrl.username && !sourceUrl.password;
+  } catch {}
+  const sameReference = typeof captureAt === "string" && proof?.requestedCaptureAt === captureAt;
+  const sameMedia = typeof insertion?.mediaUrl === "string" && mediaProof?.matchedMediaUrl === insertion.mediaUrl;
+  const visualIdentityOk = proof?.visualsOk === true && proof?.visualAudit?.identityFrameOk === true;
+  const visibility = proof?.slotVisibility;
+  const visibleEnough = visibility?.fullyVisible === true && Number.isFinite(Number(visibility?.visibleRatio)) && Number(visibility.visibleRatio) >= 0.95;
+  const retroContentProof = proof?.retroContentProof;
+  const manifestHash = retroContentProof?.manifestHash;
+  const validManifestHash = typeof manifestHash === "string" && /^[a-f0-9]{64}$/i.test(manifestHash);
+  const sourceEditorialProofApproved = retroContentProof?.status === "approved"
+    && retroContentProof?.futureCount === 0
+    && validManifestHash;
+  const legacyEmptyEditorialSource = profile === "roo-desktop-top-1"
+    && (retroContentProof === null || typeof retroContentProof === "undefined")
+    && proof?.contentTimeline?.reason === "empty_samples"
+    && proof?.contentTimeline?.sampleCount === 0
+    && proof?.contentTimeline?.parsedCount === 0
+    && proof?.contentTimeline?.targetDateMatches === false
+    && proof?.contentTimeline?.maxObserved === null
+    && Array.isArray(proof?.contentTimeline?.matchingTargetDateSamples)
+    && proof.contentTimeline.matchingTargetDateSamples.length === 0
+    && Array.isArray(proof?.contentTimeline?.futureSamples)
+    && proof.contentTimeline.futureSamples.length === 0
+    && Array.isArray(proof?.contentTimeline?.observedDates)
+    && proof.contentTimeline.observedDates.length === 0;
+  const sourceEditorialProofQualified = sourceEditorialProofApproved || legacyEmptyEditorialSource;
+  const exactContext = context?.resolvedPage === "home"
+    && context?.resolvedGroupId === plan.groupId
+    && context?.resolvedSlotSelector === mapping.slotSelector
+    && context?.resolvedContextSelector === mapping.contextSelector;
+  const qualified = status?.insertionId === Number(insertion?.id)
+    && status?.date === target
+    && checklist?.insertionId === Number(insertion?.id)
+    && checklist?.date === target
+    && status?.inPeriod === true
+    && status?.hasEvidenceForDate === true
+    && status?.hasValidUrl === true
+    && status?.isReachable === true
+    && status?.urlStatus === 200
+    && sourceUrlIsSafe
+    && proof?.captureClass === "historical_recovery"
+    && proof?.targetDate === target
+    && typeof proof?.sourceJobId === "string" && proof.sourceJobId.length > 0
+    && sameReference
+    && mediaProof?.ok === true && sameMedia
+    && exactContext
+    && proof?.finalPngSlotAudit?.ok === true
+    && visualIdentityOk && visibleEnough
+    && proof?.pageMatches === true
+    && sourceEditorialProofQualified
+    && Array.isArray(auditIssues) && Array.isArray(blockingIssues)
+    && (globallyApproved || (clockOnlyMismatch && !legacyEmptyEditorialSource));
+  if (!qualified) return { ok: false, reason: "original_historical_proof_not_qualified" };
+  const sourceIssueCodes = [...new Set([...auditIssues, ...blockingIssues])];
+  return {
+    ok: true,
+    profile,
+    sourceEvidence: {
+      url: status.arquivoUrl,
+      sourceJobId: proof.sourceJobId,
+      issueCodes: sourceIssueCodes,
+      manifestHash: sourceEditorialProofApproved ? manifestHash : null,
+      origin: "canonical_historical_evidence",
+      ...(legacyEmptyEditorialSource ? {
+        proofScope: "position_only",
+        sourceEditorialProofStatus: "missing_legacy",
+      } : {}),
+    },
+  };
+}
+
+function applyRegisteredHistoricalInternalAdInPage({ receipt }) {
+  if (receipt?.sourceKind !== 'registered_adrotate_schedule' || receipt.siteSigla !== 'PERRENGUE' || receipt.groupId !== 11
+    || receipt.slotSelector !== '.g.g-11' || location.hostname.replace(/^www\./, '') !== 'perrenguematogrosso.com') return { applied: false, reason: 'registered_reference_scope_mismatch' };
+  const slots = Array.from(document.querySelectorAll('.g.g-11'));
+  if (slots.length !== 1) return { applied: false, reason: 'registered_reference_slot_not_unique' };
+  const slot = slots[0];
+  let nativePlaceholder = null;
+  const media = Array.from(slot.querySelectorAll('img,video,source,iframe,object,embed'));
+  const text = String(slot.textContent || '').trim();
+  if (slot.classList.contains('g-placeholder') && slot.children.length === 1
+    && slot.children[0].matches('a.perr-ad-placeholder.perr-ad-placeholder--leaderboard')
+    && text.replace(/\s+/g, ' ') === 'Publicidade Anuncie aqui' && media.length === 1 && media[0].tagName === 'IMG') {
+    try {
+      const imageUrl = new URL(media[0].currentSrc || media[0].getAttribute('src'), location.href);
+      if (imageUrl.protocol === 'https:' && imageUrl.hostname === 'perrenguematogrosso.com'
+        && imageUrl.pathname === '/assets/perrengue-sublogo.png' && !imageUrl.search && !imageUrl.hash) nativePlaceholder = slot.children[0];
+    } catch {}
+  }
+  if (!slot.closest('article, .entry-content') || (media.length > 0 && !nativePlaceholder)
+    || slot.querySelector('[data-adops-static-retro-ad]')) return { applied: false, reason: 'registered_reference_slot_conflict' };
+  if (text && !nativePlaceholder && text !== 'Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!') return { applied: false, reason: 'registered_reference_slot_content_unknown' };
+  const wrapper = document.createElement('div');
+  wrapper.className = `g-single a-${receipt.adId}`;
+  wrapper.setAttribute('data-adops-static-retro-ad', '1');
+  wrapper.setAttribute('data-adops-reconstructed-slot', '1');
+  wrapper.setAttribute('data-adops-reference-hash', receipt.referenceHash);
+  const img = document.createElement('img');
+  img.src = receipt.mediaUrl; img.alt = 'Publicidade'; img.loading = 'eager'; img.decoding = 'sync';
+  img.style.width = '100%'; img.style.height = 'auto'; img.style.display = 'block';
+  wrapper.appendChild(img);
+  const notice = document.createElement('div');
+  notice.setAttribute('data-adops-reconstruction-notice', 'registered_adrotate_schedule');
+  notice.textContent = 'Reconstrução administrativa — não comprova exibição original.';
+  notice.style.cssText = 'display:block;position:static;font:600 13px/1.35 Arial,sans-serif;color:#172033;background:#fff;padding:6px 4px;text-align:left;';
+  wrapper.appendChild(notice); slot.appendChild(wrapper);
+  if (nativePlaceholder) { nativePlaceholder.remove(); slot.classList.remove('g-placeholder'); }
+  return { applied: true, sourceKind: receipt.sourceKind, historicalDisplayConfirmed: false, adId: receipt.adId,
+    scheduleId: receipt.scheduleId, referenceHash: receipt.referenceHash };
+}
+
+function annotateRegisteredFailureRecoveryInPage({ receipt, actualGeneratedAt }) {
+  if (!receipt?.failureSource || receipt.groupId !== 3 || receipt.page !== 'home' || receipt.slotSelector !== '.g.g-3'
+    || receipt.historicalDisplayConfirmed !== false || !Number.isFinite(Date.parse(actualGeneratedAt))) return { applied: false, reason: 'failed_capture_reference_invalid' };
+  const slots = document.querySelectorAll(receipt.slotSelector);
+  if (slots.length !== 1) return { applied: false, reason: 'failed_capture_slot_not_unique' };
+  const slot = slots[0], ads = slot.querySelectorAll('.a-' + receipt.adId);
+  if (ads.length !== 1) return { applied: false, reason: 'failed_capture_ad_not_unique' };
+  const ad = ads[0];
+  if (ad.getAttribute('data-adops-failed-capture-reference') !== receipt.referenceHash) {
+    const media = [...ad.querySelectorAll('img')].filter(n => n.getAttribute('src') === receipt.mediaUrl || n.currentSrc === receipt.mediaUrl);
+    if (media.length !== 1) return { applied: false, reason: 'failed_capture_media_not_unique' };
+    ad.setAttribute('data-adops-failed-capture-reference', receipt.referenceHash);
+  }
+  const notices = document.querySelectorAll('[data-adops-reconstruction-notice]');
+  if (notices.length > 1) return { applied: false, reason: 'failed_capture_notice_not_unique' };
+  const notice = notices[0] || document.createElement('div');
+  if (!notices.length) slot.after(notice);
+  notice.setAttribute('data-adops-reconstruction-notice', 'registered_adrotate_schedule');
+  const actualDate = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Cuiaba', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(actualGeneratedAt));
+  notice.textContent = receipt.presentationLabel + ' Gerada em ' + actualDate + '.';
+  notice.style.cssText = 'display:block;position:static;font:600 13px/1.35 Arial,sans-serif;color:#172033;background:#fff;padding:6px 4px;text-align:left;';
+  return { applied: true, creativeReplaced: false, historicalDisplayConfirmed: false, referenceHash: receipt.referenceHash };
+}
+
+function evaluateClockRepairSource(insertion, mapping, date, captureAt, status) {
+  const audit = status?.audit, check = status?.checklistValidation;
+  const context = audit?.auditContext;
+  const codes = (items) => Array.isArray(items) ? items.map(x => typeof x === "string" ? x : x?.code) : [];
+  const issues = codes(audit?.issues), blocking = codes(check?.blockingIssues);
+  const target = String(date || "").slice(0, 10);
+  const allowedContext = mapping?.domain === "perrenguematogrosso.com"
+    && [1, 2, 3, 6, 11].includes(mapping.groupId)
+    && mapping.slotSelector === `.g.g-${mapping.groupId}`;
+  const videoSourceQualified = mapping?.groupId !== 6 || (audit?.isVideoCapture === true
+    && audit?.playerProof?.ok === true && audit.playerProof.controlsVisible === true
+    && audit.playerProof.progressVisible === true && Number.isFinite(audit.playerProof.duration)
+    && audit.playerProof.duration > 0);
+  if (!allowedContext || !videoSourceQualified || status?.insertionId !== Number(insertion.id) || status?.date !== target
+    || target >= currentDateInCuiaba() || String(insertion.periodoFim).slice(0, 10) >= currentDateInCuiaba()
+    || status?.inPeriod !== true || status?.hasEvidenceForDate !== true
+    || status?.isReachable !== true || status?.urlStatus !== 200 || status?.status !== "invalid_audit"
+    || check?.approved !== false || check?.preliminary !== false
+    || issues.length !== 1 || issues[0] !== "page_time_mismatch"
+    || blocking.length !== 1 || blocking[0] !== "metadata_page_time_mismatch"
+    || !pageTextMatchesRequestedCaptureAt(audit?.systemDateTime, captureAt)
+    || audit?.mediaProof?.ok !== true || audit.mediaProof.matchedMediaUrl !== insertion.mediaUrl
+    || audit?.visualsOk !== true || audit?.visualAudit?.identityFrameOk !== true
+    || audit?.finalPngSlotAudit?.ok !== true || audit?.slotVisibility?.fullyVisible !== true
+    || Number(audit?.slotVisibility?.visibleRatio) < 0.95
+    || context?.resolvedGroupId !== mapping.groupId || context?.resolvedPage !== mapping.page
+    || context?.resolvedSlotSelector !== mapping.slotSelector || context?.resolvedContextSelector !== mapping.contextSelector
+    || !audit.sourceJobId || !status.arquivoUrl) return null;
+  const url = new URL(status.arquivoUrl);
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  return { sourceKind: "audited_clock_correction", insertionId: Number(insertion.id), date: target,
+    sourceJobId: audit.sourceJobId, sourceUrl: status.arquivoUrl, mediaUrl: insertion.mediaUrl,
+    originalSystemDateTime: audit.systemDateTime, originalPageDateText: audit.pageDateText,
+    historicalDisplayConfirmed: false };
+}
+
+async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasename, options = {}) {
+  if (options.registeredHistoricalReference) {
+    if (options.registeredHistoricalReference.failureSource && options.candidateOnly === true && options.reconstructionProvenanceVersion === 4
+      && mapping.domain === 'perrenguematogrosso.com' && mapping.page === 'home' && mapping.groupId === 3
+      && mapping.slotSelector === '.g.g-3' && mapping.contextSelector === '.g.g-3') {
+      return await page.evaluate(annotateRegisteredFailureRecoveryInPage, { receipt: options.registeredHistoricalReference, actualGeneratedAt: new Date().toISOString() });
+    }
+    if (options.candidateOnly !== true || options.reconstructionProvenanceVersion !== 4
+      || mapping.domain !== 'perrenguematogrosso.com' || mapping.page !== 'article' || mapping.groupId !== 11 || mapping.slotSelector !== '.g.g-11') return false;
+    return await page.evaluate(applyRegisteredHistoricalInternalAdInPage, { receipt: options.registeredHistoricalReference });
+  }
+  const clockCorrection = options.candidateOnly === true && options.reconstructionProvenanceVersion === 4
+    && options.clockRepairSource?.sourceKind === "audited_clock_correction";
+  const allowExplicitStaticInjection = clockCorrection || process.env.ADOPS_CAPTURE_ALLOW_STATIC_RETRO_AD_INJECTION === "1" ||
+    (mapping?.auditConfig?.allowAuditedReconstruction === true && options.reconstructionReason === "late_publication_recovery");
+  const auditedCandidateReconstruction = options.auditedCandidateReconstruction?.ok === true
+    && options.candidateOnly === true
+    && options.reconstructionProvenanceVersion === 4;
+  if (!allowExplicitStaticInjection && !auditedCandidateReconstruction) return false;
+  if (options.reconstructionReason !== "late_publication_recovery" && !auditedCandidateReconstruction && !clockCorrection) return false;
+  const domain = String(mapping?.domain || "").toLowerCase();
+  if (options.allowConfiguredSlotReconstruction !== true) return false;
+  if (mapping?.domain !== "perrenguematogrosso.com" && !allowExplicitStaticInjection && !auditedCandidateReconstruction) return false;
+  if (!allowExplicitStaticInjection && !auditedCandidateReconstruction && mapping?.page !== "home" && mapping?.pageLabel !== "Home") return false;
   const url = String(mediaUrl || "").trim();
   if (!url) return false;
 
-  return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector }) => {
+  const missingSlotPlan = options.allowConfiguredSlotReconstruction === true
+    ? buildStaticRetroSlotPlan(mapping, {
+        rooHistoricalCandidateV4: options.auditedCandidateReconstruction?.profile === "roo-desktop-top-1",
+      })
+    : null;
+  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && mapping?.auditConfig?.allowAuditedReconstruction !== true) return false;
+  if (missingSlotPlan?.requireUniqueVisibleAnchor === true && options.reconstructionProvenanceVersion !== 2 && !auditedCandidateReconstruction) return false;
+  if (auditedCandidateReconstruction && !["perrengue-popup-9", "ppmt-desktop-top-1", "roo-desktop-top-1"].includes(options.auditedCandidateReconstruction.profile)) return false;
+  return await page.evaluate(async ({ mediaUrl: targetUrl, mediaBasename: targetBasename, slotSelector, missingSlotPlan, auditedCandidateReconstruction }) => {
+    const knownAdRotateUnavailableComment = "Erro, o Anúncio não está disponível neste momento devido às restrições de agendamento/geolocalização!";
     const normalizeSelector = (value) => String(value || "").trim();
     const createMissingInternalSlot = () => {
       const selector = normalizeSelector(slotSelector);
@@ -2035,12 +3966,90 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
     const createMissingPopupSlot = () => {
       const selector = normalizeSelector(slotSelector);
       if (selector !== "#cod5-bottom-popup-ad .g.g-9") return null;
-      let host = document.querySelector("#cod5-bottom-popup-ad");
+      const hosts = Array.from(document.querySelectorAll("#cod5-bottom-popup-ad"));
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9" && hosts.length > 1) return null;
+      let host = auditedCandidateReconstruction?.profile === "perrengue-popup-9" ? hosts[0] : document.querySelector("#cod5-bottom-popup-ad");
       if (!(host instanceof HTMLElement)) {
         host = document.createElement("div");
         host.id = "cod5-bottom-popup-ad";
         host.setAttribute("data-cod5-popup-retro-ad", "1");
+        if (auditedCandidateReconstruction?.profile === "perrengue-popup-9") host.setAttribute("data-cod5-popup-ad", "bottom-fixed");
         document.body.appendChild(host);
+      }
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9" && host.querySelector(".g.g-9")) return null;
+      if (auditedCandidateReconstruction?.profile === "perrengue-popup-9") {
+        let inner = host.querySelector(".cod5-bottom-popup-ad__inner");
+        const close = host.querySelector(".cod5-bottom-popup-ad__close");
+        const outsideKnownContent = Array.from(host.children).some((child) => child !== inner && child !== close);
+        if (outsideKnownContent || (close && (!inner || !inner.contains(close)))) return null;
+        if (!(inner instanceof HTMLElement)) {
+          if (host.children.length > 0) return null;
+          inner = document.createElement("div");
+          inner.className = "cod5-bottom-popup-ad__inner";
+          host.appendChild(inner);
+        }
+        if (Array.from(inner.children).some((child) => child !== close)) return null;
+        host.classList.add("cod5-bottom-popup-ad");
+        host.setAttribute("data-cod5-popup-ad", "bottom-fixed");
+        host.setAttribute("role", "region");
+        host.setAttribute("aria-label", "Publicidade");
+        host.style.position = "fixed";
+        host.style.left = "50%";
+        host.style.bottom = "max(10px, env(safe-area-inset-bottom))";
+        host.style.transform = "translateX(-50%)";
+        host.style.zIndex = "9990";
+        host.style.width = "min(calc(100vw - 24px), 1120px)";
+        host.style.display = "block";
+        host.style.visibility = "visible";
+        host.style.opacity = "1";
+        host.style.pointerEvents = "none";
+        host.style.background = "transparent";
+        inner.style.position = "relative";
+        inner.style.display = "flex";
+        inner.style.justifyContent = "center";
+        inner.style.alignItems = "center";
+        inner.style.width = "100%";
+        inner.style.padding = "0 42px 0 0";
+        inner.style.pointerEvents = "auto";
+        const slot = document.createElement("div");
+        slot.className = "g g-9";
+        slot.setAttribute("data-adops-reconstructed-slot", "9");
+        slot.style.display = "block";
+        slot.style.visibility = "visible";
+        slot.style.opacity = "1";
+        slot.style.width = "100%";
+        slot.style.maxWidth = "970px";
+        slot.style.minHeight = "90px";
+        slot.style.pointerEvents = "auto";
+        inner.appendChild(slot);
+        const popupClose = close || document.createElement("button");
+        if (!close) {
+          popupClose.className = "cod5-bottom-popup-ad__close";
+          popupClose.type = "button";
+          popupClose.setAttribute("aria-label", "Fechar publicidade");
+          popupClose.textContent = "×";
+          popupClose.addEventListener("click", () => host.remove());
+        }
+        popupClose.style.position = "absolute";
+        popupClose.style.right = "0";
+        popupClose.style.top = "50%";
+        popupClose.style.display = "inline-flex";
+        popupClose.style.alignItems = "center";
+        popupClose.style.justifyContent = "center";
+        popupClose.style.width = "32px";
+        popupClose.style.height = "32px";
+        popupClose.style.border = "0";
+        popupClose.style.borderRadius = "999px";
+        popupClose.style.background = "rgba(16,18,24,.82)";
+        popupClose.style.color = "#fff";
+        popupClose.style.fontSize = "22px";
+        popupClose.style.fontWeight = "800";
+        popupClose.style.lineHeight = "1";
+        popupClose.style.transform = "translateY(-50%)";
+        popupClose.style.cursor = "pointer";
+        popupClose.style.pointerEvents = "auto";
+        if (!close) inner.appendChild(popupClose);
+        return slot;
       }
       host.style.position = "fixed";
       host.style.left = "50%";
@@ -2067,6 +4076,72 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       slot.style.minHeight = "90px";
       return slot;
     };
+    const resolveUniqueDesktopAnchor = () => {
+      const hosts = Array.from(document.querySelectorAll(missingSlotPlan.contextSelector));
+      if (hosts.length !== 1) return null;
+      const host = hosts[0];
+      if (!(host instanceof HTMLElement)) return null;
+      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1") {
+        if (host.id !== "block-8" || host.children.length !== 0) return null;
+        let knownCommentCount = 0;
+        for (const child of Array.from(host.childNodes)) {
+          if (child.nodeType === Node.TEXT_NODE && !String(child.nodeValue || "").trim()) continue;
+          if (child.nodeType === Node.COMMENT_NODE
+            && String(child.nodeValue || "").trim() === knownAdRotateUnavailableComment
+            && knownCommentCount === 0) {
+            knownCommentCount += 1;
+            continue;
+          }
+          return null;
+        }
+      }
+      const desktopHost = host.closest("div.hidden.lg\\:block");
+      if (!(desktopHost instanceof HTMLElement)) return null;
+      const style = window.getComputedStyle(desktopHost);
+      const rect = desktopHost.getBoundingClientRect();
+      const header = desktopHost.closest(".omt-header-top");
+      if (!(header instanceof HTMLElement)) return null;
+      const headerRect = header.getBoundingClientRect();
+      const semanticHeader = desktopHost.closest("header");
+      if (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+        && (document.querySelectorAll("header .omt-header-top").length !== 1 || document.querySelector("header .omt-header-top") !== header)) return null;
+      if (!header.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+        || (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+          && semanticHeader && !semanticHeader.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+        || (auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+          && !desktopHost.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+        || style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0
+        || rect.width < 48 || headerRect.height < 24 || headerRect.width < 48) return null;
+      return host;
+    };
+    const createConfiguredHomeSlot = () => {
+      if (!missingSlotPlan) return null;
+      const host = missingSlotPlan.requireUniqueVisibleAnchor === true
+        ? resolveUniqueDesktopAnchor()
+        : document.querySelector(missingSlotPlan.contextSelector);
+      if (!(host instanceof HTMLElement)) return null;
+      if (missingSlotPlan.requireUniqueVisibleAnchor === true && auditedCandidateReconstruction?.profile !== "roo-desktop-top-1") {
+        const walker = document.createTreeWalker(host, NodeFilter.SHOW_COMMENT);
+        let hasAdRotateUnavailableComment = false;
+        while (walker.nextNode()) {
+          if (String(walker.currentNode.nodeValue || "").trim() === knownAdRotateUnavailableComment) {
+            hasAdRotateUnavailableComment = true;
+            break;
+          }
+        }
+        if (!hasAdRotateUnavailableComment) return null;
+      }
+      const slot = document.createElement("div");
+      slot.className = missingSlotPlan.groupClass;
+      slot.setAttribute("data-adops-reconstructed-slot", String(missingSlotPlan.groupId));
+      slot.style.display = "block";
+      slot.style.visibility = "visible";
+      slot.style.opacity = "1";
+      slot.style.width = "100%";
+      slot.style.minHeight = "48px";
+      host.appendChild(slot);
+      return slot;
+    };
     const isUsableSlot = (node) => {
       if (!(node instanceof HTMLElement)) return false;
       const style = window.getComputedStyle(node);
@@ -2078,8 +4153,29 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
         rect.height >= 24;
     };
     const slots = Array.from(document.querySelectorAll(slotSelector || ".g.g-1"));
-    const slot = slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot();
-    if (!slot) return { applied: false, reason: "slot_missing" };
+    if (auditedCandidateReconstruction && slots.length !== 0) return { applied: false, reason: "candidate_slot_must_be_missing" };
+    if (missingSlotPlan?.requireUniqueVisibleAnchor === true && slots.length !== 0) {
+      const host = resolveUniqueDesktopAnchor();
+      const existing = slots[0];
+      const media = existing ? Array.from(existing.querySelectorAll("img,video,source,iframe")) : [];
+      const onlyKnownPlaceholder = media.length === 1 && media[0].tagName === "IMG" && (() => {
+        try {
+          const image = media[0];
+          const sources = [image.currentSrc, image.getAttribute("src"), image.getAttribute("data-src"), image.getAttribute("data-lazy-src")].filter(Boolean);
+          return !image.getAttribute("srcset") && !image.getAttribute("data-srcset") && !image.getAttribute("data-lazy-srcset")
+            && sources.length > 0 && sources.every((src) => new URL(src, location.href).hostname === "placehold.co");
+        } catch { return false; }
+      })();
+      if (slots.length !== 1 || !host?.contains(existing) || !isUsableSlot(existing) || !onlyKnownPlaceholder) {
+        return { applied: false, reason: "slot_conflict" };
+      }
+    }
+    const slot = auditedCandidateReconstruction
+      ? (auditedCandidateReconstruction.profile === "perrengue-popup-9" ? createMissingPopupSlot() : createConfiguredHomeSlot())
+      : (slots.find(isUsableSlot) || slots[0] || createMissingInternalSlot() || createMissingPopupSlot() || createConfiguredHomeSlot());
+    if (!slot) return { applied: false, reason: auditedCandidateReconstruction?.profile === "roo-desktop-top-1"
+      ? "roo_desktop_anchor_missing_or_ambiguous"
+      : missingSlotPlan?.requireUniqueVisibleAnchor === true ? "pnmt_desktop_anchor_missing_or_ambiguous" : "slot_missing" };
     const basename = String(targetBasename || targetUrl.split("/").pop() || "").toLowerCase();
     if (slot.querySelector("[data-adops-static-retro-ad='1']")) {
       return { applied: false, reason: "static_retro_ad_already_present" };
@@ -2158,7 +4254,7 @@ async function applyPerrengueStaticRetroAd(page, mapping, mediaUrl, mediaBasenam
       mediaWidth: mediaRect ? Math.round(mediaRect.width) : null,
       mediaHeight: mediaRect ? Math.round(mediaRect.height) : null,
     };
-  }, { mediaUrl: url, mediaBasename, slotSelector: mapping?.slotSelector || ".g.g-1" });
+  }, { mediaUrl: url, mediaBasename, slotSelector: mapping?.slotSelector || ".g.g-1", missingSlotPlan, auditedCandidateReconstruction: auditedCandidateReconstruction ? options.auditedCandidateReconstruction : null });
 }
 
 function parseIsoLikeDate(value) {
@@ -2191,7 +4287,8 @@ function parseIsoLikeDate(value) {
     return null;
   }
 
-  const parsed = new Date(raw);
+  const cod5IsoLocal = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)$/);
+  const parsed = new Date(cod5IsoLocal ? `${cod5IsoLocal[1]}-04:00` : raw);
   if (!Number.isNaN(parsed.getTime())) return parsed;
 
   const ptLong = raw.match(/\b(\d{1,2})\s+de\s+([a-zA-ZçÇãõáéíóúâêô]+)(?:\s+de)?\s+(\d{4})(?:.*?\b(\d{2}):(\d{2})(?::(\d{2}))?)?/i);
@@ -2253,6 +4350,22 @@ function evaluateContentTimeline(contentDateSamples, requestedCaptureAt) {
   };
 }
 
+function evaluateRelativeContentTimeline(contentRelativeTimeSamples, required) {
+  const relativeSamples = Array.isArray(contentRelativeTimeSamples)
+    ? contentRelativeTimeSamples.filter((value) => typeof value === "string" && value.trim()).slice(0, 10)
+    : [];
+  return {
+    ok: required !== true || relativeSamples.length === 0,
+    required: required === true,
+    relativeSamples,
+  };
+}
+
+function dateInCuiaba(value) {
+  const parsed = parseIsoLikeDate(value);
+  return parsed ? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba" }).format(parsed) : null;
+}
+
 function normalizeEditorialUrl(value) {
   try {
     const parsed = new URL(String(value || ""), "https://adops.invalid");
@@ -2262,12 +4375,112 @@ function normalizeEditorialUrl(value) {
   }
 }
 
+function buildVerifiedEditorialDateReplacements(expectedPosts, captureAt) {
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff || !Array.isArray(expectedPosts)) return {};
+  const grouped = new Map();
+  for (const post of expectedPosts) {
+    let sourceUrl;
+    try { sourceUrl = new URL(post?.url || post?.link); } catch { continue; }
+    if (sourceUrl.origin !== "https://portalnortemt.com") continue;
+    const path = normalizeEditorialUrl(sourceUrl.href);
+    const date = String(post?.date || "").trim();
+    const parsed = parseIsoLikeDate(date);
+    if (!path) continue;
+    const values = grouped.get(path) || [];
+    values.push({ date, parsed, id: Number(post?.id || 0) || null, sourceUrl: sourceUrl.href });
+    grouped.set(path, values);
+  }
+  const replacements = {};
+  for (const [path, values] of grouped) {
+    if (values.length !== 1) continue;
+    const value = values[0];
+    if (!value.parsed || value.parsed.getTime() > cutoff.getTime()) continue;
+    const match = value.date.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!match) continue;
+    replacements[path] = {
+      date: value.date,
+      label: `${match[3]}/${match[2]}/${match[1]} ${match[4]}:${match[5]}`,
+      postId: value.id,
+      sourceUrl: value.sourceUrl,
+      source: "wordpress_rest_verified",
+    };
+  }
+  return replacements;
+}
+
+function shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping) {
+  return mapping?.domain === "portalnortemt.com"
+    && (mapping?.page === "home" || mapping?.pageLabel === "Home");
+}
+
+async function normalizeVerifiedPnmtHeroRelativeDates(page, mapping, captureAt) {
+  if (!shouldNormalizeVerifiedPnmtHeroRelativeDates(mapping)) return { applied: 0, reason: "not_configured" };
+  const cutoff = parseIsoLikeDate(captureAt);
+  if (!cutoff) return { applied: 0, reason: "invalid_cutoff" };
+  const expectedPosts = await page.evaluate(async (cutoff) => {
+    try {
+      if (window.location.origin !== "https://portalnortemt.com") return [];
+      const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
+      endpoint.searchParams.set("per_page", "25");
+      endpoint.searchParams.set("before", cutoff);
+      endpoint.searchParams.set("orderby", "date");
+      endpoint.searchParams.set("order", "desc");
+      endpoint.searchParams.set("_fields", "id,date,link");
+      const response = await fetch(endpoint.toString(), { cache: "no-store", credentials: "same-origin" });
+      const rows = response.ok ? await response.json() : null;
+      return Array.isArray(rows) ? rows : [];
+    } catch {
+      return [];
+    }
+  }, cutoff.toISOString());
+  const replacements = buildVerifiedEditorialDateReplacements(expectedPosts, captureAt);
+  const applied = await page.evaluate((verifiedDates) => {
+    if (window.location.origin !== "https://portalnortemt.com") return [];
+    const normalizePath = (value) => {
+      try { return new URL(String(value || ""), window.location.href).pathname.replace(/\/+$/, "") || "/"; } catch { return ""; }
+    };
+    const appliedRows = [];
+    for (const card of Array.from(document.querySelectorAll("article.hero-post"))) {
+      const link = card.querySelector("a[href]");
+      if (!link || new URL(link.href, window.location.href).origin !== window.location.origin) continue;
+      const replacement = verifiedDates[normalizePath(link?.href)];
+      if (!replacement) continue;
+      const dateNodes = Array.from(card.querySelectorAll("span,time,[class*='date'],[class*='time']"))
+        .filter((node) => /^\s*(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\s*$/i.test(String(node.textContent || "")));
+      if (dateNodes.length !== 1) continue;
+      const node = dateNodes[0];
+      const original = String(node.textContent || "").trim();
+      node.setAttribute("data-adops-retro-original-relative-date", original);
+      node.setAttribute("data-adops-retro-date-source", replacement.source);
+      node.setAttribute("data-adops-retro-post-date", replacement.date);
+      if (replacement.postId) node.setAttribute("data-adops-retro-post-id", String(replacement.postId));
+      node.textContent = replacement.label;
+      card.setAttribute("data-adops-retro-post-date", replacement.date);
+      card.setAttribute("data-adops-retro-date-source", replacement.source);
+      appliedRows.push({
+        url: new URL(link.href, window.location.href).toString(),
+        postId: replacement.postId || null,
+        date: replacement.date,
+        originalRelativeText: original,
+        visibleLabel: replacement.label,
+        source: replacement.source,
+        sourceUrl: replacement.sourceUrl,
+      });
+    }
+    return appliedRows;
+  }, replacements);
+  return { applied: applied.length, replacements: applied, reason: applied.length ? null : "no_verified_hero_relative_date" };
+}
+
 function evaluateRetroContentProof(payload) {
   const requestedCaptureAt = payload.requestedCaptureAt || null;
   const editorialSamples = Array.isArray(payload.editorialSamples) ? payload.editorialSamples.slice(0, 25) : [];
   const expectedPosts = Array.isArray(payload.expectedPosts) ? payload.expectedPosts.slice(0, 25) : [];
   const minimumConfigured = Math.max(1, Math.min(25, Number(payload.minimumRequired || (payload.pageType === "article" ? 1 : 3))));
-  const minimumRequired = expectedPosts.length > 0 ? Math.min(minimumConfigured, expectedPosts.length) : minimumConfigured;
+  const minimumRequired = payload.strictMinimumRequired === true
+    ? Math.max(3, minimumConfigured)
+    : expectedPosts.length > 0 ? Math.min(minimumConfigured, expectedPosts.length) : minimumConfigured;
   const contentTimeline = evaluateContentTimeline(editorialSamples.map((item) => item.date).filter(Boolean), requestedCaptureAt);
   const expectedPaths = new Set(expectedPosts.map((item) => normalizeEditorialUrl(item.url || item.link)).filter(Boolean));
   const visiblePaths = new Set(editorialSamples.map((item) => normalizeEditorialUrl(item.url)).filter(Boolean));
@@ -2323,11 +4536,27 @@ function evaluateRetroCaptureGate(payload) {
     };
   }
   const issues = [];
-  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", requestedCaptureAt);
+  const reconstruction = payload.reconstruction && typeof payload.reconstruction === "object"
+    ? payload.reconstruction
+    : null;
+  const reconstructionAt = typeof reconstruction?.reconstructedAt === "string" &&
+    !Number.isNaN(new Date(reconstruction.reconstructedAt).getTime())
+    ? reconstruction.reconstructedAt
+    : null;
+  if (reconstruction && !reconstructionAt) {
+    issues.push({
+      code: "reconstruction_provenance_invalid",
+      detail: "reconstruction.reconstructedAt is missing or invalid",
+    });
+  }
+  const desktopExpectedAt = reconstruction?.provenanceVersion === 3 && reconstructionAt
+    ? formatCaptureAtForPreview(new Date(reconstructionAt))
+    : requestedCaptureAt;
+  const desktopMatches = pageTextMatchesRequestedCaptureAt(payload.systemDateTime || "", desktopExpectedAt);
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
-      detail: `desktop=${payload.systemDateTime || "n/a"}`,
+      detail: `desktop=${payload.systemDateTime || "n/a"} expected=${desktopExpectedAt}`,
     });
   }
   const pageReference = payload.pageDateObserved || payload.pageDateText || "";
@@ -2339,10 +4568,30 @@ function evaluateRetroCaptureGate(payload) {
     });
   }
   const contentTimeline = evaluateContentTimeline(payload.contentDateSamples, requestedCaptureAt);
+  const requestedContentDate = dateInCuiaba(requestedCaptureAt);
+  const targetDateMatches = Array.isArray(payload.contentDateSamples)
+    && payload.contentDateSamples.some((value) => dateInCuiaba(value) === requestedContentDate);
+  contentTimeline.targetDateMatches = targetDateMatches;
+  const relativeContentTimeline = evaluateRelativeContentTimeline(
+    payload.contentRelativeTimeSamples,
+    payload.requireNoRelativeEditorialDates,
+  );
   if (!contentTimeline.ok && (payload.requireRetroContentProof || contentTimeline.reason === "future_samples")) {
     issues.push({
       code: "content_time_mismatch",
       detail: `maxObserved=${contentTimeline.maxObserved || "n/a"} futureSamples=${contentTimeline.futureSamples.join(" | ") || "n/a"}`,
+    });
+  }
+  if (payload.requireAbsoluteEditorialDates === true && ["empty_samples", "unparseable_samples"].includes(contentTimeline.reason)) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      detail: `reason=${contentTimeline.reason}`,
+    });
+  }
+  if (payload.requireEditorialDateMatchTarget === true && !targetDateMatches) {
+    issues.push({
+      code: "editorial_date_target_mismatch",
+      detail: `targetDate=${requestedContentDate || "n/a"}`,
     });
   }
   if (payload.requireRetroContentProof && payload.retroContentProof?.status !== "approved") {
@@ -2352,6 +4601,12 @@ function evaluateRetroCaptureGate(payload) {
     } else {
       for (const issue of proofIssues) issues.push(issue);
     }
+  }
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      detail: `relativeSamples=${relativeContentTimeline.relativeSamples.join(" | ")}`,
+    });
   }
   if (payload.requireSlotVisibleInViewport && !payload.slotVisibility?.mostlyVisible) {
     issues.push({
@@ -2376,8 +4631,36 @@ function evaluateRetroCaptureGate(payload) {
     issues,
     codes: issues.map((item) => item.code),
     contentTimeline,
+    relativeContentTimeline,
     retroContentProof: payload.retroContentProof || null,
   };
+}
+
+function formatDesktopClock(date) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Cuiaba",
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function resolveDesktopFrameDateTime(fallback, reconstruction, requestedCaptureAt = null, capturedAt = null) {
+  if (!reconstruction && typeof capturedAt === "string") {
+    const actualCapture = new Date(capturedAt);
+    if (!Number.isNaN(actualCapture.getTime())) return formatDesktopClock(actualCapture);
+  }
+  if (reconstruction?.provenanceVersion === 4) {
+    const requestedAt = parseCaptureDate(requestedCaptureAt);
+    return requestedAt ? formatDesktopClock(requestedAt) : fallback;
+  }
+  if (reconstruction?.provenanceVersion !== 3 || typeof reconstruction.reconstructedAt !== "string") return fallback;
+  const reconstructedAt = new Date(reconstruction.reconstructedAt);
+  return Number.isNaN(reconstructedAt.getTime()) ? fallback : formatDesktopClock(reconstructedAt);
 }
 
 function sha256Buffer(buffer) {
@@ -2495,6 +4778,100 @@ function evaluateFinalPngSlotAuditResult(payload = {}) {
   };
 }
 
+function selectBestFinalPngCreativeIdentityAudit(audits = []) {
+  const candidates = (Array.isArray(audits) ? audits : [])
+    .filter((audit) => audit && typeof audit === "object")
+    .map((audit) => ({
+      ...audit,
+      referenceFrameIndex: Number.isFinite(Number(audit.referenceFrameIndex))
+        ? Number(audit.referenceFrameIndex)
+        : null,
+    }));
+  if (!candidates.length) return null;
+
+  const best = [...candidates].sort((left, right) => {
+    if (left.ok === true && right.ok !== true) return -1;
+    if (left.ok !== true && right.ok === true) return 1;
+    return Number(right.similarityScore ?? -1) - Number(left.similarityScore ?? -1);
+  })[0];
+
+  return {
+    ...best,
+    matchedReferenceFrameIndex: best.referenceFrameIndex,
+    referenceCandidates: candidates.map((candidate) => ({
+      ok: candidate.ok === true,
+      similarityScore: Number.isFinite(Number(candidate.similarityScore))
+        ? Number(candidate.similarityScore)
+        : null,
+      referenceFrameIndex: candidate.referenceFrameIndex,
+      issues: Array.isArray(candidate.issues) ? candidate.issues : [],
+    })),
+  };
+}
+
+function buildFinalPngCreativeReferenceFrames(frameSelection = null) {
+  if (!frameSelection || typeof frameSelection !== "object") return [];
+  const strongFrames = Array.isArray(frameSelection.gifFrameCandidates)
+    ? frameSelection.gifFrameCandidates.filter((frame) => frame?.strongCandidate === true && typeof frame?.pngPath === "string")
+    : [];
+  if (strongFrames.length) return strongFrames;
+
+  const explicitFallbackAllowed = frameSelection.captureOnly === true || frameSelection.frameSelectionDowngraded === true;
+  if (!explicitFallbackAllowed || typeof frameSelection.chosenPngPath !== "string") return [];
+  return [{
+    frameIndex: frameSelection.gifChosenFrameIndex,
+    pngPath: frameSelection.chosenPngPath,
+  }];
+}
+
+function measureFinalCreativeBoxInPage({ slotSelector, referenceDataUrl = null }) {
+  if (!referenceDataUrl) return { ok: false, reason: "final_reference_frame_missing" };
+  const slot = document.querySelector(slotSelector);
+  if (!(slot instanceof HTMLElement)) return { ok: false, reason: "final_media_slot_missing" };
+  const candidates = [...(slot instanceof HTMLImageElement ? [slot] : []), ...Array.from(slot.querySelectorAll("img"))].filter((node) => {
+    const style = window.getComputedStyle(node), rect = node.getBoundingClientRect();
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0 || rect.width <= 0 || rect.height <= 0) return false;
+    return node instanceof HTMLImageElement && node.getAttribute("src") === referenceDataUrl;
+  });
+  if (candidates.length !== 1) return { ok: false, reason: "final_identity_media_not_unique", count: candidates.length };
+  const node = candidates[0], rect = node.getBoundingClientRect(), style = window.getComputedStyle(node);
+  if (node instanceof HTMLImageElement && (!node.complete || node.naturalWidth <= 0 || node.naturalHeight <= 0)) return { ok: false, reason: "final_identity_media_not_loaded" };
+  // Use DOM geometry only: never search the screenshot for a favorable pixel crop.
+  const px = value => Number.parseFloat(value) || 0;
+  const leftInset = px(style.borderLeftWidth) + px(style.paddingLeft), rightInset = px(style.borderRightWidth) + px(style.paddingRight);
+  const topInset = px(style.borderTopWidth) + px(style.paddingTop), bottomInset = px(style.borderBottomWidth) + px(style.paddingBottom);
+  let left = rect.left + leftInset, top = rect.top + topInset, width = rect.width - leftInset - rightInset, height = rect.height - topInset - bottomInset;
+  if (style.objectFit === "contain" && node instanceof HTMLImageElement) {
+    // A reference overlay can contain letterboxing; compare only its geometrically painted content.
+    const ratio = Math.min(width / node.naturalWidth, height / node.naturalHeight);
+    const paintedWidth = node.naturalWidth * ratio, paintedHeight = node.naturalHeight * ratio;
+    if (!/^(50%|center) (50%|center)$/.test(String(style.objectPosition || "50% 50%"))) return { ok: false, reason: "final_media_object_position_unsupported" };
+    left += (width - paintedWidth) / 2; top += (height - paintedHeight) / 2; width = paintedWidth; height = paintedHeight;
+  }
+  if (!(width > 0 && height > 0)) return { ok: false, reason: "final_media_empty_box" };
+  const box = { left, top, width, height }, right = left + width, bottom = top + height;
+  let clip = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+    // Root overflow clips the viewport above, not a clientHeight box translated
+    // by document scroll. Intermediate clipping ancestors still apply normally.
+    if (parent === document.documentElement) continue;
+    const css = window.getComputedStyle(parent), r = parent.getBoundingClientRect();
+    if (/^(hidden|clip|auto|scroll)$/.test(css.overflowX)) { clip.left = Math.max(clip.left, r.left + parent.clientLeft); clip.right = Math.min(clip.right, r.left + parent.clientLeft + parent.clientWidth); }
+    if (/^(hidden|clip|auto|scroll)$/.test(css.overflowY)) { clip.top = Math.max(clip.top, r.top + parent.clientTop); clip.bottom = Math.min(clip.bottom, r.top + parent.clientTop + parent.clientHeight); }
+  }
+  if (left < clip.left - 0.5 || top < clip.top - 0.5 || right > clip.right + 0.5 || bottom > clip.bottom + 0.5) return { ok: false, reason: "final_identity_media_clipped", box, clip };
+  return { ok: true, box, source: "final_dom_reference_frame", referenceFrameMatched: true, viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY } };
+}
+
+function resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit, finalCreativeAudit = undefined) {
+  if (finalCreativeAudit !== undefined) return finalCreativeAudit?.ok === true ? finalCreativeAudit.box : null;
+  if (finalViewportTargetAudit?.box) return finalViewportTargetAudit.box;
+  if (Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]) {
+    return creativePlacementAudit.targetInsideBoxes[0];
+  }
+  return creativePlacementAudit?.slotBox || null;
+}
+
 function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMetadata, options = {}) {
   const chromeFrameHeight = Number(desktopFrameMetadata?.chromeFrameHeight ?? 0);
   const frameWidth = Number(desktopFrameMetadata?.frameTemplateSize?.width ?? 0);
@@ -2524,6 +4901,14 @@ function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMe
     width: Math.max(1, Math.round(slotWidth * pixelScale)),
     height: Math.max(1, Math.round(slotHeight * pixelScale)),
   };
+  const referenceCropBox = options.referenceIsViewport === true
+    ? {
+        left: cropBox.left,
+        top: Math.max(0, Math.round(slotTop * pixelScale)),
+        width: cropBox.width,
+        height: cropBox.height,
+      }
+    : null;
   if (frameWidth > 0 && cropBox.left >= frameWidth) {
     return evaluateFinalPngSlotAuditResult({
       finalProofStyle: options.finalProofStyle,
@@ -2534,7 +4919,7 @@ function auditFinalPngSlotPixels(finalPng, referencePng, slotBox, desktopFrameMe
     });
   }
 
-  const payload = Buffer.from(JSON.stringify({ finalPng, referencePng, cropBox }), "utf8").toString("base64");
+  const payload = Buffer.from(JSON.stringify({ finalPng, referencePng, cropBox, referenceCropBox }), "utf8").toString("base64");
   const py = `
 import base64, json, os
 from PIL import Image, ImageChops, ImageStat
@@ -2543,6 +4928,7 @@ payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
 final_path = payload["finalPng"]
 reference_path = payload["referencePng"]
 crop = payload["cropBox"]
+reference_crop = payload.get("referenceCropBox")
 if not os.path.exists(final_path) or not os.path.exists(reference_path):
     print(json.dumps({"similarityScore": None, "error": "missing_file"}))
     raise SystemExit(0)
@@ -2558,7 +4944,14 @@ if right <= left or bottom <= top:
     raise SystemExit(0)
 
 final_crop = final_img.crop((left, top, right, bottom))
-reference_ref = reference_img.resize(final_crop.size)
+if reference_crop:
+    ref_left = max(0, int(reference_crop["left"]))
+    ref_top = max(0, int(reference_crop["top"]))
+    ref_right = min(reference_img.size[0], ref_left + max(1, int(reference_crop["width"])))
+    ref_bottom = min(reference_img.size[1], ref_top + max(1, int(reference_crop["height"])))
+    reference_ref = reference_img.crop((ref_left, ref_top, ref_right, ref_bottom)).resize(final_crop.size)
+else:
+    reference_ref = reference_img.resize(final_crop.size)
 diff = ImageChops.difference(final_crop, reference_ref)
 stat = ImageStat.Stat(diff)
 mean = sum(stat.mean) / len(stat.mean)
@@ -2608,6 +5001,248 @@ print(json.dumps({
     cropSize: result.cropSize || null,
     error: result.error || null,
   };
+}
+
+async function auditNativeVideoProgress(page, adSelector) {
+  const session = await page.context().newCDPSession(page);
+  let videoObjectId = null;
+  let timelineObjectId = null;
+  try {
+    await session.send("DOM.enable");
+    const videoObject = await session.send("Runtime.evaluate", {
+      expression: `document.querySelector(${JSON.stringify(adSelector)})?.querySelector("video") || null`,
+      returnByValue: false,
+    });
+    videoObjectId = videoObject.result?.objectId;
+    if (!videoObjectId) {
+      return { version: 1, source: "chromium_ua_shadow_timeline", ok: false, reason: "video_not_found" };
+    }
+    const described = await session.send("DOM.describeNode", {
+      objectId: videoObjectId,
+      depth: -1,
+      pierce: true,
+    });
+    const nodeAttribute = (node, name) => {
+      const index = Array.isArray(node?.attributes) ? node.attributes.indexOf(name) : -1;
+      return index >= 0 ? node.attributes[index + 1] : null;
+    };
+    const findTimeline = (node) => {
+      if (nodeAttribute(node, "pseudo") === "-webkit-media-controls-timeline") return node;
+      for (const child of [...(node?.shadowRoots || []), ...(node?.children || []), ...(node?.childNodes || [])]) {
+        const found = findTimeline(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    const timelineNode = findTimeline(described.node);
+    const [videoState, overlayState] = await Promise.all([
+      page.locator(adSelector).locator("video").first().evaluate((video) => ({
+        controls: video.controls === true,
+        currentTime: Number(video.currentTime),
+        duration: Number(video.duration),
+        paused: video.paused === true,
+        videoBox: (() => {
+          const rect = video.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        })(),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      })),
+      page.locator(adSelector).evaluate((ad) => ({
+        artificialOverlayCount: ad.querySelectorAll("[data-adops-video-overlay='1']").length,
+      })),
+    ]);
+    if (!timelineNode?.backendNodeId) {
+      return {
+        version: 1,
+        source: "chromium_ua_shadow_timeline",
+        ok: false,
+        reason: "native_timeline_missing",
+        ...videoState,
+        ...overlayState,
+      };
+    }
+    const resolved = await session.send("DOM.resolveNode", { backendNodeId: timelineNode.backendNodeId });
+    timelineObjectId = resolved.object?.objectId || null;
+    const measured = await session.send("Runtime.callFunctionOn", {
+      objectId: timelineObjectId,
+      returnByValue: true,
+      functionDeclaration: `function () {
+        const rect = this.getBoundingClientRect();
+        const box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        const scrollX = window.scrollX || 0;
+        const scrollY = window.scrollY || 0;
+        let left = rect.left, top = rect.top, right = rect.right, bottom = rect.bottom;
+        let effectiveOpacity = 1, effectiveVisible = true;
+        let node = this;
+        while (node) {
+          if (node instanceof Element) {
+            const style = getComputedStyle(node);
+            const opacity = Number(style.opacity);
+            effectiveOpacity *= Number.isFinite(opacity) ? opacity : 0;
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || opacity <= 0) effectiveVisible = false;
+            if (node !== this && /(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+              const clip = node.getBoundingClientRect();
+              left = Math.max(left, clip.left); top = Math.max(top, clip.top);
+              right = Math.min(right, clip.right); bottom = Math.min(bottom, clip.bottom);
+            }
+            node = node.parentElement || node.getRootNode()?.host || null;
+          } else node = null;
+        }
+        const style = getComputedStyle(this);
+        const video = (() => {
+          let host = this;
+          while (host && !(host instanceof HTMLVideoElement)) host = host.parentElement || host.getRootNode()?.host || null;
+          return host;
+        })();
+        const videoRect = video?.getBoundingClientRect();
+        const insideVideoBounds = Boolean(videoRect && rect.width > 0 && rect.height > 0 &&
+          rect.left >= videoRect.left - 1 && rect.top >= videoRect.top - 1 &&
+          rect.right <= videoRect.right + 1 && rect.bottom <= videoRect.bottom + 1);
+        const insideViewport = rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 &&
+          rect.right <= innerWidth && rect.bottom <= innerHeight;
+        const visibleWidthRatio = Math.max(0, right - left) / Math.max(1, rect.width);
+        const visibleHeightRatio = Math.max(0, bottom - top) / Math.max(1, rect.height);
+        const visibleRatio = Math.min(visibleWidthRatio, visibleHeightRatio);
+        const effectiveBoxVisible = visibleWidthRatio >= 0.95 && visibleHeightRatio >= 0.95;
+        return {
+          tag: this.tagName,
+          type: this.getAttribute('type'),
+          value: Number(this.value),
+          max: Number(this.max),
+          ariaLabel: this.getAttribute('aria-label'),
+          box,
+          scrollX,
+          scrollY,
+          display: style.display,
+          visibility: style.visibility,
+          opacity: Number(style.opacity),
+          effectiveOpacity,
+          effectiveVisible: effectiveVisible && effectiveBoxVisible,
+          visibleWidthRatio: Number(visibleWidthRatio.toFixed(4)),
+          visibleHeightRatio: Number(visibleHeightRatio.toFixed(4)),
+          visibleRatio: Number(visibleRatio.toFixed(4)),
+          insideVideoBounds,
+          insideViewport,
+          disabled: this.disabled === true,
+        };
+      }`,
+    });
+    const timeline = measured.result?.value || {};
+    let occlusion = "unavailable";
+    try {
+      const hit = await session.send("DOM.getNodeForLocation", {
+        x: Math.round(timeline.box.x + timeline.box.width / 2 + timeline.scrollX),
+        y: Math.round(timeline.box.y + timeline.box.height / 2 + timeline.scrollY),
+        includeUserAgentShadowDOM: true,
+        ignorePointerEventsNone: false,
+      });
+      if (hit.backendNodeId === timelineNode.backendNodeId) {
+        occlusion = "clear";
+      } else {
+        const hitNode = await session.send("DOM.describeNode", { backendNodeId: hit.backendNodeId, depth: 0 });
+        occlusion = nodeAttribute(hitNode.node, "pseudo") ? "ua_other_target" : "page_element_target";
+      }
+    } catch {}
+    const valuesMatch = Number.isFinite(timeline.value) && Number.isFinite(timeline.max) &&
+      Number.isFinite(videoState.currentTime) && Number.isFinite(videoState.duration) &&
+      Math.abs(timeline.value - videoState.currentTime) <= 0.25 &&
+      Math.abs(timeline.max - videoState.duration) <= 0.25;
+    const ok = videoState.controls === true && videoState.paused === true && videoState.currentTime > 0.5 && videoState.duration > 0 &&
+      timeline.tag === "INPUT" && timeline.type === "range" && valuesMatch &&
+      timeline.effectiveVisible === true && timeline.effectiveOpacity > 0.01 &&
+      timeline.insideVideoBounds === true && timeline.insideViewport === true &&
+      timeline.disabled === false &&
+      occlusion === "clear" &&
+      overlayState.artificialOverlayCount === 0;
+    return {
+      version: 1,
+      source: "chromium_ua_shadow_timeline",
+      ok,
+      pseudo: nodeAttribute(timelineNode, "pseudo"),
+      ...timeline,
+      currentTime: videoState.currentTime,
+      duration: videoState.duration,
+      paused: videoState.paused,
+      controls: videoState.controls,
+      videoBox: videoState.videoBox,
+      viewport: videoState.viewport,
+      artificialOverlayCount: overlayState.artificialOverlayCount,
+      occlusion,
+      valuesMatch,
+    };
+  } catch (error) {
+    return {
+      version: 1,
+      source: "chromium_ua_shadow_timeline",
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    if (timelineObjectId) await session.send("Runtime.releaseObject", { objectId: timelineObjectId }).catch(() => {});
+    if (videoObjectId) await session.send("Runtime.releaseObject", { objectId: videoObjectId }).catch(() => {});
+    await session.detach().catch(() => {});
+  }
+}
+
+function auditFinalPngVideoProgress(finalPng, viewportPng, nativeProgressAudit, desktopFrameMetadata, options = {}) {
+  if (!nativeProgressAudit?.ok || !nativeProgressAudit.box) {
+    return { ok: false, issues: [{ code: "native_progress_unverified", detail: nativeProgressAudit?.reason || "native timeline audit failed" }] };
+  }
+  const configuredMinSimilarity = Number(options.minSimilarity ?? 0.82);
+  const minSimilarity = Math.max(0.82, Number.isFinite(configuredMinSimilarity) ? configuredMinSimilarity : 0.82);
+  const { x, y, width, height } = nativeProgressAudit.box;
+  const audit = auditFinalPngSlotPixels(
+    finalPng,
+    viewportPng,
+    { left: x, top: y, width, height },
+    desktopFrameMetadata,
+    {
+      finalProofStyle: options.finalProofStyle,
+      minSimilarity,
+      minContentStddev: Number(options.minContentStddev ?? 4),
+      comparedTo: "viewportPng_video_progress_roi",
+      referenceIsViewport: true,
+      viewportWidthCss: Number(options.viewportWidthCss ?? 0),
+    },
+  );
+  return { ...audit, source: "auditFinalPngSlotPixels_video_progress_roi", slotBox: { left: x, top: y, width, height } };
+}
+
+function auditFinalPngCreativeIdentityAgainstFrames(finalPng, referenceFrames, slotBox, desktopFrameMetadata, options = {}) {
+  const uniqueFrames = [];
+  const seenPaths = new Set();
+  for (const frame of Array.isArray(referenceFrames) ? referenceFrames : []) {
+    const pngPath = typeof frame?.pngPath === "string" ? frame.pngPath : null;
+    if (!pngPath || seenPaths.has(pngPath)) continue;
+    seenPaths.add(pngPath);
+    uniqueFrames.push(frame);
+  }
+  const missingFrames = uniqueFrames.filter((frame) => !existsSync(frame.pngPath));
+  if (missingFrames.length) {
+    return {
+      ok: false,
+      issues: [{
+        code: "final_png_creative_reference_missing",
+        detail: `Referência(s) forte(s) ausente(s): ${missingFrames.map((frame) => frame.frameIndex ?? "unknown").join(", ")}.`,
+      }],
+      similarityScore: null,
+      matchedReferenceFrameIndex: null,
+      referenceCandidates: uniqueFrames.map((frame) => ({
+        ok: false,
+        similarityScore: null,
+        referenceFrameIndex: Number.isFinite(Number(frame.frameIndex)) ? Number(frame.frameIndex) : null,
+        missing: !existsSync(frame.pngPath),
+        issues: !existsSync(frame.pngPath)
+          ? [{ code: "final_png_creative_reference_missing" }]
+          : [],
+      })),
+    };
+  }
+  const audits = uniqueFrames.map((frame) => ({
+    ...auditFinalPngSlotPixels(finalPng, frame.pngPath, slotBox, desktopFrameMetadata, options),
+    referenceFrameIndex: Number.isFinite(Number(frame.frameIndex)) ? Number(frame.frameIndex) : null,
+  }));
+  return selectBestFinalPngCreativeIdentityAudit(audits);
 }
 
 function auditFinalPngStickyHeaderPixels(finalPng, desktopFrameMetadata, options = {}) {
@@ -2931,6 +5566,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         inPopupRow: !!node.closest(".perrengue-popup-ads-row"),
         isStaticRetroAd: !!node.closest("[data-adops-static-retro-ad]"),
         isTopGroup: node.classList.contains("g-1"),
+        isLateralGroup: node.classList.contains("g-10"),
         isPopupGroup: node.classList.contains("g-9"),
       }))
       .filter((entry) => entry.inHeaderAdsRow || entry.inPopupRow || entry.isStaticRetroAd)
@@ -2953,14 +5589,15 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    if (beforeHeaderGroups.length > 1) {
+    if (beforeHeaderGroups.filter((entry) => entry.isTopGroup).length > 1 ||
+        beforeHeaderGroups.filter((entry) => entry.isLateralGroup).length > 1) {
       issues.push({
         code: "multiple_header_ad_groups_before_logo",
         detail: `groups=${beforeHeaderGroups.length}`,
       });
     }
 
-    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !entry.isTopGroup);
+    const invalidBeforeHeaderGroups = beforeHeaderGroups.filter((entry) => !entry.inHeaderAdsRow || !(entry.isTopGroup || entry.isLateralGroup));
     if (invalidBeforeHeaderGroups.length > 0) {
       issues.push({
         code: "invalid_ad_group_before_logo",
@@ -2968,8 +5605,8 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
       });
     }
 
-    const topGroup = document.querySelector("#header-ads-row .g.g-1");
-    if (topGroup instanceof HTMLElement) {
+    for (const topGroup of document.querySelectorAll("#header-ads-row .g.g-1, #header-ads-row .g.g-10")) {
+      if (!(topGroup instanceof HTMLElement)) continue;
       const visibleChildren = Array.from(topGroup.querySelectorAll(":scope > .g-dyn, :scope > .g-single"))
         .filter((node) => node instanceof HTMLElement && isVisible(node) && hasVisibleMedia(node));
       if (visibleChildren.length > 1) {
@@ -2998,6 +5635,7 @@ async function auditHeaderAdPolicy(page, mapping = {}) {
         box: entry.box,
         inHeaderAdsRow: entry.inHeaderAdsRow,
         isTopGroup: entry.isTopGroup,
+        isLateralGroup: entry.isLateralGroup,
         isPopupGroup: entry.isPopupGroup,
       })),
       popupRowsBeforeHeader: popupRowsBeforeHeader.map(toBox).filter(Boolean),
@@ -3107,6 +5745,9 @@ function determineProbableCause(payload) {
   if (errorCode === "placeholder_only") {
     return { probableCause: "placeholder_only", confidence: 97, nextAction: "O site exibiu placeholder/modelo. Revisar publicação ativa do anúncio antes de recapturar." };
   }
+  if (["critical_image_not_loaded", "critical_image_not_painted", "critical_background_not_loaded", "resource_request_failed", "readiness_timeout", "layout_not_stable", "final_viewport_changed"].includes(errorCode)) {
+    return { probableCause: "critical_content_not_ready", confidence: 96, nextAction: "Revisar a mídia crítica indicada no readinessAudit e recapturar somente depois que o frame final estiver carregado e pintado." };
+  }
   if (errorCode === "capture_legibility_failed" && Number(slot.nonBgRatio ?? 0) < 0.02) {
     return { probableCause: "slot_without_useful_content", confidence: 88, nextAction: "Aguardar um frame melhor ou revisar o criativo/slot porque o banner capturado ficou sem conteúdo útil." };
   }
@@ -3124,6 +5765,9 @@ function determineProbableCause(payload) {
 
 function detectErrorCode(error) {
   const message = String(error?.message || error || "");
+  for (const code of ["critical_image_not_loaded", "critical_image_not_painted", "critical_background_not_loaded", "resource_request_failed", "readiness_timeout", "layout_not_stable", "final_viewport_changed"]) {
+    if (message.includes(code)) return code;
+  }
   if (message.includes("placeholder")) return "placeholder_only";
   if (message.includes("capture_legibility_failed")) return "capture_legibility_failed";
   if (message.includes("capture_audit_failed")) return "capture_audit_failed";
@@ -3135,6 +5779,162 @@ function detectErrorCode(error) {
   return "capture_failed";
 }
 
+const FAVICON_CDN_HOSTS_BY_SITE = Object.freeze({
+  "afolhalivre.com": Object.freeze(["afolhalivre.nyc3.digitaloceanspaces.com"]),
+  "roonoticias.com": Object.freeze(["roonoticias.nyc3.digitaloceanspaces.com"]),
+  "perrenguematogrosso.com": Object.freeze(["cdn.perrenguematogrosso.com"]),
+  "portalnortemt.com": Object.freeze(["portalnortemt.nyc3.digitaloceanspaces.com"]),
+  "portalpantanalmt.com": Object.freeze(["portalpantanalmt.nyc3.digitaloceanspaces.com"]),
+});
+
+function resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname) {
+  const configured = String(configuredDomain || "").toLowerCase().replace(/\.$/, "");
+  const current = String(pageHostname || "").toLowerCase().replace(/\.$/, "");
+  if (!configured || (current !== configured && current !== `www.${configured}`)) return [];
+  return [...(FAVICON_CDN_HOSTS_BY_SITE[configured] || [])];
+}
+
+function isAllowedFaviconUrl(pageOrigin, url, allowedExternalHosts = []) {
+  try {
+    const page = new URL(pageOrigin);
+    const target = new URL(url, pageOrigin);
+    if (target.username || target.password) return false;
+    if (target.origin === page.origin) return target.protocol === "https:" || target.protocol === "http:";
+    return target.protocol === "https:" && target.port === "" && allowedExternalHosts.includes(target.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+async function captureObservedTabFavicon(page, configuredDomain = "", captureHeaders = null) {
+  const originalHeaders = captureHeaders && typeof captureHeaders === "object" && !Array.isArray(captureHeaders)
+    ? captureHeaders
+    : null;
+  const faviconHeaders = Object.fromEntries(Object.entries(originalHeaders || {})
+    .filter(([name]) => !["cache-control", "pragma"].includes(name.toLowerCase())));
+  try {
+    if (originalHeaders) await page.setExtraHTTPHeaders(faviconHeaders);
+    const pageHostname = new URL(page.url()).hostname;
+    const allowedExternalHosts = resolveAllowedExternalFaviconHosts(configuredDomain, pageHostname);
+    const observed = await page.evaluate(async (trustedExternalHosts) => {
+      const links = Array.from(document.querySelectorAll('link[rel]'));
+      const link = links.find((item) => /(?:^|\s)(?:shortcut\s+)?icon(?:\s|$)/i.test(item.rel || ""))
+        || links.find((item) => /icon/i.test(item.rel || ""));
+      if (!link?.href) return null;
+      const href = link.href;
+      const parsed = new URL(href, location.href);
+      const dataHref = parsed.protocol === "data:" && /^data:image\//i.test(href);
+      if (parsed.username || parsed.password) return null;
+      if (dataHref && href.length > 1400000) return null;
+      if (!dataHref && !(
+        parsed.origin === location.origin
+          ? parsed.protocol === "https:" || parsed.protocol === "http:"
+          : parsed.protocol === "https:" && parsed.port === "" && trustedExternalHosts.includes(parsed.hostname.toLowerCase())
+      )) return null;
+      let blob;
+      if (dataHref) {
+        const response = await fetch(href);
+        blob = await response.blob();
+      } else {
+        let response;
+        try {
+          response = await fetch(href, { credentials: "omit", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(3000) });
+        } catch (error) {
+          if (parsed.origin !== location.origin && error instanceof TypeError) {
+            return { nodeFetchFallback: true, href, pageOrigin: location.origin };
+          }
+          return null;
+        }
+        if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) return null;
+        const contentLength = Number(response.headers.get("content-length") || 0);
+        if (contentLength > 1024 * 1024) return null;
+        const reader = response.body?.getReader();
+        if (!reader) return null;
+        const chunks = [];
+        let total = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > 1024 * 1024) { await reader.cancel(); return null; }
+          chunks.push(value);
+        }
+        blob = new Blob(chunks, { type: response.headers.get("content-type") || "" });
+      }
+      if (!blob.type.startsWith("image/") || blob.size < 1 || blob.size > 1024 * 1024) return null;
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error("favicon_read_failed"));
+        reader.readAsDataURL(blob);
+      });
+      const sourceUrl = dataHref ? "page-declared-data-favicon" : `${parsed.origin}${parsed.pathname}`;
+      return { dataUrl, sourceUrl, source: "observed_page_icon_link" };
+    }, allowedExternalHosts);
+    let normalizedInput = observed;
+    if (observed?.nodeFetchFallback) {
+      const pageOrigin = observed.pageOrigin;
+      const fallbackUrl = new URL(observed.href, pageOrigin);
+      if (!isAllowedFaviconUrl(pageOrigin, fallbackUrl.href, allowedExternalHosts)
+          || fallbackUrl.origin === pageOrigin || fallbackUrl.protocol !== "https:"
+          || fallbackUrl.port !== "" || fallbackUrl.username || fallbackUrl.password) return null;
+      const response = await fetch(fallbackUrl.href, {
+        method: "GET",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) return null;
+      const contentLength = Number(response.headers.get("content-length") || 0);
+      if (contentLength > 1024 * 1024 || !response.body) return null;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > 1024 * 1024) { await reader.cancel(); return null; }
+        chunks.push(Buffer.from(value));
+      }
+      if (!total) return null;
+      const dataUrl = `data:${(response.headers.get("content-type") || "image/png").split(";")[0]};base64,${Buffer.concat(chunks).toString("base64")}`;
+      const parsed = new URL(fallbackUrl.href);
+      normalizedInput = { dataUrl, sourceUrl: `${parsed.origin}${parsed.pathname}`, source: "observed_page_icon_link" };
+    }
+    if (!normalizedInput?.dataUrl) return null;
+    return await page.evaluate(async (payload) => {
+      const blob = await (await fetch(payload.dataUrl)).blob();
+      if (!blob.type.startsWith("image/") || blob.size < 1 || blob.size > 1024 * 1024) return null;
+      const bitmap = await createImageBitmap(blob);
+      if (bitmap.width < 1 || bitmap.height < 1 || bitmap.width > 512 || bitmap.height > 512 || bitmap.width * bitmap.height > 262144) {
+        bitmap.close();
+        return null;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext("2d");
+      if (!context) { bitmap.close(); return null; }
+      const scale = Math.min(56 / bitmap.width, 56 / bitmap.height);
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      context.drawImage(bitmap, Math.round((64-width)/2), Math.round((64-height)/2), width, height);
+      bitmap.close();
+      const sourceUrl = payload.sourceUrl === "page-declared-data-favicon"
+        ? payload.sourceUrl
+        : `${new URL(payload.sourceUrl).origin}${new URL(payload.sourceUrl).pathname}`;
+      return { dataUrl: canvas.toDataURL("image/png"), sourceUrl, source: "observed_page_icon_link" };
+    }, normalizedInput);
+  } catch {
+    return null;
+  } finally {
+    if (originalHeaders) {
+      await page.setExtraHTTPHeaders(originalHeaders);
+    }
+  }
+}
+
 function composeDesktopProof(viewportPng, finalPng, opts) {
   const payload = Buffer.from(JSON.stringify({
     viewportPng,
@@ -3142,10 +5942,9 @@ function composeDesktopProof(viewportPng, finalPng, opts) {
     opts,
     frameKitDir: WINDOWS_FRAME_KIT_DIR,
     frameFontPath: WINDOWS_FRAME_FONT,
-    siteLogosDir: SITE_LOGOS_DIR,
   }), "utf8").toString("base64");
   const py = `
-import base64, json
+import base64, json, re, io, math
 from PIL import Image, ImageDraw, ImageFont
 
 payload = json.loads(base64.b64decode("${payload}").decode("utf-8"))
@@ -3154,22 +5953,26 @@ final_path = payload["finalPng"]
 opts = payload["opts"]
 frame_kit_dir = payload.get("frameKitDir")
 frame_font_path = payload.get("frameFontPath") or ""
-site_logos_dir = payload.get("siteLogosDir") or ""
 
 img = Image.open(viewport_path).convert("RGBA")
-trim_bottom = int(opts.get("viewportTrimBottomPx") or 0)
+requested_trim_bottom = int(opts.get("viewportTrimBottomPx") or 0)
+trim_bottom = requested_trim_bottom
+# DOM coordinates come from the same final viewport capture. Never trim the ad.
+protected_slot = opts.get("protectedSlotBox")
+if protected_slot is not None:
+    viewport_width_css = float((opts.get("scrollMetrics") or {}).get("viewportWidth") or 0)
+    slot_top = float(protected_slot.get("top", float("nan")))
+    slot_height = float(protected_slot.get("height", float("nan")))
+    if not all(math.isfinite(v) for v in [viewport_width_css, slot_top, slot_height]) or viewport_width_css <= 0 or slot_top < 0 or slot_height <= 0:
+        raise RuntimeError("desktop_frame_protected_slot_invalid")
+    protected_bottom_px = math.ceil((slot_top + slot_height) * img.size[0] / viewport_width_css)
+    trim_bottom = min(trim_bottom, max(0, img.size[1] - protected_bottom_px))
 if trim_bottom > 0 and trim_bottom < img.size[1]:
     img = img.crop((0, 0, img.size[0], img.size[1] - trim_bottom))
 w, h = img.size
 
-chrome_top_path = f"{frame_kit_dir}/chrome-top.png"
-taskbar_path = f"{frame_kit_dir}/taskbar.png"
 layout_path = f"{frame_kit_dir}/layout.json"
-for code, candidate in [
-    ("windows_frame_chrome_top_missing", chrome_top_path),
-    ("windows_frame_taskbar_missing", taskbar_path),
-    ("windows_frame_layout_missing", layout_path),
-]:
+for code, candidate in [("windows_frame_layout_missing", layout_path)]:
     try:
         open(candidate, "rb").close()
     except FileNotFoundError:
@@ -3184,12 +5987,29 @@ except FileNotFoundError:
 with open(layout_path, "r", encoding="utf-8") as handle:
     layout = json.load(handle)
 
-frame_theme = "windows11_chrome_real_template"
 frame_template_version = str(layout.get("version") or "unknown")
+frame_theme = str(layout.get("frameTheme") or "windows11_chrome_real_template")
 reference_w = int(layout.get("referenceWidth") or 1280)
 scale = w / reference_w
 chrome_h = max(1, int(round(float(layout.get("chromeTopHeight") or 0) * scale)))
 taskbar_h = max(1, int(round(float(layout.get("taskbarHeight") or 0) * scale)))
+
+# Pre-rendered source widths keep large outputs crisp on Pillow-only runners.
+asset_widths = sorted([int(x) for x in (layout.get("assetWidths") or [reference_w]) if int(x) >= w])
+if not asset_widths:
+    raise RuntimeError("windows_frame_asset_resolution_insufficient")
+asset_width = asset_widths[0] if asset_widths else reference_w
+suffix = "" if asset_width == reference_w else f"-{asset_width}"
+chrome_top_path = f"{frame_kit_dir}/chrome-top{suffix}.png"
+taskbar_path = f"{frame_kit_dir}/taskbar{suffix}.png"
+for code, candidate in [
+    ("windows_frame_chrome_top_missing", chrome_top_path),
+    ("windows_frame_taskbar_missing", taskbar_path),
+]:
+    try:
+        open(candidate, "rb").close()
+    except FileNotFoundError:
+        raise RuntimeError(f"{code}: {candidate}")
 
 chrome_top = Image.open(chrome_top_path).convert("RGBA").resize((w, chrome_h))
 taskbar = Image.open(taskbar_path).convert("RGBA").resize((w, taskbar_h))
@@ -3235,18 +6055,30 @@ def draw_dynamic_field(field_name, value):
     draw.rectangle([x0, y0, x1, y1], fill=clear)
     draw.text((x0 + pad_x, y0 + pad_y), text_fit(value, max(1, x1 - x0 - pad_x * 2), font), fill=fill, font=font)
 
-def find_site_logo(site_sigla):
-    slug = str(site_sigla or "").strip().lower()
-    if not slug or not site_logos_dir:
-        return None
-    for ext in ["png", "webp", "jpg", "jpeg"]:
-        candidate = f"{site_logos_dir}/{slug}.{ext}"
-        try:
-            open(candidate, "rb").close()
-            return candidate
-        except FileNotFoundError:
-            pass
-    return None
+def draw_two_line_datetime(field_name, value):
+    field = (layout.get("dynamicFields") or {}).get(field_name) or {}
+    if not field.get("rect"):
+        return
+    rendered = str(value or "")
+    match = re.search(r"(\\d{2}/\\d{2}/\\d{4}).*?(\\d{2}:\\d{2})", rendered)
+    if match:
+        date_part, time_part = match.group(1), match.group(2)
+    else:
+        time_part, date_part = "", rendered
+    x0, y0, x1, y1 = scaled_rect(field["rect"], chrome_h + h)
+    draw.rectangle([x0, y0, x1, y1], fill=tuple(field.get("clearFill") or [239,245,253,255]))
+    font_size = max(8, int(round(float(field.get("fontSize") or 11) * scale)))
+    font = ImageFont.truetype(frame_font_path, font_size)
+    fill = tuple(field.get("fill") or [28,32,38,255])
+    for key, text in [("timeLineRect", time_part), ("dateLineRect", date_part)]:
+        rect = field.get(key)
+        if not rect:
+            continue
+        rx0, ry0, rx1, ry1 = scaled_rect(rect, chrome_h + h)
+        bbox = draw.textbbox((0,0), text, font=font)
+        tw = bbox[2]-bbox[0]
+        th = bbox[3]-bbox[1]
+        draw.text((rx1-tw-int(4*scale), ry0+max(0,(ry1-ry0-th)//2)-bbox[1]), text, fill=fill, font=font)
 
 def draw_tab_identity():
     surface_field = (layout.get("dynamicFields") or {}).get("tabSurface") or {}
@@ -3271,10 +6103,11 @@ def draw_tab_identity():
         ix0, iy0, ix1, iy1 = scaled_rect(icon_field.get("rect"))
         clear = tuple(icon_field.get("clearFill") or [255, 255, 255, 255])
         draw.rectangle([ix0, iy0, ix1, iy1], fill=clear)
-        logo_path = find_site_logo(site_sigla)
-        if logo_path:
+        favicon_data_url = opts.get("tabIconDataUrl") or ""
+        if favicon_data_url.startswith("data:image/png;base64,"):
             try:
-                logo = Image.open(logo_path).convert("RGBA")
+                favicon_bytes = base64.b64decode(favicon_data_url.split(",",1)[1])
+                logo = Image.open(io.BytesIO(favicon_bytes)).convert("RGBA")
                 logo.thumbnail((max(1, ix1 - ix0), max(1, iy1 - iy0)))
                 lx = ix0 + max(0, int(((ix1 - ix0) - logo.size[0]) / 2))
                 ly = iy0 + max(0, int(((iy1 - iy0) - logo.size[1]) / 2))
@@ -3285,14 +6118,11 @@ def draw_tab_identity():
         if not icon_rendered:
             icon_fallback = True
             icon_rendered = True
-            fill = tuple(icon_field.get("fallbackFill") or [66, 133, 244, 255])
-            text_fill = tuple(icon_field.get("fallbackTextFill") or [255, 255, 255, 255])
-            font_size = max(8, int(round(float(icon_field.get("fontSize") or 11) * scale)))
-            font = ImageFont.truetype(frame_font_path, font_size)
-            draw.rounded_rectangle([ix0, iy0, ix1, iy1], radius=max(3, int((ix1 - ix0) / 5)), fill=fill)
-            initial = str(site_sigla or tab_title or "?").strip()[:1].upper() or "?"
-            bbox = draw.textbbox((0, 0), initial, font=font)
-            draw.text((ix0 + ((ix1 - ix0) - (bbox[2] - bbox[0])) / 2, iy0 + ((iy1 - iy0) - (bbox[3] - bbox[1])) / 2 - 1), initial, fill=text_fill, font=font)
+            center = ((ix0+ix1)//2,(iy0+iy1)//2)
+            radius = max(3,(ix1-ix0)//2-2)
+            draw.ellipse((center[0]-radius,center[1]-radius,center[0]+radius,center[1]+radius), outline=(104,112,124,255), width=max(1,int(round(scale))))
+            draw.arc((center[0]-radius//2,center[1]-radius,center[0]+radius//2,center[1]+radius), 75, 285, fill=(104,112,124,255), width=max(1,int(round(scale))))
+            draw.arc((center[0]-radius,center[1]-radius//2,center[0]+radius,center[1]+radius//2), 0, 180, fill=(104,112,124,255), width=max(1,int(round(scale))))
 
     if title_field.get("rect"):
         tx0, ty0, tx1, ty1 = scaled_rect(title_field.get("rect"))
@@ -3305,6 +6135,13 @@ def draw_tab_identity():
         draw.rectangle([tx0, ty0, tx1, ty1], fill=clear)
         draw.text((tx0 + pad_x, ty0 + pad_y), text_fit(tab_title, max(1, tx1 - tx0 - pad_x * 2), font), fill=fill, font=font)
 
+    # Redraw the active-tab close control after dynamic title/favicon overlays.
+    cx, cy = int(round(307*scale)), int(round(20*scale))
+    d = max(3, int(round(3*scale)))
+    line_color = (105,112,123,255)
+    draw.line((cx-d,cy-d,cx+d,cy+d), fill=line_color, width=max(1,int(round(scale))))
+    draw.line((cx+d,cy-d,cx-d,cy+d), fill=line_color, width=max(1,int(round(scale))))
+
     return {
         "tabTitleRendered": title_rendered,
         "tabIconRendered": icon_rendered,
@@ -3316,7 +6153,10 @@ date_text = opts.get("systemDateTime", "")
 tab_identity = draw_tab_identity()
 
 draw_dynamic_field("addressText", opts.get("addressText", opts.get("hostLabel", "")))
-draw_dynamic_field("systemDateTimeInline", date_text)
+if (layout.get("dynamicFields") or {}).get("systemDateTime", {}).get("mode") == "two-line-date-time":
+    draw_two_line_datetime("systemDateTime", date_text)
+else:
+    draw_dynamic_field("systemDateTimeInline", date_text)
 
 scroll_metrics = opts.get("scrollMetrics") or {}
 try:
@@ -3386,14 +6226,19 @@ print(json.dumps({
     "frameTemplateVersion": frame_template_version,
     "frameTemplateSize": {"width": w, "chromeTopHeight": chrome_h, "taskbarHeight": taskbar_h},
     "frameStrictAssetsOk": True,
-    "dynamicFields": ["addressText", "tabSurface", "tabTitle", "tabIcon", "systemDateTimeInline"],
+    "dynamicFields": ["addressText", "tabSurface", "tabTitle", "tabIcon", "systemDateTime"],
     "chromeTopTheme": "light",
     "tabSurfaceRendered": bool(tab_identity.get("tabSurfaceRendered")),
     "tabTitleRendered": bool(tab_identity.get("tabTitleRendered")),
     "tabIconRendered": bool(tab_identity.get("tabIconRendered")),
     "tabIconFallback": bool(tab_identity.get("tabIconFallback")),
+    "tabIconSource": opts.get("tabIconSource") or ("generic_fallback" if tab_identity.get("tabIconFallback") else "unknown"),
+    "tabIconSourceUrl": opts.get("tabIconSourceUrl") or None,
     "chromeFrameHeight": chrome_h,
     "taskbarHeight": taskbar_h,
+    "viewportTrimBottomPx": trim_bottom,
+    "requestedViewportTrimBottomPx": requested_trim_bottom,
+    "viewportTrimLimitedBySlot": trim_bottom != requested_trim_bottom,
     "scrollbarRendered": scrollbar_rendered,
     "scrollbarThumbTop": scrollbar_thumb_top,
     "scrollbarThumbHeight": scrollbar_thumb_height,
@@ -3414,6 +6259,8 @@ print(json.dumps({
       tabTitleRendered: null,
       tabIconRendered: null,
       tabIconFallback: null,
+      tabIconSource: null,
+      tabIconSourceUrl: null,
       chromeFrameHeight: null,
       taskbarHeight: null,
       scrollbarRendered: null,
@@ -3608,7 +6455,24 @@ async function captureStableSlotFrame(page, selector, outputPath, options = {}) 
     const samplePath = index === sampleCount - 1
       ? outputPath
       : outputPath.replace(/\.png$/i, `-sample-${String(index + 1).padStart(2, "0")}.png`);
-    await page.locator(selector).screenshot({ path: samplePath });
+    const locator = page.locator(selector).first();
+    let captured = false;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await forceMatchedAdVisible(page);
+      try {
+        await locator.waitFor({ state: "visible", timeout: 4000 });
+        await locator.screenshot({ path: samplePath });
+        captured = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) await page.waitForTimeout(250);
+      }
+    }
+    if (!captured) {
+      throw new Error(`slot_frame_not_visible: selector=${selector}; ${lastError instanceof Error ? lastError.message : String(lastError || "unknown")}`);
+    }
     samplePaths.push(samplePath);
     if (index < sampleCount - 1) {
       await page.waitForTimeout(sampleIntervalMs);
@@ -4184,9 +7048,23 @@ function compactGifFrameCandidates(candidates, chosenIndex, maxItems = 36) {
 
 function compactMetadataForPersistence(metadata) {
   if (!metadata || typeof metadata !== "object") return metadata;
+  const readinessAudit = metadata.readinessAudit && typeof metadata.readinessAudit === "object"
+    ? metadata.readinessAudit
+    : null;
+  const compactPixelAudit = (audit) => audit && typeof audit === "object"
+    ? {
+        ok: audit.ok === true,
+        pixelScale: audit.pixelScale ?? null,
+        failedElements: Array.isArray(audit.elements)
+          ? audit.elements.filter((item) => item?.painted !== true).slice(0, 8)
+          : [],
+        error: audit.error || null,
+      }
+    : null;
   return {
     ...metadata,
     contentDateSamples: Array.isArray(metadata.contentDateSamples) ? metadata.contentDateSamples.slice(0, 25) : [],
+    contentRelativeTimeSamples: Array.isArray(metadata.contentRelativeTimeSamples) ? metadata.contentRelativeTimeSamples.slice(0, 10) : [],
     editorialSamples: Array.isArray(metadata.editorialSamples) ? metadata.editorialSamples.slice(0, 25) : [],
     dynamicFields: [],
     gifFrameCandidates: [],
@@ -4200,17 +7078,31 @@ function compactMetadataForPersistence(metadata) {
           domFrameSamples: [],
         }
       : metadata.visualAudit,
+    readinessAudit: readinessAudit
+      ? {
+          ...readinessAudit,
+          elements: [],
+          ignoredLoadedResourceFailures: Array.isArray(readinessAudit.ignoredLoadedResourceFailures)
+            ? readinessAudit.ignoredLoadedResourceFailures.slice(0, 8)
+            : [],
+          pixelAudit: compactPixelAudit(readinessAudit.pixelAudit),
+          finalPixelAudit: compactPixelAudit(readinessAudit.finalPixelAudit),
+        }
+      : readinessAudit,
   };
 }
 
-async function collectRetroContentEvidence(page, mapping, captureAt, retroPreview) {
+async function collectRetroContentEvidence(page, mapping, captureAt, retroPreview, {
+  strictMinimumRequired = false,
+  allowLiveArticleEvidence = false,
+} = {}) {
   const configuredCardSelectors = Array.isArray(mapping.auditConfig?.retroContentCardSelectors)
     ? mapping.auditConfig.retroContentCardSelectors
     : [];
   const configuredDateSelectors = Array.isArray(mapping.auditConfig?.retroContentDateSelectors)
     ? mapping.auditConfig.retroContentDateSelectors
     : [];
-  const collected = await page.evaluate(async ({ captureAt: cutoff, configuredCardSelectors, configuredDateSelectors, pageType }) => {
+  const collected = await page.evaluate(async ({ captureAt: cutoff, configuredCardSelectors, configuredDateSelectors, pageType, allowLiveArticleEvidence, configuredDomain }) => {
     const isVisible = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const rect = element.getBoundingClientRect();
@@ -4240,6 +7132,17 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
       ".meta-date",
       "time",
     ]));
+    // Some themes render YYYY/MM/DD immediately before an HH:MM sibling.
+    // Normalize the whole year-first date before the legacy DD/MM/YYYY regex
+    // can mistake the suffix of 2026/10/2902:00 for 26/10/2902.
+    const normalizeYearFirstEditorialDate = (value) => String(value || "").replace(
+      /(?<!\d)(\d{4})\/(\d{2})\/(\d{2})(?=$|\D|\d{2}:\d{2})/g,
+      (full, year, month, day) => {
+        const check = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+        if (check.getUTCFullYear() !== Number(year) || check.getUTCMonth() + 1 !== Number(month) || check.getUTCDate() !== Number(day)) return full;
+        return `${year}-${month}-${day} `;
+      },
+    );
     const readDate = (card) => {
       for (const selector of dateSelectors) {
         let nodes = [];
@@ -4252,13 +7155,13 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
             node.getAttribute?.("data-date"),
             node.textContent,
           ];
-          const value = values.map((item) => String(item || "").trim()).find((item) => /(\d{4}-\d{2}-\d{2})|(\d{2}\/\d{2}\/\d{4})|(\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(\s+de)?\s+\d{4})/i.test(item));
+          const value = values.map((item) => normalizeYearFirstEditorialDate(item).trim()).find((item) => /(?<!\d)(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})(?!\d)|(\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(\s+de)?\s+\d{4})/i.test(item));
           if (value) return value;
         }
       }
       if (pageType !== "article") {
-        const cardText = String(card.textContent || "").replace(/\s+/g, " ").trim();
-        const textualDate = cardText.match(/(?:\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?|\d{2}\/\d{2}\/\d{4}(?:\s+(?:às\s+)?\d{2}:\d{2})?|\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(?:\s+de)?\s+\d{4}(?:\s+(?:às\s+)?\d{2}:\d{2})?)/i);
+        const cardText = normalizeYearFirstEditorialDate(card.textContent).replace(/\s+/g, " ").trim();
+        const textualDate = cardText.match(/(?<!\d)(?:\d{4}-\d{2}-\d{2}(?!\d)(?:[T\s]\d{2}:\d{2}(?::\d{2})?)?|\d{2}\/\d{2}\/\d{4}(?!\d)(?:\s+(?:às\s+)?\d{2}:\d{2})?|\d{1,2}\s+de\s+[a-zA-ZçÇãõáéíóúâêô]+(?:\s+de)?\s+\d{4}(?:\s+(?:às\s+)?\d{2}:\d{2})?)/i);
         if (textualDate) return textualDate[0];
       }
       return null;
@@ -4276,6 +7179,7 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
           "[class*='ultima'] li",
         ]));
     const samples = [];
+    const relativeTimeSamples = [];
     const seen = new Set();
     for (const selector of cardSelectors) {
       let cards = [];
@@ -4287,6 +7191,16 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
         const url = new URL(link.href, window.location.href).toString();
         const key = new URL(url).pathname.replace(/\/+$/, "") || "/";
         if (seen.has(key)) continue;
+        // Audit publication timestamps, not durations mentioned in headlines or excerpts.
+        for (const dateSelector of dateSelectors) {
+          let dateNodes = [];
+          try { dateNodes = card.matches(dateSelector) ? [card] : Array.from(card.querySelectorAll(dateSelector)); } catch { continue; }
+          for (const dateNode of dateNodes) {
+            if (dateNode.querySelector?.("h1,h2,h3,h4,.entry-title,article")) continue;
+            const relativeTime = String(dateNode.textContent || "").replace(/\s+/g, " ").match(/\b(?:h[aá]|faz)\s+\d+\s+(?:minutos?|horas?|dias?|semanas?|mes(?:es)?|anos?)\b/i)?.[0] || null;
+            if (relativeTime && !relativeTimeSamples.includes(relativeTime)) relativeTimeSamples.push(relativeTime);
+          }
+        }
         const date = readDate(card);
         if (!date) continue;
         const titleNode = card.querySelector("h1,h2,h3,h4,.entry-title,[class*='title']");
@@ -4298,36 +7212,165 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
       if (samples.length >= 25) break;
     }
 
+    let liveArticleEvidence = false;
+    const signedMarker = document.querySelector('meta[name="cod5-adops-retro-preview"][content="active"]');
+    const signedPrimaryArticle = configuredDomain === "portalnortemt.com" && Boolean(cutoff) && Boolean(signedMarker)
+      && Number.isFinite(Date.parse(cutoff))
+      && Date.parse(signedMarker.getAttribute("data-cutoff") || "") === Date.parse(cutoff);
+    if ((allowLiveArticleEvidence === true || signedPrimaryArticle) && pageType === "article" && samples.length === 0) {
+      const normalizeArticleUrl = (value) => {
+        try {
+          const url = new URL(value, window.location.href);
+          if (!new Set(["http:", "https:"]).has(url.protocol) || url.username || url.password) return null;
+          return { url, key: `${url.origin}${url.pathname.replace(/\/+$/, "") || "/"}` };
+        } catch {
+          return null;
+        }
+      };
+      const current = normalizeArticleUrl(window.location.href);
+      const canonicalNodes = Array.from(document.querySelectorAll('link[rel~="canonical"]'));
+      const canonical = canonicalNodes.length === 1
+        ? normalizeArticleUrl(canonicalNodes[0].getAttribute("href") || "")
+        : null;
+      const hostMatches = current && String(current.url.hostname || "").toLowerCase() === String(configuredDomain || "").toLowerCase();
+      const canonicalMatches = canonicalNodes.length === 0 || (canonical && current && canonical.key === current.key);
+      const topLevelArticles = Array.from(document.querySelectorAll("main article"))
+        .filter((article, index, all) => all.indexOf(article) === index)
+        .filter((article) => !signedPrimaryArticle || article.querySelector("h1"))
+        .filter((article) => isVisible(article)
+          && !article.parentElement?.closest("article")
+          && !article.closest("aside, [class*='sidebar']")
+          && !excluded(article));
+      const article = topLevelArticles.length === 1 ? topLevelArticles[0] : null;
+      const articleTitles = article
+        ? Array.from(article.querySelectorAll("h1")).filter(isVisible)
+        : [];
+      const visibleDocumentTitles = Array.from(document.querySelectorAll("h1")).filter(isVisible);
+      const titleNode = articleTitles.length === 1 && visibleDocumentTitles.length === 1 && visibleDocumentTitles[0] === articleTitles[0]
+        ? articleTitles[0]
+        : null;
+      const title = String(titleNode?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 240);
+      const normalizeTitle = (value) => String(value || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("pt-BR");
+      const articleDateTimes = article
+        ? Array.from(article.querySelectorAll("time[datetime]"))
+          .filter(isVisible)
+          .filter((node) => node.closest("article") === article)
+          .filter((node) => !node.closest(signedPrimaryArticle
+            ? "aside, [class*='sidebar']:not(.cod5-content-sidebar-layout)"
+            : "aside, [class*='sidebar']"))
+          .filter((node) => !node.closest('[itemprop="dateModified"], [class*="modified"], [class*="updated"], [data-date-modified]'))
+        : [];
+      const publicationMarkedDateTimes = articleDateTimes.filter((node) => /publicad[oa]|datePublished|(?:^|\s)published(?:\s|$)/i.test([
+            node.textContent,
+            node.getAttribute("aria-label"),
+            node.getAttribute("itemprop"),
+            node.className,
+            node.parentElement?.className,
+          ].filter(Boolean).join(" ")));
+      const explicitInstant = (value) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(String(value || ""));
+      let structuredArticleObjects = [];
+      for (const script of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
+        try {
+          const parsed = JSON.parse(script.textContent || "null");
+          const visit = (value) => {
+            if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+            if (!value || typeof value !== "object") return;
+            if (Array.isArray(value["@graph"])) visit(value["@graph"]);
+            const types = Array.isArray(value["@type"]) ? value["@type"] : [value["@type"]];
+            if (types.some((type) => /^(Article|NewsArticle|BlogPosting|ReportageNewsArticle)$/i.test(String(type || "")))) {
+              structuredArticleObjects.push(value);
+            }
+          };
+          visit(parsed);
+        } catch {}
+      }
+      const articleJsonLdUrl = (item) => {
+        const main = item.mainEntityOfPage;
+        const mainUrl = typeof main === "string" ? main : main?.["@id"] || main?.url;
+        return item.url || mainUrl || item["@id"] || "";
+      };
+      const matchingStructuredArticles = current
+        ? structuredArticleObjects.filter((item) => normalizeArticleUrl(articleJsonLdUrl(item))?.key === current.key)
+        : [];
+      const hasMatchingArticleJsonLd = structuredArticleObjects.length === 1 && matchingStructuredArticles.length === 1;
+      const jsonLdDate = hasMatchingArticleJsonLd ? String(matchingStructuredArticles[0].datePublished || "").trim() : "";
+      const jsonLdHeadline = hasMatchingArticleJsonLd ? String(matchingStructuredArticles[0].headline || "").replace(/\s+/g, " ").trim() : "";
+      const explicitJsonLdInstant = explicitInstant(jsonLdDate);
+      const parsedJsonLdDate = explicitJsonLdInstant ? new Date(jsonLdDate) : null;
+      const correlatedJsonLd = hasMatchingArticleJsonLd
+        && Boolean(title)
+        && Boolean(jsonLdHeadline)
+        && normalizeTitle(jsonLdHeadline) === normalizeTitle(title)
+        && !Number.isNaN(parsedJsonLdDate?.getTime());
+      const candidateDateTimes = publicationMarkedDateTimes.length > 0
+        ? publicationMarkedDateTimes
+        : articleDateTimes.length === 1 && correlatedJsonLd
+          ? articleDateTimes
+          : [];
+      const articleDate = candidateDateTimes.length === 1 ? String(candidateDateTimes[0].getAttribute("datetime") || "").trim() : "";
+      const explicitArticleInstant = explicitInstant(articleDate);
+      const parsedArticleDate = explicitArticleInstant ? new Date(articleDate) : null;
+      const visibleArticleDate = candidateDateTimes.length === 1
+        ? String(candidateDateTimes[0].textContent || "").match(/\b\d{2}\/\d{2}\/\d{4}\b/)?.[0] || null
+        : null;
+      const articleDateParts = parsedArticleDate && !Number.isNaN(parsedArticleDate.getTime())
+        ? new Intl.DateTimeFormat("en-GB", {
+            timeZone: "America/Cuiaba",
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+          }).formatToParts(parsedArticleDate)
+        : [];
+      const articleDatePart = (type) => articleDateParts.find((part) => part.type === type)?.value || "";
+      const expectedVisibleArticleDate = `${articleDatePart("day")}/${articleDatePart("month")}/${articleDatePart("year")}`;
+      const visibleDateMatchesInstant = !visibleArticleDate || visibleArticleDate === expectedVisibleArticleDate;
+      const jsonLdValid = structuredArticleObjects.length === 0
+        || (correlatedJsonLd && explicitArticleInstant
+          && parsedArticleDate?.getTime() === parsedJsonLdDate?.getTime());
+      if (current && current.url.protocol === "https:" && hostMatches && canonicalMatches && article && title && explicitArticleInstant
+        && !Number.isNaN(parsedArticleDate?.getTime()) && visibleDateMatchesInstant && jsonLdValid) {
+        samples.push({ title, url: current.url.href, date: articleDate,
+          source: signedPrimaryArticle ? "signed_preview_primary_article" : "live_article_visible_published_time" });
+        // Signed historical observations still require the REST match, cutoff,
+        // manifest and retro-content gates below. They are never live proof.
+        liveArticleEvidence = !signedPrimaryArticle;
+      }
+    }
+
     let expectedPosts = [];
     let expectedSource = null;
-    try {
-      const before = new Date(cutoff).toISOString();
-      const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
-      endpoint.searchParams.set("per_page", "25");
-      endpoint.searchParams.set("before", before);
-      endpoint.searchParams.set("orderby", "date");
-      endpoint.searchParams.set("order", "desc");
-      endpoint.searchParams.set("_fields", "id,date,link,title");
-      const response = await fetch(endpoint.toString(), { cache: "no-store", credentials: "same-origin" });
-      if (response.ok) {
-        const rows = await response.json();
-        if (Array.isArray(rows)) {
-          expectedPosts = rows.map((row) => ({
-            id: Number(row.id),
-            date: String(row.date || ""),
-            url: String(row.link || ""),
-            title: String(row.title?.rendered || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240),
-          })).filter((row) => row.id > 0 && row.url && row.date);
-          expectedSource = "wordpress_rest";
+    if (!liveArticleEvidence && !(allowLiveArticleEvidence === true && !cutoff)) {
+      try {
+        const before = new Date(cutoff).toISOString();
+        const endpoint = new URL("/wp-json/wp/v2/posts", window.location.origin);
+        endpoint.searchParams.set("per_page", "25");
+        endpoint.searchParams.set("before", before);
+        endpoint.searchParams.set("orderby", "date");
+        endpoint.searchParams.set("order", "desc");
+        endpoint.searchParams.set("_fields", "id,date,link,title");
+        const response = await fetch(endpoint.toString(), { cache: "no-store", credentials: "same-origin" });
+        if (response.ok) {
+          const rows = await response.json();
+          if (Array.isArray(rows)) {
+            expectedPosts = rows.map((row) => ({
+              id: Number(row.id),
+              date: String(row.date || ""),
+              url: String(row.link || ""),
+              title: String(row.title?.rendered || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240),
+            })).filter((row) => row.id > 0 && row.url && row.date);
+            expectedSource = "wordpress_rest";
+          }
         }
+      } catch {
+        expectedPosts = [];
       }
-    } catch {
-      expectedPosts = [];
     }
 
     const marker = document.querySelector('meta[name="cod5-adops-retro-preview"][content="active"]');
     return {
       editorialSamples: samples,
+      liveArticleEvidence,
+      contentRelativeTimeSamples: relativeTimeSamples.slice(0, 10),
       expectedPosts,
       expectedSource,
       previewActive: Boolean(marker),
@@ -4338,6 +7381,8 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     configuredCardSelectors,
     configuredDateSelectors,
     pageType: mapping.page === "article" ? "article" : "home",
+    allowLiveArticleEvidence: allowLiveArticleEvidence === true,
+    configuredDomain: mapping.domain,
   });
 
   const reconstructed = Boolean(retroPreview && typeof retroPreview === "object" && retroPreview.applied === true);
@@ -4345,20 +7390,68 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     collected.expectedPosts = retroPreview.expectedPosts.slice(0, 25);
     collected.expectedSource = "wordpress_admin_api_reconstruction";
   }
-  if (
-    reconstructed &&
-    mapping.page === "article" &&
-    retroPreview.articleVerified === true &&
-    Array.isArray(retroPreview.expectedPosts) &&
-    retroPreview.expectedPosts[0]
-  ) {
+  if (reconstructed && mapping.page === "article" && retroPreview.articleVerified === true
+    && Array.isArray(retroPreview.expectedPosts) && retroPreview.expectedPosts[0]) {
     const primary = retroPreview.expectedPosts[0];
-    collected.editorialSamples = [{
-      title: String(primary.title || "").slice(0, 240),
-      url: new URL(primary.url || retroPreview.expectedArticlePath, mapping.homeUrl).toString(),
-      date: String(primary.date || ""),
-      source: "audited_article_reconstruction",
-    }];
+    if (mapping.domain === "afolhalivre.com") {
+      const currentPageUrl = new URL(page.url());
+      let configuredHomeUrl = null;
+      try { configuredHomeUrl = new URL(mapping.homeUrl); } catch {}
+      let primaryUrl = null;
+      try { primaryUrl = new URL(primary.url || ""); } catch {}
+      const normalizePath = (value) => String(value || "").replace(/\/+$/, "") || "/";
+      const expectedArticlePath = String(retroPreview.expectedArticlePath || "");
+      if (retroPreview.source !== "afl-wp-rest"
+        || !Number.isInteger(Number(primary.id)) || Number(primary.id) <= 0
+        || !primaryUrl
+        || primaryUrl.protocol !== "https:"
+        || primaryUrl.username || primaryUrl.password
+        || primaryUrl.origin !== currentPageUrl.origin
+        || !configuredHomeUrl
+        || currentPageUrl.origin !== configuredHomeUrl.origin
+        || normalizePath(primaryUrl.pathname) !== normalizePath(currentPageUrl.pathname)
+        || normalizePath(expectedArticlePath) !== normalizePath(currentPageUrl.pathname)
+        || !String(primary.title || "").trim()
+        || !String(primary.date || "").trim()) {
+        throw new Error("retro_content_article_identity_unverified");
+      }
+      collected.expectedPosts = [{ ...primary, url: primaryUrl.href }];
+      collected.expectedSource = "audited_article_reconstruction";
+      collected.editorialSamples = [{
+        title: String(primary.title || "").slice(0, 240),
+        url: primaryUrl.href,
+        date: String(primary.date || ""),
+        source: "audited_article_reconstruction",
+      }];
+    } else {
+      collected.editorialSamples = [{
+        title: String(primary.title || "").slice(0, 240),
+        url: new URL(primary.url || retroPreview.expectedArticlePath, mapping.homeUrl).toString(),
+        date: String(primary.date || ""),
+        source: "audited_article_reconstruction",
+      }];
+    }
+  } else if (reconstructed && mapping.domain === "afolhalivre.com" && mapping.page === "article") {
+    throw new Error("retro_content_article_identity_unverified");
+  }
+  if (
+    collected.editorialSamples.length === 0 &&
+    reconstructed &&
+    (mapping.page === "home" || (!mapping.page && mapping.pageLabel === "Home")) &&
+    retroPreview.editorialContentMatches === true &&
+    Array.isArray(retroPreview.renderedLeadSlugs) &&
+    retroPreview.renderedLeadSlugs.length > 0 &&
+    JSON.stringify(retroPreview.renderedLeadSlugs) === JSON.stringify(retroPreview.expectedLeadSlugs)
+  ) {
+    const rendered = new Set(retroPreview.renderedLeadSlugs.map((value) => String(value || "").replace(/^\/+|\/+$/g, "")));
+    collected.editorialSamples = (retroPreview.expectedPosts || [])
+      .filter((post) => rendered.has(String(post.slug || post.url || "").replace(/^https?:\/\/[^/]+/i, "").replace(/^\/+|\/+$/g, "")))
+      .map((post) => ({
+        title: String(post.title || "").slice(0, 240),
+        url: new URL(post.url, mapping.homeUrl).toString(),
+        date: String(post.date || ""),
+        source: "audited_home_reconstruction",
+      }));
   }
   const manifest = {
     cutoff: captureAt,
@@ -4368,10 +7461,13 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     visiblePosts: collected.editorialSamples,
   };
   const manifestHash = crypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
-  const retroContentProof = evaluateRetroContentProof({
+  const retroContentProof = collected.liveArticleEvidence ? null : evaluateRetroContentProof({
     requestedCaptureAt: captureAt,
     pageType: mapping.page,
-    minimumRequired: mapping.page === "article" ? 1 : mapping.auditConfig?.minRetroContentMatches,
+    minimumRequired: strictMinimumRequired
+      ? Math.max(3, Number(mapping.auditConfig?.minRetroContentMatches) || 3)
+      : mapping.page === "article" ? 1 : mapping.auditConfig?.minRetroContentMatches,
+    strictMinimumRequired,
     requireSignedPreview: mapping.auditConfig?.requireSignedRetroPreview !== false,
     previewActive: collected.previewActive,
     reconstructed,
@@ -4380,6 +7476,21 @@ async function collectRetroContentEvidence(page, mapping, captureAt, retroPrevie
     expectedPosts: collected.expectedPosts,
   });
   return { ...collected, manifest, manifestHash, retroContentProof };
+}
+
+function shouldCollectRetroContentEvidence({ captureClass }) {
+  return captureClass === "historical_recovery";
+}
+
+function shouldCollectEditorialEvidenceForCapture({ isHistoricalCapture, requireAbsoluteEditorialDates, requireEditorialDateMatchTarget }) {
+  return isHistoricalCapture === true || requireAbsoluteEditorialDates === true || requireEditorialDateMatchTarget === true;
+}
+
+function shouldAllowLiveArticleEditorialEvidenceForCapture({ captureClass, isHistoricalCapture, page, requireEditorialDateMatchTarget }) {
+  return ["scheduled", "same_day_retry"].includes(captureClass)
+    && isHistoricalCapture !== true
+    && page === "article"
+    && requireEditorialDateMatchTarget === true;
 }
 
 async function measureSlotVisibility(page, selector) {
@@ -4455,7 +7566,28 @@ async function waitForViewportVisuals(page, slotSelector) {
   const stats = await page.evaluate(async (selector) => {
     function isInsideFirstFold(element) {
       const rect = element.getBoundingClientRect();
-      return rect.bottom > 0 && rect.top < window.innerHeight + 120;
+      let left = Math.max(0, rect.left);
+      let right = Math.min(window.innerWidth, rect.right);
+      let top = Math.max(0, rect.top);
+      let bottom = Math.min(window.innerHeight, rect.bottom);
+      if (!(rect.width > 0 && rect.height > 0 && right > left && bottom > top)) return false;
+      for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+        const style = window.getComputedStyle(ancestor);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        const bounds = ancestor.getBoundingClientRect();
+        // Carousel children can intersect the viewport geometrically while
+        // being fully clipped by their scroll container. Audit painted area.
+        if (/^(hidden|clip|auto|scroll)$/.test(style.overflowX)) {
+          left = Math.max(left, bounds.left);
+          right = Math.min(right, bounds.right);
+        }
+        if (/^(hidden|clip|auto|scroll)$/.test(style.overflowY)) {
+          top = Math.max(top, bounds.top);
+          bottom = Math.min(bottom, bounds.bottom);
+        }
+        if (!(right > left && bottom > top)) return false;
+      }
+      return true;
     }
 
     function imageReady(img) {
@@ -4671,6 +7803,373 @@ async function waitForViewportVisuals(page, slotSelector) {
 
   await page.waitForTimeout(1600);
   return stats;
+}
+
+function normalizeStrictReadinessConfig(auditConfig = {}) {
+  const selectors = Array.isArray(auditConfig.criticalContentSelectors)
+    ? auditConfig.criticalContentSelectors
+        .filter((value) => typeof value === "string" && value.trim())
+        .map((value) => value.trim())
+        .slice(0, 12)
+    : [];
+  return {
+    mode: String(auditConfig.readinessMode || "legacy").trim().toLowerCase(),
+    criticalContentSelectors: selectors,
+    timeoutMs: Math.min(90_000, Math.max(5_000, Number(auditConfig.readinessTimeoutMs ?? 45_000))),
+    layoutStableSamples: Math.min(8, Math.max(2, Number(auditConfig.layoutStableSamples ?? 3))),
+    layoutStableIntervalMs: Math.min(2_000, Math.max(100, Number(auditConfig.layoutStableIntervalMs ?? 350))),
+    captureRetryCount: Math.min(3, Math.max(0, Number(auditConfig.captureRetryCount ?? 2))),
+    requirePainted: auditConfig.requireCriticalContentPainted !== false,
+    minContentStddev: Math.max(1, Number(auditConfig.criticalContentMinStddev ?? 4)),
+  };
+}
+
+function auditVisibleMediaPixels(pngPath, elements, options = {}) {
+  const payload = JSON.stringify({
+    pngPath,
+    elements,
+    viewportWidthCss: Number(options.viewportWidthCss || 0),
+    topOffsetPx: Number(options.topOffsetPx || 0),
+    minContentStddev: Number(options.minContentStddev ?? 4),
+  });
+  const py = `
+import json, os, sys
+from PIL import Image, ImageStat
+
+payload = json.load(sys.stdin)
+path = payload["pngPath"]
+if not os.path.exists(path):
+    print(json.dumps({"ok": False, "error": "missing_file", "elements": []}))
+    raise SystemExit(0)
+img = Image.open(path).convert("RGB")
+viewport_width = max(1.0, float(payload.get("viewportWidthCss") or img.size[0]))
+scale = img.size[0] / viewport_width
+top_offset = float(payload.get("topOffsetPx") or 0)
+minimum = float(payload.get("minContentStddev") or 4)
+results = []
+for item in payload.get("elements") or []:
+    box = item.get("box") or {}
+    left = max(0, int(round(float(box.get("left") or 0) * scale)))
+    top = max(0, int(round(float(box.get("top") or 0) * scale + top_offset)))
+    width = max(1, int(round(float(box.get("width") or 0) * scale)))
+    height = max(1, int(round(float(box.get("height") or 0) * scale)))
+    right = min(img.size[0], left + width)
+    bottom = min(img.size[1], top + height)
+    if right <= left or bottom <= top:
+        results.append({**item, "painted": False, "reason": "empty_crop"})
+        continue
+    crop = img.crop((left, top, right, bottom))
+    stat = ImageStat.Stat(crop)
+    stddev = sum(stat.stddev) / max(1, len(stat.stddev))
+    brightness = sum(stat.mean) / max(1, len(stat.mean))
+    painted = stddev >= minimum
+    results.append({
+      **item,
+      "painted": painted,
+      "meanStddev": round(stddev, 5),
+      "meanBrightness": round(brightness, 5),
+      "cropSize": {"width": crop.size[0], "height": crop.size[1]},
+      "reason": None if painted else "flat_or_blank",
+    })
+print(json.dumps({
+  "ok": all(item.get("painted") is True for item in results),
+  "pixelScale": round(scale, 5),
+  "elements": results,
+}))
+`;
+  try {
+    return JSON.parse(execFileSync(CAPTURE_PYTHON_BIN, ["-c", py], {
+      input: payload,
+      maxBuffer: 16 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    }).trim() || "{}");
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      elements: [],
+    };
+  }
+}
+
+async function waitForFinalViewportReadiness(page, slotSelector, auditConfig, resourceFailures = []) {
+  const config = normalizeStrictReadinessConfig(auditConfig);
+  const startedAt = Date.now();
+  const deadline = startedAt + config.timeoutMs;
+  let lastSnapshot = null;
+  let stableCount = 0;
+  let attempts = 0;
+  const signatureHistory = [];
+
+  while (Date.now() < deadline) {
+    attempts += 1;
+    const snapshot = await page.evaluate(async ({ selector, criticalSelectors }) => {
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const visibleBox = (node) => {
+        if (!(node instanceof Element)) return null;
+        const style = window.getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        const left = Math.max(0, rect.left);
+        const top = Math.max(0, rect.top);
+        const right = Math.min(viewportWidth, rect.right);
+        const bottom = Math.min(viewportHeight, rect.bottom);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || "1") <= 0) return null;
+        if (right - left < 16 || bottom - top < 16) return null;
+        return { left, top, width: right - left, height: bottom - top };
+      };
+      const safeUrl = (value) => {
+        try {
+          const parsed = new URL(String(value || ""), window.location.href);
+          return `${parsed.origin}${parsed.pathname}`;
+        } catch {
+          return String(value || "").split(/[?#]/)[0];
+        }
+      };
+      const activateImage = async (img) => {
+        if (!(img instanceof HTMLImageElement)) return false;
+        const current = img.getAttribute("src") || "";
+        const lazySrc = img.getAttribute("data-lazy-src") || img.getAttribute("data-src") || img.getAttribute("data-original");
+        const lazySrcset = img.getAttribute("data-lazy-srcset") || img.getAttribute("data-srcset");
+        img.loading = "eager";
+        img.fetchPriority = "high";
+        if (lazySrc && (!current || current.startsWith("data:") || /placeholder|blank/i.test(current))) img.src = lazySrc;
+        if (lazySrcset && !img.srcset) img.srcset = lazySrcset;
+        const picture = img.closest("picture");
+        picture?.querySelectorAll("source").forEach((source) => {
+          const candidate = source.getAttribute("data-srcset") || source.getAttribute("data-lazy-srcset");
+          if (candidate && !source.getAttribute("srcset")) source.setAttribute("srcset", candidate);
+        });
+        try {
+          if (typeof img.decode === "function") await img.decode();
+        } catch {}
+        if (img.complete && img.naturalWidth > 1 && img.naturalHeight > 1) return true;
+        await new Promise((resolve) => {
+          const done = () => resolve();
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+          window.setTimeout(done, 1400);
+        });
+        return Boolean(img.complete && img.naturalWidth > 1 && img.naturalHeight > 1);
+      };
+      const loadUrl = async (url) => {
+        if (!url) return false;
+        return await new Promise((resolve) => {
+          const image = new Image();
+          const done = (value) => resolve(value);
+          image.onload = () => done(true);
+          image.onerror = () => done(false);
+          window.setTimeout(() => done(false), 1800);
+          image.src = url;
+        });
+      };
+
+      let fontsReady = true;
+      try {
+        if (document.fonts?.ready) await document.fonts.ready;
+        fontsReady = document.fonts ? document.fonts.status === "loaded" : true;
+      } catch {
+        fontsReady = false;
+      }
+
+      const explicit = new Set();
+      const criticalSelectorAudit = [];
+      for (const criticalSelector of criticalSelectors) {
+        try {
+          const matches = Array.from(document.querySelectorAll(criticalSelector));
+          matches.forEach((node) => explicit.add(node));
+          criticalSelectorAudit.push({
+            selector: criticalSelector,
+            matches: matches.length,
+            visibleMatches: matches.filter((node) => visibleBox(node)).length,
+          });
+        } catch {
+          criticalSelectorAudit.push({ selector: criticalSelector, matches: 0, visibleMatches: 0 });
+        }
+      }
+      try {
+        const slot = document.querySelector(selector);
+        if (slot) {
+          explicit.add(slot);
+          slot.querySelectorAll("img,video,picture,[style*='background-image']").forEach((node) => explicit.add(node));
+        }
+      } catch {}
+
+      const nodes = new Set(Array.from(document.querySelectorAll("img,video,canvas,iframe,main [class],aside [class],header [class],[style*='background-image']")));
+      explicit.forEach((node) => nodes.add(node));
+      const elements = [];
+      for (const node of nodes) {
+        const box = visibleBox(node);
+        if (!box) continue;
+        const isExplicit = explicit.has(node);
+        if (node instanceof HTMLImageElement) {
+          const loaded = await activateImage(node);
+          const source = safeUrl(node.currentSrc || node.getAttribute("src") || node.getAttribute("data-lazy-src") || node.getAttribute("data-src"));
+          if (!source || /perrengue-sublogo\.png$|transparent|spacer/i.test(source)) continue;
+          elements.push({ kind: "image", selector: isExplicit ? "critical" : "visible", source, box, loaded, paintRequired: isExplicit || box.width * box.height >= 10000 });
+          continue;
+        }
+        if (node instanceof HTMLVideoElement) {
+          node.preload = "auto";
+          try { if (node.readyState < 2) node.load(); } catch {}
+          const poster = safeUrl(node.poster || "");
+          const loaded = node.readyState >= 2 || node.currentTime > 0.2 || (poster ? await loadUrl(poster) : false);
+          elements.push({ kind: "video", selector: isExplicit ? "critical" : "visible", source: safeUrl(node.currentSrc || node.querySelector("source")?.getAttribute("src") || poster), box, loaded, paintRequired: false });
+          continue;
+        }
+        if (node instanceof HTMLCanvasElement || node instanceof HTMLIFrameElement) {
+          elements.push({
+            kind: node instanceof HTMLCanvasElement ? "canvas" : "iframe",
+            selector: isExplicit ? "critical" : "visible",
+            source: node instanceof HTMLIFrameElement ? safeUrl(node.src) : "canvas",
+            box,
+            loaded: node instanceof HTMLCanvasElement ? node.width > 1 && node.height > 1 : true,
+            paintRequired: isExplicit || box.width * box.height >= 10000,
+          });
+          continue;
+        }
+        if (node instanceof HTMLElement) {
+          const match = window.getComputedStyle(node).backgroundImage.match(/url\(["']?([^"')]+)["']?\)/i);
+          if (!match?.[1]) continue;
+          const source = safeUrl(match[1]);
+          const loaded = await loadUrl(match[1]);
+          elements.push({ kind: "background", selector: isExplicit ? "critical" : "visible", source, box, loaded, paintRequired: isExplicit || box.width * box.height >= 10000 });
+        }
+      }
+      const documentHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+      const stableElements = elements.filter((item) => item.selector === "critical");
+      const signature = JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth,
+        viewportHeight,
+        boxes: stableElements.map((item) => [item.kind, Math.round(item.box.left), Math.round(item.box.top), Math.round(item.box.width), Math.round(item.box.height)]),
+      });
+      const viewportSignature = JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth,
+        viewportHeight,
+      });
+      const missingCriticalSelectors = criticalSelectorAudit
+        .filter((item) => item.matches < 1 || item.visibleMatches < 1)
+        .map((item) => item.selector);
+      return {
+        fontsReady,
+        elements,
+        signature,
+        viewportSignature,
+        viewportWidth,
+        viewportHeight,
+        documentHeight,
+        criticalSelectorAudit,
+        missingCriticalSelectors,
+      };
+    }, { selector: slotSelector, criticalSelectors: config.criticalContentSelectors });
+
+    const blockingElements = snapshot.elements.filter((item) => item.paintRequired === true || item.selector === "critical");
+    const allLoaded = snapshot.fontsReady &&
+      snapshot.missingCriticalSelectors.length === 0 &&
+      blockingElements.every((item) => item.loaded === true);
+    stableCount = snapshot.signature === lastSnapshot?.signature ? stableCount + 1 : 1;
+    signatureHistory.push(snapshot.signature);
+    if (signatureHistory.length > 8) signatureHistory.shift();
+    lastSnapshot = snapshot;
+    if (allLoaded && stableCount >= config.layoutStableSamples) {
+      const failedSources = new Set(resourceFailures.map((item) => item.url));
+      const criticalFailures = blockingElements.filter((item) => failedSources.has(item.source) && item.loaded !== true);
+      const ignoredLoadedResourceFailures = snapshot.elements.filter((item) => failedSources.has(item.source) && item.loaded === true);
+      return {
+        mode: config.mode,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        fontsReady: snapshot.fontsReady,
+        layoutStable: true,
+        criticalElementsTotal: snapshot.elements.length,
+        criticalElementsLoaded: snapshot.elements.filter((item) => item.loaded).length,
+        criticalElementsPainted: 0,
+        failedResources: criticalFailures,
+        ignoredLoadedResourceFailures,
+        elements: snapshot.elements,
+        viewportWidth: snapshot.viewportWidth,
+        signature: snapshot.signature,
+        viewportSignature: snapshot.viewportSignature,
+        criticalSelectorAudit: snapshot.criticalSelectorAudit,
+        missingCriticalSelectors: snapshot.missingCriticalSelectors,
+        approved: criticalFailures.length === 0,
+      };
+    }
+    await page.waitForTimeout(config.layoutStableIntervalMs);
+  }
+
+  return {
+    mode: config.mode,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    fontsReady: lastSnapshot?.fontsReady === true,
+    layoutStable: false,
+    criticalElementsTotal: lastSnapshot?.elements?.length ?? 0,
+    criticalElementsLoaded: lastSnapshot?.elements?.filter((item) => item.loaded).length ?? 0,
+    criticalElementsPainted: 0,
+    failedResources: (lastSnapshot?.elements ?? [])
+      .filter((item) => (item.paintRequired === true || item.selector === "critical") && item.loaded !== true)
+      .filter((item) => resourceFailures.some((failure) => failure.url === item.source)),
+    elements: lastSnapshot?.elements ?? [],
+    viewportWidth: lastSnapshot?.viewportWidth ?? 0,
+    signature: lastSnapshot?.signature ?? null,
+    viewportSignature: lastSnapshot?.viewportSignature ?? null,
+    criticalSelectorAudit: lastSnapshot?.criticalSelectorAudit ?? [],
+    missingCriticalSelectors: lastSnapshot?.missingCriticalSelectors ?? config.criticalContentSelectors,
+    signatureHistory,
+    approved: false,
+  };
+}
+
+async function captureStrictReadinessCandidate(page, viewportPng, slotSelector, auditConfig, resourceFailures = [], beforeScreenshot = null) {
+  const config = normalizeStrictReadinessConfig(auditConfig);
+  if (config.mode !== "strict-visible") return null;
+  const totalAttempts = config.captureRetryCount + 1;
+  const perAttemptTimeoutMs = Math.max(5_000, Math.floor(config.timeoutMs / totalAttempts));
+  const attemptAuditConfig = {
+    ...auditConfig,
+    readinessTimeoutMs: perAttemptTimeoutMs,
+  };
+  let latest = null;
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    latest = await waitForFinalViewportReadiness(page, slotSelector, attemptAuditConfig, resourceFailures);
+    latest.attempts = attempt;
+    if (latest.approved === true && latest.layoutStable && latest.fontsReady && latest.failedResources.length === 0) {
+      if (typeof beforeScreenshot === "function") await beforeScreenshot();
+      await page.screenshot({ path: viewportPng });
+      const paintTargets = latest.elements.filter((item) => item.paintRequired === true);
+      const pixelAudit = auditVisibleMediaPixels(viewportPng, paintTargets, {
+        viewportWidthCss: latest.viewportWidth,
+        minContentStddev: config.minContentStddev,
+      });
+      const after = await page.evaluate(() => JSON.stringify({
+        scrollX: Math.round(window.scrollX),
+        scrollY: Math.round(window.scrollY),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      }));
+      latest.pixelAudit = pixelAudit;
+      latest.criticalElementsPainted = Array.isArray(pixelAudit.elements)
+        ? pixelAudit.elements.filter((item) => item.painted === true).length
+        : 0;
+      latest.finalViewportChanged = latest.viewportSignature !== after;
+      latest.approved = !latest.finalViewportChanged && (!config.requirePainted || pixelAudit.ok === true);
+      if (latest.approved) return latest;
+    }
+    if (attempt <= config.captureRetryCount) {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("resize"));
+        window.dispatchEvent(new Event("scroll"));
+      });
+      await page.waitForTimeout(config.layoutStableIntervalMs * attempt);
+    }
+  }
+  return latest;
 }
 
 async function assertStickyHeaderInViewport(page, mapping) {
@@ -4904,12 +8403,27 @@ async function resolveVisibleMediaSelector(page, mediaBasename, options = {}) {
   }, { basename: mediaBasename, anchorSelector: options.anchorSelector || null });
 }
 
-async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
-  if (!selector || !pngPath || !existsSync(pngPath)) {
-    return { ok: false, reason: "missing_selector_or_frame" };
-  }
-  const dataUrl = `data:image/png;base64,${readFileSync(pngPath).toString("base64")}`;
-  return await page.evaluate(async ({ selector, dataUrl }) => {
+function buildReferenceFrameOverlayLayout() {
+  return {
+    anchor: {
+      position: "relative",
+      overflow: "hidden",
+    },
+    overlay: {
+      position: "absolute",
+      inset: "0",
+      overflow: "hidden",
+    },
+    image: {
+      width: "100%",
+      height: "100%",
+      objectFit: "contain",
+      objectPosition: "center center",
+    },
+  };
+}
+
+async function applyReferenceFrameToDomMediaInPage({ selector, dataUrl, overlayLayout, lockIntervalMs = 60 }) {
     let node = document.querySelector(selector);
     if (!(node instanceof HTMLElement)) {
       return { ok: false, reason: "selector_not_found" };
@@ -4959,9 +8473,11 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
     }
 
     const adWrapper = node.closest(".g-dyn");
+    let adGroup = null;
     if (adWrapper instanceof HTMLElement) {
       const group = adWrapper.parentElement;
       if (group instanceof HTMLElement) {
+        adGroup = group;
         Array.from(group.children).forEach((child) => {
           if (!(child instanceof HTMLElement) || !child.classList.contains("g-dyn")) return;
           if (child === adWrapper) {
@@ -4981,6 +8497,91 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       }
     }
 
+    if (node instanceof HTMLImageElement && adGroup instanceof HTMLElement) {
+      adGroup.style.setProperty("position", overlayLayout.anchor.position, "important");
+      adGroup.style.setProperty("overflow", overlayLayout.anchor.overflow, "important");
+      const previousOverlay = adGroup.querySelector(':scope > [data-adops-reference-frame-overlay="1"]');
+      if (previousOverlay) previousOverlay.remove();
+      const overlay = document.createElement("div");
+      overlay.setAttribute("data-adops-reference-frame-overlay", "1");
+      overlay.setAttribute("aria-hidden", "true");
+      overlay.style.setProperty("position", overlayLayout.overlay.position, "important");
+      overlay.style.setProperty("inset", overlayLayout.overlay.inset, "important");
+      overlay.style.setProperty("z-index", "20", "important");
+      overlay.style.setProperty("display", "block", "important");
+      overlay.style.setProperty("overflow", overlayLayout.overlay.overflow, "important");
+      overlay.style.setProperty("pointer-events", "none", "important");
+      const overlayImage = document.createElement("img");
+      overlayImage.setAttribute("data-adops-reference-frame-overlay-image", "1");
+      overlayImage.alt = "Publicidade";
+      overlayImage.decoding = "sync";
+      overlayImage.loading = "eager";
+      overlayImage.style.setProperty("display", "block", "important");
+      overlayImage.style.setProperty("width", overlayLayout.image.width, "important");
+      overlayImage.style.setProperty("height", overlayLayout.image.height, "important");
+      overlayImage.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+      overlayImage.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
+      overlay.appendChild(overlayImage);
+      adGroup.appendChild(overlay);
+      node = overlayImage;
+    }
+
+    const referenceFrameAnchor =
+      adGroup ||
+      node.closest('[data-adops-capture-ad="1"]') ||
+      node.parentElement ||
+      node;
+    const installReferenceFrameLock = (mediaKind) => {
+      const enforceReferenceFrame = () => {
+        if (!(referenceFrameAnchor instanceof HTMLElement) || !referenceFrameAnchor.isConnected) return;
+        let target = referenceFrameAnchor.querySelector('[data-adops-reference-frame-locked="1"]');
+        if (!(target instanceof HTMLElement)) {
+          target = mediaKind === "video" && node instanceof HTMLVideoElement
+            ? node
+            : mediaKind === "image" && node instanceof HTMLImageElement
+              ? node
+              : mediaKind === "video"
+                ? referenceFrameAnchor.querySelector("video")
+                : referenceFrameAnchor.querySelector("img");
+        }
+        if (mediaKind === "image" && target instanceof HTMLImageElement) {
+          target.setAttribute("data-adops-reference-frame-locked", "1");
+          if (target.getAttribute("src") !== dataUrl) target.setAttribute("src", dataUrl);
+          target.removeAttribute("srcset");
+          target.removeAttribute("data-src");
+          target.removeAttribute("data-lazy-src");
+          target.removeAttribute("data-srcset");
+          target.removeAttribute("data-lazy-srcset");
+          target.removeAttribute("loading");
+          target.style.setProperty("display", "block", "important");
+          target.style.setProperty("opacity", "1", "important");
+          target.style.setProperty("visibility", "visible", "important");
+          target.style.setProperty("width", overlayLayout.image.width, "important");
+          target.style.setProperty("height", overlayLayout.image.height, "important");
+          target.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+          target.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
+          target.style.setProperty("transform", "none", "important");
+          target.style.setProperty("transition", "none", "important");
+          target.style.setProperty("animation", "none", "important");
+        } else if (mediaKind === "video" && target instanceof HTMLVideoElement) {
+          target.setAttribute("data-adops-reference-frame-locked", "1");
+          if (target.getAttribute("poster") !== dataUrl) target.setAttribute("poster", dataUrl);
+          target.style.setProperty("display", "block", "important");
+          target.style.setProperty("opacity", "1", "important");
+          target.style.setProperty("visibility", "visible", "important");
+          target.style.setProperty("transform", "none", "important");
+          target.style.setProperty("transition", "none", "important");
+          target.style.setProperty("animation", "none", "important");
+        }
+      };
+      enforceReferenceFrame();
+      if (window.__adopsReferenceFrameLockInterval) {
+        window.clearInterval(window.__adopsReferenceFrameLockInterval);
+      }
+      window.__adopsReferenceFrameLockInterval = window.setInterval(enforceReferenceFrame, lockIntervalMs);
+      return true;
+    };
+
     if (node instanceof HTMLImageElement) {
       node.setAttribute("src", dataUrl);
       node.removeAttribute("srcset");
@@ -4992,12 +8593,20 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       node.style.opacity = "1";
       node.style.visibility = "visible";
       node.style.display = "block";
-      node.style.width = "100%";
-      node.style.height = "auto";
+      if (node.hasAttribute("data-adops-reference-frame-overlay-image")) {
+        node.style.setProperty("width", overlayLayout.image.width, "important");
+        node.style.setProperty("height", overlayLayout.image.height, "important");
+        node.style.setProperty("object-fit", overlayLayout.image.objectFit, "important");
+        node.style.setProperty("object-position", overlayLayout.image.objectPosition, "important");
+      } else {
+        node.style.width = "100%";
+        node.style.height = "auto";
+      }
       node.style.filter = "none";
       node.style.transition = "none";
       node.style.animation = "none";
       node.style.transform = "none";
+      const referenceFrameLocked = installReferenceFrameLock("image");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = node.getBoundingClientRect();
       return {
@@ -5006,6 +8615,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
         width: rect.width,
         height: rect.height,
         adRotateItemFrozen: Boolean(adWrapper instanceof HTMLElement),
+        referenceFrameLocked,
       };
     }
     if (node instanceof HTMLVideoElement) {
@@ -5016,6 +8626,7 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
       node.style.filter = "none";
       node.style.transition = "none";
       node.style.animation = "none";
+      const referenceFrameLocked = installReferenceFrameLock("video");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = node.getBoundingClientRect();
       return {
@@ -5024,10 +8635,22 @@ async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
         width: rect.width,
         height: rect.height,
         adRotateItemFrozen: Boolean(adWrapper instanceof HTMLElement),
+        referenceFrameLocked,
       };
     }
     return { ok: false, reason: "unsupported_media_tag", tag: node.tagName };
-  }, { selector, dataUrl });
+}
+
+async function applyReferenceFrameToDomMedia(page, selector, pngPath) {
+  if (!selector || !pngPath || !existsSync(pngPath)) {
+    return { ok: false, reason: "missing_selector_or_frame" };
+  }
+  const dataUrl = `data:image/png;base64,${readFileSync(pngPath).toString("base64")}`;
+  return await page.evaluate(applyReferenceFrameToDomMediaInPage, {
+    selector,
+    dataUrl,
+    overlayLayout: buildReferenceFrameOverlayLayout(),
+  });
 }
 
 function isVideoFormat(insertion) {
@@ -5058,48 +8681,6 @@ async function prepareVideoProof(page, adSelector, seed) {
     if (!(video instanceof HTMLVideoElement)) {
       return { ok: false, reason: "video_not_found" };
     }
-
-    const formatTime = (seconds) => {
-      const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
-      const minutes = Math.floor(safeSeconds / 60);
-      const remainder = String(safeSeconds % 60).padStart(2, "0");
-      return `${minutes}:${remainder}`;
-    };
-    const injectProgressOverlay = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
-      const currentTime = Number(video.currentTime || 0);
-      const ratio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-      const previousOverlay = ad.querySelector("[data-adops-video-overlay='1']");
-      if (previousOverlay) previousOverlay.remove();
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-adops-video-overlay", "1");
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.style.position = "absolute";
-      overlay.style.left = "10px";
-      overlay.style.right = "10px";
-      overlay.style.bottom = "10px";
-      overlay.style.zIndex = "2147483647";
-      overlay.style.pointerEvents = "none";
-      overlay.style.background = "linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.74))";
-      overlay.style.color = "#fff";
-      overlay.style.font = "600 13px Arial, sans-serif";
-      overlay.style.textShadow = "0 1px 2px rgba(0,0,0,.8)";
-      overlay.style.padding = "18px 8px 6px";
-      overlay.style.borderRadius = "0 0 4px 4px";
-      overlay.innerHTML = `
-        <div style="height:5px;background:rgba(255,255,255,.42);border-radius:999px;overflow:hidden;margin-bottom:6px;">
-          <div style="width:${Math.round(ratio * 100)}%;height:100%;background:#ffffff;border-radius:999px;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="font-size:14px;">&#9658;</span> ${formatTime(currentTime)}</span>
-          <span>${formatTime(duration)}</span>
-        </div>
-      `;
-      const adStyle = window.getComputedStyle(ad);
-      if (adStyle.position === "static") ad.style.position = "relative";
-      ad.appendChild(overlay);
-      return { ratio, overlayInjected: true, progressVisible: true };
-    };
 
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
@@ -5164,7 +8745,7 @@ async function prepareVideoProof(page, adSelector, seed) {
     const hoverX = rect.left + rect.width / 2;
     const hoverY = rect.top + rect.height / 2;
 
-    const progressState = injectProgressOverlay();
+    const artificialOverlayCount = ad.querySelectorAll("[data-adops-video-overlay='1']").length;
 
     video.setAttribute("data-adops-video-proof", "1");
     ad.classList.add("adops-video-proof");
@@ -5179,8 +8760,9 @@ async function prepareVideoProof(page, adSelector, seed) {
       paused: video.paused,
       playResolved,
       controls: video.controls === true,
-      overlayInjected: progressState.overlayInjected === true,
-      progressVisible: progressState.progressVisible === true,
+      overlayInjected: false,
+      artificialOverlayCount,
+      progressVisible: false,
       targetTime: Number(targetSecond || 0),
       randomSeed: Number(seed),
       progressRatio: video.duration > 0 ? Number((video.currentTime / video.duration).toFixed(4)) : 0,
@@ -5203,48 +8785,6 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
     if (!(ad instanceof HTMLElement)) return { ok: false, reason: "ad_not_found" };
     const video = ad.querySelector("video");
     if (!(video instanceof HTMLVideoElement)) return { ok: false, reason: "video_not_found" };
-    const formatTime = (seconds) => {
-      const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
-      const minutes = Math.floor(safeSeconds / 60);
-      const remainder = String(safeSeconds % 60).padStart(2, "0");
-      return `${minutes}:${remainder}`;
-    };
-    const injectProgressOverlay = () => {
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
-      const currentTime = Number(video.currentTime || 0);
-      const ratio = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
-      const previousOverlay = ad.querySelector("[data-adops-video-overlay='1']");
-      if (previousOverlay) previousOverlay.remove();
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-adops-video-overlay", "1");
-      overlay.setAttribute("aria-hidden", "true");
-      overlay.style.position = "absolute";
-      overlay.style.left = "10px";
-      overlay.style.right = "10px";
-      overlay.style.bottom = "10px";
-      overlay.style.zIndex = "2147483647";
-      overlay.style.pointerEvents = "none";
-      overlay.style.background = "linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,.74))";
-      overlay.style.color = "#fff";
-      overlay.style.font = "600 13px Arial, sans-serif";
-      overlay.style.textShadow = "0 1px 2px rgba(0,0,0,.8)";
-      overlay.style.padding = "18px 8px 6px";
-      overlay.style.borderRadius = "0 0 4px 4px";
-      overlay.innerHTML = `
-        <div style="height:5px;background:rgba(255,255,255,.42);border-radius:999px;overflow:hidden;margin-bottom:6px;">
-          <div style="width:${Math.round(ratio * 100)}%;height:100%;background:#ffffff;border-radius:999px;"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="font-size:14px;">&#9658;</span> ${formatTime(currentTime)}</span>
-          <span>${formatTime(duration)}</span>
-        </div>
-      `;
-      const adStyle = window.getComputedStyle(ad);
-      if (adStyle.position === "static") ad.style.position = "relative";
-      ad.appendChild(overlay);
-      return { ratio, overlayInjected: true, progressVisible: true };
-    };
-
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? Number(video.duration) : 0;
     if (!duration) return { ok: false, reason: "duration_unavailable" };
     const seedRatio = (Number(seed || 0) % 1000) / 1000;
@@ -5269,7 +8809,7 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
     try {
       video.pause();
     } catch {}
-    const progressState = injectProgressOverlay();
+    const artificialOverlayCount = ad.querySelectorAll("[data-adops-video-overlay='1']").length;
     const rect = video.getBoundingClientRect();
     return {
       ok: true,
@@ -5281,8 +8821,9 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
       randomSeed: Number(seed),
       attempt: Number(attempt),
       controls: video.controls === true,
-      overlayInjected: progressState.overlayInjected === true,
-      progressVisible: progressState.progressVisible === true,
+      overlayInjected: false,
+      artificialOverlayCount,
+      progressVisible: false,
     };
   }, { selector: adSelector, seed, attempt });
 
@@ -5296,10 +8837,19 @@ async function seekVideoProofFrame(page, adSelector, seed, attempt) {
   return result;
 }
 
+function resolveEffectiveCaptureAt({ captureClass, previewSupported, requestedCaptureAt, captureDate }) {
+  if (captureClass !== "historical_recovery") return null;
+  return previewSupported ? (requestedCaptureAt || formatCaptureAtForPreview(captureDate)) : requestedCaptureAt;
+}
+
 async function main() {
   const { chromium } = loadPlaywright();
   const args = parseArgs(process.argv.slice(2));
+  if (args.candidateOnly && args.saveEvidence) {
+    throw new Error("candidate_promotion_requires_persisted_approval: candidate capture must use --saveEvidence false; promote only the audited stored artifact.");
+  }
   const insertion = await fetchInsertion(args.apiBase, args.insertionId);
+  assertInsertionOperable(insertion);
   const captureDate = parseCaptureDate(args.captureAt) ?? new Date();
 
   if (!insertion.mediaUrl) {
@@ -5308,9 +8858,76 @@ async function main() {
 
   const mapping = await getMapping(insertion, args.apiBase);
   const previewSupported = Boolean(mapping.originIp && mapping.domain && mapping.previewSecret);
-  const effectiveCaptureAt = previewSupported ? (args.captureAt || formatCaptureAtForPreview(captureDate)) : args.captureAt;
   const mediaBasename = getMediaBasename(insertion.mediaUrl);
   const { isoDate, titleDate } = getDateLabel(captureDate);
+  let capturedAt = null;
+  const todayAtExecution = currentDateInCuiaba();
+  const captureClass = isoDate < todayAtExecution
+    ? "historical_recovery"
+    : (args.reconstructionReason === "late_publication_recovery"
+      ? "historical_recovery"
+      : (args.captureAttempt > 1 ? "same_day_retry" : "scheduled"));
+  // A same-day queue may start minutes after enqueue. Use the public live page
+  // and its actual clock; the requested enqueue time remains in the job payload.
+  const effectiveCaptureAt = resolveEffectiveCaptureAt({
+    captureClass, previewSupported, requestedCaptureAt: args.captureAt, captureDate,
+  });
+  const sourceJobId = args.runnerJobId || args.jobId || null;
+  const allowConfiguredRetroSlotReconstruction = shouldAllowConfiguredRetroSlotReconstruction({
+    captureDate: isoDate,
+    periodStart: insertion.periodoInicio,
+    periodEnd: insertion.periodoFim,
+    explicitCaptureAt: Boolean(args.captureAt),
+    reconstructionReason: args.reconstructionReason,
+  });
+  const portalRetroPreviewOptions = {
+    allowReconstruction: allowConfiguredRetroSlotReconstruction,
+  };
+  const staticRetroAdOptions = {
+    allowConfiguredSlotReconstruction: allowConfiguredRetroSlotReconstruction,
+    reconstructionReason: args.reconstructionReason,
+    reconstructionProvenanceVersion: captureClass === "historical_recovery" ? 2 : null,
+    candidateOnly: args.candidateOnly === true,
+  };
+  const reconstruction = captureClass === "historical_recovery"
+    ? {
+        reason: args.reconstructionReason === "late_publication_recovery" ? "late_publication_recovery" : "historical_recovery",
+        provenanceVersion: 4,
+        contractedDate: isoDate,
+        reconstructedAt: null,
+        mediaUrl: insertion.mediaUrl,
+        mediaSha256: (mediaBasename.match(/(?:^|[-_])([a-f0-9]{64})(?:\.|[-_]|$)/i) || [])[1]?.toLowerCase() || null,
+      }
+    : null;
+  if (args.historicalReference) {
+    const scope = historicalReferencePolicy.scopeFor(insertion, isoDate, args.captureAt, { ...mapping, ...(args.historicalReference.failureSource ? { failureSource: args.historicalReference.failureSource } : {}) });
+    const reference = historicalReferencePolicy.validateReference(args.historicalReference, scope, {
+      candidateOnly: args.candidateOnly, saveEvidence: args.saveEvidence, captureClass,
+    });
+    const sourceResponse = await fetch(reference.mediaUrl, { redirect: 'error', signal: AbortSignal.timeout(30000) });
+    if (!sourceResponse.ok || !/image\/gif/i.test(sourceResponse.headers.get('content-type') || '')) throw Error('historical_reference_media_unavailable');
+    const chunks = []; let length = 0;
+    for await (const chunk of sourceResponse.body) { length += chunk.length; if (length > 5 * 1024 * 1024) throw Error('historical_reference_media_too_large'); chunks.push(chunk); }
+    if (crypto.createHash('sha256').update(Buffer.concat(chunks)).digest('hex') !== reference.mediaSha256) throw Error('historical_reference_media_changed');
+    staticRetroAdOptions.registeredHistoricalReference = reference;
+    staticRetroAdOptions.reconstructionProvenanceVersion = 4;
+    reconstruction.sourceKind = reference.sourceKind;
+    reconstruction.sourceEvidence = reference;
+    reconstruction.historicalDisplayConfirmed = false;
+    reconstruction.mediaSha256 = reference.mediaSha256;
+    reconstruction.presentationLabel = reference.presentationLabel;
+    if (reference.failureSource) reconstruction.failureCause = 'capture_failure_recovery';
+    mapping.auditConfig = { ...mapping.auditConfig, requireRetroContentProof: true };
+  }
+  const requiresFinalPageClockProof = captureClass === "historical_recovery"
+    && reconstruction?.provenanceVersion === 4
+    && (mapping.auditConfig?.requireVisiblePageDate === true || ["OMT", "PERRENGUE", "ROO", "AFL"].includes(insertion.siteSigla));
+  const requiresAcceptancePageClockProof = args.capturePurpose === "publication_acceptance"
+    && mapping.auditConfig?.requireVisiblePageDate === true;
+  const stampCaptureInstant = () => {
+    capturedAt = new Date().toISOString();
+    if (reconstruction) reconstruction.reconstructedAt = capturedAt;
+  };
 
   const generatedPrintsRoot = process.env.ADOPS_GENERATED_PRINTS_ROOT || path.join(process.cwd(), "tmp/generated-prints");
   const outDir = args.candidateOnly
@@ -5329,10 +8946,16 @@ async function main() {
   const viewportPng = path.join(outDir, `${isoDate}-viewport.png`);
   const finalPng = path.join(outDir, `${isoDate}-proof.png`);
   const metaJson = path.join(outDir, `${isoDate}-meta.json`);
-  const trace = createStageRecorder();
+  for (const artifactPath of [slotPng, contextPng, viewportPng, finalPng, metaJson]) {
+    rmSync(artifactPath, { force: true });
+  }
+  const trace = createStageRecorder((event) => {
+    if (args.runnerJobId) process.stderr.write(`ADOPS_CAPTURE_PROGRESS ${JSON.stringify(event)}\n`);
+  });
   const artifactRecords = {};
   let logId = null;
   let finalProofStyle = null;
+  let effectiveViewportTrimBottomPx = Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0);
   let publicUrl = null;
   let remoteFinal = null;
   let auditStatus = null;
@@ -5346,25 +8969,35 @@ async function main() {
   let lastSelectorFailure = null;
   let frameSelection = null;
   let visualAudit = null;
+  let readinessAudit = null;
+  let finalReadinessAudit = null;
   let creativePlacementAudit = null;
   let headerAdPolicyAudit = null;
   let finalPngHeaderAdPolicyAudit = null;
   let finalPngStickyHeaderAudit = null;
   let finalViewportTargetAudit = null;
+  let finalCreativeGeometryAudit;
   let stickyHeaderViewportAudit = null;
   let slotVisibility = null;
   let pageScrollMetrics = null;
+  let pageClockViewportAudit = null;
   let domMediaPatch = null;
   let pageDateObserved = null;
   let pageDateText = null;
   let systemDateTime = null;
   let metadata = null;
+  let pageHealthMetadata = null;
+  let lastPageNavigationResponse = null;
   let contentDateSamples = [];
+  let contentRelativeTimeSamples = [];
   let editorialSamples = [];
   let retroContentManifest = null;
   let retroContentProof = null;
   let retroGate = null;
   let retroPreview = null;
+  let nativeProgressAudit = null;
+  let finalPngProgressAudit = null;
+  let verifiedEditorialDateReplacements = [];
   let pendingLogFlush = { flushed: 0, kept: 0 };
   let logPersistence = { status: "skipped", queued: false, error: null };
 
@@ -5381,10 +9014,104 @@ async function main() {
   }
   const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage({ viewport: { width: 1660, height: 1200 }, deviceScaleFactor: 2 });
+  trackMainFrameNavigationResponses(page, (response) => { lastPageNavigationResponse = response; });
+  const resourceFailures = [];
+  const recordResourceFailure = (url, resourceType, status, reason) => {
+    if (!url || !["image", "media", "font"].includes(resourceType)) return;
+    let sanitizedUrl = String(url).split(/[?#]/)[0];
+    try {
+      const parsed = new URL(url);
+      sanitizedUrl = `${parsed.origin}${parsed.pathname}`;
+    } catch {}
+    if (resourceFailures.some((item) => item.url === sanitizedUrl && item.status === status && item.reason === reason)) return;
+    resourceFailures.push({ url: sanitizedUrl, resourceType, status, reason });
+  };
+  page.on("requestfailed", (request) => {
+    recordResourceFailure(request.url(), request.resourceType(), null, request.failure()?.errorText || "request_failed");
+  });
+  page.on("response", (response) => {
+    if (response.status() < 400) return;
+    const request = response.request();
+    recordResourceFailure(response.url(), request.resourceType(), response.status(), `http_${response.status()}`);
+  });
 
   try {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
-    if (args.apiBase && internalCaptureToken) {
+    const staticSlotPlan = buildStaticRetroSlotPlan(mapping, {
+      rooHistoricalCandidateV4: args.candidateOnly === true && args.saveEvidence === false
+        && Boolean(args.captureAt) && captureClass === "historical_recovery",
+    });
+    const exactCandidateSlotMapping = (mapping.domain === "perrenguematogrosso.com"
+        && mapping.page === "home"
+        && mapping.groupId === 9
+        && mapping.slotSelector === "#cod5-bottom-popup-ad .g.g-9"
+        && mapping.contextSelector === "#cod5-bottom-popup-ad"
+        && staticSlotPlan?.groupId === 9)
+      || (mapping.auditConfig?.allowAuditedReconstruction === true
+        && mapping.domain === "portalpantanalmt.com"
+          && mapping.page === "home"
+          && mapping.groupId === 1
+          && mapping.slotSelector === "div.hidden.lg\\:block .g.g-1"
+          && mapping.contextSelector === "div.hidden.lg\\:block .g.g-1"
+          && staticSlotPlan?.groupId === 1
+          && staticSlotPlan?.requireUniqueVisibleAnchor === true)
+      || (mapping.auditConfig?.allowAuditedReconstruction === true
+        && mapping.domain === "roonoticias.com"
+        && mapping.page === "home"
+        && mapping.groupId === 1
+        && mapping.slotSelector === ".g.g-1"
+        && mapping.contextSelector === ".g.g-1"
+        && mapping.auditConfig?.requireRetroContentProof === true
+        && staticSlotPlan?.groupId === 1
+        && staticSlotPlan?.requireUniqueVisibleAnchor === true);
+    const targetDay = String(isoDate);
+    const contractStart = String(insertion.periodoInicio || "").slice(0, 10);
+    const contractEnd = String(insertion.periodoFim || "").slice(0, 10);
+    const todayInCuiaba = currentDateInCuiaba();
+    const candidateSlotReferenceEligible = args.candidateOnly === true
+      && args.saveEvidence === false
+      && Boolean(args.captureAt)
+      && captureClass === "historical_recovery"
+      && targetDay < todayInCuiaba
+      && contractEnd < todayInCuiaba
+      && /^\d{4}-\d{2}-\d{2}$/.test(contractStart)
+      && /^\d{4}-\d{2}-\d{2}$/.test(contractEnd)
+      && contractStart <= targetDay && targetDay <= contractEnd
+      && exactCandidateSlotMapping
+      && Boolean(args.apiBase && internalCaptureToken);
+    if (candidateSlotReferenceEligible) {
+      const originalStatus = await fetchCaptureAuditStatus(args.apiBase, insertion.id, targetDay);
+      const auditedCandidateReconstruction = evaluateAuditedRetroSlotReconstruction({
+        insertion,
+        mapping,
+        targetDate: targetDay,
+        captureAt: args.captureAt,
+        currentDate: todayInCuiaba,
+        captureClass,
+        provenanceVersion: 4,
+        candidateOnly: args.candidateOnly,
+        saveEvidence: args.saveEvidence,
+        status: originalStatus,
+      });
+      if (auditedCandidateReconstruction.ok) {
+        staticRetroAdOptions.reconstructionProvenanceVersion = 4;
+        staticRetroAdOptions.auditedCandidateReconstruction = auditedCandidateReconstruction;
+        reconstruction.sourceEvidence = auditedCandidateReconstruction.sourceEvidence;
+        reconstruction.historicalDisplayConfirmed = false;
+      }
+    }
+    if (args.candidateOnly === true && args.saveEvidence === false && captureClass === "historical_recovery"
+      && allowConfiguredRetroSlotReconstruction && args.captureAt && args.apiBase && internalCaptureToken) {
+      const sourceStatus = await fetchCaptureAuditStatus(args.apiBase, insertion.id, isoDate);
+      const clockRepairSource = evaluateClockRepairSource(insertion, mapping, isoDate, args.captureAt, sourceStatus);
+      if (clockRepairSource) {
+        staticRetroAdOptions.reconstructionProvenanceVersion = 4;
+        staticRetroAdOptions.clockRepairSource = clockRepairSource;
+        reconstruction.sourceEvidence = clockRepairSource;
+        reconstruction.historicalDisplayConfirmed = false;
+      }
+    }
+    if (args.saveEvidence && args.apiBase && internalCaptureToken) {
       try {
         pendingLogFlush = await flushPendingCaptureLogs();
       } catch (error) {
@@ -5409,27 +9136,40 @@ async function main() {
       previewSupported,
       signedPreviewRequired: signedRetroPreviewRequired,
     });
-    await page.setExtraHTTPHeaders({
+    const captureRequestHeaders = {
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
-    });
+    };
+    await page.setExtraHTTPHeaders(captureRequestHeaders);
 
-    for (const candidateUrl of candidateUrls) {
+    for (const originalCandidateUrl of candidateUrls) {
+      // OMT renders its live clock on the server; cached HTML is not a live clock.
+      const candidateUrl = appendCaptureRetryQuery(originalCandidateUrl, args.captureAttempt,
+        captureClass !== "historical_recovery" && mapping.domain === "omatogrossense.com");
       try {
-        await page.goto(candidateUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+        lastPageNavigationResponse = null;
+        pageHealthMetadata = null;
+        const candidateNavigationResponse = await page.goto(candidateUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+        lastPageNavigationResponse = candidateNavigationResponse || lastPageNavigationResponse;
+        const candidatePageHealth = await collectCapturePageHealthMetadata(page, lastPageNavigationResponse);
+        pageHealthMetadata = candidatePageHealth;
+        const articleCandidateAudit = await auditArticleCandidatePage(page, mapping);
+        if (!articleCandidateAudit.ok) {
+          throw new Error(`article_candidate_rejected:${articleCandidateAudit.reason}:${articleCandidateAudit.currentUrl}`);
+        }
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping) });
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-        retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+        retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
+        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename, staticRetroAdOptions);
         await page.waitForSelector(mapping.slotSelector, { state: "attached", timeout: 12000 });
         await page.waitForTimeout(2500);
         await dismissCookieConsent(page, mapping);
         await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
         await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-        retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
-        const candidateMatch = await findCreativeMatch(page, mapping.slotSelector, mediaBasename);
+        retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
+        await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename, staticRetroAdOptions);
+        const candidateMatch = await findCreativeMatch(page, mapping.slotSelector, mediaBasename, insertion.mediaUrl);
         if (candidateMatch.ok) {
           targetUrl = candidateUrl;
           resolvedMediaSelector = await resolveVisibleMediaSelector(page, mediaBasename, {
@@ -5513,7 +9253,7 @@ async function main() {
     let slotFrameSelector = resolvedContextSelector || resolvedSlotSelector;
     const domReferenceSelector = resolvedMediaSelector || matchedAdSelector || resolvedSlotSelector;
     const gifFrameSelectionMode = String(mapping.auditConfig?.gifFrameSelection || "source_preferred").trim().toLowerCase();
-    const gifSourceUrl = match.mediaUrl && isGifUrl(match.mediaUrl) ? resolveReachableMediaUrl(match.mediaUrl) : null;
+    const gifSourceUrl = resolveMatchedGifSourceUrl(match.mediaUrl, insertion.mediaUrl);
     const videoMedia = isVideoMedia(insertion, match.mediaUrl);
     if (videoMedia) {
       // For AdRotate rotators, the <video> can be temporarily hidden while the
@@ -5546,10 +9286,14 @@ async function main() {
     }
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-    retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+    retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
+    const verifiedEditorialDates = captureClass === "historical_recovery" && mapping.auditConfig?.requireAbsoluteEditorialDates === true
+      ? await normalizeVerifiedPnmtHeroRelativeDates(page, mapping, effectiveCaptureAt)
+      : { replacements: [] };
+    verifiedEditorialDateReplacements = verifiedEditorialDates.replacements || [];
+    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename, staticRetroAdOptions);
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
-    creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, {
+    creativePlacementAudit = await auditMatchedCreativePlacementWithRetry(page, resolvedSlotSelector, mediaBasename, insertion.mediaUrl, {
       attempts: Number(mapping.auditConfig?.creativePlacementAuditAttempts ?? 4),
       waitMs: Number(mapping.auditConfig?.creativePlacementAuditRetryWaitMs ?? 550),
     });
@@ -5616,6 +9360,9 @@ async function main() {
         allowedFrameRanges: forcedGifAllowedFrameRanges || mapping.auditConfig?.gifAllowedFrameRanges,
         sceneTargetOffset,
       });
+      if (args.historicalReference && crypto.createHash('sha256').update(readFileSync(path.join(outDir, 'gif-source', 'source.gif'))).digest('hex') !== args.historicalReference.mediaSha256) {
+        throw Error('historical_reference_media_changed');
+      }
       if (resolvedMediaSelector) {
         domMediaPatch = await applyReferenceFrameToDomMedia(page, resolvedMediaSelector, frameSelection.chosenPngPath);
         await page.waitForTimeout(180);
@@ -5775,8 +9522,17 @@ async function main() {
     const slotCapturedStage = trace.start("slot_captured");
     await forceMatchedAdVisible(page);
     await freezePreviewDatestamp(page, mapping.pageDateSelectors, effectiveCaptureAt, mapping.domain);
-    retroPreview = await applyPerrengueStaticRetroPreview(page, mapping, effectiveCaptureAt) || retroPreview;
-    await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename);
+    retroPreview = await applyPortalRetroPreview(page, mapping, effectiveCaptureAt, portalRetroPreviewOptions) || retroPreview;
+    // AFL internal GIFs already carry the verified reference frame as a data URL.
+    // Re-injecting the source GIF here mistakes that frame for a missing ad,
+    // hides its wrapper, and leaves final geometry pointing at the hidden image.
+    // Preserve this frame; final DOM and pixel audits still fail closed.
+    const preserveAflInternalReference = mapping.domain === "afolhalivre.com"
+      && mapping.page === "article" && mapping.groupId === 14
+      && gifSourceAllowed && domMediaPatch?.ok === true;
+    if (!preserveAflInternalReference) {
+      await applyPerrengueStaticRetroAd(page, mapping, insertion.mediaUrl, mediaBasename, staticRetroAdOptions);
+    }
     await dismissBlockingOverlays(page, { preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector) });
     await forceMatchedAdVisible(page);
     if (gifSourceAllowed && frameSelection?.chosenPngPath) {
@@ -5793,7 +9549,78 @@ async function main() {
     if (!finalViewportTargetAudit.ok) {
       throw new Error(`capture_audit_failed: final_viewport_target_not_visible: ${finalViewportTargetAudit.reason || "unknown"} selector=${finalViewportTargetSelector}`);
     }
+    if (requiresFinalPageClockProof || (!effectiveCaptureAt && ["OMT", "PERRENGUE", "ROO", "AFL"].includes(insertion.siteSigla))) {
+      pageClockViewportAudit = await ensureFinalPageClockViewport(page, mapping, effectiveCaptureAt, finalViewportTargetSelector);
+      if (!pageClockViewportAudit.ok) {
+        throw new Error("capture_audit_failed: final_page_clock_viewport_unavailable: " + pageClockViewportAudit.reason);
+      }
+      finalViewportTargetAudit = pageClockViewportAudit.targetAudit;
+      slotVisibility = await measureSlotVisibility(page, resolvedSlotSelector);
+      if (!slotVisibility?.mostlyVisible) {
+        throw new Error("capture_audit_failed: final_viewport_target_not_visible_after_clock_viewport");
+      }
+    }
     stickyHeaderViewportAudit = await assertStickyHeaderInViewport(page, mapping);
+    const readinessStage = trace.start("critical_assets");
+    pageHealthMetadata = null;
+    readinessAudit = await captureStrictReadinessCandidate(
+      page,
+      viewportPng,
+      resolvedSlotSelector,
+      mapping.auditConfig,
+      resourceFailures,
+      async () => {
+        pageHealthMetadata = await collectCapturePageHealthMetadata(page, lastPageNavigationResponse, {
+          slotSelector: resolvedSlotSelector,
+          preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector),
+        });
+      },
+    );
+    if (readinessAudit && readinessAudit.approved !== true) {
+      const failedPixel = readinessAudit.pixelAudit?.elements?.find((item) => item.painted !== true);
+      const notLoaded = readinessAudit.elements?.find((item) => item.loaded !== true);
+      const code = !readinessAudit.fontsReady
+        ? "readiness_timeout"
+        : notLoaded?.kind === "background"
+          ? "critical_background_not_loaded"
+          : notLoaded
+            ? "critical_image_not_loaded"
+            : !readinessAudit.layoutStable
+              ? "layout_not_stable"
+              : readinessAudit.finalViewportChanged
+                ? "final_viewport_changed"
+        : readinessAudit.failedResources?.length
+          ? "resource_request_failed"
+          : failedPixel?.kind === "background"
+            ? "critical_background_not_loaded"
+            : "critical_image_not_painted";
+      const failedSource = notLoaded?.source || failedPixel?.source || (
+        code === "layout_not_stable"
+          ? JSON.stringify({
+              signatures: readinessAudit.signatureHistory || [],
+              missingCriticalSelectors: readinessAudit.missingCriticalSelectors || [],
+            })
+          : JSON.stringify(readinessAudit.failedResources || [])
+      );
+      trace.finish(readinessStage, "error", readinessAudit, code, failedSource || "readiness gate failed");
+      throw new Error(`${code}: ${failedSource}`);
+    }
+    trace.finish(readinessStage, "ok", readinessAudit || { mode: "legacy" });
+    if (readinessAudit) stampCaptureInstant();
+    await stabilizeVisibleRetroDatesBeforeCapture(page, mapping, effectiveCaptureAt);
+    if (requiresFinalPageClockProof && !args.historicalReference) {
+      const generatedDate = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const noticeText = "Reconstrução histórica gerada em " + generatedDate + ". Referência: " + isoDate.split("-").reverse().join("/") + ". Não comprova exibição original.";
+      await page.evaluate((text) => {
+        const el = document.createElement("div");
+        el.setAttribute("data-adops-reconstruction-notice", "clock_correction");
+        el.textContent = text;
+        el.style.cssText = "position:fixed;bottom:4px;left:4px;right:4px;z-index:2147483647;padding:4px 8px;background:#fff;color:#111;font:12px/16px sans-serif;border:1px solid #888;pointer-events:none;text-align:center";
+        document.body.appendChild(el);
+      }, noticeText);
+      reconstruction.presentationLabel = noticeText;
+      mapping.auditConfig = { ...mapping.auditConfig, viewportTrimBottomPx: 0 };
+    }
     pageScrollMetrics = await measurePageScrollMetrics(page);
     const contextScreenshotSelector = videoMedia
       ? (slotFrameSelector || resolvedMediaSelector || matchedAdSelector || resolvedContextSelector || resolvedSlotSelector)
@@ -5809,17 +9636,20 @@ async function main() {
         error: contextScreenshotError instanceof Error ? contextScreenshotError.message : String(contextScreenshotError),
       };
     }
-    await page.screenshot({ path: viewportPng });
-    trace.finish(slotCapturedStage, "ok", {
-      slotVisibility,
-      viewportImagesLoaded: visualAudit?.viewportImagesLoaded ?? null,
-      slotImagesLoaded: visualAudit?.slotImagesLoaded ?? null,
-    });
-
+    if (!pageHealthMetadata) {
+      pageHealthMetadata = await collectCapturePageHealthMetadata(page, lastPageNavigationResponse, {
+        slotSelector: resolvedSlotSelector,
+        preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector),
+      });
+    }
+    if (!readinessAudit) {
+      await page.screenshot({ path: viewportPng });
+      stampCaptureInstant();
+    }
     const finalPageUrl = targetUrl || page.url();
 
     const pageDateSelectors = mergePageDateSelectors(mapping.pageDateSelectors);
-    const visiblePageDateAudit = await assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, effectiveCaptureAt);
+    let visiblePageDateAudit = await assertVisiblePageDateTextMatchesRequestedCaptureAt(page, mapping, effectiveCaptureAt);
     pageDateObserved = await page.evaluate((selectors) => {
       const isVisible = (el) => {
         if (!el) return false;
@@ -5854,32 +9684,81 @@ async function main() {
       return visibleCandidates[0] || hiddenCandidates[0] || null;
     }, pageDateSelectors);
 
-    const retroContentEvidence = await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview);
+    // A prova editorial assinada protege reconstruções históricas. Para a
+    // captura do próprio dia, o portal está no estado público atual; exigir
+    // cards de um snapshot retroativo vazio reprova uma evidência visualmente
+    // válida sem aumentar a garantia de veiculação.
+    // A recuperação tardia é marcada de forma explícita com data contratada,
+    // instante real da reconstrução e mídia canônica. Não existe como provar
+    // o editorial original se o portal não possui snapshot assinado daquela
+    // data; exigir essa amostra vazia só bloqueia uma prova visual válida do
+    // banner. As capturas históricas normais continuam exigindo essa prova.
+    const isHistoricalCapture = shouldCollectRetroContentEvidence({
+      captureClass,
+      reconstructionReason: args.reconstructionReason,
+    });
+    const shouldCollectEditorialEvidence = shouldCollectEditorialEvidenceForCapture({
+      isHistoricalCapture,
+      requireAbsoluteEditorialDates: mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+      requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
+    });
+    const strictRooCandidateEditorialProof = args.candidateOnly === true
+      && args.saveEvidence === false
+      && typeof args.captureAt === "string"
+      && captureClass === "historical_recovery"
+      && reconstruction?.provenanceVersion === 4
+      && mapping.domain === "roonoticias.com"
+      && mapping.page === "home"
+      && mapping.groupId === 1
+      && mapping.slotSelector === ".g.g-1"
+      && mapping.contextSelector === ".g.g-1"
+      && mapping.auditConfig?.allowAuditedReconstruction === true
+      && mapping.auditConfig?.requireRetroContentProof === true;
+    const retroContentEvidence = shouldCollectEditorialEvidence
+      ? await collectRetroContentEvidence(page, mapping, effectiveCaptureAt, retroPreview, {
+          strictMinimumRequired: strictRooCandidateEditorialProof,
+          allowLiveArticleEvidence: shouldAllowLiveArticleEditorialEvidenceForCapture({
+            captureClass,
+            isHistoricalCapture,
+            page: mapping.page,
+            requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
+          }),
+        })
+      : {
+          editorialSamples: [],
+          contentRelativeTimeSamples: [],
+          manifest: null,
+          retroContentProof: null,
+        };
+    if (strictRooCandidateEditorialProof
+      && !hasMatchingPreviewCutoff(retroContentEvidence.previewActive, retroContentEvidence.previewCutoff, effectiveCaptureAt)) {
+      throw new Error("roo_candidate_preview_cutoff_unverified");
+    }
     editorialSamples = retroContentEvidence.editorialSamples;
     contentDateSamples = editorialSamples.map((item) => item.date).filter(Boolean).slice(0, 25);
+    contentRelativeTimeSamples = isHistoricalCapture && Array.isArray(retroContentEvidence.contentRelativeTimeSamples)
+      ? retroContentEvidence.contentRelativeTimeSamples.slice(0, 10)
+      : [];
     retroContentManifest = retroContentEvidence.manifest;
     retroContentProof = retroContentEvidence.retroContentProof;
+    historicalReferencePolicy.assertEditorialProof(args.historicalReference, retroContentProof);
 
-    systemDateTime = new Intl.DateTimeFormat("pt-BR", {
-      timeZone: "America/Cuiaba",
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(captureDate);
+    systemDateTime = formatDesktopClock(captureDate);
+    let frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction, effectiveCaptureAt, capturedAt);
     pageDateText = pageDateObserved;
 
     retroGate = evaluateRetroCaptureGate({
       requestedCaptureAt: effectiveCaptureAt,
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
+      reconstruction,
       pageDateObserved,
       pageDateText,
       contentDateSamples,
+      contentRelativeTimeSamples,
+      requireAbsoluteEditorialDates: isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+      requireNoRelativeEditorialDates: isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true,
       retroContentProof,
-      requireRetroContentProof: mapping.auditConfig?.requireRetroContentProof === true,
+      requireRetroContentProof: isHistoricalCapture && mapping.auditConfig?.requireRetroContentProof === true,
       slotVisibility,
       requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true || mapping.requireSlotVisibleInViewport === true,
       requireDomFrameSimilarity: frameSelection?.frameSelectionMode === "gif_source",
@@ -5896,6 +9775,16 @@ async function main() {
         ...retroGate,
         sparse: retroPreview.sparse === true,
         postsAvailable: Number.isFinite(Number(retroPreview.postsAvailable ?? retroPreview.posts)) ? Number(retroPreview.postsAvailable ?? retroPreview.posts) : null,
+        totalPostsAvailable: Number.isFinite(Number(retroPreview.totalPostsAvailable)) ? Number(retroPreview.totalPostsAvailable) : null,
+        excludedMemePosts: Number.isFinite(Number(retroPreview.excludedMemePosts)) ? Number(retroPreview.excludedMemePosts) : 0,
+        editorialMemeLeaks: Array.isArray(retroPreview.editorialMemeLeaks) ? retroPreview.editorialMemeLeaks : [],
+        retroContentSource: retroPreview.source || null,
+        adminPosts: Number.isFinite(Number(retroPreview.adminPosts)) ? Number(retroPreview.adminPosts) : 0,
+        expectedLeadSlugs: Array.isArray(retroPreview.expectedLeadSlugs) ? retroPreview.expectedLeadSlugs : [],
+        renderedLeadSlugs: Array.isArray(retroPreview.renderedLeadSlugs) ? retroPreview.renderedLeadSlugs : [],
+        expectedNowSlugs: Array.isArray(retroPreview.expectedNowSlugs) ? retroPreview.expectedNowSlugs : [],
+        renderedNowSlugs: Array.isArray(retroPreview.renderedNowSlugs) ? retroPreview.renderedNowSlugs : [],
+        editorialContentMatches: retroPreview.editorialContentMatches === true,
         postsRequired: Number.isFinite(Number(retroPreview.postsRequired)) ? Number(retroPreview.postsRequired) : null,
       };
     }
@@ -5910,48 +9799,267 @@ async function main() {
     const effectiveProofStyle = proofStyleContract.finalProofStyle;
     finalProofStyle = effectiveProofStyle;
 
+    if (videoMedia) {
+      const videoLocator = page.locator(matchedAdSelector).locator("video").first();
+      const hoverPoint = await videoLocator.evaluate((video) => {
+        video.pause();
+        const rect = video.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      });
+      await page.mouse.move(hoverPoint.x, hoverPoint.y);
+      await page.waitForTimeout(160);
+      pageHealthMetadata = null;
+      pageHealthMetadata = await collectCapturePageHealthMetadata(page, lastPageNavigationResponse, {
+        slotSelector: resolvedSlotSelector,
+        preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector),
+      });
+      await page.screenshot({ path: viewportPng });
+      if (readinessAudit || requiresFinalPageClockProof) stampCaptureInstant();
+      nativeProgressAudit = await auditNativeVideoProgress(page, matchedAdSelector);
+      videoProof = {
+        ...videoProof,
+        currentTime: nativeProgressAudit.currentTime ?? videoProof?.currentTime ?? null,
+        duration: nativeProgressAudit.duration ?? videoProof?.duration ?? null,
+        paused: nativeProgressAudit.paused ?? videoProof?.paused ?? null,
+        controls: nativeProgressAudit.controls ?? videoProof?.controls ?? false,
+        progressRatio: Number.isFinite(nativeProgressAudit.currentTime) && nativeProgressAudit.duration > 0
+          ? Number((nativeProgressAudit.currentTime / nativeProgressAudit.duration).toFixed(4))
+          : videoProof?.progressRatio ?? 0,
+        overlayInjected: false,
+        artificialOverlayCount: nativeProgressAudit.artificialOverlayCount ?? null,
+        progressVisible: false,
+      };
+    } else if (requiresFinalPageClockProof || !existsSync(viewportPng)) {
+      const viewportPngWasMissingBeforeFinalCapture = !existsSync(viewportPng);
+      pageHealthMetadata = null;
+      pageHealthMetadata = await collectCapturePageHealthMetadata(page, lastPageNavigationResponse, {
+        slotSelector: resolvedSlotSelector,
+        preserveBottomPopup: shouldPreserveBottomPopupForCapture(mapping, resolvedSlotSelector, resolvedContextSelector),
+      });
+      await page.screenshot({ path: viewportPng });
+      if (requiresFinalPageClockProof) stampCaptureInstant();
+      if (viewportPngWasMissingBeforeFinalCapture) {
+        artifactRecords.viewportRecapturedBeforeCompose = {
+          reason: "approved_viewport_artifact_missing",
+          capturedAt: capturedAt || new Date().toISOString(),
+        };
+      }
+    }
+
+    if (gifSourceAllowed && domMediaPatch?.ok && frameSelection?.chosenPngPath) {
+      // Locator screenshots can scroll after the earlier placement audit. Only
+      // an already approved GIF reference frame uses this fresh geometry path.
+      const finalGeometryInput = {
+        slotSelector: resolvedSlotSelector,
+        referenceDataUrl: `data:image/png;base64,${readFileSync(frameSelection.chosenPngPath).toString("base64")}`,
+      };
+      finalCreativeGeometryAudit = await page.evaluate(measureFinalCreativeBoxInPage, finalGeometryInput);
+      if (!finalCreativeGeometryAudit.ok) throw new Error("capture_audit_failed: " + finalCreativeGeometryAudit.reason);
+      await page.screenshot({ path: viewportPng });
+      const geometryAfterScreenshot = await page.evaluate(measureFinalCreativeBoxInPage, finalGeometryInput);
+      if (!geometryAfterScreenshot.ok || ["left", "top", "width", "height"].some(key => Math.abs(finalCreativeGeometryAudit.box[key] - geometryAfterScreenshot.box[key]) > 0.5)) {
+        throw new Error("capture_audit_failed: final_identity_media_geometry_changed");
+      }
+      pageScrollMetrics = await measurePageScrollMetrics(page);
+      if (readinessAudit || requiresFinalPageClockProof) stampCaptureInstant();
+    }
+
+    trace.finish(slotCapturedStage, "ok", {
+      slotVisibility,
+      viewportImagesLoaded: visualAudit?.viewportImagesLoaded ?? null,
+      slotImagesLoaded: visualAudit?.slotImagesLoaded ?? null,
+    });
+
     const finalComposedStage = trace.start("final_composed");
+    if (reconstruction) {
+      reconstruction.slotReconstructed = await page.locator("[data-adops-reconstructed-slot]").count() > 0;
+      reconstruction.historicalDisplayConfirmed = false;
+      if (args.historicalReference) {
+        const noticeAudit = await page.evaluate((expectedLabel) => {
+          const nodes = Array.from(document.querySelectorAll('[data-adops-reconstruction-notice="registered_adrotate_schedule"]'));
+          if (nodes.length !== 1) return { ok: false, count: nodes.length };
+          const n = nodes[0], r = n.getBoundingClientRect(), style = getComputedStyle(n);
+          return { ok: n.textContent === expectedLabel
+            && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0
+            && r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth,
+            count: 1, text: n.textContent };
+        }, reconstruction.presentationLabel + (args.historicalReference.failureSource
+          ? ' Gerada em ' + new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Cuiaba', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(capturedAt || Date.now())) + '.'
+          : ''));
+        if (!noticeAudit.ok) throw Error('historical_reference_visible_notice_missing');
+        reconstruction.presentationAudit = noticeAudit;
+      }
+    }
+    let liveClockSynchronization = null;
+    if (!effectiveCaptureAt && ["OMT", "PERRENGUE", "ROO", "AFL"].includes(insertion.siteSigla)) {
+      const screenshotClockAt = new Date();
+      const labels = buildFrozenPageDateLabels(screenshotClockAt.toISOString());
+      const selectors = mergePageDateSelectors(mapping.pageDateSelectors);
+      const elements = await page.evaluate(({ selectors, labels, domain }) => {
+        const results = [];
+        for (const selector of selectors) for (const el of document.querySelectorAll(selector)) {
+          const rect = el.getBoundingClientRect(), style = getComputedStyle(el);
+          if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") continue;
+          if (el.children.length > 0) continue;
+          const original = el.textContent;
+          const short = /short/i.test(el.className || "");
+          el.textContent = short ? (domain.includes("omatogrossense.com") ? labels.omtShort : labels.perrengueShort) : labels.full;
+          results.push({ selector, original, renderedText: el.textContent });
+        }
+        return results;
+      }, { selectors, labels, domain: mapping.domain || "" });
+      if (!elements.length) throw Error("capture_audit_failed: live_page_clock_missing");
+      liveClockSynchronization = { version: 1, captureOnly: true, source: "actual_screenshot_clock", synchronizedAt: screenshotClockAt.toISOString(), elements };
+      await page.screenshot({ path: viewportPng });
+      capturedAt = screenshotClockAt.toISOString();
+      pageDateObserved = elements.find((item) => pageTextMatchesRequestedCaptureAt(item.renderedText, capturedAt))?.renderedText || null;
+      pageDateText = pageDateObserved;
+      systemDateTime = formatDesktopClock(screenshotClockAt);
+      if (!pageTextMatchesRequestedCaptureAt(pageDateObserved, capturedAt)) throw Error("capture_audit_failed: live_page_clock_mismatch");
+    }
+    const observedTabFavicon = await captureObservedTabFavicon(page, mapping.domain, captureRequestHeaders);
+    const actualPageTitle = String(await page.title()).trim();
+    frameSystemDateTime = resolveDesktopFrameDateTime(systemDateTime, reconstruction, effectiveCaptureAt, capturedAt);
+    const finalPngSlotAuditBox = resolveFinalPngSlotAuditBox(finalViewportTargetAudit, creativePlacementAudit, finalCreativeGeometryAudit);
     const desktopFrameMetadata = composeDesktopProof(viewportPng, finalPng, {
       osLabel: "Google Chrome",
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
       siteSigla: insertion.siteSigla,
-      tabTitle: mapping.browserTitle,
+      tabTitle: actualPageTitle || mapping.browserTitle,
       hostLabel: mapping.hostLabel,
       addressText: buildAddressText(finalPageUrl, mapping.hostLabel),
+      tabIconDataUrl: observedTabFavicon?.dataUrl || null,
+      tabIconSource: observedTabFavicon?.source || "generic_fallback",
+      tabIconSourceUrl: observedTabFavicon?.sourceUrl || null,
       slotPng,
       proofStyle: effectiveProofStyle,
       scrollMetrics: pageScrollMetrics,
+      protectedSlotBox: finalPngSlotAuditBox,
       viewportTrimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
     });
+    effectiveViewportTrimBottomPx = Number(desktopFrameMetadata.viewportTrimBottomPx ?? mapping.auditConfig?.viewportTrimBottomPx ?? 0);
     trace.finish(finalComposedStage, "ok", {
       requestedProofStyle,
       finalProofStyle,
       proofStyleDowngradeReason,
       auditInsetSuppressed: proofStyleContract.auditInsetSuppressed,
-      viewportTrimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
+      viewportTrimBottomPx: effectiveViewportTrimBottomPx,
       pageScrollMetrics,
       ...desktopFrameMetadata,
     });
+    if (requiresFinalPageClockProof || requiresAcceptancePageClockProof || liveClockSynchronization) {
+      const composedImage = describeLocalImage(finalPng);
+      const composedBytes = statSync(finalPng).size;
+      const composedWidth = Number(composedImage?.width);
+      const composedHeight = Number(composedImage?.height);
+      if (!Number.isFinite(composedWidth) || !Number.isFinite(composedHeight)
+        || composedWidth <= 0 || composedHeight <= 0
+        || composedWidth * composedHeight > 40_000_000) {
+        throw new Error("capture_audit_failed: candidate_artifact_dimensions_blocked");
+      }
+      if (!Number.isFinite(composedBytes) || composedBytes <= 0 || composedBytes > 20 * 1024 * 1024) {
+        throw new Error("capture_audit_failed: candidate_artifact_too_large");
+      }
+      visiblePageDateAudit = await auditVisiblePageDateClock(
+        page,
+        mapping,
+        effectiveCaptureAt || capturedAt,
+        viewportPng,
+        finalPng,
+        desktopFrameMetadata,
+      );
+      if (!visiblePageDateAudit.ok) {
+        const details = visiblePageDateAudit.issues.map((item) => item.code).join(", ");
+        throw new Error("capture_audit_failed: final_page_clock_unverified: " + (details || "page clock proof failed"));
+      }
+      pageDateObserved = visiblePageDateAudit.renderedText;
+      pageDateText = visiblePageDateAudit.renderedText;
+    }
 
-    const finalPngSlotAuditBox = Array.isArray(creativePlacementAudit?.targetInsideBoxes) && creativePlacementAudit.targetInsideBoxes[0]
-      ? creativePlacementAudit.targetInsideBoxes[0]
-      : (finalViewportTargetAudit?.box || creativePlacementAudit?.slotBox);
     const finalPngSlotAudit = auditFinalPngSlotPixels(
       finalPng,
-      slotPng,
+      viewportPng,
       finalPngSlotAuditBox,
       desktopFrameMetadata,
       {
         finalProofStyle,
         minSimilarity: Number(mapping.auditConfig?.finalPngSlotMinSimilarity ?? 0.82),
         minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
-        comparedTo: "slotPng",
+        comparedTo: "viewportPng",
+        referenceIsViewport: true,
         viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
       },
     );
     if (!finalPngSlotAudit.ok) {
       const details = finalPngSlotAudit.issues.map((item) => `${item.code}: ${item.detail}`).join("; ");
       throw new Error(`capture_audit_failed: final_png_slot_audit_failed: ${details}`);
+    }
+    if (videoMedia) {
+      finalPngProgressAudit = auditFinalPngVideoProgress(
+        finalPng,
+        viewportPng,
+        nativeProgressAudit,
+        desktopFrameMetadata,
+        {
+          finalProofStyle,
+          minSimilarity: Number(mapping.auditConfig?.finalPngSlotMinSimilarity ?? 0.82),
+          minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
+          viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
+        },
+      );
+      const progressVisible = nativeProgressAudit?.ok === true && finalPngProgressAudit?.ok === true;
+      videoProof = {
+        ...videoProof,
+        overlayInjected: false,
+        artificialOverlayCount: nativeProgressAudit?.artificialOverlayCount ?? null,
+        progressVisible,
+      };
+      if (reconstruction?.provenanceVersion === 4 && !progressVisible) {
+        const details = (finalPngProgressAudit?.issues || []).map((item) => `${item.code}: ${item.detail}`).join("; ");
+        throw new Error(`capture_audit_failed: native_video_progress_unverified: ${details || nativeProgressAudit?.reason || "native timeline or final PNG ROI did not pass"}`);
+      }
+    }
+    const finalPngCreativeReferenceFrames = gifSourceAllowed
+      ? buildFinalPngCreativeReferenceFrames(frameSelection)
+      : [];
+    const finalPngCreativeIdentityAudit = finalPngCreativeReferenceFrames.length
+      ? auditFinalPngCreativeIdentityAgainstFrames(
+          finalPng,
+          finalPngCreativeReferenceFrames,
+          finalPngSlotAuditBox,
+          desktopFrameMetadata,
+          {
+            finalProofStyle,
+            minSimilarity: Number(mapping.auditConfig?.finalPngCreativeMinSimilarity ?? 0.82),
+            minContentStddev: Number(mapping.auditConfig?.finalPngSlotMinContentStddev ?? 4),
+            comparedTo: "approvedGifFrames",
+            viewportWidthCss: Number(pageScrollMetrics?.viewportWidth ?? 0),
+          },
+        )
+      : null;
+    if (finalPngCreativeIdentityAudit && !finalPngCreativeIdentityAudit.ok) {
+      const details = finalPngCreativeIdentityAudit.issues
+        .map((item) => `${item.code}: ${item.detail}`)
+        .join("; ");
+      throw new Error(`capture_audit_failed: final_png_creative_identity_failed: ${details}`);
+    }
+    if (readinessAudit) {
+      const config = normalizeStrictReadinessConfig(mapping.auditConfig);
+      const paintTargets = readinessAudit.elements.filter((item) => item.paintRequired === true);
+      const finalPixelAudit = auditVisibleMediaPixels(finalPng, paintTargets, {
+        viewportWidthCss: readinessAudit.viewportWidth,
+        topOffsetPx: Number(desktopFrameMetadata.chromeFrameHeight ?? 0),
+        minContentStddev: config.minContentStddev,
+      });
+      finalReadinessAudit = {
+        ...readinessAudit,
+        finalPixelAudit,
+        approved: readinessAudit.approved === true && (!config.requirePainted || finalPixelAudit.ok === true),
+      };
+      if (!finalReadinessAudit.approved) {
+        const failed = finalPixelAudit.elements?.find((item) => item.painted !== true);
+        throw new Error(`critical_image_not_painted: final_png ${failed?.source || finalPixelAudit.error || "unknown"}`);
+      }
     }
     const shouldAuditPerrengueHeaderAdPolicy = mapping.domain === "perrenguematogrosso.com" &&
       mapping.scrollMode === "top" &&
@@ -5989,7 +10097,14 @@ async function main() {
     ].filter(Boolean).join("_") + ".png";
 
     metadata = {
+      ...pageHealthMetadata,
       auditContractVersion: "audit-checklist-v1",
+      auditPolicyVersion: "audit-policy-v1",
+      captureClass,
+      targetDate: isoDate,
+      sourceJobId,
+      capturePurpose: args.capturePurpose,
+      verifiedEditorialDateReplacements,
       resolvedRuleVersionHash: mapping.ruleVersionHash || null,
       requiredGates: {
         requireSlotVisibleInViewport: mapping.auditConfig?.requireSlotVisibleInViewport === true,
@@ -6002,6 +10117,10 @@ async function main() {
         requireNoOverlay: mapping.auditConfig?.requireNoOverlay !== false,
         requireNo404: mapping.auditConfig?.requireNo404 !== false,
         requireVideoControls: /VIDEO/i.test(insertion.localFormatoNormalizado || insertion.localFormato || ""),
+        requireReadinessAudit: normalizeStrictReadinessConfig(mapping.auditConfig).mode === "strict-visible",
+        requireAbsoluteEditorialDates: isHistoricalCapture && mapping.auditConfig?.requireAbsoluteEditorialDates === true,
+        requireEditorialDateMatchTarget: mapping.auditConfig?.requireEditorialDateMatchTarget === true,
+        requireVisiblePageDate: mapping.auditConfig?.requireVisiblePageDate === true && visiblePageDateAudit?.skipped !== true,
         gifAllowedFrameRanges: Array.isArray(mapping.auditConfig?.gifAllowedFrameRanges) ? mapping.auditConfig.gifAllowedFrameRanges : [],
       },
       checklistValidation: null,
@@ -6023,21 +10142,26 @@ async function main() {
       mediaUrl: insertion.mediaUrl,
       mediaBasename,
       requestedCaptureAt: effectiveCaptureAt,
-      systemDateTime,
+      systemDateTime: frameSystemDateTime,
       pageDateText,
       pageDateObserved,
       contentDateSamples,
+      contentRelativeTimeSamples,
       editorialSamples,
       retroContentManifest,
       retroContentProof,
       retroGate,
+      reconstruction,
       visiblePageDateAudit,
+      liveClockSynchronization,
       creativePlacementAudit,
       headerAdPolicyAudit,
       stickyHeaderViewportAudit,
       finalPngStickyHeaderAudit,
       finalViewportTargetAudit,
-      capturedAt: new Date().toISOString(),
+      finalCreativeGeometryAudit,
+      pageClockViewportAudit,
+      capturedAt,
       pageScrollMetrics,
       frameTheme: desktopFrameMetadata.frameTheme,
       frameTemplateVersion: desktopFrameMetadata.frameTemplateVersion ?? null,
@@ -6049,6 +10173,8 @@ async function main() {
       tabTitleRendered: desktopFrameMetadata.tabTitleRendered === true,
       tabIconRendered: desktopFrameMetadata.tabIconRendered === true,
       tabIconFallback: desktopFrameMetadata.tabIconFallback === true,
+      tabIconSource: desktopFrameMetadata.tabIconSource ?? null,
+      tabIconSourceUrl: desktopFrameMetadata.tabIconSourceUrl ?? null,
       chromeFrameHeight: desktopFrameMetadata.chromeFrameHeight,
       taskbarHeight: desktopFrameMetadata.taskbarHeight,
       scrollbarRendered: desktopFrameMetadata.scrollbarRendered,
@@ -6060,6 +10186,9 @@ async function main() {
       proofStyleDowngradeReason,
       auditInsetSuppressed: proofStyleContract.auditInsetSuppressed,
       finalPngSlotAudit,
+      nativeProgressAudit,
+      finalPngProgressAudit,
+      finalPngCreativeIdentityAudit,
       finalPngHeaderAdPolicyAudit,
       adClass: match.adClass || null,
       matchedAdSelector,
@@ -6100,6 +10229,7 @@ async function main() {
       frameSelectionDowngradeReason: frameSelection.frameSelectionDowngradeReason || null,
       videoProof,
       visualAudit,
+      readinessAudit: finalReadinessAudit || readinessAudit,
       pendingLogFlush,
       slotPng,
       contextPng,
@@ -6109,18 +10239,44 @@ async function main() {
     };
     writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
 
-    if (args.saveEvidence && args.apiBase && internalCaptureToken) {
-      await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
+    if (args.candidateOnly && (!args.apiBase || !internalCaptureToken)) {
+      throw new Error("candidate_checklist_unavailable: credencial interna da API ausente.");
+    }
+    if ((args.saveEvidence || args.candidateOnly) && args.apiBase && internalCaptureToken) {
+      metadata.checklistValidation = await validateCaptureChecklist(
+        args.apiBase,
+        insertion.id,
+        isoDate,
+        compactMetadataForPersistence(metadata),
+        args.candidateOnly && !args.saveEvidence,
+      );
+      writeFileSync(metaJson, JSON.stringify(metadata, null, 2));
     }
 
     const uploadedStage = trace.start("uploaded");
     if (args.upload) {
       if (!args.spacesEnv) throw new Error("Use --spacesEnv para subir o print ao Spaces.");
       spacesEnv = parseEnvFile(args.spacesEnv);
+      if (args.replaceExisting) {
+        const titleKey = `Print ${isoDate}`;
+        const existingEvidence = (insertion.evidences || []).find((item) => item.titulo && item.titulo.includes(titleKey));
+        const archivePlan = buildEvidenceReplacementArchivePlan({
+          evidenceUrl: existingEvidence?.arquivoUrl || null,
+          bucket: args.spacesBucket,
+          competencia: insertion.competencia,
+          campaignId: insertion.campanhaId,
+          insertionId: insertion.id,
+          targetDate: isoDate,
+        });
+        if (existingEvidence?.arquivoUrl && !archivePlan) {
+          throw new Error("evidence_replacement_archive_failed: URL anterior não pertence ao bucket configurado.");
+        }
+        if (archivePlan) metadata.replacementArchive = archiveEvidenceBeforeReplacement(spacesEnv, args.spacesBucket, archivePlan);
+      }
       const competenciaSlug = slugify(insertion.competencia || "sem-competencia").toUpperCase();
       const candidateSegment = args.candidateOnly
         ? `candidates/${slugify(args.runnerJobId || args.jobId || String(Date.now()))}/`
-        : "";
+        : `captures/${crypto.createHash("sha256").update(readFileSync(finalPng)).digest("hex")}/`;
       const key = `${args.spacesBasePath}/${competenciaSlug}/${insertion.campanhaId}/${insertion.id}/${candidateSegment}${evidenceFilename}`;
       const uploadedUrl = uploadToSpaces(spacesEnv, args.spacesBucket, key, finalPng);
       publicUrl = appendCacheVersion(uploadedUrl, Date.now());
@@ -6135,19 +10291,23 @@ async function main() {
       const title = `Print ${isoDate} - ${titleDate} [semi-auto]`;
       await upsertEvidence(args.apiBase, insertion, publicUrl, title, args.replaceExisting);
     }
+    metadata.evidenceUrl = publicUrl;
+    if (args.apiBase && internalCaptureToken && (!args.candidateOnly || args.saveEvidence)) {
+      await persistCaptureMetadata(args.apiBase, insertion.id, isoDate, compactMetadataForPersistence(metadata));
+    }
 
     const slotInfo = describeLocalImage(slotPng);
     const contextInfo = describeLocalImage(contextPng);
     const viewportInfo = describeLocalImage(viewportPng);
     const finalInfo = describeLocalImage(finalPng);
     const finalInsetInfo = finalProofStyle === "viewport_with_slot_inset"
-      ? describeLocalImage(finalPng, buildProofInsetCrop(viewportInfo, slotInfo, Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0)))
+      ? describeLocalImage(finalPng, buildProofInsetCrop(viewportInfo, slotInfo, effectiveViewportTrimBottomPx))
       : null;
 
     artifactRecords.slot = buildArtifactRecord("slot", slotPng, slotInfo);
     artifactRecords.context = buildArtifactRecord("context", contextPng, contextInfo);
     artifactRecords.viewport = buildArtifactRecord("viewport", viewportPng, viewportInfo, {
-      trimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
+      trimBottomPx: effectiveViewportTrimBottomPx,
     });
     artifactRecords.final = buildArtifactRecord("final", finalPng, finalInfo, {
       uploadedUrl: publicUrl,
@@ -6191,6 +10351,23 @@ async function main() {
 
     const auditStage = trace.start("audit_evaluated");
     const shouldFetchRemoteAuditStatus = args.apiBase && internalCaptureToken && args.upload && args.saveEvidence;
+    if (shouldFetchRemoteAuditStatus) {
+      const provisionalLog = await persistCaptureLogWithRetry(args.apiBase, insertion.id, {
+        date: isoDate,
+        log: {
+          jobId: args.jobId || null,
+          runnerJobId: args.runnerJobId || null,
+          captureAt: effectiveCaptureAt,
+          siteSigla: insertion.siteSigla,
+          status: "pending_audit",
+          uploadedUrl: publicUrl,
+          cacheBustedUrl: publicUrl,
+          metadata,
+          summary: { phase: "pending_audit" },
+        },
+      }, { maxAttempts: 3, baseBackoffMs: 450 });
+      logId = provisionalLog?.logId || null;
+    }
     const auditPayload = shouldFetchRemoteAuditStatus
       ? await fetchCaptureAuditStatus(args.apiBase, insertion.id, isoDate)
       : null;
@@ -6210,6 +10387,7 @@ async function main() {
           jobId: args.jobId || null,
           runnerJobId: args.runnerJobId || null,
           captureAt: effectiveCaptureAt,
+          reconstruction,
           siteSigla: insertion.siteSigla,
           status: "ok",
           uploadedUrl: publicUrl,
@@ -6242,6 +10420,8 @@ async function main() {
             tabTitleRendered: desktopFrameMetadata.tabTitleRendered === true,
             tabIconRendered: desktopFrameMetadata.tabIconRendered === true,
             tabIconFallback: desktopFrameMetadata.tabIconFallback === true,
+            tabIconSource: desktopFrameMetadata.tabIconSource ?? null,
+            tabIconSourceUrl: desktopFrameMetadata.tabIconSourceUrl ?? null,
             chromeFrameHeight: desktopFrameMetadata.chromeFrameHeight,
             taskbarHeight: desktopFrameMetadata.taskbarHeight,
             scrollbarRendered: desktopFrameMetadata.scrollbarRendered,
@@ -6305,17 +10485,36 @@ async function main() {
       uploadedUrl: publicUrl,
       metadata: metaJson,
       captureLogId: logId,
+      readinessAudit: finalReadinessAudit || readinessAudit,
       logPersistence,
       pendingLogFlush,
       retroGate,
       retroContentProof,
+      ...(args.candidateOnly ? { checklistValidation: metadata.checklistValidation ?? null } : {}),
+      reconstruction,
       manifestHash: retroContentManifest ? crypto.createHash("sha256").update(JSON.stringify(retroContentManifest)).digest("hex") : null,
       probableCause: analysis.probableCause,
+      stages: trace.stages,
     }, null, 2));
   } catch (error) {
     const internalCaptureToken = process.env.ADOPS_CAPTURE_API_TOKEN || process.env.ADOPS_INTERNAL_API_TOKEN || "";
     const errorCode = detectErrorCode(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const pageClockViewportGeometry = pageClockViewportAudit && {
+      ok: pageClockViewportAudit.ok,
+      reason: pageClockViewportAudit.reason ?? null,
+      initial: pageClockViewportAudit.initial && {
+        viewport: pageClockViewportAudit.initial.viewport,
+        target: pageClockViewportAudit.initial.target,
+      },
+      final: pageClockViewportAudit.final && {
+        viewport: pageClockViewportAudit.final.viewport,
+        target: pageClockViewportAudit.final.target,
+      },
+      measurements: pageClockViewportAudit.measurements ?? null,
+      requestedHeight: pageClockViewportAudit.requestedHeight ?? null,
+      maxHeightByPixelBudget: pageClockViewportAudit.maxHeightByPixelBudget ?? null,
+    };
 
     try {
       const slotInfo = describeLocalImage(slotPng);
@@ -6323,13 +10522,13 @@ async function main() {
       const viewportInfo = describeLocalImage(viewportPng);
       const finalInfo = describeLocalImage(finalPng);
       const finalInsetInfo = finalProofStyle === "viewport_with_slot_inset" && slotInfo && viewportInfo
-        ? describeLocalImage(finalPng, buildProofInsetCrop(viewportInfo, slotInfo, Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0)))
+        ? describeLocalImage(finalPng, buildProofInsetCrop(viewportInfo, slotInfo, effectiveViewportTrimBottomPx))
         : null;
 
       artifactRecords.slot = artifactRecords.slot ?? buildArtifactRecord("slot", slotPng, slotInfo);
       artifactRecords.context = artifactRecords.context ?? buildArtifactRecord("context", contextPng, contextInfo);
       artifactRecords.viewport = artifactRecords.viewport ?? buildArtifactRecord("viewport", viewportPng, viewportInfo, {
-        trimBottomPx: Number(mapping.auditConfig?.viewportTrimBottomPx ?? 0),
+        trimBottomPx: effectiveViewportTrimBottomPx,
       });
       artifactRecords.final = artifactRecords.final ?? buildArtifactRecord("final", finalPng, finalInfo, {
         uploadedUrl: publicUrl,
@@ -6384,6 +10583,7 @@ async function main() {
             jobId: args.jobId || null,
             runnerJobId: args.runnerJobId || null,
             captureAt: effectiveCaptureAt,
+            reconstruction,
             siteSigla: insertion.siteSigla,
             status: "failed",
             uploadedUrl: publicUrl,
@@ -6394,6 +10594,8 @@ async function main() {
             confidence: analysis.confidence,
             nextAction: analysis.nextAction,
             summary: {
+              errorCode,
+              errorDetail: errorMessage.slice(0, 1000),
               gifChosenFrameIndex: frameSelection?.gifChosenFrameIndex ?? null,
               gifStrongFrameCount: Array.isArray(frameSelection?.gifFrameCandidates)
                 ? frameSelection.gifFrameCandidates.filter((item) => item.strongCandidate).length
@@ -6428,9 +10630,16 @@ async function main() {
               insertionId: insertion.id,
               requestedCaptureAt: effectiveCaptureAt,
               isoDate,
+                ...(pageHealthMetadata || {}),
+                ...(typeof lastPageNavigationResponse?.status === "function"
+                  ? { pageStatus: Number(lastPageNavigationResponse.status()) }
+                  : {}),
               slotSelector: resolvedSlotSelector,
               contextSelector: resolvedContextSelector || resolvedSlotSelector,
               matchedMediaUrl: match?.mediaUrl || null,
+              nativeProgressAudit,
+              finalPngProgressAudit,
+              pageClockViewportAudit: pageClockViewportGeometry,
             },
           },
         }, {
@@ -6456,7 +10665,8 @@ async function main() {
               log: {
                 jobId: args.jobId || null,
                 runnerJobId: args.runnerJobId || null,
-                captureAt: effectiveCaptureAt,
+                  captureAt: effectiveCaptureAt,
+                  reconstruction,
                 siteSigla: insertion.siteSigla,
                 status: "failed",
                 errorCode,
@@ -6474,9 +10684,16 @@ async function main() {
                   insertionId: insertion.id,
                   requestedCaptureAt: effectiveCaptureAt,
                   isoDate,
+                    ...(pageHealthMetadata || {}),
+                    ...(typeof lastPageNavigationResponse?.status === "function"
+                      ? { pageStatus: Number(lastPageNavigationResponse.status()) }
+                      : {}),
                   slotSelector: resolvedSlotSelector,
                   contextSelector: resolvedContextSelector || resolvedSlotSelector,
                   matchedMediaUrl: match?.mediaUrl || null,
+                  nativeProgressAudit,
+                  finalPngProgressAudit,
+                  pageClockViewportAudit: pageClockViewportGeometry,
                 },
               },
             },
@@ -6508,15 +10725,75 @@ if (require.main === module) {
   });
 } else {
   module.exports = {
+    captureStrictReadinessCandidate,
+    collectCapturePageHealthMetadata,
+    trackMainFrameNavigationResponses,
+    appendCaptureRetryQuery,
+    resolveEffectiveCaptureAt,
+    assertInsertionOperable,
+    validateCaptureChecklist,
+    forceMatchedAdVisible,
+    applyAflRetroPreview,
+    stabilizeVisibleRetroDatesBeforeCapture,
+    applyOmtRetroPreview,
     applyPerrengueStaticRetroPreview,
+    collectRetroContentEvidence,
+    shouldCollectRetroContentEvidence,
+    shouldCollectEditorialEvidenceForCapture,
+    shouldAllowLiveArticleEditorialEvidenceForCapture,
+    applyPerrengueStaticRetroAd,
+    buildStaticRetroSlotPlan,
+    shouldAllowConfiguredRetroSlotReconstruction,
+    evaluateAuditedRetroSlotReconstruction,
+    normalizeRetroEditorialPosts,
+    buildWordPressArticleApiUrl,
+    fetchWordPressArticleCandidates,
+    isRejectedArticleCandidateUrl,
+    auditArticleCandidatePage,
+    normalizePerrengueWpRestBefore,
     resolveFinalCustomerProofStyle,
     evaluateFinalPngSlotAuditResult,
+    selectBestFinalPngCreativeIdentityAudit,
+    buildFinalPngCreativeReferenceFrames,
+    buildReferenceFrameOverlayLayout,
+    applyReferenceFrameToDomMediaInPage,
+    resolveFinalPngSlotAuditBox,
+    measureFinalCreativeBoxInPage,
     auditFinalPngSlotPixels,
+    auditNativeVideoProgress,
+    waitForViewportVisuals,
+    auditFinalPngVideoProgress,
+    auditVisiblePageDateClock,
+    ensureFinalPageClockViewport,
+    auditFinalPngCreativeIdentityAgainstFrames,
+    auditVisibleMediaPixels,
+    captureStrictReadinessCandidate,
+    normalizeStrictReadinessConfig,
     auditFinalPngHeaderAdPolicy,
     auditHeaderAdPolicy,
+    normalizeMediaIdentityUrl,
+    resolveReachableMediaUrl,
+    resolveMatchedGifSourceUrl,
+    resolvePageUrls,
     parseIsoLikeDate,
+    hasMatchingPreviewCutoff,
     evaluateContentTimeline,
+    evaluateRelativeContentTimeline,
+    buildVerifiedEditorialDateReplacements,
+    shouldNormalizeVerifiedPnmtHeroRelativeDates,
+    normalizeVerifiedPnmtHeroRelativeDates,
     evaluateRetroContentProof,
     evaluateRetroCaptureGate,
+    resolveDesktopFrameDateTime,
+    compactMetadataForPersistence,
+    requiresRetroEditorialProof,
+    buildEvidenceReplacementArchivePlan,
+    archiveEvidenceBeforeReplacement,
+    restoreEvidenceFromArchive,
+    parseSpacesEnv: parseEnvFile,
+    composeDesktopProof,
+    captureObservedTabFavicon,
+    resolveAllowedExternalFaviconHosts,
+    isAllowedFaviconUrl,
   };
 }

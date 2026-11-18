@@ -19,6 +19,9 @@ export const captureRulesTable = pgTable(
     statusPublished: boolean("status_published").notNull().default(false),
     ruleVersionHash: text("rule_version_hash"),
     publishedVersionId: integer("published_version_id"),
+    supersededByRuleId: integer("superseded_by_rule_id"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archiveReason: text("archive_reason"),
     createdBy: text("created_by"),
     updatedBy: text("updated_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -29,6 +32,7 @@ export const captureRulesTable = pgTable(
       .on(table.siteSigla, table.groupId)
       .where(sql`${table.statusPublished} = true`),
     index("capture_rules_site_published_updated_idx").on(table.siteSigla, table.statusPublished, table.updatedAt),
+    index("capture_rules_archived_idx").on(table.archivedAt),
   ],
 );
 

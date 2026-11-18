@@ -45,7 +45,7 @@ function validateFrameKit({ kitDir, fontPath }) {
   }
 
   if (!fontPath) {
-    throw new Error("windows_frame_font_missing: defina ADOPS_WINDOWS_FRAME_FONT com Segoe UI/Segoe UI Variable");
+    throw new Error("windows_frame_font_missing: defina ADOPS_WINDOWS_FRAME_FONT ou forneça Selawik licenciada no kit");
   }
 
   try {
@@ -122,6 +122,6 @@ if (process.env.ADOPS_VALIDATE_REAL_WINDOWS_FRAME_KIT === "true") {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: "windows11_chrome_real_template",
+  contract: "windows11_chrome_reconstructed_template",
   strictAssetValidation: process.env.ADOPS_VALIDATE_REAL_WINDOWS_FRAME_KIT === "true" ? "enabled" : "negative-contract-only",
 }));

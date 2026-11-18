@@ -1,0 +1,198 @@
+[
+  {
+    "id": "3P4R4F9ZPKNUUd3o",
+    "name": "ADOPS — Conferir implantação",
+    "active": false,
+    "versionId": "f30e86c4-06c1-46e0-bda4-d66531312ad9",
+    "sha256": "9fcf46756cb91b2c043087aac4918ad0c6c9592fa3e82c81a7b1a472bfc32242"
+  },
+  {
+    "id": "3ZPZJRQJkcbY3Q8Z",
+    "name": "ADOPS — Recuperar evidência histórica autorizada",
+    "active": true,
+    "versionId": "b3cc1a93-fc4b-4364-a135-a721c8d27637",
+    "sha256": "41474f413bf85781b5c1afbba3ae7435851c2ca6a849d50a3d83e2f11d4f2e98"
+  },
+  {
+    "id": "4z3NXGnap9Ix1ETq",
+    "name": "ADOPS — Acompanhar captura",
+    "active": true,
+    "versionId": "4f1d0156-df32-493a-88bd-18a036c4bae6",
+    "sha256": "5759616b8c42e5f840d207f099e551b2bf477209bb8d164081caee5bf5d52632"
+  },
+  {
+    "id": "54fuGL9hSCJzhGCR",
+    "name": "ADOPS — Publicar inserção autorizada",
+    "active": true,
+    "versionId": "648eb573-25e9-4662-ae22-8aed173c3edc",
+    "sha256": "12a7009a816c3e8b2fb5b0098a10e69570027f4f2bc864330169a3d59a762f90"
+  },
+  {
+    "id": "60qip0xZC1HTB4I8",
+    "name": "ADOPS — Monitorar Drive",
+    "active": true,
+    "versionId": "1b1c6ca8-0a8a-443d-b6c1-c7803547a381",
+    "sha256": "ae41b06237de46b0d0a0aaad7f7f02319f218c9f81fe83128f9d4ee5e0dfecbc"
+  },
+  {
+    "id": "BZBuOEtUAJ1KsjLG",
+    "name": "ADOPS — Conferir checklist",
+    "active": false,
+    "versionId": "df473b14-6f76-41b1-86e8-120391b3e408",
+    "sha256": "a6f851f711de5ddb1ca08b6000f7a423dcdd496f8008deea8b0f8c3941453ae7"
+  },
+  {
+    "id": "C7rpQHqQDD3CuQlp",
+    "name": "ADOPS — Evidências e recuperações",
+    "active": true,
+    "versionId": "b6a2636e-81aa-4a5d-ab66-4eb337384658",
+    "sha256": "3bd4ccb5ec4d64886703569e8143948a6699b0225d699e9bc67d787a844786e1"
+  },
+  {
+    "id": "Cr7a6T27RlnpMJC1",
+    "name": "ADOPS — Atualizar relatório",
+    "active": true,
+    "versionId": "cb13658a-4415-4083-9f31-15544ee2286b",
+    "sha256": "b6e63602bf62e7d30667404ad0e9b56376739350a4ebff97adefdb0aaff37987"
+  },
+  {
+    "id": "JJ3QI4rtLMrpDCDF",
+    "name": "ADOPS — Avisar pendências WhatsApp",
+    "active": true,
+    "versionId": "930ed5e1-2b70-4e8e-977e-9c1f1db9ac28",
+    "sha256": "da5aa0da4a5ef4016b6fbd7d6f2fcada7945107867255d863c153b8e72a72b3a"
+  },
+  {
+    "id": "ME2wagCk0TbmuOzF",
+    "name": "ADOPS — Receber respostas WhatsApp",
+    "active": true,
+    "versionId": "359d5344-bf78-45f1-a476-a41521dcef2d",
+    "sha256": "a3d6ba79d1e45ac77dcef37836aeb207413bf1e13a8d2ef16b6ed58074cdeab6"
+  },
+  {
+    "id": "McaBaIBdwxN7icfv",
+    "name": "ADOPS — Tratar falhas",
+    "active": true,
+    "versionId": "ddc332e2-9e08-45a3-96bc-ec730809ffee",
+    "sha256": "125e15eda5f11fcff0d6fe97641c623cf2c0d74b4fab2385202e5956c14f722b"
+  },
+  {
+    "id": "OfVb0E0Q8Wja3QXt",
+    "name": "ADOPS — Orquestrar recuperação de ontem",
+    "active": true,
+    "versionId": "cd8b994d-0ea3-4155-bfec-2c67e6c3c7bc",
+    "sha256": "70f892531fc8f0f03475256e7c0f42c7a78e14daf5374f1375455af0b672143d"
+  },
+  {
+    "id": "Pte7Lv1jdXqO1Bol",
+    "name": "ADOPS — Entregar provas e resumo no WhatsApp",
+    "active": true,
+    "versionId": "44e1da61-6635-4b27-8e27-d7fdac23ce20",
+    "sha256": "2ffe82c077113f718662d7511a61808b4595a1dd4cf01cc2316b370f5bff4130"
+  },
+  {
+    "id": "Titn4cBLFJaN1B5U",
+    "name": "ADOPS — Enviar prévia de agendamento ao grupo",
+    "active": true,
+    "versionId": "4af176c2-cc91-4916-a92d-2160fdf775b6",
+    "sha256": "81411e9b7832f7a5442985ed603ef6030a53665dfc110c4516fb8a7363a24356"
+  },
+  {
+    "id": "YmgDpb3ZVhLqkt3L",
+    "name": "ADOPS — Operação controlada API",
+    "active": true,
+    "versionId": "2a3a144c-bb40-40a0-921f-3a0ecc28caf2",
+    "sha256": "8834a1d1e5f796f0e2f1b682d072b0ac4354e91bae3d5cefeecdfff7d83127e4"
+  },
+  {
+    "id": "Yuzka3YszPwKxyKI",
+    "name": "ADOPS — Acompanhar trabalho",
+    "active": true,
+    "versionId": "fd3f58b7-5af4-4479-99d5-8c515fbd0de3",
+    "sha256": "a0a82e9fbfb7d1022cee25a50fc9db875c54c0f92598371218429c247deecba3"
+  },
+  {
+    "id": "eg82FQzf2QFj81Zv",
+    "name": "ADOPS — Conferir WhatsApp",
+    "active": false,
+    "versionId": "e613bb4e-dde4-458d-b0fc-b5be760304b2",
+    "sha256": "75576b37cb925ec3a30b717d8f0288f8ca7f30f631be04212d95db5ba2e6f8cf"
+  },
+  {
+    "id": "gRSMPctoutOPPqix",
+    "name": "ADOPS — Conferir provas e preparar fechamento",
+    "active": true,
+    "versionId": "ee97c242-53b9-4e20-8053-4015c63ed5ca",
+    "sha256": "98ae58e4f195ce5acc4d538df821d58d84a390d4dc62b8bb6a1235b8701ca2f6"
+  },
+  {
+    "id": "gbJ6md3XnOnVZijc",
+    "name": "ADOPS — Atender confirmações de campanhas",
+    "active": true,
+    "versionId": "915d2748-8e94-419f-860b-770343a81ded",
+    "sha256": "f8b73ee57bbe6179b58b4f11361f67d26ec9f349a07ed34c10979bcca27b14dd"
+  },
+  {
+    "id": "hHNPwZhND1LdDwoo",
+    "name": "ADOPS — Manter cache e confirmar publicação",
+    "active": true,
+    "versionId": "7a046e0d-6d91-4b9e-ac47-f8eaf1a0854f",
+    "sha256": "f9b986f912ae561bd3c58afca56aebde5a966949fee0449e81ffa28bda2097f9"
+  },
+  {
+    "id": "heku9uF6VtOfBtJm",
+    "name": "ADOPS — Monitorar planilha",
+    "active": true,
+    "versionId": "08d00d3a-120a-4ac5-b7a2-27cc1e7a4f58",
+    "sha256": "c10a646450c558be6dec2745d78be6c66354f524f5d40235afce9071fcb3a03f"
+  },
+  {
+    "id": "kHzYHdowjIrwFQsS",
+    "name": "ADOPS — Executar campanha confirmada",
+    "active": true,
+    "versionId": "4b43f0c5-618b-4faa-89b5-98a09ff92b9f",
+    "sha256": "d8af2a2a644b1d22eb7eb0f16441b889bed1b9a7eb710811d869b7611604f770"
+  },
+  {
+    "id": "nBV1gMZpKon59TLt",
+    "name": "ADOPS — Atender menu no WhatsApp",
+    "active": true,
+    "versionId": "8899e91b-861e-4d01-97f8-8bf2319acc67",
+    "sha256": "f38a1f077e70de480a739859436aec40de00db4d2e8704277df4d1235cafdb11"
+  },
+  {
+    "id": "vRKxLmmNNuNfDOVy",
+    "name": "ADOPS — Enviar ZIPs Sanear 3294 e 3292 somente a Leandro — 29/10/2026",
+    "active": false,
+    "versionId": "18a06f8b-53b9-4fb8-8850-a3d876f49e1e",
+    "sha256": "433723d6a2b225a127bf337f9a6946183b754cf2d9756d75d65eae592f956834"
+  },
+  {
+    "id": "w6AeogzSyGwHhcwI",
+    "name": "ADOPS — Baixar prévia visual privada",
+    "active": true,
+    "versionId": "3ccfec79-4ddd-4030-8833-024e28fa6f87",
+    "sha256": "3970d70916baeb1b394dcc54e4f4f7ba77f9626bfe67674a7168cecc9385b839"
+  },
+  {
+    "id": "xarhkBClaM3R5HWF",
+    "name": "ADOPS — Confirmar resposta WhatsApp",
+    "active": true,
+    "versionId": "2512f5b4-ea4e-4b76-a305-436847746f28",
+    "sha256": "b33335a81dd090d9fc6e1e777c11e7a4df1e235c213565c404fa2ed675efeb6a"
+  },
+  {
+    "id": "zOsmHEbMq7JzIzqP",
+    "name": "ADOPS — Preparar candidata histórica com referência",
+    "active": true,
+    "versionId": "7be0520d-4e53-4ce9-b7a3-47bb3a28e0a4",
+    "sha256": "c68337f2eda976e76a960f3bb35bcf4a59722ca7e5cc3cec9b3b7d03dba5deb9"
+  },
+  {
+    "id": "zxGSxncVTG3YX9W1",
+    "name": "ADOPS — Capturar evidência autorizada",
+    "active": true,
+    "versionId": "913ea4d0-f144-4d4e-b2e5-21a47b724e04",
+    "sha256": "c2d035416b9819066c7b861459b7cdb48789b2dcf64acad004cda4ca80957737"
+  }
+]

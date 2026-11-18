@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+import {ListEvidencesResponse} from '../../lib/api-zod/src/generated/api';
+const source=readFileSync(new URL('../../artifacts/api-server/src/routes/evidences.ts',import.meta.url),'utf8');
+const expression=source.match(/res\.json\((ListEvidencesResponse\.parse\([\s\S]*?)\);/)?.[1];
+assert.ok(expression);
+const evidence={id:1,insercaoId:3022,tipo:'print',arquivoUrl:'https://example.com/proof.png',titulo:'2026-09-01',criadoEm:new Date('2026-09-01T12:00:00Z')};
+const result=runInNewContext(expression,{ListEvidencesResponse,evidences:[evidence]});
+assert.equal(result[0].criadoEm,'2026-09-01T12:00:00.000Z');
+assert.equal(result[0].arquivoUrl,evidence.arquivoUrl);
+assert.equal(runInNewContext(expression,{ListEvidencesResponse,evidences:[]}).length,0);
+assert.ok(evidence.criadoEm instanceof Date);
+console.log('ok: evidence listing serializes timestamps without changing stored proofs');

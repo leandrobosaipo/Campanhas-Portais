@@ -1,10 +1,14 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   campaignsTable,
+  captureProofCandidatePromotionsTable,
+  captureProofCandidatesTable,
   captureProofLogsTable,
   captureRulesTable,
   db,
+  evidencesTable,
   insertionsTable,
+  printJobsTable,
   sitesTable,
 } from "@workspace/db";
 import {
@@ -15,14 +19,32 @@ import {
   normalizeSiteMediaUrl,
 } from "./adrotate-sites";
 import {
+  attachServerCaptureProvenance,
+  correlateCaptureLogProvenance,
   evaluateCaptureMetadata,
+  evaluateVideoPlayerProof,
+  formatIsoDate,
+  getEvidenceDateKey,
   isCaptureAtInRetroWindow,
+  isFutureCaptureAt,
+  pageTextMatchesRequestedCaptureAt,
+  pageTextMatchesCaptureReceiptAt,
   parseDateOnly,
+  requiresRetroEditorialProof,
 } from "./capture-audit";
-import { loadLocalCaptureMetadata } from "./local-capture-runtime";
+import {
+  requiresPerrengueHomeEditorialAudit,
+  resolveChecklistFinalProofStyle,
+} from "./proof-style-contract";
+import { selectCanonicalEvidencePerDate } from "./evidence-export";
+import { resolvePromotedCaptureProofMetadata } from "./promoted-capture-proof-metadata.mjs";
+import { publicationAcceptanceReceipt } from "./publication-acceptance-policy.mjs";
 
 export const AUDIT_CHECKLIST_VERSION = "audit-checklist-v1" as const;
-const REQUIRED_FRAME_TEMPLATE = "windows11-chrome-light-similar-v4";
+const REQUIRED_FRAME_TEMPLATES = new Set([
+  "windows11-chrome-light-similar-v4",
+  "windows11-chrome-light-similar-v5",
+]);
 
 type Severity = "blocking" | "warning";
 
@@ -49,6 +71,10 @@ type RequiredGates = {
   requireNoOverlay: boolean;
   requireNo404: boolean;
   requireVideoControls: boolean;
+  requireReadinessAudit: boolean;
+  requireAbsoluteEditorialDates: boolean;
+  requireEditorialDateMatchTarget: boolean;
+  requireVisiblePageDate: boolean;
   requireGifAllowedFrameRanges: boolean;
   gifAllowedFrameRanges: Array<[number, number]>;
 };
@@ -114,6 +140,7 @@ export type AuditChecklistContract = AuditChecklistContractOk | AuditChecklistCo
 
 export type AuditChecklistValidation = {
   approved: boolean;
+  preliminary: boolean;
   version: typeof AUDIT_CHECKLIST_VERSION;
   insertionId: number;
   date: string;
@@ -124,7 +151,38 @@ export type AuditChecklistValidation = {
   blockingIssues: AuditChecklistIssue[];
   warnings: AuditChecklistIssue[];
   evidenceStatus: "approved" | "blocked";
+  publicationAcceptance?: { purpose: string; sourceJobId: string; insertionId: number; targetDate: string; actualAt: string; preliminary: boolean } | null;
+  captureWindowException: {
+    approvalRef: string;
+    approvedAt: string;
+    expiresAt: string;
+    actualAt: string;
+    late: true;
+    targetDate: string;
+    insertionId: number;
+    siteSigla: string;
+    piCodigo: string;
+    groupId: number;
+    limitation: string;
+  } | null;
 };
+
+const CAPTURE_WINDOW_EXCEPTION = {
+  approvalRef: "call_dff2ebce693b4957bf4d52ccc737ce7b:reply",
+  approvedAt: "2026-10-12T02:41:31Z",
+  expiresAt: "2026-10-12T03:59:59.999Z",
+  targetDate: "2026-10-11",
+  allowlisted: [
+    { insertionId: 3055, siteSigla: "OMT", piCodigo: "PI 9784 - PREF CBA", groupId: 1 },
+    { insertionId: 3083, siteSigla: "PERRENGUE", piCodigo: "91713", groupId: 11 },
+  ],
+} as const;
+
+function formatCuiabaDateAt(value: Date | string) {
+  const instant = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(instant.getTime())) return null;
+  return formatIsoDate(instant);
+}
 
 function issue(
   code: string,
@@ -134,6 +192,54 @@ function issue(
   severity: Severity = "blocking",
 ): AuditChecklistIssue {
   return { code, severity, gate, label, detail };
+}
+
+function formatCuiabaClockAt(value: Date | string) {
+  const instant = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(instant.getTime())) return null;
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Cuiaba",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(instant).replace(" ", "T");
+}
+
+export function decideAuditChecklistApproval(input: {
+  phase?: "pre_upload" | "final";
+  contractOk: boolean;
+  metadataPresent: boolean;
+  auditOk: boolean;
+  blockingIssues: AuditChecklistIssue[];
+}) {
+  const blockingIssues = [...input.blockingIssues];
+  const preliminary = input.phase === "pre_upload";
+  const approved = input.contractOk
+    && input.metadataPresent
+    && blockingIssues.length === 0
+    && (preliminary || input.auditOk);
+
+  if (!approved && blockingIssues.length === 0) {
+    blockingIssues.push(input.contractOk && input.metadataPresent && !preliminary && !input.auditOk
+      ? issue(
+          "audit_not_approved",
+          "captureMetadata",
+          "Auditoria final ainda não aprovada",
+          "A captura passou pelos gates mecânicos, mas a auditoria final ainda não confirmou a proveniência persistida.",
+        )
+      : issue(
+          "checklist_decision_inconsistent",
+          "checklist",
+          "Checklist bloqueado sem causa resolvida",
+          "O contrato não pôde aprovar a captura e não informou outro bloqueio estruturado.",
+        ));
+  }
+
+  return { approved, blockingIssues };
 }
 
 function normalizeDateKey(value: string) {
@@ -206,6 +312,10 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
     requireNoOverlay: booleanFromConfig(auditConfig, "requireNoOverlay", true),
     requireNo404: booleanFromConfig(auditConfig, "requireNo404", true),
     requireVideoControls: booleanFromConfig(auditConfig, "requireVideoControls", isVideo),
+    requireReadinessAudit: String(auditConfig.readinessMode ?? "legacy").trim().toLowerCase() === "strict-visible",
+    requireAbsoluteEditorialDates: booleanFromConfig(auditConfig, "requireAbsoluteEditorialDates", false),
+    requireEditorialDateMatchTarget: booleanFromConfig(auditConfig, "requireEditorialDateMatchTarget", false),
+    requireVisiblePageDate: booleanFromConfig(auditConfig, "requireVisiblePageDate", false),
     requireGifAllowedFrameRanges: ranges.length > 0,
     gifAllowedFrameRanges: ranges,
   };
@@ -237,17 +347,70 @@ async function resolvePublishedRule(siteSigla: string, groupId: number) {
 
 export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string) {
   const dateKey = normalizeDateKey(targetDate);
-  const localMetadata = loadLocalCaptureMetadata(insertionId, dateKey);
-  if (isPlainObject(localMetadata)) return localMetadata;
-
-  const [latestLog] = await db.select().from(captureProofLogsTable).where(
+  const logs = await db.select({
+    id: captureProofLogsTable.id,
+    uploadedUrl: captureProofLogsTable.uploadedUrl,
+  }).from(captureProofLogsTable).where(
     and(
       eq(captureProofLogsTable.insertionId, insertionId),
       eq(captureProofLogsTable.targetDate, dateKey),
-      eq(captureProofLogsTable.status, "ok"),
+      inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
     ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(1);
-  return isPlainObject(latestLog?.metadata) ? latestLog.metadata : null;
+  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(50);
+  const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
+  const evidenceUrl = selectCanonicalEvidencePerDate(evidenceRows, (row) => getEvidenceDateKey(row.titulo))
+    .find((row) => getEvidenceDateKey(row.titulo) === dateKey)?.arquivoUrl ?? null;
+  if (evidenceUrl) {
+    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(and(
+      eq(captureProofCandidatePromotionsTable.insertionId, insertionId),
+      eq(captureProofCandidatePromotionsTable.targetDate, dateKey),
+      eq(captureProofCandidatePromotionsTable.status, "approved"),
+    )).orderBy(desc(captureProofCandidatePromotionsTable.receivedAt));
+    for (const promotion of promotions) {
+      if (!promotion.finalLogId) continue;
+      const candidatePromise = db.select().from(captureProofCandidatesTable)
+        .where(eq(captureProofCandidatesTable.id, promotion.candidateId)).limit(1);
+      const logPromise = db.select().from(captureProofLogsTable)
+        .where(eq(captureProofLogsTable.id, promotion.finalLogId)).limit(1);
+      const [[candidate], [finalLog]] = await Promise.all([candidatePromise, logPromise]);
+      const promotedMetadata = resolvePromotedCaptureProofMetadata({
+        promotion,
+        candidate,
+        finalLog,
+        canonicalEvidenceUrl: evidenceUrl,
+      });
+      if (promotedMetadata && finalLog) {
+        const provenance = correlateCaptureLogProvenance({
+          targetDate: finalLog.targetDate,
+          jobId: finalLog.jobId,
+          runnerJobId: finalLog.runnerJobId,
+          createdAt: finalLog.createdAt,
+          uploadedUrl: finalLog.uploadedUrl,
+          status: finalLog.status,
+          metadata: promotedMetadata,
+          evidenceUrl,
+        });
+        if (provenance) return attachServerCaptureProvenance(promotedMetadata, provenance);
+      }
+    }
+  }
+  const latestRef = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? null;
+  const [latestLog] = latestRef
+    ? await db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, latestRef.id)).limit(1)
+    : [];
+  if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
+  const metadata = { ...latestLog.metadata };
+  const provenance = correlateCaptureLogProvenance({
+    targetDate: latestLog.targetDate,
+    jobId: latestLog.jobId,
+    runnerJobId: latestLog.runnerJobId,
+    createdAt: latestLog.createdAt,
+    uploadedUrl: latestLog.uploadedUrl,
+    status: latestLog.status,
+    metadata,
+    evidenceUrl,
+  });
+  return provenance ? attachServerCaptureProvenance(metadata, provenance) : metadata;
 }
 
 export async function resolveAuditChecklist(input: { insertionId: number; date: string }): Promise<AuditChecklistContract> {
@@ -446,10 +609,87 @@ function addBaseAuditIssues(audit: ReturnType<typeof evaluateCaptureMetadata> | 
   }
 }
 
+export function validatePerrengueRetroEditorialChecklistGate(input: {
+  captureClass: string | null | undefined;
+  siteSigla: string;
+  page: string;
+  retroGate: Record<string, unknown> | null;
+}): AuditChecklistIssue[] {
+  if (input.captureClass !== "historical_recovery" || !requiresPerrengueHomeEditorialAudit(input.siteSigla, input.page)) return [];
+  const editorialMemeLeaks = Array.isArray(input.retroGate?.editorialMemeLeaks)
+    ? input.retroGate.editorialMemeLeaks
+    : null;
+  if (input.retroGate?.editorialContentMatches !== true || editorialMemeLeaks === null) {
+    return [issue(
+      "retro_editorial_audit_missing",
+      "retroGate",
+      "Auditoria editorial retroativa ausente",
+      "Perrengue exige editorialContentMatches=true e editorialMemeLeaks presente antes de liberar a prova.",
+    )];
+  }
+  if (editorialMemeLeaks.length > 0) {
+    return [issue(
+      "retro_editorial_meme_leak",
+      "retroGate",
+      "Memes do Vovo em area editorial bloqueada",
+      `Destaques e Agora nao podem conter Memes do Vovo. Ocorrencias: ${JSON.stringify(editorialMemeLeaks)}.`,
+    )];
+  }
+  return [];
+}
+
+export function resolveChecklistCaptureWindowAt(
+  audit: Pick<ReturnType<typeof evaluateCaptureMetadata>, "captureClass" | "targetDate" | "capturedAt" | "requestedCaptureAt"> | null,
+  targetDate: string,
+  now = new Date(),
+  preUploadReceivedAt?: Date,
+) {
+  if (audit?.captureClass === "scheduled" || audit?.captureClass === "same_day_retry") {
+    if (audit.targetDate !== targetDate || !audit.capturedAt || isFutureCaptureAt(audit.capturedAt, now)) return null;
+    return audit.capturedAt;
+  }
+  if (preUploadReceivedAt && formatIsoDate(preUploadReceivedAt) === targetDate && !isFutureCaptureAt(preUploadReceivedAt.toISOString(), now)) {
+    return preUploadReceivedAt.toISOString();
+  }
+  return audit?.requestedCaptureAt ?? null;
+}
+
+export function resolveChecklistEditorialCaptureClass(input: {
+  trustedCaptureClass: string | null | undefined;
+  phase?: "pre_upload" | "final";
+  targetDate: string;
+  preUploadReceivedAt?: Date;
+}) {
+  if (
+    input.phase === "pre_upload" &&
+    input.preUploadReceivedAt &&
+    input.targetDate < formatIsoDate(input.preUploadReceivedAt)
+  ) return "historical_recovery";
+  return input.trustedCaptureClass ?? null;
+}
+
+export function requiresHistoricalEditorialChecklist(input: {
+  trustedCaptureClass: string | null | undefined;
+  phase?: "pre_upload" | "final";
+  targetDate: string;
+  preUploadReceivedAt?: Date;
+  now?: Date;
+}) {
+  const captureClass = resolveChecklistEditorialCaptureClass(input);
+  return captureClass === "historical_recovery" || (
+    input.phase !== "pre_upload" && !captureClass &&
+    requiresRetroEditorialProof(input.targetDate, input.now)
+  );
+}
+
 export async function validateAuditChecklist(input: {
   insertionId: number;
   date: string;
   metadata?: unknown;
+  phase?: "pre_upload" | "final";
+  candidateFinalPageClock?: boolean;
+  preUploadReceivedAt?: Date;
+  preUploadUntrustedMetadata?: unknown;
 }): Promise<AuditChecklistValidation> {
   const date = normalizeDateKey(input.date);
   const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date });
@@ -459,7 +699,60 @@ export async function validateAuditChecklist(input: {
     ? await loadAuditChecklistMetadata(input.insertionId, date)
     : input.metadata;
   const metadata = isPlainObject(loadedMetadata) ? loadedMetadata : null;
-  const audit = evaluateCaptureMetadata(metadata, date);
+  const finalPageClockRequired = input.candidateFinalPageClock === true && contract.ok && contract.requiredGates.requireVisiblePageDate;
+  const audit = evaluateCaptureMetadata(metadata, date, new Date(), {
+    finalPageClockRequired,
+    preUploadReceivedAt: input.phase === "pre_upload" ? input.preUploadReceivedAt : undefined,
+  });
+  const acceptanceMetadata = input.phase === "pre_upload" ? input.preUploadUntrustedMetadata : metadata;
+  let publicationAcceptance: AuditChecklistValidation["publicationAcceptance"] = null;
+  if (isPlainObject(acceptanceMetadata)
+    && acceptanceMetadata.capturePurpose === "publication_acceptance"
+    && typeof acceptanceMetadata.sourceJobId === "string"
+    && /^[A-Za-z0-9._:-]{1,160}$/.test(acceptanceMetadata.sourceJobId)) {
+    const [job] = await db.select().from(printJobsTable).where(eq(printJobsTable.id, acceptanceMetadata.sourceJobId)).limit(1);
+    publicationAcceptance = publicationAcceptanceReceipt({
+      insertionId: input.insertionId, date, phase: input.phase, metadata: acceptanceMetadata, audit, job,
+      receivedAt: input.phase === "pre_upload" ? input.preUploadReceivedAt ?? new Date() : new Date(),
+    });
+  }
+  const reconstruction = metadata?.reconstruction && typeof metadata.reconstruction === "object"
+    ? metadata.reconstruction as Record<string, unknown>
+    : null;
+  const isTrustedOriginalOmtLiveCapture = contract.ok
+    && contract.insertion.siteSigla === "OMT"
+    && input.phase !== "pre_upload"
+    && (audit?.captureClass === "scheduled" || audit?.captureClass === "same_day_retry")
+    && audit.targetDate === date
+    && typeof audit.capturedAt === "string"
+    && formatIsoDate(new Date(audit.capturedAt)) === date
+    && audit.retroContentProof?.sourceMode !== "signed_preview"
+    && audit.retroContentProof?.sourceMode !== "audited_reconstruction"
+    && audit.retroContentProof?.reconstructed !== true
+    && reconstruction?.reconstructed !== true
+    && reconstruction?.sourceMode !== "signed_preview"
+    && reconstruction?.sourceMode !== "audited_reconstruction"
+    && !["late_publication_recovery", "historical_recovery"].includes(String(reconstruction?.reason ?? ""));
+  const canonicalOmtLiveClockAt = contract.ok
+    && contract.insertion.siteSigla === "OMT"
+    && !audit?.requestedCaptureAt
+    ? input.phase === "pre_upload"
+      ? date === formatIsoDate(new Date())
+        && input.preUploadReceivedAt
+        && formatIsoDate(input.preUploadReceivedAt) === date
+        && !isFutureCaptureAt(input.preUploadReceivedAt.toISOString())
+        ? input.preUploadReceivedAt
+        : null
+      : isTrustedOriginalOmtLiveCapture
+        ? audit.capturedAt
+        : null
+    : null;
+  const historicalEditorialAuditRequired = requiresHistoricalEditorialChecklist({
+    trustedCaptureClass: audit?.captureClass,
+    phase: input.phase,
+    targetDate: date,
+    preUploadReceivedAt: input.preUploadReceivedAt,
+  });
 
   if (!metadata) {
     blockingIssues.push(issue(
@@ -471,6 +764,42 @@ export async function validateAuditChecklist(input: {
   }
 
   addBaseAuditIssues(audit, blockingIssues);
+  let captureWindowException: AuditChecklistValidation["captureWindowException"] = null;
+  if (canonicalOmtLiveClockAt && metadata) {
+    const expectedClock = formatCuiabaClockAt(canonicalOmtLiveClockAt);
+    const systemDateTime = typeof metadata.systemDateTime === "string" ? metadata.systemDateTime : "";
+    const pageDateObserved = typeof metadata.pageDateObserved === "string" ? metadata.pageDateObserved : "";
+    const pageDateText = typeof metadata.pageDateText === "string" ? metadata.pageDateText : "";
+    const visiblePageClock = pageDateObserved || pageDateText;
+    // This adds a second clock check against the server receipt. Existing date,
+    // requested-time, and capture-integrity issues remain blocking.
+    if (expectedClock && !pageTextMatchesCaptureReceiptAt(systemDateTime, expectedClock)) {
+      blockingIssues.push(issue(
+        "metadata_desktop_time_mismatch",
+        "captureMetadata",
+        "Relógio visível do OMT diverge da captura",
+        `A hora visível precisa corresponder ao instante real da captura em America/Cuiaba (tolerância existente de 90 s). Esperado ${expectedClock}; encontrado ${systemDateTime || "ausente"}.`,
+      ));
+    }
+    if (expectedClock && !pageTextMatchesCaptureReceiptAt(visiblePageClock, expectedClock)) {
+      blockingIssues.push(issue(
+        "page_time_mismatch",
+        "captureMetadata",
+        "Relógio da página do OMT diverge da captura",
+        `A hora visível no site precisa corresponder ao instante real da captura em America/Cuiaba (tolerância existente de 90 s). Esperado ${expectedClock}; encontrado ${visiblePageClock || "ausente"}.`,
+      ));
+    }
+  }
+  if (input.phase === "pre_upload") {
+    // Temporal provenance can only be trusted after the artifact and child job
+    // are persisted.  Pre-upload is deliberately a visual/mechanical gate;
+    // the canonical audit still runs after persistence and keeps these issues.
+    for (let index = blockingIssues.length - 1; index >= 0; index -= 1) {
+      if (["metadata_retro_content_unverified", "metadata_capture_class_untrusted"].includes(blockingIssues[index]!.code)) {
+        blockingIssues.splice(index, 1);
+      }
+    }
+  }
 
   if (contract.ok && metadata) {
     const { requiredGates, expectedSelectors, expectedMedia, resolvedRule } = contract;
@@ -483,7 +812,11 @@ export async function validateAuditChecklist(input: {
     const retroGate = metadataObject(metadata, "retroGate");
     const creativePlacementAudit = metadataObject(metadata, "creativePlacementAudit");
     const pageScrollMetrics = metadataObject(metadata, "pageScrollMetrics");
-    const videoProof = metadataObject(metadata, "videoProof");
+    const readinessAudit = metadataObject(metadata, "readinessAudit");
+    const metadataRequiredGates = metadataObject(metadata, "requiredGates");
+    const relativeContentTimeline = isPlainObject(retroGate?.relativeContentTimeline)
+      ? retroGate.relativeContentTimeline
+      : null;
     const matchedMediaUrl = metadataString(metadata, "matchedMediaUrl");
     const requestedCaptureAt = metadataString(metadata, "requestedCaptureAt");
 
@@ -530,23 +863,107 @@ export async function validateAuditChecklist(input: {
       ));
     }
 
-    if (!requestedCaptureAt || !isCaptureAtInRetroWindow(requestedCaptureAt)) {
+    const captureWindowAt = resolveChecklistCaptureWindowAt(
+      audit,
+      date,
+      new Date(),
+      input.phase === "pre_upload" ? input.preUploadReceivedAt : undefined,
+    );
+    const exceptionTuple = contract.ok
+      ? CAPTURE_WINDOW_EXCEPTION.allowlisted.find((item) =>
+        item.insertionId === input.insertionId
+        && item.siteSigla === contract.insertion.siteSigla
+        && item.piCodigo === contract.insertion.piCodigo
+        && item.groupId === contract.expectedSelectors.groupId)
+      : null;
+    const exceptionActualAt = input.phase === "pre_upload"
+      ? input.preUploadReceivedAt?.toISOString() ?? null
+      : audit?.capturedAt ?? null;
+    const exceptionInstant = exceptionActualAt ? new Date(exceptionActualAt) : null;
+    const approvalStart = new Date(CAPTURE_WINDOW_EXCEPTION.approvedAt);
+    const approvalEnd = new Date(CAPTURE_WINDOW_EXCEPTION.expiresAt);
+    captureWindowException = contract.ok
+      && exceptionTuple
+      && date === CAPTURE_WINDOW_EXCEPTION.targetDate
+      && input.phase === "pre_upload"
+        ? Boolean(exceptionInstant
+          && input.preUploadReceivedAt
+          && !audit?.requestedCaptureAt
+          && formatCuiabaDateAt(exceptionInstant) === CAPTURE_WINDOW_EXCEPTION.targetDate
+          && exceptionInstant.getTime() >= approvalStart.getTime()
+          && exceptionInstant.getTime() <= approvalEnd.getTime())
+          && !isFutureCaptureAt(exceptionInstant.toISOString())
+          ? {
+            approvalRef: CAPTURE_WINDOW_EXCEPTION.approvalRef,
+            approvedAt: CAPTURE_WINDOW_EXCEPTION.approvedAt,
+            expiresAt: CAPTURE_WINDOW_EXCEPTION.expiresAt,
+            actualAt: exceptionInstant.toISOString(),
+            late: true as const,
+            targetDate: date,
+            insertionId: input.insertionId,
+            siteSigla: exceptionTuple.siteSigla,
+            piCodigo: exceptionTuple.piCodigo,
+            groupId: exceptionTuple.groupId,
+            limitation: "Exceção limitada à janela de captura desta aprovação; não substitui outros gates nem valida publicação externa.",
+          }
+          : null
+        : contract.ok
+          && exceptionTuple
+          && date === CAPTURE_WINDOW_EXCEPTION.targetDate
+          && input.phase !== "pre_upload"
+          && (audit?.captureClass === "scheduled" || audit?.captureClass === "same_day_retry")
+          && audit.targetDate === date
+          && !audit.requestedCaptureAt
+          && typeof audit.capturedAt === "string"
+          && formatCuiabaDateAt(audit.capturedAt) === CAPTURE_WINDOW_EXCEPTION.targetDate
+          && !isFutureCaptureAt(audit.capturedAt)
+          && audit.retroContentProof?.sourceMode !== "signed_preview"
+          && audit.retroContentProof?.sourceMode !== "audited_reconstruction"
+          && audit.retroContentProof?.reconstructed !== true
+          && reconstruction?.reconstructed !== true
+          && reconstruction?.sourceMode !== "signed_preview"
+          && reconstruction?.sourceMode !== "audited_reconstruction"
+          && !["late_publication_recovery", "historical_recovery"].includes(String(reconstruction?.reason ?? ""))
+          && exceptionInstant
+          && exceptionInstant.getTime() >= approvalStart.getTime()
+          && exceptionInstant.getTime() <= approvalEnd.getTime()
+          ? {
+            approvalRef: CAPTURE_WINDOW_EXCEPTION.approvalRef,
+            approvedAt: CAPTURE_WINDOW_EXCEPTION.approvedAt,
+            expiresAt: CAPTURE_WINDOW_EXCEPTION.expiresAt,
+            actualAt: exceptionInstant.toISOString(),
+            late: true as const,
+            targetDate: date,
+            insertionId: input.insertionId,
+            siteSigla: exceptionTuple.siteSigla,
+            piCodigo: exceptionTuple.piCodigo,
+            groupId: exceptionTuple.groupId,
+            limitation: "Exceção limitada à captura original correlacionada desta aprovação; não substitui outros gates nem valida publicação externa.",
+          }
+          : null;
+    if ((!captureWindowAt || !isCaptureAtInRetroWindow(captureWindowAt)) && !captureWindowException && !publicationAcceptance) {
       blockingIssues.push(issue(
         "capture_time_outside_window",
         "captureTimeWindow",
         "Horário fora da janela",
-        `captureAt precisa ficar entre 18:00 e 21:59 America/Cuiaba. Encontrado: ${requestedCaptureAt || "ausente"}.`,
+        `captureAt precisa ficar entre 18:00 e 21:59 America/Cuiaba. Encontrado: ${captureWindowAt || "ausente"}.`,
+      ));
+    }
+    if (publicationAcceptance) {
+      warnings.push(issue(
+        "publication_acceptance_actual_time", "captureTimeWindow", "Aceitação adicional em horário real",
+        `Job ${publicationAcceptance.sourceJobId}; captura ${publicationAcceptance.actualAt}. Não substitui a evidência diária nem altera a janela de retroativos.`, "warning",
       ));
     }
 
     if (requiredGates.requireFrameV4) {
       const frameTemplate = metadataString(metadata, "frameTemplateVersion");
-      if (frameTemplate !== REQUIRED_FRAME_TEMPLATE) {
+      if (!REQUIRED_FRAME_TEMPLATES.has(frameTemplate)) {
         blockingIssues.push(issue(
           "frame_template_mismatch",
           "requireFrameV4",
           "Moldura oficial ausente",
-          `Esperado ${REQUIRED_FRAME_TEMPLATE}; encontrado ${frameTemplate || "ausente"}.`,
+          `Esperado um de ${[...REQUIRED_FRAME_TEMPLATES].join(", ")}; encontrado ${frameTemplate || "ausente"}.`,
         ));
       }
       if (metadataString(metadata, "chromeTopTheme") !== "light") {
@@ -647,6 +1064,70 @@ export async function validateAuditChecklist(input: {
         `retroGate.ok precisa ser true. Estado: ${JSON.stringify(retroGate ?? {})}.`,
       ));
     }
+    if (historicalEditorialAuditRequired && requiredGates.requireAbsoluteEditorialDates && metadataRequiredGates?.requireAbsoluteEditorialDates === true) {
+      if (
+        !relativeContentTimeline
+      ) {
+        blockingIssues.push(issue(
+          "relative_content_time_audit_missing",
+          "requireAbsoluteEditorialDates",
+          "Auditoria de datas editoriais ausente",
+          "A prova histórica precisa registrar a varredura de textos relativos antes de ser aprovada.",
+        ));
+      } else if (relativeContentTimeline.ok !== true) {
+        blockingIssues.push(issue(
+          "relative_content_time_unresolved",
+          "requireAbsoluteEditorialDates",
+          "Data editorial relativa na prova",
+          `A prova histórica ainda contém texto relativo: ${JSON.stringify(relativeContentTimeline.relativeSamples ?? [])}.`,
+        ));
+      }
+      if (!audit.contentTimeline?.maxObserved) {
+        blockingIssues.push(issue(
+          "absolute_content_time_missing",
+          "requireAbsoluteEditorialDates",
+          "Data editorial absoluta ausente",
+          "A prova histórica precisa registrar ao menos uma data editorial absoluta visível.",
+        ));
+      }
+    }
+    if (requiredGates.requireEditorialDateMatchTarget && metadataRequiredGates?.requireEditorialDateMatchTarget === true) {
+      if (
+        audit.contentTimeline?.targetDateMatches !== true
+      ) {
+        blockingIssues.push(issue(
+          "editorial_date_target_mismatch",
+          "requireEditorialDateMatchTarget",
+          "Data interna da notícia divergente",
+          `A notícia visível precisa corresponder a ${contract.period.targetDate}. Datas encontradas: ${audit.contentTimeline?.observedDates?.join(", ") || "nenhuma"}.`,
+        ));
+      }
+    }
+    if (requiredGates.requireVisiblePageDate && (metadataRequiredGates?.requireVisiblePageDate === true || finalPageClockRequired)) {
+      const visiblePageDateAudit = metadataObject(metadata, "visiblePageDateAudit");
+      if (
+        visiblePageDateAudit?.ok !== true ||
+        visiblePageDateAudit?.skipped === true
+      ) {
+        blockingIssues.push(issue(
+          "visible_page_time_missing",
+          "requireVisiblePageDate",
+          "Data e hora do site ausentes",
+          `A barra visível de data/hora precisa corresponder à captura. Estado: ${JSON.stringify(visiblePageDateAudit ?? {})}.`,
+        ));
+      }
+    }
+    blockingIssues.push(...validatePerrengueRetroEditorialChecklistGate({
+      captureClass: resolveChecklistEditorialCaptureClass({
+        trustedCaptureClass: audit?.captureClass,
+        phase: input.phase,
+        targetDate: date,
+        preUploadReceivedAt: input.preUploadReceivedAt,
+      }),
+      siteSigla: contract.insertion.siteSigla,
+      page: resolvedRule.page,
+      retroGate,
+    }));
 
     if (creativePlacementAudit?.ok !== true) {
       blockingIssues.push(issue(
@@ -699,18 +1180,32 @@ export async function validateAuditChecklist(input: {
     }
 
     if (requiredGates.requireVideoControls) {
-      if (
-        videoProof?.ok !== true ||
-        videoProof.controls !== true ||
-        !((videoProof.progressVisible === true) || (videoProof.overlayInjected === true)) ||
-        Number(videoProof.currentTime ?? 0) <= 0.5 ||
-        Number(videoProof.duration ?? 0) <= 0
-      ) {
+      const playerProof = evaluateVideoPlayerProof(metadata, true);
+      if (!playerProof.ok) {
         blockingIssues.push(issue(
           "video_controls_missing",
           "requireVideoControls",
           "Controles do vídeo ausentes",
-          `videoProof inválido: ${JSON.stringify(videoProof ?? {})}.`,
+          `Progresso ${playerProof.nativeRequired ? "nativo no PNG final" : "do contrato legado"} não comprovado; controles=${playerProof.controlsVisible}, progresso=${playerProof.progressVisible}.`,
+        ));
+      }
+    }
+
+    const captureRequiresReadiness = metadataRequiredGates?.requireReadinessAudit === true || readinessAudit !== null;
+    if (requiredGates.requireReadinessAudit && captureRequiresReadiness) {
+      if (!readinessAudit) {
+        blockingIssues.push(issue(
+          "readiness_audit_missing",
+          "requireReadinessAudit",
+          "Readiness da captura ausente",
+          "A captura declarou readiness estrito, mas não enviou readinessAudit.",
+        ));
+      } else if (readinessAudit.approved !== true) {
+        blockingIssues.push(issue(
+          "readiness_audit_failed",
+          "requireReadinessAudit",
+          "Conteúdo crítico não carregou",
+          `readinessAudit.approved precisa ser true. Estado: ${JSON.stringify(readinessAudit)}.`,
         ));
       }
     }
@@ -728,7 +1223,7 @@ export async function validateAuditChecklist(input: {
       }
     }
 
-    if (resolvedRule.proofStyle === "viewport_with_slot_inset" || metadataString(metadata, "finalProofStyle") === "viewport_with_slot_inset") {
+    if (resolveChecklistFinalProofStyle(resolvedRule.proofStyle, metadata) === "viewport_with_slot_inset") {
       blockingIssues.push(issue(
         "proof_style_inset_forbidden",
         "proofStyle",
@@ -738,10 +1233,17 @@ export async function validateAuditChecklist(input: {
     }
   }
 
-  const issues = [...blockingIssues, ...warnings];
-  const approved = blockingIssues.length === 0 && audit?.ok === true && contract.ok === true;
+  const decision = decideAuditChecklistApproval({
+    phase: input.phase,
+    contractOk: contract.ok,
+    metadataPresent: Boolean(metadata),
+    auditOk: audit?.ok === true,
+    blockingIssues,
+  });
+  const issues = [...decision.blockingIssues, ...warnings];
   return {
-    approved,
+    approved: decision.approved,
+    preliminary: input.phase === "pre_upload",
     version: AUDIT_CHECKLIST_VERSION,
     insertionId: input.insertionId,
     date,
@@ -749,8 +1251,10 @@ export async function validateAuditChecklist(input: {
     metadataPresent: Boolean(metadata),
     audit,
     issues,
-    blockingIssues,
+    blockingIssues: decision.blockingIssues,
     warnings,
-    evidenceStatus: approved ? "approved" : "blocked",
+    evidenceStatus: decision.approved ? "approved" : "blocked",
+    captureWindowException: captureWindowException ?? null,
+    publicationAcceptance: publicationAcceptance ?? null,
   };
 }

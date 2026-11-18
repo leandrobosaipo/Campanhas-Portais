@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { runControlledProcess } from "./controlled-process";
+import { withPlaywrightPermit } from "./playwright-budget";
 
 function getProjectRoot() {
   return process.env.ADOPS_PROJECT_ROOT || process.cwd();
@@ -53,6 +51,7 @@ export function getLocalCaptureRuntime() {
 }
 
 export type LocalCaptureOptions = {
+  capturePurpose?: "publication_acceptance" | null;
   replaceExisting?: boolean;
   captureAt?: string | null;
   jobId?: string | null;
@@ -60,9 +59,15 @@ export type LocalCaptureOptions = {
   diagnosticMode?: boolean;
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
+  reconstructionReason?: "late_publication_recovery" | null;
+  historicalReference?: Record<string, unknown> | null;
+  onProgress?: (event: { stage: string; status: string; updatedAt: string }) => void;
 };
 
 export async function runLocalCaptureProof(insertionId: number, options?: LocalCaptureOptions) {
+  if (options?.promoteCandidate) {
+    throw new Error("candidate_promotion_requires_persisted_approval: use the approved candidate promotion endpoint; capture never promotes an unreviewed candidate.");
+  }
   const runtime = getLocalCaptureRuntime();
   const args = [
     "./scripts/src/capture-insertion-proof.cjs",
@@ -81,6 +86,11 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
   if (options?.captureAt) {
     args.push("--captureAt", options.captureAt);
   }
+  if (options?.capturePurpose === "publication_acceptance") args.push("--capturePurpose", options.capturePurpose);
+  if (options?.reconstructionReason) {
+    args.push("--reconstructionReason", options.reconstructionReason);
+  }
+  if (options?.historicalReference) args.push('--historicalReference', JSON.stringify(options.historicalReference));
   if (options?.jobId) {
     args.push("--jobId", options.jobId);
   }
@@ -95,26 +105,48 @@ export async function runLocalCaptureProof(insertionId: number, options?: LocalC
       "--candidateOnly",
       "true",
       "--saveEvidence",
-      options.promoteCandidate ? "true" : "false",
+      "false",
     );
-    if (options.promoteCandidate && !options.replaceExisting) {
-      args.push("--replaceExisting", "true");
+  }
+  const cleanContextRetries = Math.min(2, Math.max(0, Number(process.env.ADOPS_CAPTURE_CLEAN_CONTEXT_RETRIES ?? 2)));
+  const timeoutMs = Math.max(30_000, Number(process.env.ADOPS_CAPTURE_TIMEOUT_MS ?? 300_000));
+  const killGraceMs = Math.max(1_000, Number(process.env.ADOPS_CAPTURE_KILL_GRACE_MS ?? 5_000));
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= cleanContextRetries + 1; attempt += 1) {
+    try {
+      const { stdout } = await withPlaywrightPermit(`capture:${insertionId}:${attempt}`, () =>
+        runControlledProcess("node", [...args, "--captureAttempt", String(attempt)], {
+          cwd: runtime.projectRoot,
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
+          },
+          timeoutMs,
+          killGraceMs,
+          maxBuffer: 10 * 1024 * 1024,
+          onStderrLine: (line) => {
+            if (!line.startsWith("ADOPS_CAPTURE_PROGRESS ")) return;
+            try {
+              const event = JSON.parse(line.slice("ADOPS_CAPTURE_PROGRESS ".length));
+              if (event && typeof event.stage === "string" && typeof event.status === "string" && typeof event.updatedAt === "string") {
+                options?.onProgress?.(event);
+              }
+            } catch {
+              // Saída de diagnóstico inválida não pode interromper a captura.
+            }
+          },
+        }),
+      );
+      return JSON.parse(stdout);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? `${error.message}\n${String((error as any).stderr ?? "")}` : String(error);
+      const retryable = /critical_image_not_loaded|critical_image_not_painted|critical_background_not_loaded|resource_request_failed|readiness_timeout|layout_not_stable|final_viewport_changed/.test(message);
+      const permanentClientError = /http_4\d\d/.test(message);
+      if (!retryable || permanentClientError || attempt > cleanContextRetries) throw error;
     }
   }
-  const { stdout } = await execFileAsync(
-    "node",
-    args,
-    {
-      cwd: runtime.projectRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
-      },
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-
-  return JSON.parse(stdout);
+  throw lastError;
 }
 
 export function loadLocalCaptureMetadata(insertionId: number, dateKey: string) {

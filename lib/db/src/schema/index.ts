@@ -8,3 +8,8 @@ export * from "./print-jobs";
 export * from "./operational-document-states";
 export * from "./capture-proof-logs";
 export * from "./capture-rules";
+export * from "./capture-proof-reviews";
+export * from "./capture-proof-candidates";
+export * from "./capture-proof-candidate-promotions";
+export * from "./insertion-media-selections";
+export * from "./adrotate-publication-snapshots";

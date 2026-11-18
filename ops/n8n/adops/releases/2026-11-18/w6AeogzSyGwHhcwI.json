@@ -1,0 +1,340 @@
+{
+  "id": "w6AeogzSyGwHhcwI",
+  "name": "ADOPS — Baixar prévia visual privada",
+  "active": true,
+  "versionId": "3ccfec79-4ddd-4030-8833-024e28fa6f87",
+  "nodes": [
+    {
+      "id": "preview-input",
+      "name": "Receive preview identity or cursor",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "cursor",
+              "type": "string"
+            },
+            {
+              "name": "insertionId",
+              "type": "number"
+            },
+            {
+              "name": "revision",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "preview-request",
+      "name": "Validate preview request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input=$input.first().json;\nif($input.all().length!==1)throw Error('one_request_required');\nconst hasId=input.insertionId!==undefined&&input.insertionId!==null&&Number(input.insertionId)!==0;\nif(hasId){\n const id=Number(input.insertionId),revision=String(input.revision||'');\n if(!Number.isSafeInteger(id)||id<=0||!/^[A-Za-z0-9_-]{1,128}$/.test(revision)||input.cursor)throw Error('invalid_preview_identity');\n return [{json:{mode:'single',insertionId:id,revision,path:'/api/insertions/'+id+'/visual-previews/'+revision},pairedItem:{item:0}}];\n}\nif(input.revision)throw Error('insertion_required');\nconst cursor=String(input.cursor||'0');\nif(!/^\\d{1,19}$/.test(cursor)||BigInt(cursor)>9223372036854775807n)throw Error('invalid_cursor');\nreturn [{json:{mode:'feed',cursor,path:'/api/visual-previews/completed?cursor='+cursor},pairedItem:{item:0}}];"
+      }
+    },
+    {
+      "id": "preview-metadata",
+      "name": "Read private preview metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "onError": "stopWorkflow",
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br\" + $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 90000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "preview-expand",
+      "name": "Prepare PNG downloads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request=$('Validate preview request').first().json,response=$input.first().json;\nlet items,nextCursor=null;\nif(request.mode==='feed'){\n if(!Array.isArray(response.items)||response.items.length>50||!/^\\d{1,19}$/.test(String(response.nextCursor))||BigInt(response.nextCursor)<BigInt(request.cursor)||BigInt(response.nextCursor)>9223372036854775807n)throw Error('invalid_preview_feed');\n nextCursor=String(response.nextCursor);items=response.items;\n}else{\n if(response.insertionId!==request.insertionId||response.revision!==request.revision)throw Error('preview_identity_mismatch');\n if(response.publicationEnabled!==false||response.isPublicationEvidence!==false)throw Error('not_a_visual_preview');\n if(response.status!=='completed')return [{json:{ready:false,status:response.status,insertionId:request.insertionId,revision:request.revision,nextCursor:null,publicationEnabled:false},pairedItem:{item:0}}];\n items=[response];\n}\nif(response.publicationEnabled!==false)throw Error('publication_must_be_disabled');\nif(!items.length)return [{json:{ready:false,status:'empty',nextCursor,publicationEnabled:false},pairedItem:{item:0}}];\nreturn items.map(preview=>{\n if(!Number.isSafeInteger(preview.insertionId)||preview.insertionId<=0||!/^[A-Za-z0-9_-]{1,128}$/.test(preview.revision)||preview.status!=='completed'||preview.publicationEnabled!==false||preview.isPublicationEvidence!==false||preview.contentType!=='image/png'||!/^[a-f0-9]{64}$/.test(preview.sha256))throw Error('invalid_completed_preview');\n return {json:{ready:true,insertionId:preview.insertionId,revision:preview.revision,sha256:preview.sha256,nextCursor,path:'/api/insertions/'+preview.insertionId+'/visual-previews/'+preview.revision+'/download',caption:'PRÉVIA NÃO PUBLICADA — revisão '+preview.revision,publicationEnabled:false,isPublicationEvidence:false},pairedItem:{item:0}};\n});"
+      }
+    },
+    {
+      "id": "preview-ready",
+      "name": "Has completed PNG?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ready }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "preview-download",
+      "name": "Download private preview PNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "onError": "stopWorkflow",
+      "position": [
+        1100,
+        -80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br\" + $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 90000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "preview"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "preview-sha256",
+      "name": "Hash preview PNG",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        1530,
+        -80
+      ],
+      "parameters": {
+        "action": "hash",
+        "binaryData": true,
+        "binaryPropertyName": "preview",
+        "type": "SHA256",
+        "dataPropertyName": "computedDigest",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "preview-binary",
+      "name": "Return PNG with revision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const result=[];\nfor(let index=0;index<$input.all().length;index++){\n const item=$input.all()[index],context=$('Prepare PNG downloads').itemMatching(index).json;\n const bytes=await this.helpers.getBinaryDataBuffer(index,'preview');\n if(!bytes||bytes.length<8||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('invalid_png_response');\n if(!item.binary?.preview)throw Error('missing_preview_binary');\n item.binary.preview.mimeType='image/png';item.binary.preview.fileName='previa-'+context.insertionId+'-'+context.revision+'.png';\n const {path,...metadata}=context;\n result.push({json:metadata,binary:{preview:item.binary.preview},pairedItem:{item:index}});\n}\nreturn result;"
+      }
+    },
+    {
+      "id": "preview-empty",
+      "name": "Return cursor or pending status",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        150
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "preview-note",
+      "name": "Private binary consumer only",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        -350
+      ],
+      "parameters": {
+        "content": "Read-only private consumer. One input: cursor OR insertionId+revision. Returns binary.preview and caption; no WhatsApp send, publication, scheduler or activation. Constant host and credential; redirects disabled. Persist nextCursor only after the WHOLE successful result is processed; dedupe insertionId+revision. Pending/empty returns ready=false without binary. The caller must wait for this subworkflow.",
+        "height": 220,
+        "width": 900
+      }
+    },
+    {
+      "id": "preview-digest-result",
+      "name": "Verify PNG digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        -80
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all().map((item,index)=>{\n const original=$('Return PNG with revision').itemMatching(index);\n if(item.json.computedDigest!==original.json.sha256)throw Error('preview_checksum_mismatch');\n return {json:original.json,binary:original.binary,pairedItem:{item:index}};\n});"
+      }
+    }
+  ],
+  "connections": {
+    "Receive preview identity or cursor": {
+      "main": [
+        [
+          {
+            "node": "Validate preview request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate preview request": {
+      "main": [
+        [
+          {
+            "node": "Read private preview metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read private preview metadata": {
+      "main": [
+        [
+          {
+            "node": "Prepare PNG downloads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PNG downloads": {
+      "main": [
+        [
+          {
+            "node": "Has completed PNG?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has completed PNG?": {
+      "main": [
+        [
+          {
+            "node": "Download private preview PNG",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return cursor or pending status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download private preview PNG": {
+      "main": [
+        [
+          {
+            "node": "Return PNG with revision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash preview PNG": {
+      "main": [
+        [
+          {
+            "node": "Verify PNG digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return PNG with revision": {
+      "main": [
+        [
+          {
+            "node": "Hash preview PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  }
+}

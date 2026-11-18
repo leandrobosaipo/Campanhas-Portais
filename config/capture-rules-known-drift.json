@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "reviewedAt": "2026-08-07",
+  "rule": "Only exact matches are downgraded. Any changed value or new drift remains an error.",
+  "issues": []
+}

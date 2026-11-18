@@ -41,11 +41,16 @@ function createApi() {
   return {
     get: (pathname) => request("GET", pathname),
     post: (pathname, body) => request("POST", pathname, body),
-    async publicAsset(asset, evidenceUrl) {
-      if (!evidenceUrl) throw new Error(`Sem URL pública para validar consumidor ${asset}.`);
-      const response = await fetch(evidenceUrl, { signal: AbortSignal.timeout(15_000) });
-      if (!response.ok) throw new Error(`Consumidor público ${asset} retornou ${response.status}.`);
-      return { ok: true, url: evidenceUrl };
+    async publicAsset(target) {
+      const response = await fetch(target.url, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new Error(`Consumidor público ${target.kind} retornou ${response.status}.`);
+      if (target.kind === "modal") {
+        const data = await response.json();
+        const insertion = data?.insertions?.find((item) => Number(item?.id) === target.insertionId);
+        const evidence = insertion?.evidenceDays?.find((item) => item?.date === target.date);
+        if (!evidence || evidence.url !== target.evidenceUrl) throw new Error(`Consumidor público modal não contém a evidência ${target.date}.`);
+      }
+      return { ok: true, url: target.url };
     },
   };
 }
@@ -61,7 +66,10 @@ export async function waitForTerminalJob(api, jobId, timeoutMs, { now = Date.now
   let progress;
   for (;;) {
     progress = await api.get(`/api/ops/jobs/${encodeURIComponent(jobId)}/progress`);
-    if (terminalStatuses.has(progress.status)) return progress;
+    if (terminalStatuses.has(progress.status)) {
+      const job = await api.get(`/api/ops/jobs/${encodeURIComponent(jobId)}`);
+      return { ...progress, job };
+    }
     if (now() >= deadline) {
       throw Object.assign(new Error(`Timeout aguardando job ${jobId}.`), { code: "job_timeout", jobId, progress });
     }
@@ -71,17 +79,17 @@ export async function waitForTerminalJob(api, jobId, timeoutMs, { now = Date.now
 
 export async function runHarness(options) {
   const { mode, api = createApi(), timeoutMs = 2_700_000, now, sleep: wait } = options;
-  const release = options.release ?? process.env.CF_PAGES_COMMIT_SHA ?? process.env.GIT_COMMIT ?? null;
+  const release = options.release ?? process.env.ADOPS_RELEASE_SHA ?? process.env.CF_PAGES_COMMIT_SHA ?? process.env.GIT_COMMIT ?? null;
   if (!new Set(["check", "execute", "verify"]).has(mode)) throw new Error("mode deve ser check, execute ou verify.");
 
   if (mode === "check") {
-    const checks = await Promise.all([
+    const [preflightJobs, publicationJobs, queueOverview, runtimeReadiness] = await Promise.all([
       api.get("/api/ops/jobs?kind=drive-pi-preflight&limit=10"),
       api.get("/api/ops/jobs?kind=adrotate-publish&limit=10"),
       api.get("/api/ops/queue/overview"),
       api.get("/api/ops/runtime-readiness"),
     ]);
-    return { mode, release, status: "checked", checks: checks.length };
+    return { mode, release, status: "checked", checks: { preflightJobs, publicationJobs, queueOverview, runtimeReadiness } };
   }
 
   requireExecuteSlice(options);
@@ -95,7 +103,7 @@ export async function runHarness(options) {
     });
     if (!created.jobId) throw new Error("Resposta do print-backfill sem jobId.");
     const progress = await waitForTerminalJob(api, created.jobId, timeoutMs, { now, sleep: wait });
-    return { mode, release, jobId: created.jobId, status: progress.status, progress, insertionId: options.insertionId, dates };
+    return { mode, release, jobId: created.jobId, status: progress.status, progress, job: progress.job, insertionId: options.insertionId, dates };
   }
 
   const evidence = [];
@@ -107,15 +115,31 @@ export async function runHarness(options) {
     evidence.push({ date, url: status.arquivoUrl });
   }
   const publicUrl = evidence[0]?.url;
-  const consumers = ["html", "thumbnail", "modal", "download"];
-  await Promise.all(consumers.map((asset) => api.publicAsset(asset, publicUrl)));
+  const firstDate = evidence[0]?.date;
+  const reportUrl = publicReportUrl(options.reportUrl, options.toDate);
+  const deliveryApiBase = String(options.deliveryApiBase || apiBase()).replace(/\/$/, "");
+  const consumers = [
+    { kind: "html", url: reportUrl },
+    { kind: "thumbnail", url: publicUrl },
+    { kind: "modal", url: new URL("data.json", reportUrl).toString(), insertionId: options.insertionId, date: firstDate, evidenceUrl: publicUrl },
+    { kind: "download", url: `${deliveryApiBase}/api/insertions/${encodeURIComponent(options.insertionId)}/evidences/${encodeURIComponent(firstDate)}/download` },
+  ];
+  await Promise.all(consumers.map((target) => api.publicAsset(target)));
   return { mode, release, status: "verified", insertionId: options.insertionId, dates, evidence, consumers };
+}
+
+function publicReportUrl(override, toDate) {
+  if (override) return String(override).endsWith("/") ? String(override) : `${override}/`;
+  const [year, month] = toDate.split("-");
+  const monthSlug = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"][Number(month) - 1];
+  const slug = process.env.ADOPS_REPORT_SLUG || `adops-evidencias-${monthSlug}-${year}`;
+  return `https://sites.codigo5.com.br/reports/${slug}/`;
 }
 
 function dateRange(fromDate, toDate) {
   const from = new Date(`${fromDate}T00:00:00Z`);
   const to = new Date(`${toDate}T00:00:00Z`);
-  if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) throw new Error("Datas devem ser YYYY-MM-DD e fromDate não pode ser posterior a toDate.");
+  if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from.toISOString().slice(0, 10) !== fromDate || to.toISOString().slice(0, 10) !== toDate || from > to || !/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) throw new Error("Datas devem ser YYYY-MM-DD válidas e fromDate não pode ser posterior a toDate.");
   const dates = [];
   for (let current = from; current <= to; current = new Date(current.valueOf() + 86_400_000)) dates.push(current.toISOString().slice(0, 10));
   return dates;
@@ -155,23 +179,45 @@ function resolveOutputDir(input) {
   return target;
 }
 
-async function writeArtifacts(outputDir, result) {
+async function assertSafeOutputDir(outputDir) {
+  const relative = path.relative(reportRoot, outputDir);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Diretório de saída fora da raiz permitida.");
+  let current = reportRoot;
+  for (const segment of relative ? relative.split(path.sep) : []) {
+    const metadata = await fs.lstat(current).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+    if (metadata?.isSymbolicLink()) throw new Error(`Diretório de saída contém symlink: ${current}`);
+    current = path.join(current, segment);
+  }
+  const metadata = await fs.lstat(current).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (metadata?.isSymbolicLink()) throw new Error(`Diretório de saída contém symlink: ${current}`);
+}
+
+async function assertSafeOutputFile(filePath) {
+  const metadata = await fs.lstat(filePath).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (metadata?.isSymbolicLink()) throw new Error(`Arquivo de saída contém symlink: ${filePath}`);
+}
+
+export async function writeHarnessArtifacts(outputDir, result) {
+  await assertSafeOutputDir(outputDir);
   await fs.mkdir(outputDir, { recursive: true });
+  const resultsPath = path.join(outputDir, "results.json");
+  const summaryPath = path.join(outputDir, "summary.md");
+  await Promise.all([assertSafeOutputFile(resultsPath), assertSafeOutputFile(summaryPath)]);
   const safe = sanitize(result);
-  await fs.writeFile(path.join(outputDir, "results.json"), `${JSON.stringify(safe, null, 2)}\n`);
-  await fs.writeFile(path.join(outputDir, "summary.md"), ["# Retroactive Recovery Harness", "", `- Mode: ${safe.mode}`, `- Status: ${safe.status}`, safe.release ? `- Release: ${safe.release}` : null, safe.jobId ? `- Job ID: ${safe.jobId}` : null, safe.insertionId ? `- Insertion: ${safe.insertionId}` : null, safe.dates ? `- Dates: ${safe.dates.join(", ")}` : null].filter(Boolean).join("\n") + "\n");
+  await fs.writeFile(resultsPath, `${JSON.stringify(safe, null, 2)}\n`);
+  await fs.writeFile(summaryPath, ["# Retroactive Recovery Harness", "", `- Mode: ${safe.mode}`, `- Status: ${safe.status}`, safe.release ? `- Release: ${safe.release}` : null, safe.jobId ? `- Job ID: ${safe.jobId}` : null, safe.insertionId ? `- Insertion: ${safe.insertionId}` : null, safe.dates ? `- Dates: ${safe.dates.join(", ")}` : null].filter(Boolean).join("\n") + "\n");
 }
 
 async function main() {
   const options = parseHarnessArgs(process.argv.slice(2));
   try {
     const result = await runHarness(options);
-    await writeArtifacts(options.outputDir, result);
+    await writeHarnessArtifacts(options.outputDir, result);
     console.log(JSON.stringify({ mode: result.mode, status: result.status, outputDir: options.outputDir }, null, 2));
     process.exitCode = result.status === "failed" ? 1 : 0;
   } catch (error) {
     const result = { mode: options.mode, status: "failed", error: { code: error?.code || "harness_error", message: error instanceof Error ? error.message : String(error), jobId: error?.jobId || null, progress: error?.progress || null } };
-    await writeArtifacts(options.outputDir, result);
+    await writeHarnessArtifacts(options.outputDir, result);
     console.error(result.error.message);
     process.exitCode = 1;
   }

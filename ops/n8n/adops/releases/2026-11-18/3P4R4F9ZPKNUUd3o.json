@@ -1,0 +1,141 @@
+{
+  "id": "3P4R4F9ZPKNUUd3o",
+  "name": "ADOPS — Conferir implantação",
+  "active": false,
+  "versionId": "f30e86c4-06c1-46e0-bda4-d66531312ad9",
+  "nodes": [
+    {
+      "id": "ed46b03c-b103-4089-984c-43d62f057a0d",
+      "name": "Conferir implantação autorizada",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "8ef8da86-b5ae-40cb-88de-0ceeaae8a21d",
+      "name": "Consultas do manifesto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "requests",
+              "name": "requests",
+              "type": "array",
+              "value": [
+                {
+                  "path": "/insertions/capture-proof/audit?date=2026-10-20"
+                },
+                {
+                  "path": "/insertions/capture-proof/audit?date=2026-10-21"
+                },
+                {
+                  "path": "/insertions/capture-proof/audit?date=2026-10-22"
+                }
+              ]
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5df15ee8-44fc-4176-ab25-4b6f67939da8",
+      "name": "Uma consulta por item",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "requests",
+        "include": "noOtherFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "5c69ac8c-f1d7-479d-bbef-c2d289f3ceea",
+      "name": "Consultar API e preservar recibo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api\" + $json.path }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Conferir implantação autorizada": {
+      "main": [
+        [
+          {
+            "node": "Consultas do manifesto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultas do manifesto": {
+      "main": [
+        [
+          {
+            "node": "Uma consulta por item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uma consulta por item": {
+      "main": [
+        [
+          {
+            "node": "Consultar API e preservar recibo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 600
+  }
+}

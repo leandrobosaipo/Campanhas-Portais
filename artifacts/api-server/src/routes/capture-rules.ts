@@ -10,6 +10,7 @@ import {
   db,
 } from "@workspace/db";
 import { getSiteFormatMapping, getSiteIntegration, getSiteIntegrations, normalizeLocalFormato } from "../lib/adrotate-sites";
+import { captureRuntimeResponse } from "../lib/capture-runtime-response.mjs";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -118,32 +119,67 @@ function sanitizeAliases(value: unknown) {
 }
 
 function sanitizeAuditConfig(value: unknown) {
-  const payload = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  const normalized = { ...payload };
+  const payload = value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {};
+  if (payload.readinessMode != null) {
+    const mode = String(payload.readinessMode).trim().toLowerCase();
+    if (!["legacy", "strict-visible"].includes(mode)) {
+      throw new Error("auditConfig.readinessMode deve ser legacy ou strict-visible.");
+    }
+    payload.readinessMode = mode;
+  }
+  if (payload.criticalContentSelectors != null) {
+    if (!Array.isArray(payload.criticalContentSelectors)) {
+      throw new Error("auditConfig.criticalContentSelectors deve ser uma lista.");
+    }
+    if (payload.criticalContentSelectors.length > 12) {
+      throw new Error("auditConfig.criticalContentSelectors excede 12 itens.");
+    }
+    payload.criticalContentSelectors = payload.criticalContentSelectors.map((selector, index) => (
+      sanitizeSelector(selector, `auditConfig.criticalContentSelectors[${index}]`)
+    ));
+  }
+  const numericLimits: Record<string, [number, number]> = {
+    readinessTimeoutMs: [5_000, 90_000],
+    layoutStableSamples: [2, 8],
+    layoutStableIntervalMs: [100, 2_000],
+    captureRetryCount: [0, 3],
+    criticalContentMinStddev: [1, 64],
+  };
+  for (const [key, [minimum, maximum]] of Object.entries(numericLimits)) {
+    if (payload[key] == null) continue;
+    const numeric = Number(payload[key]);
+    if (!Number.isFinite(numeric) || numeric < minimum || numeric > maximum) {
+      throw new Error(`auditConfig.${key} deve ficar entre ${minimum} e ${maximum}.`);
+    }
+    payload[key] = numeric;
+  }
+  if (payload.requireCriticalContentPainted != null && typeof payload.requireCriticalContentPainted !== "boolean") {
+    throw new Error("auditConfig.requireCriticalContentPainted deve ser booleano.");
+  }
   for (const key of ["requireSignedRetroPreview", "requireRetroContentProof", "allowAuditedReconstruction"]) {
-    if (normalized[key] != null && typeof normalized[key] !== "boolean") {
+    if (payload[key] != null && typeof payload[key] !== "boolean") {
       throw new Error(`auditConfig.${key} deve ser booleano.`);
     }
   }
-  if (normalized.minRetroContentMatches != null) {
-    const minimum = Number(normalized.minRetroContentMatches);
+  if (payload.minRetroContentMatches != null) {
+    const minimum = Number(payload.minRetroContentMatches);
     if (!Number.isInteger(minimum) || minimum < 1 || minimum > 25) {
       throw new Error("auditConfig.minRetroContentMatches deve ser um inteiro entre 1 e 25.");
     }
-    normalized.minRetroContentMatches = minimum;
+    payload.minRetroContentMatches = minimum;
   }
   for (const key of ["retroContentCardSelectors", "retroContentDateSelectors"]) {
-    if (normalized[key] == null) continue;
-    if (!Array.isArray(normalized[key]) || normalized[key].length > 25) {
+    if (payload[key] == null) continue;
+    if (!Array.isArray(payload[key]) || payload[key].length > 25) {
       throw new Error(`auditConfig.${key} deve ser uma lista com no máximo 25 seletores.`);
     }
-    normalized[key] = Array.from(new Set(normalized[key].map((selector) => sanitizeSelector(selector, `auditConfig.${key}`))));
+    payload[key] = Array.from(new Set(payload[key].map((selector) => sanitizeSelector(selector, `auditConfig.${key}`))));
   }
-  const bytes = Buffer.byteLength(JSON.stringify(normalized), "utf8");
+  const bytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   if (bytes > MAX_AUDIT_JSON_BYTES) {
     throw new Error(`auditConfig excede ${MAX_AUDIT_JSON_BYTES} bytes.`);
   }
-  return normalized;
+  return payload;
 }
 
 function sanitizeOptionalUrl(value: unknown, fieldName: string) {
@@ -567,9 +603,11 @@ router.get("/capture-rules/runtime", async (req, res): Promise<void> => {
     res.status(404).json({ error: "not_found", details: "Regra de captura não encontrada para os parâmetros informados." });
     return;
   }
+  res.setHeader("Cache-Control", "private, no-store");
+  res.vary("Authorization");
   res.json({
     ok: true,
-    rule: payload,
+    rule: captureRuntimeResponse(payload, req.header("authorization"), process.env.OPS_API_TOKEN, process.env.ADOPS_INTERNAL_API_TOKEN),
   });
 });
 

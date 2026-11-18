@@ -14,9 +14,12 @@ export type PrintRunnerJobTarget = {
   insertionId: number;
   targetDate: string;
   captureAt?: string | null;
+  capturePurpose?: "publication_acceptance" | null;
   replaceExisting?: boolean;
   candidateOnly?: boolean;
   promoteCandidate?: boolean;
+  reconstructionReason?: "late_publication_recovery" | null;
+  historicalReference?: Record<string, unknown> | null;
 };
 
 export type PrintRunnerJobPayload = {
@@ -37,10 +40,21 @@ export type PrintRunnerJobResultItem = {
   uploadedUrl?: string | null;
   captureLogId?: string | null;
   probableCause?: string | null;
+  candidateOnly?: boolean;
+  checklistValidation?: Record<string, unknown> | null;
+  readinessAudit?: Record<string, unknown> | null;
   retroContentProof?: Record<string, unknown> | null;
   manifestHash?: string | null;
+  stages?: Array<{
+    stage: string;
+    status: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    durationMs: number | null;
+  }>;
   reason?: string;
   error?: string;
+  timedOut?: boolean;
 };
 
 export type PrintRunnerJobResult = {
@@ -48,12 +62,23 @@ export type PrintRunnerJobResult = {
   kind: PrintRunnerJobKind;
   status: PrintRunnerJobStatus;
   createdAt: string;
+  queuedAt?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  queueWaitMs?: number | null;
+  durationMs?: number | null;
+  timedOut?: boolean;
+  runnerId?: string | null;
   totalTargets: number;
   completedTargets: number;
   failedTargets: number;
   items: PrintRunnerJobResultItem[];
+  progress?: {
+    percent: number;
+    stage: string;
+    message: string;
+    updatedAt: string;
+  } | null;
 };
 
 export type PrintRunnerPort = {

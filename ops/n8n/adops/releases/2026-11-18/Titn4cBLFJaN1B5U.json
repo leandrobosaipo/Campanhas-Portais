@@ -1,0 +1,389 @@
+{
+  "id": "Titn4cBLFJaN1B5U",
+  "name": "ADOPS — Enviar prévia de agendamento ao grupo",
+  "active": true,
+  "versionId": "4af176c2-cc91-4916-a92d-2160fdf775b6",
+  "nodes": [
+    {
+      "id": "dfafaa56-b52c-b06e-8f96-095842438893",
+      "name": "Consultar uma reserva por minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "17 * * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f616cad0-d37b-cdda-6f23-478ff5c43732",
+      "name": "Reservar uma prévia agendada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "position": [
+        230,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/visual-previews/scheduled-deliveries/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {claimRequestId: '87620510-2bc3-47b2-9fd0-' + String($execution.id).padStart(12,'0')} }}",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "7cca7a2a-fd32-1d71-ce7e-0e2b2b292df0",
+      "name": "Conferir destino e identidade da reserva",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const data=$input.first().json;\nif(data.delivery===null)return [];\nconst c=data.delivery;\nif(!c||typeof c!=='object'||typeof c.deliveryId!=='string'||!/^[a-f0-9-]{36}$/i.test(c.deliveryId)||\n !/^[a-f0-9-]{36}$/i.test(c.claimToken)||c.instance!=='cod5-pmt-pilot')throw Error('invalid_preview_claim_identity');\nif(c.status!=='reserved')return [];\nif(c.mimetype!=='image/png'||c.publicationEnabled!==false||!Number.isSafeInteger(c.adId)||c.adId<=0||!Number.isSafeInteger(c.scheduleId)||c.scheduleId<=0||c.groupJid!==\"120363431261379098@g.us\"||!Number.isSafeInteger(c.insertionId)||c.insertionId<=0||\n !/^[a-f0-9]{64}$/.test(c.revision)||!/^[a-f0-9]{64}$/.test(c.sha256)||\n c.downloadPath!=='/api/insertions/'+c.insertionId+'/visual-previews/'+c.revision+'/download'||\n typeof c.messageKey!=='string'||!c.messageKey||typeof c.caption!=='string'||!c.caption.trim())throw Error('invalid_preview_claim_identity');\nreturn [{json:c}];"
+      }
+    },
+    {
+      "id": "af70e9ba-c618-7a66-6603-07d881591a25",
+      "name": "Baixar e conferir o PNG privado",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        690,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "w6AeogzSyGwHhcwI"
+        },
+        "mode": "once",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "insertionId": "={{ $json.insertionId }}",
+            "revision": "={{ $json.revision }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "insertionId",
+              "displayName": "insertionId",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "revision",
+              "displayName": "revision",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "0624dc7c-f522-274e-8265-ebcbabca3b15",
+      "name": "Conferir PNG e preparar imagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const inputs=$input.all(),c=$(\"Conferir destino e identidade da reserva\").first().json;\nif(inputs.length!==1)throw Error('expected_one_download');\nconst item=inputs[0],p=item.json;\nif(p.ready!==true||p.publicationEnabled!==false||p.isPublicationEvidence!==false||p.insertionId!==c.insertionId||\n p.revision!==c.revision||p.sha256!==c.sha256||item.binary?.preview?.mimeType!=='image/png')throw Error('download_reservation_mismatch');\nconst bytes=await this.helpers.getBinaryDataBuffer(0,'preview');\nif(!bytes||bytes.length<=8||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('invalid_binary_preview');\nreturn [{json:{media:bytes.toString('base64'),fileName:'previa-'+p.insertionId+'-'+p.revision+'.png'}}];"
+      }
+    },
+    {
+      "id": "3e6f5e50-126c-d92b-51c4-61cf897ac448",
+      "name": "Registrar tentativa antes do envio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "position": [
+        1150,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/visual-previews/scheduled-deliveries/attempt",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {deliveryId: $(\"Conferir destino e identidade da reserva\").first().json.deliveryId, claimToken: $(\"Conferir destino e identidade da reserva\").first().json.claimToken} }}",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "9cbffd0d-7fb3-16cf-7117-c864ae290efb",
+      "name": "Conferir autorização da tentativa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c=$(\"Conferir destino e identidade da reserva\").first().json,a=$input.first().json;\nif(a.sendAllowed===false)return [];\nconst d=a.delivery;\nif(a.sendAllowed!==true||!d||d.status!=='delivery_unknown'||!d.attemptedAt||d.deliveryId!==c.deliveryId||\n d.insertionId!==c.insertionId||d.revision!==c.revision||d.sha256!==c.sha256||d.messageKey!==c.messageKey||\n d.groupJid!==c.groupJid||d.instance!==c.instance||d.adId!==c.adId||d.scheduleId!==c.scheduleId)throw Error('send_attempt_not_confirmed');\nreturn [{json:{ok:true}}];"
+      }
+    },
+    {
+      "id": "8af29eba-8c94-b8eb-2fee-bc9b39b08835",
+      "name": "Enviar imagem uma única vez ao ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "position": [
+        1610,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://cod5-evolution-evolution-1:8080/message/sendMedia/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {number: \"120363431261379098@g.us\", mediatype:'image', mimetype:'image/png', fileName:$(\"Conferir PNG e preparar imagem\").first().json.fileName, media:$(\"Conferir PNG e preparar imagem\").first().json.media, caption:$(\"Conferir destino e identidade da reserva\").first().json.caption} }}",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "bbbd4843-9fa6-99e2-90aa-0dcc39662f16",
+      "name": "Vincular retorno à mesma tentativa",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c=$(\"Conferir destino e identidade da reserva\").first().json,r=$input.first().json,key=r.body?.key;\nconst accepted=r.statusCode>=200&&r.statusCode<300&&key?.remoteJid===\"120363431261379098@g.us\"&&key.fromMe===true&&typeof key.id==='string'&&key.id.length>0;\nif(!accepted)throw Error('provider_delivery_unknown_do_not_resend');\nreturn [{json:{deliveryId:c.deliveryId,claimToken:c.claimToken,receipt:{key:{id:key.id,remoteJid:key.remoteJid,fromMe:key.fromMe},status:r.body.status}}}];"
+      }
+    },
+    {
+      "id": "61458f59-a921-4660-417c-efeb41b87693",
+      "name": "Guardar recibo sem repetir envio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "position": [
+        2070,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/visual-previews/scheduled-deliveries/receipt",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Consultar uma reserva por minuto": {
+      "main": [
+        [
+          {
+            "node": "Reservar uma prévia agendada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar uma prévia agendada": {
+      "main": [
+        [
+          {
+            "node": "Conferir destino e identidade da reserva",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir destino e identidade da reserva": {
+      "main": [
+        [
+          {
+            "node": "Baixar e conferir o PNG privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar e conferir o PNG privado": {
+      "main": [
+        [
+          {
+            "node": "Conferir PNG e preparar imagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir PNG e preparar imagem": {
+      "main": [
+        [
+          {
+            "node": "Registrar tentativa antes do envio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar tentativa antes do envio": {
+      "main": [
+        [
+          {
+            "node": "Conferir autorização da tentativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir autorização da tentativa": {
+      "main": [
+        [
+          {
+            "node": "Enviar imagem uma única vez ao ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar imagem uma única vez ao ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Vincular retorno à mesma tentativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vincular retorno à mesma tentativa": {
+      "main": [
+        [
+          {
+            "node": "Guardar recibo sem repetir envio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "timezone": "America/Cuiaba",
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,366 @@
+{
+  "id": "kHzYHdowjIrwFQsS",
+  "name": "ADOPS — Executar campanha confirmada",
+  "active": true,
+  "versionId": "4b43f0c5-618b-4faa-89b5-98a09ff92b9f",
+  "nodes": [
+    {
+      "id": "a77fc371-2995-4e9d-a4a7-52165c8a5727",
+      "name": "Conferir prontidão sem publicar",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f659186d-5b38-4a2e-ba51-ba23325eea55",
+      "name": "Operação manual autorizada",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "readiness"
+            },
+            {
+              "id": "resourceId",
+              "name": "resourceId",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "bodyJson",
+              "name": "bodyJson",
+              "type": "string",
+              "value": "{}"
+            },
+            {
+              "id": "idempotencyKey",
+              "name": "idempotencyKey",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3d42fbc7-d85a-4dd4-9524-8b036107ee68",
+      "name": "Normalizar operação restrita",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "action",
+              "name": "action",
+              "type": "string",
+              "value": "={{ String($json.action || \"readiness\") }}"
+            },
+            {
+              "id": "resourceId",
+              "name": "resourceId",
+              "type": "string",
+              "value": "={{ String($json.resourceId || \"\") }}"
+            },
+            {
+              "id": "bodyJson",
+              "name": "bodyJson",
+              "type": "string",
+              "value": "={{ String($json.bodyJson || \"{}\") }}"
+            },
+            {
+              "id": "idempotencyKey",
+              "name": "idempotencyKey",
+              "type": "string",
+              "value": "={{ String($json.idempotencyKey || \"\") }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ba535dec-5018-4900-95ef-d24c7f7fc780",
+      "name": "Operação e referência permitidas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"readiness\",\"preview\",\"confirm\",\"apply\",\"preview-status\",\"action-status\"].includes($json.action) && ([\"readiness\",\"preview\"].includes($json.action) || /^[a-f0-9-]{36}$/i.test($json.resourceId)) && (![\"preview\",\"confirm\",\"apply\"].includes($json.action) || ($json.idempotencyKey.length >= 8 && $json.idempotencyKey.length <= 160)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c1b5b0b1-e1db-4061-a107-a1980d89cebc",
+      "name": "Preparar confirmar ou aplicar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"preview\",\"confirm\",\"apply\"].includes($(\"Normalizar operação restrita\").first().json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "80e0ca46-c184-4176-99f0-b3619700c9de",
+      "name": "Executar recurso com chave única",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/\" + ($(\"Normalizar operação restrita\").first().json.action === \"preview\" ? \"previews\" : ($(\"Normalizar operação restrita\").first().json.action === \"confirm\" ? \"previews/\" + encodeURIComponent($(\"Normalizar operação restrita\").first().json.resourceId) + \"/confirm\" : \"actions/\" + encodeURIComponent($(\"Normalizar operação restrita\").first().json.resourceId) + \"/apply\")) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $(\"Normalizar operação restrita\").first().json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($(\"Normalizar operação restrita\").first().json.bodyJson) }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "cc7f8cd0-5174-47d7-b556-959bcc6d1846",
+      "name": "Consultar estado sem repetir execução",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api\" + ($(\"Normalizar operação restrita\").first().json.action === \"readiness\" ? \"/ops/runtime-readiness\" : \"/monitoring/campaign-actions/\" + ($(\"Normalizar operação restrita\").first().json.action === \"preview-status\" ? \"previews/\" : \"actions/\") + encodeURIComponent($(\"Normalizar operação restrita\").first().json.resourceId)) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "1e49f9d9-63b7-4148-b0d5-6b9a8f0d71db",
+      "name": "Bloquear operação sem referência e confirmação",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        896,
+        288
+      ],
+      "parameters": {
+        "errorMessage": "Informe operação permitida, referência exata e chave estável. Ciência ou pedido de prévia não autorizam cadastro."
+      }
+    },
+    {
+      "id": "ea787819-188a-4da7-b1a7-b6bc6f25c381",
+      "name": "Receber decisão com referência exata",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        288
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "resourceId",
+              "type": "string"
+            },
+            {
+              "name": "bodyJson",
+              "type": "string"
+            },
+            {
+              "name": "idempotencyKey",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Conferir prontidão sem publicar": {
+      "main": [
+        [
+          {
+            "node": "Operação manual autorizada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operação manual autorizada": {
+      "main": [
+        [
+          {
+            "node": "Normalizar operação restrita",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar operação restrita": {
+      "main": [
+        [
+          {
+            "node": "Operação e referência permitidas?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operação e referência permitidas?": {
+      "main": [
+        [
+          {
+            "node": "Preparar confirmar ou aplicar?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear operação sem referência e confirmação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar confirmar ou aplicar?": {
+      "main": [
+        [
+          {
+            "node": "Executar recurso com chave única",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar estado sem repetir execução",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber decisão com referência exata": {
+      "main": [
+        [
+          {
+            "node": "Normalizar operação restrita",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "ME2wagCk0TbmuOzF,YmgDpb3ZVhLqkt3L"
+  }
+}

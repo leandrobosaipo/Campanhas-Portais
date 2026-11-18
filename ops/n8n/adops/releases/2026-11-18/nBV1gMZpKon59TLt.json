@@ -1,0 +1,640 @@
+{
+  "id": "nBV1gMZpKon59TLt",
+  "name": "ADOPS — Atender menu no WhatsApp",
+  "active": true,
+  "versionId": "8899e91b-861e-4d01-97f8-8bf2319acc67",
+  "nodes": [
+    {
+      "id": "baf3bb85-77e9-41ad-b3f0-f1f97764ba2c",
+      "name": "Atender menu sem repetir mensagens",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "17,47 * * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "696e6569-53ac-474a-a495-4ba28cea5eb0",
+      "name": "Preparar respostas novas sem executar ações",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/menu/process",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "0a0becd0-0b65-459f-bc64-bc8f7dd286c4",
+      "name": "Reservar uma resposta do menu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/menu/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"supportsAuditedPrint\":true}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "6db4b02f-9714-4178-b585-315b0478b65e",
+      "name": "Existe aviso novo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar uma resposta do menu\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "bfed20a1-37f9-41a4-abab-09ce4ce7dfef",
+      "name": "Enviar uma vez somente ao grupo ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"http://cod5-evolution-evolution-1:8080/message/\" + ($(\"Reservar uma resposta do menu\").first().json.items[0].part === \"poll\" ? \"sendPoll\" : \"sendText\") + \"/cod5-pmt-pilot\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Reservar uma resposta do menu\").first().json.items[0].request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "f7f9710f-dcf7-4c79-a5cb-f1cc93670783",
+      "name": "Guardar recibo da mesma mensagem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/menu/receipts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {messageKey: $(\"Reservar uma resposta do menu\").first().json.items[0].messageKey,receipt: $json} }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "02b26076-9f93-4857-81ea-489e104be3e3",
+      "name": "Conferir recibo persistido sem reenviar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/menu/deliveries",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "ab21f3ca-b465-4057-a7a3-186dfe906963",
+      "name": "Mesmo identificador e recibo confirmados?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Conferir recibo persistido sem reenviar\").first().json.items.some(x => x.message_key === $(\"Guardar recibo da mesma mensagem\").first().json.messageKey && x.provider_id === $(\"Guardar recibo da mesma mensagem\").first().json.providerId && [\"accepted\",\"delivered\",\"read\"].includes(x.status)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "01338763-0b6e-44cb-9420-908df26663a6",
+      "name": "Preservar tentativa sem recibo exato",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "errorMessage": "O envio não tem confirmação do mesmo providerId. Preservar a tentativa e investigar; não reenviar."
+      }
+    },
+    {
+      "id": "a1c874f7-b668-49e6-99aa-a85d2c6ba174",
+      "name": "Conferir e entregar um item do menu",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "65a46d7e-e4b4-4638-aaf5-5a11767f04b0",
+      "name": "Atender evento já registrado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        384
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "c990aebd-6e39-42a1-af09-4c9f66b3bbd8",
+      "name": "É arquivo real auditado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1050,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar uma resposta do menu\").first().json.items[0].part === \"image\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ad5f8413-94fa-4b2d-9a6e-af0e673691ed",
+      "name": "Conferir identidade do print real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item=$('Reservar uma resposta do menu').first().json.items[0],p=item?.request?._auditedPrint;\nif(item.part!=='image'||item.instance!=='cod5-pmt-pilot'||item.request.number!==\"120363431261379098@g.us\"||!Number.isSafeInteger(p?.insertionId)||p.insertionId<=0||!/^\\d{4}-\\d{2}-\\d{2}$/.test(p.date)||!Number.isSafeInteger(p.evidenceId)||p.evidenceId<=0||!/^[a-f0-9]{64}$/.test(p.sha256))throw Error('invalid_audited_print_identity');\nconst path='/api/monitoring/whatsapp/menu/prints/'+p.insertionId+'?date='+p.date+'&evidenceId='+encodeURIComponent(p.evidenceId)+'&sha256='+p.sha256;\nif(item.downloadPath!==path||typeof item.request.text!=='string')throw Error('invalid_audited_print_path');\nreturn [{json:{...p,caption:item.request.text,downloadPath:path,messageKey:item.messageKey}}];"
+      }
+    },
+    {
+      "id": "a5954b3a-e73c-4b29-9272-f7601b209566",
+      "name": "Baixar PNG auditado privado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1510,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br\" + $json.downloadPath }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "auditPrint"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "819a9ab6-74de-4a01-8a14-ab66a8f982cc",
+      "name": "Calcular SHA256 pelo nó nativo",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        -200
+      ],
+      "parameters": {
+        "action": "hash",
+        "binaryData": true,
+        "binaryPropertyName": "auditPrint",
+        "type": "SHA256",
+        "dataPropertyName": "auditedSha256",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "3230fa55-7cbf-4a8d-a008-d998e72f17be",
+      "name": "Restaurar binário sem copiar storage privado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1730,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const source=$('Baixar PNG auditado privado').first();return [{json:$input.first().json,binary:source.binary}];"
+      }
+    },
+    {
+      "id": "6ec5b24d-8beb-4d69-9af9-3a800eafd56e",
+      "name": "Preparar arquivo auditado sem URL privada",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const data=$('Conferir identidade do print real').first().json;\nconst bytes=await this.helpers.getBinaryDataBuffer(0,'auditPrint');\nif(bytes.length>20*1024*1024||bytes.length<8||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw Error('invalid_audited_png');\nif($input.first().json.auditedSha256!==data.sha256)throw Error('audited_png_hash_changed');\nreturn [{json:{number:\"120363431261379098@g.us\",mediatype:'image',mimetype:'image/png',caption:data.caption,media:bytes.toString('base64'),fileName:'print-'+data.insertionId+'-'+data.date+'.png'}}];"
+      }
+    },
+    {
+      "id": "c370adc8-727d-4434-9d91-6100fe1b15bc",
+      "name": "Enviar print real uma única vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1970,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://cod5-evolution-evolution-1:8080/message/sendMedia/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 60000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Atender menu sem repetir mensagens": {
+      "main": [
+        [
+          {
+            "node": "Preparar respostas novas sem executar ações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar respostas novas sem executar ações": {
+      "main": [
+        [
+          {
+            "node": "Reservar uma resposta do menu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar uma resposta do menu": {
+      "main": [
+        [
+          {
+            "node": "Existe aviso novo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar uma vez somente ao grupo ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Guardar recibo da mesma mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar recibo da mesma mensagem": {
+      "main": [
+        [
+          {
+            "node": "Conferir recibo persistido sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir recibo persistido sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Mesmo identificador e recibo confirmados?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo identificador e recibo confirmados?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Preservar tentativa sem recibo exato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir e entregar um item do menu": {
+      "main": [
+        [
+          {
+            "node": "Preparar respostas novas sem executar ações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atender evento já registrado": {
+      "main": [
+        [
+          {
+            "node": "Preparar respostas novas sem executar ações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe aviso novo?": {
+      "main": [
+        [
+          {
+            "node": "É arquivo real auditado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É arquivo real auditado?": {
+      "main": [
+        [
+          {
+            "node": "Conferir identidade do print real",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar uma vez somente ao grupo ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir identidade do print real": {
+      "main": [
+        [
+          {
+            "node": "Baixar PNG auditado privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar PNG auditado privado": {
+      "main": [
+        [
+          {
+            "node": "Calcular SHA256 pelo nó nativo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular SHA256 pelo nó nativo": {
+      "main": [
+        [
+          {
+            "node": "Restaurar binário sem copiar storage privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restaurar binário sem copiar storage privado": {
+      "main": [
+        [
+          {
+            "node": "Preparar arquivo auditado sem URL privada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar arquivo auditado sem URL privada": {
+      "main": [
+        [
+          {
+            "node": "Enviar print real uma única vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar print real uma única vez": {
+      "main": [
+        [
+          {
+            "node": "Guardar recibo da mesma mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "ME2wagCk0TbmuOzF"
+  }
+}

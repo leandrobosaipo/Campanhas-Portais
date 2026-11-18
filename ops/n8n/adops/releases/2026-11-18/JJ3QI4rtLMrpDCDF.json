@@ -1,0 +1,509 @@
+{
+  "id": "JJ3QI4rtLMrpDCDF",
+  "name": "ADOPS — Avisar pendências WhatsApp",
+  "active": true,
+  "versionId": "930ed5e1-2b70-4e8e-977e-9c1f1db9ac28",
+  "nodes": [
+    {
+      "id": "4eebf708-3e4a-479e-9fd0-ea5b9def393a",
+      "name": "Conferir e enviar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "67781814-877b-4b69-948f-d35e83f7d1c5",
+      "name": "Reservar primeiro envio único",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "bd03bc64-47a6-44cb-b1c7-8583bda57899",
+      "name": "Há primeiro envio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar primeiro envio único\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e548a3c5-cd3e-415c-ac34-3e0b4ea45688",
+      "name": "Enviar primeiro item ao ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1440,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"http://cod5-evolution-evolution-1:8080/message/\" + ($(\"Reservar primeiro envio único\").first().json.items[0].part === \"text\" ? \"sendText\" : \"sendPoll\") + \"/cod5-pmt-pilot\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Reservar primeiro envio único\").first().json.items[0].request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "db8cb74b-54ce-42d9-b459-7f6e34825521",
+      "name": "Guardar primeiro recibo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1680,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/receipts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {messageKey: $(\"Reservar primeiro envio único\").first().json.items[0].messageKey,receipt: $(\"Enviar primeiro item ao ADOPS\").first().json} }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d222b380-cc18-4b00-90f3-7079d6bac1e8",
+      "name": "Reservar segundo envio único",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1920,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "e873b382-549a-4cfa-a992-f7db8aa88634",
+      "name": "Há segundo envio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2160,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar segundo envio único\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "4d6bce7e-fafa-4b39-9840-fc5a86937112",
+      "name": "Enviar segundo item ao ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2400,
+        -180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"http://cod5-evolution-evolution-1:8080/message/\" + ($(\"Reservar segundo envio único\").first().json.items[0].part === \"text\" ? \"sendText\" : \"sendPoll\") + \"/cod5-pmt-pilot\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Reservar segundo envio único\").first().json.items[0].request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "9448ccad-8edb-4214-9d76-bce848df8089",
+      "name": "Guardar segundo recibo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2640,
+        -180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/receipts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {messageKey: $(\"Reservar segundo envio único\").first().json.items[0].messageKey,receipt: $(\"Enviar segundo item ao ADOPS\").first().json} }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "a0b27fd4-053c-445d-8010-09ba37a8dda1",
+      "name": "Pendências a cada 5 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        240
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3-59/5 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3602927c-0b0a-4e5d-89b6-6ed796845cb8",
+      "name": "Conferir validação do piloto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "52f5e18f-2f58-46da-82fd-94a16d29b3ea",
+      "name": "Voto e texto reais confirmados?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Conferir validação do piloto\").first().json.enabled === true && $(\"Conferir validação do piloto\").first().json.pilotOnly === true && $(\"Conferir validação do piloto\").first().json.validationReady === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c344b310-ddd0-4278-ac36-ea030d7e575b",
+      "name": "Liberar avisos após validação",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        720,
+        -140
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/activate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Reservar primeiro envio único": {
+      "main": [
+        [
+          {
+            "node": "Há primeiro envio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Há primeiro envio?": {
+      "main": [
+        [
+          {
+            "node": "Enviar primeiro item ao ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar primeiro item ao ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Guardar primeiro recibo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar primeiro recibo": {
+      "main": [
+        [
+          {
+            "node": "Reservar segundo envio único",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar segundo envio único": {
+      "main": [
+        [
+          {
+            "node": "Há segundo envio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Há segundo envio?": {
+      "main": [
+        [
+          {
+            "node": "Enviar segundo item ao ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar segundo item ao ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Guardar segundo recibo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir e enviar agora": {
+      "main": [
+        [
+          {
+            "node": "Conferir validação do piloto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pendências a cada 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Conferir validação do piloto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir validação do piloto": {
+      "main": [
+        [
+          {
+            "node": "Voto e texto reais confirmados?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Voto e texto reais confirmados?": {
+      "main": [
+        [
+          {
+            "node": "Liberar avisos após validação",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reservar primeiro envio único",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Liberar avisos após validação": {
+      "main": [
+        [
+          {
+            "node": "Reservar primeiro envio único",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240
+  }
+}

@@ -1,0 +1,345 @@
+{
+  "id": "gbJ6md3XnOnVZijc",
+  "name": "ADOPS — Atender confirmações de campanhas",
+  "active": true,
+  "versionId": "915d2748-8e94-419f-860b-770343a81ded",
+  "nodes": [
+    {
+      "id": "40f17cb4-b5f9-4a5a-afbf-596912afed4a",
+      "name": "Retomar confirmações preservadas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "37 * * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5010b6b5-a0da-4b61-b7d1-3bf5079d81fa",
+      "name": "Vincular confirmação e atualizar etapas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/actions/process",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "1a9fe5c1-f023-4c4e-bec9-c6ecf55aede0",
+      "name": "Reservar uma ação explicitamente confirmada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/actions/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "fbdb4f5a-fc68-42d7-aa13-0d172fda42c5",
+      "name": "Existe confirmação nova?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar uma ação explicitamente confirmada\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "94fe7c03-583d-4f4f-ba89-18e8c1861972",
+      "name": "Aplicar somente a revisão confirmada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/actions/\" + encodeURIComponent($(\"Reservar uma ação explicitamente confirmada\").first().json.items[0].actionId) + \"/apply\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"campaign-action:\" + $(\"Reservar uma ação explicitamente confirmada\").first().json.items[0].actionId + \":apply:v1\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {expectedRevision: $(\"Reservar uma ação explicitamente confirmada\").first().json.items[0].revision} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "213f2484-2d9a-4ad5-a0b8-64461ad63731",
+      "name": "Ler o mesmo trabalho sem reenviar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/actions/\" + encodeURIComponent($(\"Reservar uma ação explicitamente confirmada\").first().json.items[0].actionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "07ed5523-41a9-4bb5-bd88-4dbbe4ffd5e9",
+      "name": "Conferir decisões e retomar uma ação",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9124f794-b226-4b3a-ad30-76e180059928",
+      "name": "Conferir resposta já registrada",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        384
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "98bb1755-c2c3-4799-88f2-cc7494794b6a",
+      "name": "Conferir publicação sem reenviar campanha",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        450,
+        450
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/campaign-actions/actions/verify-publications",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": false
+    }
+  ],
+  "connections": {
+    "Retomar confirmações preservadas": {
+      "main": [
+        [
+          {
+            "node": "Vincular confirmação e atualizar etapas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar uma ação explicitamente confirmada": {
+      "main": [
+        [
+          {
+            "node": "Existe confirmação nova?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe confirmação nova?": {
+      "main": [
+        [
+          {
+            "node": "Aplicar somente a revisão confirmada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar somente a revisão confirmada": {
+      "main": [
+        [
+          {
+            "node": "Ler o mesmo trabalho sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler o mesmo trabalho sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir decisões e retomar uma ação": {
+      "main": [
+        [
+          {
+            "node": "Vincular confirmação e atualizar etapas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir resposta já registrada": {
+      "main": [
+        [
+          {
+            "node": "Vincular confirmação e atualizar etapas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vincular confirmação e atualizar etapas": {
+      "main": [
+        [
+          {
+            "node": "Conferir publicação sem reenviar campanha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir publicação sem reenviar campanha": {
+      "main": [
+        [
+          {
+            "node": "Reservar uma ação explicitamente confirmada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "ME2wagCk0TbmuOzF,kHzYHdowjIrwFQsS"
+  }
+}

@@ -1,0 +1,654 @@
+{
+  "id": "OfVb0E0Q8Wja3QXt",
+  "name": "ADOPS — Orquestrar recuperação de ontem",
+  "active": true,
+  "versionId": "cd8b994d-0ea3-4155-bfec-2c67e6c3c7bc",
+  "nodes": [
+    {
+      "id": "ccc9d350-01c5-424c-93e8-93a7519a3316",
+      "name": "Executar recuperação de ontem às 08h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        464
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 8 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "skip"
+      }
+    },
+    {
+      "id": "29c2d754-cf3b-447b-966c-68bbcea271be",
+      "name": "Fixar data de referência e manifesto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        464
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $now.setZone(\"America/Cuiaba\").minus({days:1}).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5c7300e3-88c7-467d-8010-a61ee120a180",
+      "name": "Gerar itens únicos de inserção/data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        464
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run = $(\"Fixar data de referência e manifesto\").first().json;\nconst date = String(run.date || \"\");\nconst audit = $input.first().json;\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || audit.date !== date || !Array.isArray(audit.items) || audit.totalEligible !== audit.items.length) throw new Error(\"daily_manifest_incomplete\");\nconst ids = audit.items.map(x => Number(x.insertionId));\nif (ids.some(x => !Number.isSafeInteger(x) || x <= 0) || new Set(ids).size !== ids.length) throw new Error(\"daily_manifest_identity_invalid\");\nreturn ids.map(insertionId => ({json:{insertionId,date}}));"
+      }
+    },
+    {
+      "id": "1d60a899-e3fd-477d-b091-64f33037c415",
+      "name": "Encerrar inventário da data de ontem",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "yesterday_manifest_inventory_complete"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $now.setZone(\"America/Cuiaba\").minus({days:1}).toISODate() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5748cf54-21eb-4c8b-9c1e-75f74143c879",
+      "name": "Consultar inserção e período",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Gerar itens únicos de inserção/data\").item.json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "04d375e1-04e1-43cb-af67-a874ed3605d0",
+      "name": "Data de ontem pertence ao período já iniciado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($(\"Consultar inserção e período\").item.json.periodoInicio && $(\"Consultar inserção e período\").item.json.periodoFim && $(\"Gerar itens únicos de inserção/data\").item.json.date >= $(\"Consultar inserção e período\").item.json.periodoInicio && $(\"Gerar itens únicos de inserção/data\").item.json.date <= $(\"Consultar inserção e período\").item.json.periodoFim && $now.setZone(\"America/Cuiaba\").toISODate() >= $(\"Consultar inserção e período\").item.json.periodoInicio) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "3a2de3b5-52ee-41ae-b468-30bc24043055",
+      "name": "Inventariar prova canônica de ontem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Gerar itens únicos de inserção/data\").item.json.insertionId) + \"/capture-proof/status?date=\" + encodeURIComponent($(\"Gerar itens únicos de inserção/data\").item.json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "97f45208-605c-4772-99dd-11903202a281",
+      "name": "Prova estrita já auditada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Inventariar prova canônica de ontem\").item.json.status === \"audited\" && $(\"Inventariar prova canônica de ontem\").item.json.checklistValidation?.approved === true && $(\"Inventariar prova canônica de ontem\").item.json.audit?.ok === true && Number($(\"Inventariar prova canônica de ontem\").item.json.audit?.issues?.length || 0) === 0 && $(\"Inventariar prova canônica de ontem\").item.json.isReachable === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a7a0cee3-ec90-48c5-b716-a2a05101130e",
+      "name": "Processar uma inserção por vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        464
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "aad059b3-56db-48a7-9f7b-69d5045a0a13",
+      "name": "Falta de evidência confirmada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        272
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Inventariar prova canônica de ontem\").item.json.status === \"missing\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "7d648d15-7297-4204-9edc-ef1ab95f15e0",
+      "name": "Consultar capturas ativas individuais",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-single&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "c773ec43-d950-449e-a5c8-94594bcf27ac",
+      "name": "Consultar lotes de captura ativos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2240,
+        272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-batch&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "7c82ae8f-0faa-4bbf-badf-fc90892eb9c4",
+      "name": "Consultar backfills de captura ativos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2464,
+        272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-backfill&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "dddd6f59-8795-4c81-8514-eb64fecdc402",
+      "name": "Já há captura ativa para mesma inserção e data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2688,
+        336
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const id = Number($(\"Gerar itens únicos de inserção/data\").item.json.insertionId); const date = String($(\"Gerar itens únicos de inserção/data\").item.json.date); const jobs = [...($(\"Consultar capturas ativas individuais\").first().json.items || []), ...($(\"Consultar lotes de captura ativos\").first().json.items || []), ...($(\"Consultar backfills de captura ativos\").first().json.items || [])]; return jobs.some(j => { const p = j.payload || {}; if (![\"queued\",\"ready_for_runner\",\"running\"].includes(j.status)) return false; if (j.kind === \"print-single\") return Number(p.insertionId) === id && String(p.date || \"\") === date; if (j.kind === \"print-backfill\") return Number(p.insertionId) === id && (!p.fromDate || String(p.fromDate) <= date) && (!p.toDate || String(p.toDate) >= date); if (j.kind === \"print-batch\") return String(p.date || p.targetDate || \"\") === date && (!Array.isArray(p.insertionIds) || p.insertionIds.map(Number).includes(id)); return false; }); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a99a2295-4eeb-4be8-b4a7-a8589c699d5b",
+      "name": "Recuperar pela auditoria controlada",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2912,
+        416
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3ZPZJRQJkcbY3Q8Z"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "insertionId": "={{ Number($(\"Gerar itens únicos de inserção/data\").item.json.insertionId) }}",
+            "date": "={{ String($(\"Gerar itens únicos de inserção/data\").item.json.date) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "insertionId",
+              "displayName": "insertionId",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": false
+    },
+    {
+      "id": "adops-yesterday-live-audit",
+      "name": "Consultar inventário diário autorizado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        -180
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/capture-proof/audit?date=\" + encodeURIComponent($(\"Fixar data de referência e manifesto\").first().json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Executar recuperação de ontem às 08h": {
+      "main": [
+        [
+          {
+            "node": "Fixar data de referência e manifesto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar itens únicos de inserção/data": {
+      "main": [
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar inserção e período": {
+      "main": [
+        [
+          {
+            "node": "Data de ontem pertence ao período já iniciado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data de ontem pertence ao período já iniciado?": {
+      "main": [
+        [
+          {
+            "node": "Inventariar prova canônica de ontem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventariar prova canônica de ontem": {
+      "main": [
+        [
+          {
+            "node": "Prova estrita já auditada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prova estrita já auditada?": {
+      "main": [
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Falta de evidência confirmada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processar uma inserção por vez": {
+      "main": [
+        [
+          {
+            "node": "Encerrar inventário da data de ontem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar inserção e período",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falta de evidência confirmada?": {
+      "main": [
+        [
+          {
+            "node": "Consultar capturas ativas individuais",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar capturas ativas individuais": {
+      "main": [
+        [
+          {
+            "node": "Consultar lotes de captura ativos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar lotes de captura ativos": {
+      "main": [
+        [
+          {
+            "node": "Consultar backfills de captura ativos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar backfills de captura ativos": {
+      "main": [
+        [
+          {
+            "node": "Já há captura ativa para mesma inserção e data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já há captura ativa para mesma inserção e data?": {
+      "main": [
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Recuperar pela auditoria controlada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recuperar pela auditoria controlada": {
+      "main": [
+        [
+          {
+            "node": "Processar uma inserção por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fixar data de referência e manifesto": {
+      "main": [
+        [
+          {
+            "node": "Consultar inventário diário autorizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar inventário diário autorizado": {
+      "main": [
+        [
+          {
+            "node": "Gerar itens únicos de inserção/data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  }
+}

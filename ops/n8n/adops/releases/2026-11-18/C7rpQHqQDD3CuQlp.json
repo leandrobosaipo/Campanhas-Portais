@@ -1,0 +1,320 @@
+{
+  "id": "C7rpQHqQDD3CuQlp",
+  "name": "ADOPS — Evidências e recuperações",
+  "active": true,
+  "versionId": "b6a2636e-81aa-4a5d-ab66-4eb337384658",
+  "nodes": [
+    {
+      "id": "24b30ab4-e131-4b9d-8878-792a37ec7e73",
+      "name": "Horários oficiais de evidências",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 18-21 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 30 18-21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6e2e45c4-20b5-476a-ad96-7ccabb81e24d",
+      "name": "Conferir provas existentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/capture-proof/audit?date=\" + (DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").hour < 9 ? DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").minus({days:1}) : DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\")).toISODate() }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "4c5a8802-458a-4339-a82a-6a1d17e0e095",
+      "name": "Existe prova pendente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Conferir provas existentes\").first().json.totalEligible > 0 && $(\"Conferir provas existentes\").first().json.strictOk < $(\"Conferir provas existentes\").first().json.totalEligible }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "9e009c5d-ccc7-4ccf-a5de-a19ab64bb084",
+      "name": "Solicitar execução sem duplicar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence/dispatch",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {routine: DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").hour === 8 ? \"daily-print-morning-recovery\" : (DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").hour === 18 && DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").minute < 30 ? \"daily-print\" : \"daily-print-recovery\"),targetDate:(DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").hour < 9 ? DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").minus({days:1}) : DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\")).toISODate(),dispatchWindow:DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").set({minute:DateTime.fromISO($(\"Horários oficiais de evidências\").first().json.timestamp || $now.toISO()).setZone(\"America/Cuiaba\").minute >= 30 ? 30 : 0}).toFormat(\"HH:mm\")} }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "ef49caf2-f4bd-4932-a6be-cb3ee0305e8f",
+      "name": "Acompanhar execução das evidências",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        920,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Yuzka3YszPwKxyKI"
+        },
+        "mode": "once",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "jobId": "={{ $(\"Solicitar execução sem duplicar\").first().json.jobId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "0352c14e-9668-4e70-9d45-bffb9c5d5fc7",
+      "name": "Auditar resultado das evidências",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1150,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/capture-proof/audit?date=\" + $(\"Conferir provas existentes\").first().json.date }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c88793a1-2afb-47b2-9741-d54d65dddfad",
+      "name": "Todas as provas foram aprovadas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1380,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number.isInteger($(\"Auditar resultado das evidências\").first().json.totalEligible) && $(\"Auditar resultado das evidências\").first().json.totalEligible > 0 && $(\"Auditar resultado das evidências\").first().json.strictOk === $(\"Auditar resultado das evidências\").first().json.totalEligible && $(\"Auditar resultado das evidências\").first().json.missing === 0 && $(\"Auditar resultado das evidências\").first().json.invalid === 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5adbeac8-461c-4764-a9a2-e22ae9ba32dc",
+      "name": "Registrar provas ainda pendentes",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        0
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "A execução terminou, mas a auditoria ainda aponta evidências pendentes. Conferir o mesmo trabalho e preservar as provas existentes; não houve reenvio automático por este fluxo."
+      }
+    }
+  ],
+  "connections": {
+    "Horários oficiais de evidências": {
+      "main": [
+        [
+          {
+            "node": "Conferir provas existentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir provas existentes": {
+      "main": [
+        [
+          {
+            "node": "Existe prova pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe prova pendente?": {
+      "main": [
+        [
+          {
+            "node": "Solicitar execução sem duplicar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solicitar execução sem duplicar": {
+      "main": [
+        [
+          {
+            "node": "Acompanhar execução das evidências",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acompanhar execução das evidências": {
+      "main": [
+        [
+          {
+            "node": "Auditar resultado das evidências",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auditar resultado das evidências": {
+      "main": [
+        [
+          {
+            "node": "Todas as provas foram aprovadas?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Todas as provas foram aprovadas?": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Registrar provas ainda pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  }
+}

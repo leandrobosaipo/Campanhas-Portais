@@ -1,0 +1,183 @@
+{
+  "id": "ME2wagCk0TbmuOzF",
+  "name": "ADOPS — Receber respostas WhatsApp",
+  "active": true,
+  "versionId": "359d5344-bf78-45f1-a476-a41521dcef2d",
+  "nodes": [
+    {
+      "id": "3556135f-8745-4493-bbfd-eba21cec3fd2",
+      "name": "Associar resposta ao checklist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/events",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.eventPayload }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "20df1488-9422-48b1-89de-fa17b05fe9ef",
+      "name": "Receber evento do grupo ADOPS",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        -200
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "eventPayload",
+              "type": "object"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2c117574-6e43-4ca2-9811-1f29263af102",
+      "name": "Confirmar recebimento sem repetir a resposta",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "xarhkBClaM3R5HWF"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "d51735ce-4d34-4f98-b574-67f84d971841",
+      "name": "Atender menu após registrar a resposta",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "nBV1gMZpKon59TLt"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "be9a4c21-d632-4eba-9117-752c6d6b8494",
+      "name": "Atender confirmação explícita de prévia",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gbJ6md3XnOnVZijc"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Receber evento do grupo ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Associar resposta ao checklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Associar resposta ao checklist": {
+      "main": [
+        [
+          {
+            "node": "Confirmar recebimento sem repetir a resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar recebimento sem repetir a resposta": {
+      "main": [
+        [
+          {
+            "node": "Atender menu após registrar a resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atender menu após registrar a resposta": {
+      "main": [
+        [
+          {
+            "node": "Atender confirmação explícita de prévia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "Q5z5ziA0aIktFDnI"
+  }
+}

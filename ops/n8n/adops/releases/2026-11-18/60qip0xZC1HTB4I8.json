@@ -1,0 +1,305 @@
+{
+  "id": "60qip0xZC1HTB4I8",
+  "name": "ADOPS — Monitorar Drive",
+  "active": true,
+  "versionId": "1b1c6ca8-0a8a-443d-b6c1-c7803547a381",
+  "nodes": [
+    {
+      "id": "f80a390c-103a-4b5d-ba28-000bca767053",
+      "name": "A cada 5 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 */5 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5902ddbb-cb03-419a-b496-2b1ce4a99d50",
+      "name": "Iniciar leitura do Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/drive/refresh",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"adops-drive:\" + $execution.id }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f02cf6dc-31dd-4a20-b842-758207611577",
+      "name": "Atualizar checklist do Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/drive/scans",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {jobId: $(\"Iniciar leitura do Drive\").first().json.jobId} }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "cod5-drive-validate-receipt-v1",
+      "name": "Validar recibo do inventário",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        550,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j=$input.first().json;\nif (!j || typeof j.jobId!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(j.jobId) || typeof j.duplicate!=='boolean') throw new Error('drive_refresh_receipt_invalid');\nreturn [{json:{jobId:j.jobId,duplicate:j.duplicate}}];"
+      }
+    },
+    {
+      "id": "cod5-drive-read-same-job-v1",
+      "name": "Consultar mesmo inventário uma vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        770,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Validar recibo do inventário\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "cod5-drive-validate-status-v1",
+      "name": "Validar estado do mesmo inventário",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        990,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const receipt=$('Validar recibo do inventário').first().json;\nconst j=$input.first().json;\nif (!j || j.id!==receipt.jobId || j.kind!=='drive-inventory-refresh' || typeof j.status!=='string') throw new Error('drive_job_identity_mismatch');\nconst allowed=['queued','ready_for_runner','running','completed','failed','canceled','cancelled'];\nif (!allowed.includes(j.status)) throw new Error('drive_job_status_unknown');\nif (['failed','canceled','cancelled'].includes(j.status)) throw new Error('drive_inventory_terminal_'+j.status);\nreturn [{json:{jobId:receipt.jobId,status:j.status,duplicate:receipt.duplicate,cod5_apply:j.status==='completed',cursorAdvanced:false}}];"
+      }
+    },
+    {
+      "id": "cod5-drive-complete-gate-v1",
+      "name": "Inventário completo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1210,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.cod5_apply === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cod5-drive-pending-receipt-v1",
+      "name": "Registrar pendência sem conciliar",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1430,
+        340
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "jobId",
+              "name": "jobId",
+              "type": "string",
+              "value": "={{ $json.jobId }}"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "id": "cursorAdvanced",
+              "name": "cursorAdvanced",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "meaning",
+              "name": "meaning",
+              "type": "string",
+              "value": "Inventário não concluído. O mesmo job será consultado no próximo ciclo; nenhum checklist foi aplicado."
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "A cada 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Iniciar leitura do Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Iniciar leitura do Drive": {
+      "main": [
+        [
+          {
+            "node": "Validar recibo do inventário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar recibo do inventário": {
+      "main": [
+        [
+          {
+            "node": "Consultar mesmo inventário uma vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar mesmo inventário uma vez": {
+      "main": [
+        [
+          {
+            "node": "Validar estado do mesmo inventário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar estado do mesmo inventário": {
+      "main": [
+        [
+          {
+            "node": "Inventário completo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventário completo?": {
+      "main": [
+        [
+          {
+            "node": "Atualizar checklist do Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar pendência sem conciliar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240
+  }
+}

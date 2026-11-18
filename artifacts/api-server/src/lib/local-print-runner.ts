@@ -1,12 +1,27 @@
 import { db, printJobsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { runLocalCaptureProof } from "./local-capture-runtime";
+import { buildFailedCaptureStage } from "../../../../ops/shared/capture-stage-timings.mjs";
+import {
+  advanceCaptureProgress,
+  initialCaptureProgress,
+  type CaptureProgress,
+  type CaptureProgressStage,
+} from "./capture-job-progress";
 import type {
   PrintRunnerJobPayload,
   PrintRunnerJobResult,
   PrintRunnerJobResultItem,
   PrintRunnerPort,
 } from "./print-runner-contract";
+
+const PRINT_TARGET_MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.ADOPS_PRINT_TARGET_MAX_ATTEMPTS ?? "3", 10) || 3);
+const PRINT_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.ADOPS_PRINT_RETRY_BASE_MS ?? "15000", 10) || 15_000);
+const PRINT_TARGET_COOLDOWN_MS = Math.max(0, Number.parseInt(process.env.ADOPS_PRINT_TARGET_COOLDOWN_MS ?? "12000", 10) || 12_000);
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 class LocalPrintRunner implements PrintRunnerPort {
   async runNow(payload: PrintRunnerJobPayload): Promise<PrintRunnerJobResult> {
@@ -19,6 +34,7 @@ class LocalPrintRunner implements PrintRunnerPort {
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const job = this.createJob(payload, jobId);
     await this.save(job, payload);
+    await this.updateMeta(jobId, { progress: initialCaptureProgress(job.createdAt) });
 
     setTimeout(() => {
       void this.execute(job, payload)
@@ -36,7 +52,8 @@ class LocalPrintRunner implements PrintRunnerPort {
           });
           current.failedTargets = current.items.filter((item) => item.status === "error").length;
           current.completedTargets = current.items.filter((item) => item.status !== "skipped").length;
-          void this.save(current, payload);
+          void this.save(current, payload).then(() => this.updateProgress(job.id, "failed"))
+            .catch(() => console.warn("[print-runner] terminal state write unavailable; reconcile same job", job.id));
         });
     }, 0);
 
@@ -59,6 +76,9 @@ class LocalPrintRunner implements PrintRunnerPort {
       completedTargets: row.completedTargets,
       failedTargets: row.failedTargets,
       items: Array.isArray(row.items) ? (row.items as PrintRunnerJobResultItem[]) : [],
+      progress: row.meta && typeof row.meta.progress === "object"
+        ? row.meta.progress as CaptureProgress
+        : null,
     };
   }
 
@@ -81,60 +101,139 @@ class LocalPrintRunner implements PrintRunnerPort {
     job.status = "running";
     job.startedAt = new Date().toISOString();
     await this.save(job, payload);
+    await this.updateProgress(job.id, "running");
 
-    for (const target of payload.targets) {
-      const item = await this.executeTarget(job.id, target);
+    for (const [index, target] of payload.targets.entries()) {
+      const item = await this.executeTarget(job.id, target, payload.kind);
       job.items.push(item);
       job.completedTargets = job.items.filter((entry) => entry.status !== "skipped").length;
       job.failedTargets = job.items.filter((entry) => entry.status === "error").length;
       await this.save(job, payload);
+      if (index < payload.targets.length - 1 && PRINT_TARGET_COOLDOWN_MS > 0) {
+        await sleep(PRINT_TARGET_COOLDOWN_MS);
+      }
     }
 
     job.status = job.failedTargets > 0 ? "failed" : "completed";
     job.finishedAt = new Date().toISOString();
     await this.save(job, payload);
+    await this.updateProgress(job.id, job.status);
+    // Capture completion is durable before the existing candidate registration
+    // checks its job, timestamps and exact artifact bytes.
+    for (const target of payload.targets.filter((entry) => entry.capturePurpose === "publication_acceptance")) {
+      const item = job.items.find((entry) => entry.insertionId === target.insertionId && entry.targetDate === target.targetDate);
+      if (job.status !== "completed" || item?.status !== "ok") continue;
+      try {
+        const base = `http://127.0.0.1:${process.env.PORT || "4011"}/api`;
+        const token = process.env.ADOPS_INTERNAL_API_TOKEN;
+        if (!token) throw new Error("acceptance_audit_auth_unavailable");
+        const post = async (route: string, body: Record<string, unknown>) => {
+          const response = await fetch(base + route, { method: "POST", headers: { "x-adops-api-token": token, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(110000) });
+          const data = await response.json();
+          if (!response.ok) throw new Error(String(data.error || "acceptance_audit_failed"));
+          return data;
+        };
+        const registered = await post(`/internal/insertions/${target.insertionId}/capture-proof/candidates`, { date: target.targetDate, sourceJobId: job.id });
+        const audited = await post(`/internal/capture-proof-candidates/${registered.candidate.candidateId}/audit`, {});
+        await this.updateMeta(job.id, { publicationAcceptance: { candidateId: registered.candidate.candidateId, audit: audited } });
+      } catch (error) {
+        await this.updateMeta(job.id, { publicationAcceptance: { status: "needs_review", error: error instanceof Error ? error.message : "acceptance_audit_failed" } });
+      }
+    }
     return job;
   }
 
-  private async executeTarget(jobId: string, target: PrintRunnerJobPayload["targets"][number]): Promise<PrintRunnerJobResultItem> {
-    try {
-      const capture = await runLocalCaptureProof(target.insertionId, {
-        replaceExisting: target.replaceExisting,
-        captureAt: target.captureAt ?? null,
-        runnerJobId: jobId,
-        candidateOnly: target.candidateOnly === true,
-        promoteCandidate: target.promoteCandidate === true,
-      });
-      return {
-        insertionId: target.insertionId,
-        targetDate: target.targetDate,
-        captureAt: target.captureAt ?? null,
-        status: "ok",
-        uploadedUrl: capture.uploadedUrl ?? null,
-        captureLogId: capture.captureLogId ?? null,
-        probableCause: capture.probableCause ?? null,
-        retroContentProof: capture.retroContentProof ?? null,
-        manifestHash: capture.manifestHash ?? null,
-      };
-    } catch (error) {
-      return {
-        insertionId: target.insertionId,
-        targetDate: target.targetDate,
-        captureAt: target.captureAt ?? null,
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      };
+  private async executeTarget(
+    jobId: string,
+    target: PrintRunnerJobPayload["targets"][number],
+    kind: PrintRunnerJobPayload["kind"],
+  ): Promise<PrintRunnerJobResultItem> {
+    const targetStartedAt = new Date().toISOString();
+    let lastError = "Falha desconhecida na captura.";
+    let progressWrites = Promise.resolve();
+    for (let attempt = 1; attempt <= PRINT_TARGET_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const capture = await runLocalCaptureProof(target.insertionId, {
+          replaceExisting: attempt > 1 ? true : target.replaceExisting,
+          captureAt: target.captureAt ?? null,
+          runnerJobId: jobId,
+          capturePurpose: target.capturePurpose,
+          candidateOnly: target.candidateOnly === true,
+          historicalReference: target.historicalReference,
+          promoteCandidate: target.promoteCandidate === true,
+          reconstructionReason: target.reconstructionReason
+            ?? (kind === "capture-proof-backfill" ? "late_publication_recovery" : null),
+          onProgress: (event) => {
+            if (event.status !== "running") return;
+            progressWrites = progressWrites.then(() => this.updateProgress(jobId, event.stage as CaptureProgressStage))
+              .catch(() => console.warn("[print-runner] progress write unavailable; capture identity preserved", jobId));
+          },
+        });
+        await progressWrites;
+        return {
+          insertionId: target.insertionId,
+          targetDate: target.targetDate,
+          captureAt: target.captureAt ?? null,
+          status: "ok",
+          uploadedUrl: capture.uploadedUrl ?? null,
+          captureLogId: capture.captureLogId ?? null,
+          probableCause: capture.probableCause ?? null,
+          ...(target.candidateOnly === true ? {
+            candidateOnly: true,
+            checklistValidation: capture.checklistValidation && typeof capture.checklistValidation === "object"
+              ? capture.checklistValidation as Record<string, unknown>
+              : null,
+          } : {}),
+          readinessAudit: capture.readinessAudit && typeof capture.readinessAudit === "object"
+            ? capture.readinessAudit as Record<string, unknown>
+            : null,
+          retroContentProof: capture.retroContentProof ?? null,
+          manifestHash: capture.manifestHash ?? null,
+          stages: (Array.isArray(capture.stages) ? capture.stages : []).map((stage: any) => ({
+            stage: typeof stage?.stage === "string" ? stage.stage : "unknown",
+            status: typeof stage?.status === "string" ? stage.status : "unknown",
+            startedAt: typeof stage?.startedAt === "string" ? stage.startedAt : null,
+            finishedAt: typeof stage?.finishedAt === "string" ? stage.finishedAt : null,
+            durationMs: typeof stage?.durationMs === "number" && Number.isFinite(stage.durationMs) && stage.durationMs >= 0
+              ? stage.durationMs
+              : null,
+          })),
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        if (/capture_audit_failed|invalid_audit/i.test(lastError)) break;
+        if (attempt < PRINT_TARGET_MAX_ATTEMPTS && PRINT_RETRY_BASE_MS > 0) {
+          await sleep(PRINT_RETRY_BASE_MS * attempt);
+        }
+      }
     }
+    const targetFinishedAt = new Date().toISOString();
+    return {
+      insertionId: target.insertionId,
+      targetDate: target.targetDate,
+      captureAt: target.captureAt ?? null,
+      status: "error",
+      error: `${lastError} (${PRINT_TARGET_MAX_ATTEMPTS} tentativa(s))`,
+      stages: [buildFailedCaptureStage(targetStartedAt, targetFinishedAt)],
+    };
   }
 
   async updateMeta(jobId: string, meta: Record<string, unknown>): Promise<void> {
     await db
       .update(printJobsTable)
       .set({
-        meta,
+        meta: sql`coalesce(${printJobsTable.meta}, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb`,
         updatedAt: new Date(),
       })
       .where(eq(printJobsTable.id, jobId));
+  }
+
+  private async updateProgress(jobId: string, stage: CaptureProgressStage): Promise<void> {
+    const row = await db.query.printJobsTable.findFirst({ where: eq(printJobsTable.id, jobId) });
+    const current = row?.meta && typeof row.meta.progress === "object"
+      ? row.meta.progress as CaptureProgress
+      : null;
+    await this.updateMeta(jobId, { progress: advanceCaptureProgress(current, stage) });
   }
 
   private async save(job: PrintRunnerJobResult, payload: PrintRunnerJobPayload): Promise<void> {

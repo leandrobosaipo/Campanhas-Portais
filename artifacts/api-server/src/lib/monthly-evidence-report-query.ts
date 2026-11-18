@@ -1,11 +1,112 @@
+import {isInstagramEvidenceExcluded} from '../../../../ops/shared/evidence-monitoring-policy.mjs';
 const VALID_PORTALS = new Set(["OMT", "ROO", "PERRENGUE", "AFL", "PNMT", "PPMT"]);
 const VALID_PUBLICATION_FILTERS = new Set(["all", "active", "not_published", "scheduled", "ending", "ended"]);
-const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "invalid"]);
+const VALID_EVIDENCE_FILTERS = new Set(["all", "complete", "missing", "retroactive_missing", "scheduled", "invalid", "documentary_pending"]);
 const PUBLIC_INSERTION_FIELDS = [
   "id", "campanhaId", "campanhaName", "clienteNome", "agenciaNome", "piCodigo", "competencia",
   "siteSigla", "siteNome", "siteLogoUrl", "localFormato", "localFormatoNormalizado", "periodoInicio",
   "periodoFim", "statusNormalizado", "bannerPublicadoNoSite", "mediaUrl", "portalUrl", "adrotateGroupId", "adrotateGroupUrl",
 ] as const;
+export const MONTHLY_REPORT_EXCLUSION_MARKER = "[[adops:monthly-report-exclusion:v1]]";
+
+function monthlyArtifact(value: unknown) {
+  try { const parsed = new URL(String(value)); return `${parsed.origin}${parsed.pathname}`; }
+  catch { return null; }
+}
+
+export function resolveMonthlyRequestedCaptureAt(
+  metadata: Record<string, unknown> | null | undefined,
+  options: { correlated: boolean; trustedCapture: boolean; technicalStatus: string; technicalAccepted: boolean },
+) {
+  if (!options.correlated || !options.trustedCapture || options.technicalStatus !== "audited" || !options.technicalAccepted) return null;
+  const value = typeof metadata?.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = "0", zone] = match;
+  if (zone && !Number.isFinite(Date.parse(value))) return null;
+  const calendarDay = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (calendarDay.getUTCFullYear() !== Number(year)
+    || calendarDay.getUTCMonth() + 1 !== Number(month)
+    || calendarDay.getUTCDate() !== Number(day)
+    || Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return null;
+  // Keep offset-free source references unchanged; the consumer interprets them
+  // in the campaign's local time zone rather than converting them as UTC.
+  return value;
+}
+
+export function selectMonthlyEvidenceProof<T extends { uploadedUrl?: string | null; cacheBustedUrl?: string | null; updatedAt: Date }>(url: string | null | undefined, rows: T[]) {
+  return rows.filter(row => !url || [row.uploadedUrl, row.cacheBustedUrl].some(value => monthlyArtifact(value) && monthlyArtifact(value) === monthlyArtifact(url)))
+    .reduce<T | null>((latest, row) => !latest || latest.updatedAt < row.updatedAt ? row : latest, null);
+}
+
+export function resolveMonthlyTechnicalStatus(
+  persistedStatus: string,
+  currentAuditStatus: "ok" | "ok_best_effort" | "invalid_audit" | "invalid_url" | "missing" | null,
+) {
+  if (currentAuditStatus === null) return persistedStatus;
+  if (currentAuditStatus === "ok") return "audited";
+  if (currentAuditStatus === "ok_best_effort") return "audited_best_effort";
+  return currentAuditStatus;
+}
+
+export function monthlyEvidenceProvenance(url: string | null | undefined, proof: {
+  uploadedUrl?: string | null;
+  cacheBustedUrl?: string | null;
+  metadata?: Record<string, unknown>;
+} | null, trustedCapture = false, technicalStatus?: string | null, finalValidation?: Record<string, unknown> | null) {
+  const matches = Boolean(monthlyArtifact(url) && [proof?.uploadedUrl, proof?.cacheBustedUrl].some(value => monthlyArtifact(value) === monthlyArtifact(url)));
+  const metadata = matches ? proof?.metadata ?? {} : {};
+  const captureClass = typeof metadata.captureClass === 'string' ? metadata.captureClass : null;
+  const technicallyAudited = technicalStatus === 'audited';
+  // The original log may retain the runner's pre-upload checklist. Use the
+  // server's current final validation without rewriting immutable provenance.
+  const checklistValidation = matches && finalValidation != null ? finalValidation
+    : metadata.checklistValidation && typeof metadata.checklistValidation === 'object'
+    ? metadata.checklistValidation as Record<string, unknown>
+    : {};
+  const blockingIssues = Array.isArray(checklistValidation.blockingIssues) ? checklistValidation.blockingIssues : null;
+  const checklistAudit = checklistValidation.audit && typeof checklistValidation.audit === 'object'
+    ? checklistValidation.audit as Record<string, unknown>
+    : {};
+  const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === 'object'
+    ? metadata.retroContentProof as Record<string, unknown>
+    : {};
+  const manifest = metadata.retroContentManifest && typeof metadata.retroContentManifest === 'object' && !Array.isArray(metadata.retroContentManifest)
+    ? metadata.retroContentManifest as Record<string, unknown>
+    : {};
+  const reconstructed = metadata.reconstructed === true
+    || manifest.reconstructed === true
+    || manifest.sourceMode === 'audited_reconstruction'
+    || retroContentProof.reconstructed === true
+    || retroContentProof.sourceMode === 'audited_reconstruction';
+  const signedPreview = retroContentProof.sourceMode === 'signed_preview' && retroContentProof.reconstructed === false;
+  const manifestHash = typeof retroContentProof.manifestHash === 'string' ? retroContentProof.manifestHash.trim() : '';
+  const historicalTechnicalProofValid = checklistValidation.approved === true
+    && checklistValidation.preliminary !== true
+    && blockingIssues?.length === 0
+    && checklistAudit.ok !== false
+    && retroContentProof.status === 'approved'
+    && retroContentProof.futureCount === 0
+    && manifestHash.length > 0;
+  const trustedHistoricalReconstruction = reconstructed && trustedCapture && historicalTechnicalProofValid;
+  const trustedHistoricalEditorialProof = !reconstructed && captureClass === 'historical_recovery'
+    && signedPreview && trustedCapture && historicalTechnicalProofValid;
+  const trustedDailyCapture = !reconstructed && trustedCapture && ['scheduled', 'same_day_retry'].includes(captureClass ?? '');
+  const technicalAccepted = technicallyAudited && (trustedHistoricalReconstruction || trustedHistoricalEditorialProof || trustedDailyCapture);
+  return {
+    captureClass,
+    acceptancePolicy: 'technical-audit-v1',
+    technicalAccepted,
+    requiresDocumentaryAcceptance: false,
+    provenanceStatus: trustedHistoricalReconstruction ? 'reconstruction_recorded'
+      : trustedHistoricalEditorialProof ? 'editorial_proof_recorded'
+      : trustedDailyCapture ? 'capture_recorded' : 'unknown',
+    /** @deprecated Retained as a compatibility alias; consult technicalAccepted and provenanceStatus. */
+    documentaryStatus: reconstructed ? 'reconstruction_requires_acceptance'
+      : trustedHistoricalEditorialProof ? null
+      : trustedDailyCapture ? 'capture_recorded' : 'provenance_unverified',
+  };
+}
 
 export function normalizeMonthlyReportMonth(value: unknown) {
   if (typeof value !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
@@ -31,12 +132,34 @@ export function monthBounds(month: string, today: string) {
   return { start, end, evidenceEnd: today >= start && today <= end ? today : today < start ? start : end };
 }
 
+export function monthlyReportInsertionMatches(item: Record<string, unknown>, bounds: { start: string; end: string }) {
+  const periodStart = String(item.periodoInicio || "");
+  const periodEnd = String(item.periodoFim || "");
+  const status = String(item.statusNormalizado || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  return periodEnd >= bounds.start
+    && periodStart <= bounds.end
+    && !["CANCELADO", "CANCELADA", "EXCLUIDO", "EXCLUIDA"].includes(status);
+}
+
+export function hasMonthlyReportExclusionMarker(item: Record<string, unknown>) {
+  return typeof item.observacoes === "string" && item.observacoes.includes(MONTHLY_REPORT_EXCLUSION_MARKER);
+}
+
+export function shouldExcludeMonthlyReportItem(item: Record<string, unknown>, evidenceCount: number) {
+  return hasMonthlyReportExclusionMarker(item)
+    && !item.planilhaRef
+    && !item.mediaUrl
+    && item.bannerPublicadoNoSite === false
+    && evidenceCount === 0;
+}
+
 export function classifyMonthlyInsertion(options: {
   published: boolean;
   periodStart: string;
   periodEnd: string;
   today: string;
-  evidenceDays: Array<{ date: string; status: string }>;
+  evidenceDays: Array<{ date: string; status: string; technicalAccepted?: boolean }>;
+  currentHour?: number;
 }) {
   const publicationStates: string[] = [];
   if (options.periodStart > options.today) publicationStates.push("scheduled");
@@ -47,19 +170,111 @@ export function classifyMonthlyInsertion(options: {
   endingLimit.setUTCDate(endingLimit.getUTCDate() + 7);
   if (options.periodEnd >= options.today && options.periodEnd <= endingLimit.toISOString().slice(0, 10)) publicationStates.push("ending");
 
-  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing"].includes(day.status));
-  const missing = options.evidenceDays.some((day) => day.status === "missing");
+  const invalid = options.evidenceDays.some((day) => !["audited", "audited_best_effort", "missing", "scheduled", "reconstruction", "provenance_unverified"].includes(day.status));
+  const documentaryPending = options.evidenceDays.some(day => day.status === "provenance_unverified"
+    || (day.status === "reconstruction" && day.technicalAccepted !== true));
+  const awaitingToday = options.currentHour != null && options.currentHour < 18
+    && options.evidenceDays.some((day) => day.date === options.today && ["missing", "scheduled"].includes(day.status))
+    && !options.evidenceDays.some((day) => day.date < options.today && day.status === "missing");
+  const missing = options.evidenceDays.some((day) => day.status === "missing" && !(awaitingToday && day.date === options.today));
   const retroactiveMissing = options.evidenceDays.some((day) => day.status === "missing" && day.date < options.today);
   const evidenceStates = invalid
     ? ["invalid"]
     : missing
       ? ["missing", ...(retroactiveMissing ? ["retroactive_missing"] : [])]
+      : awaitingToday
+        ? ["scheduled"]
       : ["complete"];
+  if (documentaryPending) {
+    if (evidenceStates.includes('complete')) evidenceStates.splice(evidenceStates.indexOf('complete'), 1);
+    evidenceStates.push('documentary_pending');
+  }
   return { publicationStates, evidenceStates };
 }
 
 export function publicMonthlyInsertion(item: Record<string, unknown>) {
-  return Object.fromEntries(PUBLIC_INSERTION_FIELDS.flatMap((field) => field in item ? [[field, item[field]]] : []));
+  return {...Object.fromEntries(PUBLIC_INSERTION_FIELDS.flatMap((field) => field in item ? [[field, item[field]]] : [])),evidenceApplicable:!isInstagramEvidenceExcluded(item),evidenceExclusionReason:isInstagramEvidenceExcluded(item)?'instagram_not_monitored':null};
+}
+
+export function pageMonthlyInsertions<T>(items: T[], offset: number, limit: number) {
+  return items.slice(offset, offset + limit);
+}
+
+export function excludeSupersededMonthlyInsertions<T extends { archivedAt?: unknown; supersededByInsertionId?: unknown }>(items: T[]) {
+  return items.filter((item) => item.archivedAt == null && item.supersededByInsertionId == null);
+}
+
+type MonthlyCanonicalCandidate = {
+  id: number;
+  campanhaName?: string | null;
+  piCodigo?: string | null;
+  siteId?: number | null;
+  siteSigla?: string | null;
+  localFormato?: string | null;
+  localFormatoNormalizado?: string | null;
+  periodoInicio?: string | null;
+  periodoFim?: string | null;
+  mediaUrl?: string | null;
+  bannerPublicadoNoSite?: boolean | null;
+  statusNormalizado?: string | null;
+  canonicalIdentityKey?: string | null;
+};
+
+function canonicalFormatKey(value: unknown) {
+  const key = String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  if (key === "TOPO" || key.startsWith("MEGABANNER TOPO") || key.startsWith("MEGA BANNER TOPO")) return "MEGABANNER TOPO";
+  if (key.startsWith("LATERAL 02") || key === "BANNER LATERAL SEGUNDA DOBRA") return "BANNER LATERAL SEGUNDA DOBRA";
+  if (key.startsWith("VIDEO")) return "VIDEO";
+  return key;
+}
+
+function monthlyLogicalKey(item: MonthlyCanonicalCandidate) {
+  const pi = String(item.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const campaign = String(item.campanhaName ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  const site = item.siteId != null ? String(item.siteId) : String(item.siteSigla ?? "").toUpperCase();
+  const format = canonicalFormatKey(item.localFormatoNormalizado ?? item.localFormato);
+  const identity = pi || campaign;
+  return identity && site && format ? `${identity}:${site}:${format}` : null;
+}
+
+function sameMonthlyIdentity(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
+  const leftPi = String(left.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const rightPi = String(right.piCodigo ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const campaignKey = (value: unknown) => String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  const leftCampaign = campaignKey(left.campanhaName);
+  const rightCampaign = campaignKey(right.campanhaName);
+  const sameCampaign = Boolean(leftCampaign && rightCampaign && leftCampaign === rightCampaign);
+  const sameSite = (left.siteId ?? left.siteSigla) === (right.siteId ?? right.siteSigla);
+  const sameFormat = canonicalFormatKey(left.localFormatoNormalizado ?? left.localFormato) === canonicalFormatKey(right.localFormatoNormalizado ?? right.localFormato);
+  return sameSite && sameFormat && ((leftPi && rightPi && leftPi === rightPi && (!leftCampaign || !rightCampaign || sameCampaign)) || ((!leftPi || !rightPi) && sameCampaign));
+}
+
+function periodsOverlap(left: MonthlyCanonicalCandidate, right: MonthlyCanonicalCandidate) {
+  return Boolean(left.periodoInicio && left.periodoFim && right.periodoInicio && right.periodoFim
+    && left.periodoInicio <= right.periodoFim && left.periodoFim >= right.periodoInicio);
+}
+
+function monthlyCanonicalScore(item: MonthlyCanonicalCandidate) {
+  const status = String(item.statusNormalizado ?? "").toUpperCase();
+  return (item.bannerPublicadoNoSite === true ? 100 : 0)
+    + (item.mediaUrl ? 50 : 0)
+    + (["PUBLICADO", "EM_VEICULACAO", "PUBLICADO_NO_SITE"].includes(status) ? 10 : 0)
+    + (item.canonicalIdentityKey ? 1 : 0);
+}
+
+export function selectCanonicalMonthlyInsertions<T extends MonthlyCanonicalCandidate>(items: T[]) {
+  const groups: T[][] = [];
+  for (const item of items) {
+    const logicalKey = monthlyLogicalKey(item);
+    const group = logicalKey ? groups.find((candidate) => (
+      sameMonthlyIdentity(candidate[0]!, item) && candidate.some((member) => periodsOverlap(member, item))
+    )) : null;
+    if (group) group.push(item);
+    else groups.push([item]);
+  }
+  return groups.map((group) => [...group].sort((left, right) => (
+    monthlyCanonicalScore(right) - monthlyCanonicalScore(left) || right.id - left.id
+  ))[0]!);
 }
 
 function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
@@ -84,6 +299,6 @@ export function buildMonthlyReportQuery(query: Record<string, unknown>) {
     evidence,
     search: typeof query.search === "string" ? query.search.trim().slice(0, 160) : "",
     offset: boundedInteger(query.cursor, 0, 0, Number.MAX_SAFE_INTEGER),
-    limit: boundedInteger(query.limit, 24, 1, 100),
+    limit: boundedInteger(query.limit, 12, 1, 50),
   };
 }

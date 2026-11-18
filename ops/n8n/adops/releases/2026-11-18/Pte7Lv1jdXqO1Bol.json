@@ -1,0 +1,326 @@
+{
+  "id": "Pte7Lv1jdXqO1Bol",
+  "name": "ADOPS — Entregar provas e resumo no WhatsApp",
+  "active": true,
+  "versionId": "44e1da61-6635-4b27-8e27-d7fdac23ce20",
+  "nodes": [
+    {
+      "id": "5bc97707-1ac8-40dc-881f-cc21ced78d61",
+      "name": "Entregar provas após18h sem rajadas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "7 * 18-23 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5dbbc60e-9d19-4561-b002-a17c9c1ca3f6",
+      "name": "Reservar um aviso de evidência",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence-deliveries/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "61c39cf9-525b-4438-8022-85317baff2eb",
+      "name": "Existe aviso novo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar um aviso de evidência\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e8ac8de7-4e6d-4d2c-859d-7a8e6d8a61a7",
+      "name": "Enviar uma vez somente ao grupo ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"http://cod5-evolution-evolution-1:8080/message/\" + ($(\"Reservar um aviso de evidência\").first().json.items[0].part === \"poll\" ? \"sendPoll\" : \"sendText\") + \"/cod5-pmt-pilot\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Reservar um aviso de evidência\").first().json.items[0].request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "8dd51ebe-c71a-404f-9f96-5425734c1321",
+      "name": "Guardar recibo da mesma mensagem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence-deliveries/receipts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {messageKey: $(\"Reservar um aviso de evidência\").first().json.items[0].messageKey,receipt: $(\"Enviar uma vez somente ao grupo ADOPS\").first().json} }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "61ba5480-df7b-4890-b4e8-b4b58e4feff8",
+      "name": "Conferir recibo persistido sem reenviar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/evidence-deliveries",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "ea7ae7c7-404d-4191-8416-a9c6f466bd26",
+      "name": "Mesmo identificador e recibo confirmados?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Conferir recibo persistido sem reenviar\").first().json.items.some(x => x.message_key === $(\"Guardar recibo da mesma mensagem\").first().json.messageKey && x.provider_id === $(\"Guardar recibo da mesma mensagem\").first().json.providerId && [\"accepted\",\"delivered\",\"read\"].includes(x.status)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "35b769b8-16b1-4e99-83b7-f0d8b06d812f",
+      "name": "Preservar tentativa sem recibo exato",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "errorMessage": "O envio não tem confirmação do mesmo providerId. Preservar a tentativa e investigar; não reenviar."
+      }
+    },
+    {
+      "id": "fddb81eb-672c-4362-b8cc-11a0b5df0361",
+      "name": "Entregar um aviso já reservado na API",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Entregar provas após18h sem rajadas": {
+      "main": [
+        [
+          {
+            "node": "Reservar um aviso de evidência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar um aviso de evidência": {
+      "main": [
+        [
+          {
+            "node": "Existe aviso novo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe aviso novo?": {
+      "main": [
+        [
+          {
+            "node": "Enviar uma vez somente ao grupo ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar uma vez somente ao grupo ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Guardar recibo da mesma mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar recibo da mesma mensagem": {
+      "main": [
+        [
+          {
+            "node": "Conferir recibo persistido sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir recibo persistido sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Mesmo identificador e recibo confirmados?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo identificador e recibo confirmados?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Preservar tentativa sem recibo exato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entregar um aviso já reservado na API": {
+      "main": [
+        [
+          {
+            "node": "Reservar um aviso de evidência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 240
+  }
+}

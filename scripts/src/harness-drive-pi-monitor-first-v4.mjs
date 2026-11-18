@@ -55,9 +55,10 @@ await check("telegram-inicial-orienta-nao-cadastrar", async () => {
 
 await check("runner-cria-lock-antes-do-packaging", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
-  const flowStart = source.indexOf("async function executeDrivePiIngest(payload)");
-  const flowEnd = source.indexOf("async function executePrintBatch(payload)", flowStart);
-  const flowSource = flowStart >= 0 && flowEnd > flowStart ? source.slice(flowStart, flowEnd) : "";
+  const flowStart = source.indexOf("async function executeDrivePiIngest(");
+  if (flowStart < 0) throw new Error("executeDrivePiIngest não encontrado.");
+  const flowEnd = source.indexOf("async function executePrintBatch(job)", flowStart);
+  const flowSource = flowStart >= 0 ? source.slice(flowStart, flowEnd > flowStart ? flowEnd : undefined) : "";
   const intakeIndex = flowSource.indexOf('"intake_locked"');
   const packagingIndex = flowSource.indexOf('"packaging"');
   if (intakeIndex === -1 || packagingIndex === -1 || intakeIndex > packagingIndex) {
@@ -89,16 +90,35 @@ await check("runner-classifica-pacote", async () => {
 
 await check("runner-bloqueia-auto-apply-incompleto-e-dedupe-conflitante", async () => {
   const source = await readProjectFile("ops/cloudflare-remote-runner/src/runner.mjs");
-  return requireIncludes(source, [
-    "validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing",
-    "validateDrivePiDedupeSafety(fields)",
-    "dedupe_conflict",
-    "missing_pi_pdf",
-    "missing_media",
-    "needs_media",
-    "reviewReasons",
-    "canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok",
-  ], "Runner safe apply gate");
+  const readinessStart = source.indexOf("function getDrivePiReadiness(");
+  const readinessEnd = source.indexOf("async function updateDrivePiState(", readinessStart);
+  const readinessSource = readinessStart >= 0 ? source.slice(readinessStart, readinessEnd) : "";
+  const flowStart = source.indexOf("async function executeDrivePiIngest(");
+  const flowEnd = source.indexOf("async function executePrintBatch(job)", flowStart);
+  const flowSource = flowStart >= 0 ? source.slice(flowStart, flowEnd > flowStart ? flowEnd : undefined) : "";
+  return {
+    readiness: requireIncludes(readinessSource, [
+      "const strictReady = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;",
+      'const operationalReady = operationMode === "operational_minimum"',
+      "&& operationalValidation.ok && operationalPackage.ok && rollout.ok && dedupe.ok;",
+      'new Set(["piCodigo", "campanhaNome", "competencia", "clienteId", "agentQuality"])',
+      'item !== "missing_pi_pdf"',
+    ], "Runner strict/operational readiness"),
+    diagnostics: requireIncludes(source, [
+      "dedupe_conflict",
+      "missing_pi_pdf",
+      "missing_media",
+      "needs_media",
+      "reviewReasons",
+    ], "Runner review diagnostics"),
+    safeApply: requireIncludes(flowSource, [
+      "validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing",
+      "validateDrivePiDedupeSafety(fields, dedupeTarget)",
+      "const readiness = getDrivePiReadiness(validation, packageReadiness, rollout, dedupe, operationMode);",
+      'const canApply = operationMode === "operational_minimum" ? readiness.operationalReady : readiness.strictReady;',
+      "const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;",
+    ], "Runner safe apply gate"),
+  };
 });
 
 await check("runner-sincroniza-planilha-antes-de-mutacao", async () => {

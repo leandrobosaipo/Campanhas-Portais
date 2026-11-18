@@ -1,14 +1,35 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { renderDynamicEvidenceReport } from "./build-dynamic-evidence-report.mjs";
 
 const execFileAsync = promisify(execFile);
+const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+async function dumpDom(url, { virtualTimeBudget = 5000, timeout = 30_000, maxBuffer = 2_000_000 } = {}) {
+  const profileDir = await mkdtemp(join(tmpdir(), "adops-report-chrome-"));
+  try {
+    return await execFileAsync(chromePath, [
+      `--user-data-dir=${profileDir}`,
+      "--headless=new",
+      "--disable-gpu",
+      "--no-sandbox",
+      `--virtual-time-budget=${virtualTimeBudget}`,
+      "--dump-dom",
+      url,
+    ], { timeout, maxBuffer });
+  } finally {
+    await rm(profileDir, { recursive: true, force: true });
+  }
+}
 const monthlyPayload = {
   generatedAt: "2026-09-01T12:00:00.000Z",
-  summary: { campaigns: 1, insertions: 2, active: 2, notPublished: 0, pending: 1, invalid: 0 },
+  summary: { campaigns: 1, insertions: 1, active: 1, notPublished: 0, pending: 0, invalid: 0 },
   portals: ["OMT"],
   pagination: { total: 1, nextCursor: null },
   items: [{
@@ -16,46 +37,388 @@ const monthlyPayload = {
     agenciaNome: "Agência teste", piCodigo: "PI 42059", siteSigla: "OMT",
     localFormatoNormalizado: "MEGABANNER TOPO", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
     bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["complete"],
-    evidenceDays: [{ date: "2026-09-01", status: "audited", url: "https://example.com/evidence.jpg" }],
-  }, {
-    id: 1902, campanhaId: 1001, campanhaName: "Campanha dinâmica", clienteNome: "Cliente teste",
-    agenciaNome: "Agência teste", piCodigo: "PI 42059", siteSigla: "OMT",
-    localFormatoNormalizado: "LATERAL", periodoInicio: "2026-09-01", periodoFim: "2026-09-30",
-    bannerPublicadoNoSite: true, mediaUrl: null, publicationStates: ["active"], evidenceStates: ["scheduled"],
-    evidenceDays: [{ date: "2026-09-01", status: "scheduled", url: null }],
+    evidenceDays: [
+      { date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.jpg?v=1" },
+      { date: "2026-09-02", status: "reconstruction", technicalStatus: "audited", technicalAccepted: true, requiresDocumentaryAcceptance: false, captureClass: "historical_recovery", capturedAt: "2026-09-03T13:00:00.000Z", evidenceId: 45, verifiedAt: "2026-09-02T13:00:00.000Z", url: "https://example.com/reconstruction.jpg?v=2" },
+    ],
   }],
 };
 
 test("Chrome real renderiza a resposta dinâmica da API", async () => {
+  const requestMethods = [];
+  const reportRequests = [];
+  const operationRequests = [];
+  let rawJobListRequested = false;
+  const firstPage = Array.from({ length: 12 }, (_, index) => ({
+    ...monthlyPayload.items[0],
+    id: 1901 + index,
+    campanhaId: 1001 + index,
+    campanhaName: index === 0 ? "Campanha dinâmica" : `Campanha ${1001 + index}`,
+    evidenceDays: index === 0 ? monthlyPayload.items[0].evidenceDays : [],
+  }));
+  const secondPage = Array.from({ length: 11 }, (_, index) => ({
+    ...monthlyPayload.items[0], id: 2000 + index, campanhaId: 2000 + index,
+    campanhaName: `Campanha ${2000 + index}`, evidenceDays: [],
+  }));
+  secondPage.unshift(firstPage[0]);
+  const thirdPage = [3217, 3218].map((id) => ({ ...monthlyPayload.items[0], id, campanhaId: id, campanhaName: `Campanha ${id}`, evidenceDays: [] }));
+  let failSecondPageOnce = true;
   const server = createServer((request, response) => {
+    requestMethods.push(request.method);
+    const requestUrl = new URL(request.url, "http://localhost");
     response.setHeader("access-control-allow-origin", "*");
-    if (request.url === "/") {
+    if (requestUrl.pathname === "/") {
       response.setHeader("content-type", "text/html; charset=utf-8");
       response.end(renderDynamicEvidenceReport().replace(
         "const API_BASE = 'https://adops-api-public.leandro471.workers.dev'",
         `const API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "const REPORT_API_BASE = 'https://adops-api.codigo5.com.br'",
+        `const REPORT_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "const EVIDENCE_API_BASE = 'https://adops-api.codigo5.com.br'",
+        `const EVIDENCE_API_BASE = 'http://127.0.0.1:${server.address().port}'`,
+      ).replace(
+        "</body>",
+        '<script>const status=document.querySelector("#statusMessage");new MutationObserver(()=>{if(status.classList.contains("bad")&&status.textContent.includes("incompleta")){document.body.dataset.partialCardsOnError=document.querySelectorAll(".campaign").length;setTimeout(()=>document.querySelector("#refreshButton").click(),0)}}).observe(status,{attributes:true,childList:true,subtree:true});setTimeout(()=>{const click=()=>{const thumb=document.querySelector(".evidence-day");if(thumb){thumb.click();setTimeout(()=>{document.body.dataset.campaignCards=document.querySelectorAll(".campaign").length;document.body.dataset.hasReconstructionOverlay=!!document.querySelector(".reconstruction-label");document.body.dataset.hasSeparateReconstructionNote=!!document.querySelector(".thumb-status");document.body.dataset.modalHasReconstructionStatus=document.querySelector("#evidenceDetails")?.textContent.includes("reconstruída")},500)}else setTimeout(click,100)};click()},500)</script></body>',
       ));
       return;
     }
     response.setHeader("content-type", "application/json");
-    if (request.url.startsWith("/api/reports/evidences/monthly")) response.end(JSON.stringify(monthlyPayload));
-    else if (request.url === "/api/ops/daily-print-status") response.end(JSON.stringify({ lastAttempt: { status: "completed", approved: 1, expected: 1, targetDate: "2026-09-01", summary: "Rotina concluída." } }));
-    else response.end(JSON.stringify({ sheet: { name: "SETEMBRO 2026" }, items: [], upcomingItems: [], driveInventory: { snapshotStatus: "fresh", itemCount: 8 } }));
+    if (request.url.startsWith("/api/reports/evidences/monthly")) {
+      const url = new URL(request.url, "http://localhost");
+      reportRequests.push(url);
+      const cursor = url.searchParams.get("cursor");
+      if (cursor === "12" && failSecondPageOnce) {
+        failSecondPageOnce = false;
+        response.statusCode = 503;
+        response.end("temporary page failure");
+        return;
+      }
+      const page = cursor === "12" ? secondPage : cursor === "24" ? thirdPage : firstPage;
+      response.end(JSON.stringify({ ...monthlyPayload, items: page, summary: { ...monthlyPayload.summary, campaigns: 25 }, pagination: { total: 25, nextCursor: cursor === "24" ? null : cursor === "12" ? "24" : "12" } }));
+    }
+    else if (requestUrl.pathname === "/api/ops/jobs") {
+      rawJobListRequested = true;
+      response.end(JSON.stringify({ items: [] }));
+    }
+    else if (requestUrl.pathname === "/api/ops/daily-print-status") {
+      operationRequests.push(requestUrl);
+      response.end(JSON.stringify({ lastAttempt: { jobId: "daily-job-1", status: "partial", targetDate: "2026-09-26", approved: 1, expected: 3, missing: 1, invalid: 0, summary: "Último lote diário: partial · 1 auditados · 1 bloqueados · 0 falhas" } }));
+    }
+    else response.end(JSON.stringify({
+      sheet: { name: "SETEMBRO 2026" }, driveInventory: { snapshotStatus: "fresh", itemCount: 8 }, upcomingItems: [],
+      items: [{
+        status: "needs_media", campaignName: "Campanha pendente", piCodigo: "PI 999", siteSigla: "OMT",
+        period: { start: "2026-09-01", end: "2026-09-30" }, format: { normalized: "MEGABANNER TOPO" },
+        sheetSource: { sheetName: "SETEMBRO 2026", rowNumber: 12 }, sourceIdentity: { decision: "confirmed" },
+        canonicalSelection: { decision: "confirmed" }, drive: { status: "not_found", mediaFiles: [], mediaMatchesFormat: false },
+        adops: { status: "matched", mediaUrl: null, publicConfirmation: "not_published" },
+        publicationHealth: { status: "blocked_upstream", reason: "media_missing", expectedGroupId: 1 },
+        evidenceHealth: { status: "blocked_upstream" }, requiredActions: ["locate_or_upload_media"], blockingIssues: [],
+      }],
+    }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const port = server.address().port;
-    const { stdout } = await execFileAsync(
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      ["--headless=new", "--disable-gpu", "--no-sandbox", "--virtual-time-budget=3000", "--dump-dom", `http://127.0.0.1:${port}/`],
-      { timeout: 15_000, maxBuffer: 2_000_000 },
-    );
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 8000 });
     assert.match(stdout, /Campanha dinâmica/);
-    assert.match(stdout, /id="metricCampaigns">1</);
-    assert.match(stdout, /id="metricInsertions">2</);
-    assert.match(stdout, /<b>0<\/b> agendadas/);
-    assert.match(stdout, /Dados consultados diretamente da API AdOps/);
+    assert.match(stdout, /Campanha 3217/);
+    assert.match(stdout, /id="metricCampaigns">25</);
+    assert.match(stdout, /Último lote diário/);
+    assert.match(stdout, /2026-09-26/);
+    assert.match(stdout, /1 auditados/);
+    assert.match(stdout, /1 bloqueados/);
+    assert.match(stdout, /Dados completos consultados diretamente da API AdOps/);
+    assert.match(stdout, /Campanha pendente/);
+    assert.match(stdout, /Conferir pendências/);
+    assert.match(stdout, /alt="Evidência 1901 2026-09-02"/);
+    assert.match(stdout, /data-has-reconstruction-overlay="false"/);
+    assert.match(stdout, /data-has-separate-reconstruction-note="true"/);
+    assert.match(stdout, /data-modal-has-reconstruction-status="true"/);
+    assert.match(stdout, /data-partial-cards-on-error="0"/);
+    assert.match(stdout, /data-campaign-cards="25"/);
+    assert.ok((stdout.match(/adopsEvidenceVersion=45-2026-09-02T13%3A00%3A00.000Z-2/g) || []).length >= 2, "miniatura e modal devem usar a mesma versão da evidência reconstruída");
+    assert.equal(reportRequests.length, 5, "todas as páginas devem ser carregadas automaticamente e uma falha deve permitir tentar de novo");
+    assert.equal(operationRequests.length, 1);
+    assert.equal(operationRequests[0].searchParams.get("date"), null);
+    assert.equal(rawJobListRequested, false);
+    assert.deepEqual(reportRequests.map((url) => url.searchParams.get("cursor")), [null, "12", null, "12", "24"]);
+    assert.ok(reportRequests.every((url) => url.searchParams.get("limit") === "50"), "o cliente usa o limite maior para reduzir requisições sem dispensar paginação");
+    assert.ok(reportRequests.every((url) => url.searchParams.get("month") === "2026-09" && url.searchParams.get("publication") === "active" && url.searchParams.get("portal") === "OMT" && url.searchParams.get("search") === "Campanha"), "filtros devem ser preservados em cada página");
+    assert.deepEqual([...new Set(requestMethods)], ["GET"]);
   } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("usa a URL pública da evidência quando a API não fornece downloadUrl", async () => {
+  const item = {
+    ...monthlyPayload.items[0],
+    evidenceDays: [{ date: "2026-09-01", status: "audited", evidenceId: 44, verifiedAt: "2026-09-01T12:00:00.000Z", url: "https://example.com/evidence.png?v=1" }],
+  };
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll("https://adops-api.codigo5.com.br", `http://127.0.0.1:${server.address().port}`).replaceAll("https://adops-api-public.leandro471.workers.dev", `http://127.0.0.1:${server.address().port}`).replace("</body>", '<script>setTimeout(()=>{const thumb=document.querySelector(".thumb.evidence-day");document.body.dataset.thumbPath=new URL(thumb.querySelector("img").src).pathname;thumb.click();setTimeout(()=>{document.body.dataset.modalPath=new URL(document.querySelector("#evidenceImage").src).pathname;const link=document.querySelector("#evidenceLinks a");document.body.dataset.downloadPath=new URL(link.href).pathname;document.body.dataset.downloadLabel=link.textContent;document.body.dataset.imageLoaded=document.querySelector("#evidenceImage").naturalWidth>0},300)},300)</script></body>'));
+      return;
+    }
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ ...monthlyPayload, items: [item], pagination: { total: 1, limit: 50, nextCursor: null } }).replaceAll("https://example.com", `http://127.0.0.1:${server.address().port}`));
+      return;
+    }
+    if (url.pathname === "/evidence.png") {
+      response.setHeader("content-type", "image/png");
+      response.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pK0AAAAASUVORK5CYII=", "base64"));
+      return;
+    }
+    response.statusCode = 404;
+    response.end("not found");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { stdout } = await dumpDom(`http://127.0.0.1:${server.address().port}/`, { virtualTimeBudget: 5000, timeout: 10_000, maxBuffer: 1_000_000 });
+    assert.ok(stdout.includes("Campanha dinâmica"), "a resposta mensal deve renderizar a inserção antes de validar as URLs de evidência");
+    const imageState = stdout.match(/data-(?:thumb|modal|download)-path="[^"]*"|data-(?:image-loaded|download-label)="[^"]*"/g) || [];
+    assert.ok(imageState.includes('data-thumb-path="/evidence.png"'), `thumb deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-modal-path="/evidence.png"'), `modal deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-download-path="/evidence.png"'), `download deve usar a URL pública, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.some(value => value.startsWith('data-download-label="Abrir imagem · ') && value.includes(' · 1 captura')), `link deve identificar a data e uma captura sem prometer outro formato, resultado: ${imageState.join(", ")}`);
+    assert.ok(imageState.includes('data-image-loaded="true"'), `modal deve carregar imagem válida, resultado: ${imageState.join(", ")}`);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test("mostra login explícito em HTTP 401 e preserva os filtros", async () => {
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll(
+        "https://adops-api.codigo5.com.br",
+        `http://127.0.0.1:${server.address().port}`,
+      ));
+      return;
+    }
+    response.setHeader("content-type", "application/json");
+    response.statusCode = url.pathname === "/api/reports/evidences/monthly" ? 401 : 200;
+    response.end(JSON.stringify({ error: "authentication_required" }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 2000 });
+    assert.match(stdout, /Sessão AdOps necessária/);
+    assert.match(stdout, /id="reportLoginLink"/);
+    const href = stdout.match(/id="reportLoginLink" href="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    assert.ok(href);
+    const login = new URL(href);
+    const next = new URL(login.searchParams.get("next"));
+    assert.equal(login.pathname, "/api/auth/google/login");
+    assert.equal(next.searchParams.get("publication"), "active");
+    assert.equal(next.searchParams.get("portal"), "OMT");
+    assert.equal(next.searchParams.get("q"), "Campanha");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("API mensal cross-origin envia cookie após 401, callback e refresh; sessão expirada permite relogin", async () => {
+  const monthlyCookies = [];
+  let loginCount = 0;
+  let pageOrigin = "";
+  const apiServer = createServer((request, response) => {
+    const origin = request.headers.origin;
+    if (origin === pageOrigin) {
+      response.setHeader("access-control-allow-origin", pageOrigin);
+      response.setHeader("access-control-allow-credentials", "true");
+      response.setHeader("vary", "Origin");
+    }
+    if (request.method === "OPTIONS") {
+      response.setHeader("access-control-allow-methods", "GET, OPTIONS");
+      response.setHeader("access-control-allow-headers", "accept, content-type");
+      response.statusCode = 204;
+      response.end();
+      return;
+    }
+
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/api/auth/google/login") {
+      const callback = new URL("/api/auth/google/callback", `http://127.0.0.1:${apiServer.address().port}`);
+      callback.searchParams.set("next", url.searchParams.get("next") || `${pageOrigin}/`);
+      response.statusCode = 302;
+      response.setHeader("location", callback.href);
+      response.end();
+      return;
+    }
+    if (url.pathname === "/api/auth/google/callback") {
+      loginCount += 1;
+      response.statusCode = 302;
+      response.setHeader("set-cookie", `adops_session=mock-${loginCount}; Path=/; HttpOnly; SameSite=Lax`);
+      response.setHeader("location", url.searchParams.get("next") || `${pageOrigin}/`);
+      response.end();
+      return;
+    }
+
+    response.setHeader("content-type", "application/json");
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      const cookie = request.headers.cookie || "";
+      monthlyCookies.push(cookie.match(/(?:^|;\s*)adops_session=([^;]+)/)?.[1] || null);
+      const currentSession = `mock-${loginCount}`;
+      if (monthlyCookies.length === 1 || !loginCount || !cookie.includes(`adops_session=${currentSession}`)) {
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "authentication_required" }));
+        return;
+      }
+      if (monthlyCookies.length === 3) {
+        response.setHeader("set-cookie", "adops_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+        response.statusCode = 401;
+        response.end(JSON.stringify({ error: "authentication_required" }));
+        return;
+      }
+      response.end(JSON.stringify(monthlyPayload));
+      return;
+    }
+    response.end(JSON.stringify({ items: [], sheet: {}, driveInventory: {}, upcomingItems: [] }));
+  });
+  await new Promise((resolve) => apiServer.listen(0, "127.0.0.1", resolve));
+  const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
+  const pageServer = createServer((_request, response) => {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    const authScript = `<script>(()=>{const key='mockAuthPhase';const phase=sessionStorage.getItem(key);const waitFor=(selector,fn)=>{const timer=setInterval(()=>{const node=document.querySelector(selector);if(node){clearInterval(timer);fn(node)}},50)};const startLogin=(nextPhase)=>waitFor('#reportLoginLink',link=>{sessionStorage.setItem(key,nextPhase);link.click()});if(!phase){startLogin('first-login')}else if(phase==='first-login'){waitFor('#reportContent .campaign',()=>{sessionStorage.setItem(key,'refresh-first-session');document.body.dataset.loginCallbackReturned='true';const observer=new MutationObserver(()=>{const link=document.querySelector('#reportLoginLink');if(link){observer.disconnect();sessionStorage.setItem(key,'relogin');link.click()}});observer.observe(document.querySelector('#reportContent'),{childList:true,subtree:true});setTimeout(()=>document.querySelector('#refreshButton').click(),100)})}else if(phase==='relogin'){waitFor('#reportContent .campaign',()=>{sessionStorage.setItem(key,'complete');document.body.dataset.reloginRecovered='true';setTimeout(()=>document.querySelector('#refreshButton').click(),100)})}})()</script>`;
+    response.end(renderDynamicEvidenceReport()
+      .replaceAll("https://adops-api.codigo5.com.br", apiBase)
+      .replaceAll("https://adops-api-public.leandro471.workers.dev", apiBase)
+      .replace("</body>", `${authScript}</body>`));
+  });
+  await new Promise((resolve) => pageServer.listen(0, "127.0.0.1", resolve));
+  pageOrigin = `http://127.0.0.1:${pageServer.address().port}`;
+  try {
+    const { stdout } = await dumpDom(`${pageOrigin}/?mes=2026-09&publication=active&portal=OMT&q=Campanha`, { virtualTimeBudget: 10_000 });
+    assert.ok(stdout.includes("Campanha dinâmica"), `a lista autenticada deve carregar; status=${stdout.match(/data-auth-required="[^"]*"|Sessão AdOps necessária|Consulta incompleta[^<]*/)?.[0] ?? "sem estado"}; logins=${loginCount}; cookies=${JSON.stringify(monthlyCookies)}`);
+    assert.equal(loginCount, 2, "o callback mock deve abrir sessão inicial e permitir novo login após expiração");
+    assert.deepEqual(monthlyCookies, [null, "mock-1", "mock-1", "mock-2", "mock-2"], "401 inicial, sessão, refresh, expiração e relogin devem preservar/renovar o cookie por credentials: include");
+  } finally {
+    pageServer.closeAllConnections();
+    apiServer.closeAllConnections();
+    await Promise.all([pageServer, apiServer].map(server => new Promise(resolve => server.close(resolve))));
+  }
+});
+
+test("mostra causa de pendência somente quando lote confirma a mesma data e inserção", async () => {
+  const item = {
+    ...monthlyPayload.items[0], id: 1901, mediaUrl: null, bannerPublicadoNoSite: false,
+    statusNormalizado: "rascunho", publicationStates: ["ended"], evidenceStates: ["missing"],
+    evidenceDays: [
+      { date: "2026-09-01", status: "missing", technicalStatus: "missing" },
+      { date: "2026-09-03", status: "missing", technicalStatus: "missing" },
+    ],
+  };
+  const secondItem = {
+    ...monthlyPayload.items[0], id: 1902, campanhaId: 1002, campanhaName: "Outra inserção pendente",
+    mediaUrl: "https://example.com/banner.gif", adrotateGroupId: null, bannerPublicadoNoSite: false,
+    publicationStates: ["not_published"], evidenceStates: ["invalid", "documentary_pending"],
+    evidenceDays: [{ date: "2026-09-02", status: "invalid", technicalStatus: "invalid" }],
+  };
+  const observedDailyStatusDates = [];
+  let rawJobListRequested = false;
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    response.setHeader("access-control-allow-origin", "*");
+    response.setHeader("content-type", "application/json");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replaceAll(
+        "https://adops-api.codigo5.com.br", `http://127.0.0.1:${server.address().port}`,
+      ).replaceAll(
+        "https://adops-api-public.leandro471.workers.dev", `http://127.0.0.1:${server.address().port}`,
+      ));
+      return;
+    }
+    if (url.pathname === "/api/reports/evidences/monthly") {
+      response.end(JSON.stringify({ ...monthlyPayload, items: [item, secondItem], pagination: { total: 2, nextCursor: null } }));
+      return;
+    }
+    if (url.pathname === "/api/ops/jobs") {
+      rawJobListRequested = true;
+      response.end(JSON.stringify({ items: [] }));
+      return;
+    }
+    if (url.pathname === "/api/ops/daily-print-status") {
+      const date = url.searchParams.get("date") || "latest";
+      observedDailyStatusDates.push(date);
+      const failedInsertionIds = date === "2026-09-01" || date === "2026-09-03" ? [1901] : [];
+      response.end(JSON.stringify({
+        lastAttempt: { jobId: "safe-job-id", targetDate: "2026-09-27", status: "completed", expected: 2, approved: 2, missing: 0, invalid: 0, summary: "Rotina concluída" },
+        recentAttempts: ["2026-09-01", "2026-09-03"].map(targetDate => ({
+          jobId: "safe-job-id", targetDate, status: "failed", errorCode: "audit_incomplete", failedInsertionIds: [1901],
+          insertionOutcomes: [{
+            insertionId: 1901, targetDate, status: "blocked",
+            reasonCode: targetDate === "2026-09-01" ? "drive_media_not_linked" : "expected_media_not_observed",
+          }],
+        })),
+      }));
+      return;
+    }
+    response.end(JSON.stringify({ sheet: {}, driveInventory: {}, upcomingItems: [], items: [] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09`, { virtualTimeBudget: 2500 });
+    assert.match(stdout, /2026-09-01: bloqueado — mídia encontrada no Drive, mas não vinculada no AdOps/);
+    assert.match(stdout, /Mídia não vinculada ao AdOps/);
+    assert.match(stdout, /Grupo AdRotate não resolvido para este formato/);
+    assert.match(stdout, /AdOps não marca publicação confirmada/);
+    assert.match(stdout, /causa do cron não confirmada no histórico recente/);
+    assert.match(stdout, /auditoria reprovada/);
+    assert.match(stdout, /Proveniência ou validação técnica pendente/);
+    assert.match(stdout, /2026-09-03: bloqueado — mídia esperada não observada no portal/);
+    assert.doesNotMatch(stdout, /private runtime detail/);
+    assert.equal(rawJobListRequested, false, "o relatório não deve baixar payload/result brutos de jobs");
+    assert.deepEqual([...new Set(observedDailyStatusDates)], ["latest"]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("encerra consulta pendurada, não mostra resultado parcial e libera Atualizar", async () => {
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (url.pathname === "/") {
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(renderDynamicEvidenceReport().replace(
+        "https://adops-api.codigo5.com.br",
+        `http://127.0.0.1:${server.address().port}`,
+      ).replace(
+        "const REPORT_LOAD_TIMEOUT_MS = 45_000;",
+        "const nativeFetch=window.fetch.bind(window);window.fetch=(input,init)=>{if(new URL(input,location.href).pathname==='/api/reports/evidences/monthly')return new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));return nativeFetch(input,init)};const REPORT_LOAD_TIMEOUT_MS = 50;",
+      ).replace(
+        "</body>",
+        '<script>new MutationObserver(()=>{const s=document.querySelector("#statusMessage");if(s.textContent.includes("excedeu 45 segundos")){document.body.dataset.refreshEnabled=String(!document.querySelector("#refreshButton").disabled);document.body.dataset.partialCampaignCount=String(document.querySelectorAll(".campaign").length)}}).observe(document.querySelector("#statusMessage"),{childList:true,subtree:true,characterData:true})</script></body>',
+      ));
+      return;
+    }
+    response.statusCode = 200;
+    response.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const port = server.address().port;
+    const { stdout } = await dumpDom(`http://127.0.0.1:${port}/?mes=2026-09&publication=active`, { virtualTimeBudget: 1000 });
+    assert.match(stdout, /consulta completa excedeu 45 segundos/);
+    assert.match(stdout, /data-refresh-enabled="true"/);
+    assert.match(stdout, /data-partial-campaign-count="0"/);
+    assert.match(stdout, /A lista não foi carregada por completo/);
+  } finally {
+    server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
 });

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, timestamp, integer, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, integer, jsonb, boolean, index } from "drizzle-orm/pg-core";
 
 export const captureProofLogsTable = pgTable("capture_proof_logs", {
   id: text("id").primaryKey(),
@@ -23,6 +23,6 @@ export const captureProofLogsTable = pgTable("capture_proof_logs", {
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [index("capture_proof_report_idx").on(table.insertionId, table.targetDate, table.updatedAt)]);
 
 export type CaptureProofLog = typeof captureProofLogsTable.$inferSelect;

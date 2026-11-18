@@ -15,7 +15,22 @@ export function normalizePtText(value: string | null | undefined) {
 
 export function extractPageDateParts(value: string | null | undefined) {
   const normalized = normalizePtText(value);
-  const iso = normalized.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  const raw = String(value ?? "").trim();
+  const zonedIsoPrefix = /^\d{4}-\d{2}-\d{2}t/i.test(raw) && /(?:z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  if (zonedIsoPrefix) {
+    const isoDateTime = raw.match(/^(\d{4}-\d{2}-\d{2}t\d{2}:\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?(z|[+-]\d{2}:\d{2})$/i);
+    if (!isoDateTime) return null;
+    const seconds = isoDateTime[2] ?? "00";
+    const fraction = isoDateTime[3] ? `.${isoDateTime[3].slice(0, 3).padEnd(3, "0")}` : "";
+    const normalizedIsoDateTime = `${isoDateTime[1].slice(0, 10)}T${isoDateTime[1].slice(11)}:${seconds}${fraction}${isoDateTime[4].toUpperCase()}`;
+    const parsed = parseCaptureAtInCuiaba(normalizedIsoDateTime);
+    if (parsed?.instant) {
+      const [year, month, day] = formatIsoDate(parsed.instant).split("-");
+      return { day, month, year };
+    }
+    return null;
+  }
+  const iso = normalized.match(/\b(\d{4})-(\d{2})-(\d{2})(?=$|[t\s])/);
   if (iso) {
     return { day: iso[3], month: iso[2], year: iso[1] };
   }
@@ -65,6 +80,14 @@ function extractPageTimeParts(value: string | null | undefined) {
       second: Number(iso[3] ?? 0),
     };
   }
+  const numericDateTime = normalized.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\s*,?\s*(?:as\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
+  if (numericDateTime) {
+    return {
+      hour: Number(numericDateTime[1]),
+      minute: Number(numericDateTime[2]),
+      second: Number(numericDateTime[3] ?? 0),
+    };
+  }
   const match = normalized.match(/\b(?:as|às)\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
   if (!match) return null;
   return {
@@ -110,19 +133,24 @@ function parseIsoLikeDate(value: string | null | undefined) {
 function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureAt: string | null) {
   const captureAtDate = parseIsoLikeDate(requestedCaptureAt);
   if (!captureAtDate) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "invalid_capture_at" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, targetDate: null as string | null, targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "invalid_capture_at" };
   }
   if (!Array.isArray(contentDateSamples) || contentDateSamples.length === 0) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, reason: "empty_samples" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: 0, targetDate: formatIsoDate(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "empty_samples" };
   }
   const maxAllowed = captureAtDate.getTime() + 90 * 1000;
   const parsedSamples = contentDateSamples
     .map((value) => ({ raw: value, parsed: parseIsoLikeDate(value) }))
     .filter((item) => item.parsed);
   if (parsedSamples.length === 0) {
-    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: contentDateSamples.length, reason: "unparseable_samples" };
+    return { ok: false, maxObserved: null as string | null, futureSamples: [] as string[], parsedCount: 0, sampleCount: contentDateSamples.length, targetDate: formatIsoDate(captureAtDate), targetDateMatches: false, matchingTargetDateSamples: [] as string[], observedDates: [] as string[], reason: "unparseable_samples" };
   }
   const futureSamples = parsedSamples.filter((item) => item.parsed!.getTime() > maxAllowed);
+  const targetDate = formatIsoDate(captureAtDate);
+  const observedDates = Array.from(new Set(parsedSamples.map((item) => formatIsoDate(item.parsed!))));
+  const matchingTargetDateSamples = parsedSamples
+    .filter((item) => formatIsoDate(item.parsed!) === targetDate)
+    .map((item) => item.raw);
   const maxObserved = parsedSamples.reduce<Date | null>((acc, item) => (
     !acc || item.parsed!.getTime() > acc.getTime() ? item.parsed! : acc
   ), null);
@@ -132,11 +160,39 @@ function evaluateContentTimeline(contentDateSamples: string[], requestedCaptureA
     futureSamples: futureSamples.slice(0, 5).map((item) => item.raw),
     parsedCount: parsedSamples.length,
     sampleCount: contentDateSamples.length,
+    targetDate,
+    targetDateMatches: matchingTargetDateSamples.length > 0,
+    matchingTargetDateSamples: matchingTargetDateSamples.slice(0, 5),
+    observedDates,
     reason: futureSamples.length ? "future_samples" : null,
   };
 }
 
 export function pageTextMatchesRequestedCaptureAt(pageDateText: string, requestedCaptureAt: string) {
+  // Visible clocks must agree at the precision displayed by the taskbar.
+  // Parse zoned timestamps in Cuiaba before comparing; UTC is not a mismatch.
+  const minuteKey = (value) => {
+    const text = String(value || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+      const instant = new Date(text);
+      if (Number.isNaN(instant.getTime())) return null;
+      return new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(instant).replace(" ", "T");
+    }
+    const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})T/i);
+    const date = isoDate ? { year: isoDate[1], month: isoDate[2], day: isoDate[3] } : extractPageDateParts(text);
+    if (/^\d{4}-\d{2}-\d{2}T/i.test(text) && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/i.test(text)) return null;
+    const time = text.match(/(?:^|[T\s,])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\dA-Za-z])/i);
+    if (!date || !time || Number(time[1]) > 23 || Number(time[2]) > 59 || Number(time[3] || 0) > 59) return null;
+    const key = date.year + "-" + date.month + "-" + date.day;
+    const parsed = new Date(key + "T00:00:00Z");
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== key) return null;
+    return key + "T" + time[1].padStart(2, "0") + ":" + time[2];
+  };
+  const expected = minuteKey(requestedCaptureAt);
+  return expected !== null && minuteKey(pageDateText) === expected;
+}
+// Transport latency is independent of the minute displayed by the two clocks.
+export function pageTextMatchesCaptureReceiptAt(pageDateText: string, requestedCaptureAt: string) {
   const normalizedPageText = normalizePtText(pageDateText);
   const normalizedCaptureAt = normalizePtText(requestedCaptureAt);
   if (normalizedPageText.startsWith(normalizedCaptureAt)) return true;
@@ -145,7 +201,7 @@ export function pageTextMatchesRequestedCaptureAt(pageDateText: string, requeste
   const [targetDate, targetTimeRaw = ""] = requestedCaptureAt.split("T");
   const [year, month, day] = targetDate.split("-");
   if (!parts) return false;
-  const [hourRaw = "", minuteRaw = ""] = targetTimeRaw.split(":");
+  const [hourRaw = "", minuteRaw = "", secondRaw = "00"] = targetTimeRaw.split(":");
   const expectedHour = Number(hourRaw);
   const expectedMinute = Number(minuteRaw);
   if (!Number.isFinite(expectedHour) || !Number.isFinite(expectedMinute)) return false;
@@ -157,13 +213,245 @@ export function pageTextMatchesRequestedCaptureAt(pageDateText: string, requeste
     return expectedTime ? normalizePtText(pageDateText).includes(expectedTime) : false;
   }
 
-  const expectedSeconds = expectedHour * 3600 + expectedMinute * 60;
+  const expectedSecond = Number(secondRaw.slice(0, 2));
+  if (!Number.isFinite(expectedSecond)) return false;
+  const expectedSeconds = expectedHour * 3600 + expectedMinute * 60 + expectedSecond;
   const actualSeconds = timeParts.hour * 3600 + timeParts.minute * 60 + timeParts.second;
   return Math.abs(actualSeconds - expectedSeconds) <= 90;
 }
 
 export function formatIsoDate(value = new Date()) {
   return value.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
+}
+
+const ISO_DATE_REGEXP = /^\d{4}-\d{2}-\d{2}$/;
+
+export const CAPTURE_CLASS_SAME_DAY_RETRY = "same_day_retry";
+export const CAPTURE_CLASS_SCHEDULED = "scheduled";
+export const CAPTURE_CLASS_HISTORICAL_RECOVERY = "historical_recovery";
+export const AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE = "audit-policy-v1";
+
+export type LegacySameDayInlineCorrelationInput = {
+  targetDate: string;
+  runnerJobId: string | null;
+  status: string;
+  createdAt: Date | null;
+  capturedAt: string | null;
+  requestedCaptureAt: string | null;
+  uploadedUrl: string | null;
+  evidenceUrl: string | null;
+  matchedMediaUrl: string | null;
+  expectedMediaUrl: string | null;
+};
+
+function comparableUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function validateLegacySameDayInlineCorrelation(input: LegacySameDayInlineCorrelationInput) {
+  const blockers: string[] = [];
+  const sourceJobId = typeof input.runnerJobId === "string" && /^inline-\d+-[a-z0-9]+$/i.test(input.runnerJobId)
+    ? input.runnerJobId
+    : null;
+  const capturedAt = input.capturedAt && !Number.isNaN(new Date(input.capturedAt).getTime())
+    ? input.capturedAt
+    : input.createdAt?.toISOString() ?? null;
+  if (!ISO_DATE_REGEXP.test(input.targetDate)) blockers.push("target_date_invalid");
+  if (!sourceJobId) blockers.push("inline_runner_job_missing");
+  if (!['ok', 'pending_audit'].includes(input.status)) blockers.push("capture_log_not_approved");
+  if (!input.createdAt || formatIsoDate(input.createdAt) !== input.targetDate) blockers.push("capture_created_date_mismatch");
+  if (!capturedAt || parseCuiabaDate(capturedAt) !== input.targetDate) blockers.push("captured_at_date_mismatch");
+  if (!input.requestedCaptureAt || !input.requestedCaptureAt.startsWith(`${input.targetDate}T`)) blockers.push("requested_capture_date_mismatch");
+  if (!input.uploadedUrl || input.uploadedUrl !== input.evidenceUrl) blockers.push("capture_artifact_mismatch");
+  if (!comparableUrl(input.matchedMediaUrl) || comparableUrl(input.matchedMediaUrl) !== comparableUrl(input.expectedMediaUrl)) {
+    blockers.push("capture_media_mismatch");
+  }
+  return {
+    ok: blockers.length === 0,
+    blockers,
+    sourceJobId,
+    capturedAt,
+  };
+}
+
+const SERVER_CAPTURE_PROVENANCE = Symbol("serverCaptureProvenance");
+
+export type ServerCaptureProvenance = {
+  targetDate: string;
+  sourceJobId: string;
+  capturedAt: string;
+  uploadedUrl: string | null;
+};
+
+export function correlateCaptureLogProvenance(input: {
+  targetDate: string;
+  jobId: string | null;
+  runnerJobId: string | null;
+  createdAt: Date | null;
+  uploadedUrl: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+  evidenceUrl: string | null;
+}) {
+  if (!["ok", "pending_audit"].includes(input.status)) return null;
+  const declaredSourceJobId = typeof input.metadata.sourceJobId === "string" ? input.metadata.sourceJobId.trim() : "";
+  const sourceJobId = [input.runnerJobId, input.jobId]
+    .find((value) => typeof value === "string" && value === declaredSourceJobId) ?? null;
+  if (!sourceJobId || !input.createdAt || !input.uploadedUrl || input.uploadedUrl !== input.evidenceUrl) return null;
+  return { targetDate: input.targetDate, sourceJobId, capturedAt: input.createdAt.toISOString(), uploadedUrl: input.uploadedUrl };
+}
+
+export function attachServerCaptureProvenance(
+  metadata: Record<string, unknown>,
+  provenance: ServerCaptureProvenance,
+) {
+  Object.defineProperty(metadata, SERVER_CAPTURE_PROVENANCE, {
+    value: provenance,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+  return metadata;
+}
+
+function readServerCaptureProvenance(metadata: unknown): ServerCaptureProvenance | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const value = (metadata as Record<PropertyKey, unknown>)[SERVER_CAPTURE_PROVENANCE];
+  if (!value || typeof value !== "object") return null;
+  return value as ServerCaptureProvenance;
+}
+
+function parseCuiabaDate(value: string | null | undefined) {
+  if (!value) return null;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
+}
+
+function normalizeCaptureClassValue(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : null;
+  if (raw === CAPTURE_CLASS_HISTORICAL_RECOVERY) return CAPTURE_CLASS_HISTORICAL_RECOVERY;
+  if (raw === CAPTURE_CLASS_SAME_DAY_RETRY) return CAPTURE_CLASS_SAME_DAY_RETRY;
+  if (raw === CAPTURE_CLASS_SCHEDULED) return CAPTURE_CLASS_SCHEDULED;
+  return null;
+}
+
+function hasKnownCapturePolicy(version: unknown) {
+  return typeof version === "string" && version.trim() === AUDIT_POLICY_VERSION_IMMUTABLE_CAPTURE;
+}
+
+export function buildCaptureClassTrustContext({
+  canonicalTargetDate,
+  metadataTargetDate,
+  captureClass,
+  sourceJobId,
+  capturedAt,
+  auditPolicyVersion,
+}: {
+  canonicalTargetDate: string | null;
+  metadataTargetDate: string | null;
+  captureClass: string | null;
+  sourceJobId: string | null;
+  capturedAt: string | null;
+  auditPolicyVersion: string | null;
+}) {
+  const canonical = typeof canonicalTargetDate === "string" && ISO_DATE_REGEXP.test(canonicalTargetDate)
+    ? canonicalTargetDate
+    : null;
+  const persisted = typeof metadataTargetDate === "string" && ISO_DATE_REGEXP.test(metadataTargetDate)
+    ? metadataTargetDate
+    : null;
+  const capturedAtDate = parseCuiabaDate(capturedAt);
+  const hasSourceJobId = typeof sourceJobId === "string" && sourceJobId.trim().length > 0;
+  const hasValidPolicy = hasKnownCapturePolicy(auditPolicyVersion);
+  const hasCanonicalTarget = !!canonical;
+  const hasPersistedTarget = !!persisted;
+  const hasCapturedAtDate = !!capturedAtDate;
+  const targetDateMatches = hasCanonicalTarget && hasPersistedTarget && canonical === persisted;
+  const targetDateMatchesForDaily = hasCapturedAtDate && targetDateMatches && capturedAtDate === canonical;
+  if (!captureClass) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["capture_class_missing"],
+    };
+  }
+  if (!hasCanonicalTarget) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_invalid"],
+    };
+  }
+  if (!hasPersistedTarget) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_persisted_invalid_or_missing"],
+    };
+  }
+  if (!hasSourceJobId) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["source_job_id_missing"],
+    };
+  }
+  if (!hasValidPolicy) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["audit_policy_version_unknown"],
+    };
+  }
+  if (!hasCapturedAtDate) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["captured_at_invalid_or_missing"],
+    };
+  }
+  if (!targetDateMatches) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["target_date_mismatch"],
+    };
+  }
+  if (captureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY) {
+    return {
+      trusted: true,
+      trustedClass: captureClass,
+      reasons: [],
+    };
+  }
+  if (!targetDateMatchesForDaily) {
+    return {
+      trusted: false,
+      trustedClass: null as string | null,
+      reasons: ["captured_at_date_mismatch"],
+    };
+  }
+  return {
+    trusted: true,
+    trustedClass: captureClass,
+    reasons: [],
+  };
+}
+
+// Editorial timeline proof is meaningful only when reconstructing a past day.
+// A live capture for the current Cuiabá day cannot contain a retroactive page
+// timeline yet; the remaining visual, slot, media and clock gates still apply.
+export function requiresRetroEditorialProof(targetDate: string, now = new Date()) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(targetDate) && targetDate < formatIsoDate(now);
 }
 
 export function eachIsoDay(start: Date, end: Date) {
@@ -181,11 +469,70 @@ export const RETRO_CAPTURE_WINDOW_END = "22:00";
 export const RETRO_CAPTURE_WINDOW_START_MINUTES = 18 * 60;
 export const RETRO_CAPTURE_WINDOW_END_MINUTES = 22 * 60;
 
+function parseCaptureAtInCuiaba(captureAt: string | null | undefined) {
+  const value = String(captureAt ?? "").trim();
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?$/i);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6] ?? 0);
+  const maxDay = month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
+  if (day < 1 || day > maxDay || hour > 23 || minute > 59 || second > 59) return null;
+  const offset = match[7];
+  if (offset && offset !== "Z" && offset !== "z") {
+    const offsetHour = Number(offset.slice(1, 3));
+    const offsetMinute = Number(offset.slice(4));
+    if (offsetHour > 14 || offsetMinute > 59 || (offsetHour === 14 && offsetMinute !== 0)) return null;
+  }
+  if (!offset) return { date: `${match[1]}-${match[2]}-${match[3]}`, time: `${match[4]}:${match[5]}:${String(second).padStart(2, "0")}`, instant: null as Date | null };
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return null;
+  return {
+    date: formatIsoDate(instant),
+    time: instant.toLocaleTimeString("sv-SE", { timeZone: "America/Cuiaba", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    instant,
+  };
+}
+
 export function isCaptureAtInRetroWindow(captureAt: string | null | undefined) {
-  const match = String(captureAt ?? "").trim().match(/^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/);
-  if (!match) return false;
-  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  const parsed = parseCaptureAtInCuiaba(captureAt);
+  if (!parsed) return false;
+  const minutes = Number(parsed.time.slice(0, 2)) * 60 + Number(parsed.time.slice(3, 5));
   return minutes >= RETRO_CAPTURE_WINDOW_START_MINUTES && minutes < RETRO_CAPTURE_WINDOW_END_MINUTES;
+}
+
+export function isFutureCaptureAt(captureAt: string | null | undefined, now = new Date()) {
+  const parsed = parseCaptureAtInCuiaba(captureAt);
+  if (!parsed) return false;
+  if (parsed.instant) return parsed.instant.getTime() > now.getTime();
+  const localNow = `${formatIsoDate(now)}T${now.toLocaleTimeString("sv-SE", {
+    timeZone: "America/Cuiaba", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+  })}`;
+  return `${parsed.date}T${parsed.time}` > localNow;
+}
+
+export function isHistoricalCaptureDate(targetDate: string, now = new Date()) {
+  return targetDate < formatIsoDate(now);
+}
+
+export function captureAtPolicyError(captureAt: string | null | undefined, now = new Date()) {
+  if (!captureAt) return null;
+  const parsed = parseCaptureAtInCuiaba(captureAt);
+  if (!parsed) return "capture_at_invalid";
+  if (isFutureCaptureAt(captureAt, now)) return "capture_at_in_future";
+  if (isHistoricalCaptureDate(parsed.date, now) && !isCaptureAtInRetroWindow(captureAt)) {
+    return "capture_at_outside_allowed_window";
+  }
+  return null;
+}
+
+export function isDirectExecutionEvidenceAudit(audit: { captureClass?: string | null; retroContentProof?: { sourceMode?: string | null; reconstructed?: boolean } | null } | null | undefined) {
+  if (!audit || audit.captureClass === "historical_recovery") return false;
+  if (audit.retroContentProof?.reconstructed === true || audit.retroContentProof?.sourceMode === "audited_reconstruction") return false;
+  return audit.captureClass === "scheduled" || audit.captureClass === "same_day_retry";
 }
 
 export function buildRetroCaptureAt(dateKey: string, insertionId: number) {
@@ -206,7 +553,153 @@ export function getEvidenceDateKey(title: string | null | undefined) {
   return match?.[1] ?? null;
 }
 
-export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
+// Legacy evidence keeps its recorded contract. New v4 video reconstructions must
+// identify Chromium's actual timeline and preserve its measured ROI in the PNG.
+export function evaluateVideoPlayerProof(metadata: any, isVideoCapture: boolean) {
+  const video = metadata?.videoProof ?? {};
+  const currentTime = Number(video.currentTime ?? 0);
+  const duration = Number(video.duration ?? 0);
+  const nativeRequired = isVideoCapture && metadata?.reconstruction?.provenanceVersion === 4;
+  const native = metadata?.nativeProgressAudit;
+  const pixels = metadata?.finalPngProgressAudit;
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const box = native?.box;
+  const roi = pixels?.slotBox;
+  const crop = pixels?.cropBox;
+  const boxMatches = box && roi && [box.x, box.y, box.width, box.height, roi.left, roi.top, roi.width, roi.height].every(finite)
+    && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0
+    && Math.abs(box.x - roi.left) <= 0.5 && Math.abs(box.y - roi.top) <= 0.5
+    && Math.abs(box.width - roi.width) <= 0.5 && Math.abs(box.height - roi.height) <= 0.5;
+  const cropMatches = boxMatches && finite(pixels?.pixelScale) && pixels.pixelScale > 0
+    && finite(metadata?.chromeFrameHeight) && metadata.chromeFrameHeight >= 0
+    && crop && [crop.left, crop.top, crop.width, crop.height].every(finite)
+    && crop.left === Math.max(0, Math.round(box.x * pixels.pixelScale))
+    && crop.top === Math.max(0, Math.round(metadata.chromeFrameHeight + box.y * pixels.pixelScale))
+    && crop.width === Math.max(1, Math.round(box.width * pixels.pixelScale))
+    && crop.height === Math.max(1, Math.round(box.height * pixels.pixelScale))
+    && pixels.cropSize?.width === crop.width && pixels.cropSize?.height === crop.height;
+  const nativeVisible = native?.version === 1 && native?.source === "chromium_ua_shadow_timeline"
+    && native.ok === true && native.pseudo === "-webkit-media-controls-timeline"
+    && native.tag === "INPUT" && native.type === "range" && native.controls === true
+    && native.disabled === false && native.visibility === "visible"
+    && typeof native.display === "string" && native.display.length > 0 && native.display !== "none"
+    && native.effectiveVisible === true && finite(native.effectiveOpacity) && native.effectiveOpacity > 0.01
+    && finite(native.visibleRatio) && native.visibleRatio >= 0.95 && native.visibleRatio <= 1
+    && native.insideVideoBounds === true && native.insideViewport === true && native.occlusion === "clear"
+    && native.paused === true && video.paused === true
+    && [native.value, native.max, native.currentTime, native.duration, video.currentTime, video.duration].every(finite)
+    && native.value > 0.5 && native.max > 0 && native.value <= native.max
+    && Math.abs(native.value - currentTime) <= 0.25 && Math.abs(native.max - duration) <= 0.25
+    && Math.abs(native.currentTime - currentTime) <= 0.25 && Math.abs(native.duration - duration) <= 0.25
+    && video.overlayInjected === false && video.artificialOverlayCount === 0 && native.artificialOverlayCount === 0;
+  const pixelsVisible = pixels?.ok === true && pixels?.source === "auditFinalPngSlotPixels_video_progress_roi"
+    && pixels.comparedTo === "viewportPng_video_progress_roi" && cropMatches
+    && Array.isArray(pixels.issues) && pixels.issues.length === 0
+    && finite(pixels.similarityScore) && finite(pixels.minSimilarity)
+    && pixels.minSimilarity >= 0.82 && pixels.minSimilarity <= 1
+    && pixels.similarityScore >= pixels.minSimilarity && pixels.similarityScore <= 1
+    && finite(pixels.finalCropMeanStddev) && finite(pixels.finalCropMinContentStddev)
+    && pixels.finalCropMinContentStddev > 0 && pixels.finalCropMeanStddev >= pixels.finalCropMinContentStddev;
+  const progressVisible = nativeRequired
+    ? Boolean(nativeVisible && pixelsVisible)
+    : video.progressVisible === true || video.overlayInjected === true;
+  const controlsVisible = nativeRequired ? Boolean(nativeVisible) : video.controls === true;
+  return {
+    ok: !isVideoCapture || Boolean(video.ok === true && video.controls === true && progressVisible && currentTime > 0.5 && duration > 0),
+    nativeRequired,
+    controlsVisible,
+    progressVisible,
+    progressSource: nativeVisible && pixelsVisible ? "chromium_ua_shadow_timeline" : nativeRequired ? "unverified" : video.overlayInjected === true ? "legacy_injected_overlay" : "legacy_reported_progress",
+    nativeProgressVerified: Boolean(nativeVisible),
+    finalProgressPixelsVerified: Boolean(pixelsVisible),
+  };
+}
+
+// Candidate callers require this proof from the server's rule. Canonical legacy
+// evidence retains its recorded contract; newly recorded v2 proofs are checked.
+// These immutable originals were reviewed from PNG pixels; their HTML time
+// attributes report a different minute. New capture jobs never match this key.
+export function resolveVerifiedClockPixelReview(metadata: any) {
+  const reviews = [
+  {
+    "insertionId": 3090,
+    "targetDate": "2026-10-16",
+    "sourceJobId": "1792188274384-qzxe7k",
+    "sha256": "002e7386c8058055bc024d5755dab7fcef7f6bd62deb4a948f6fab4a556d6a9d",
+    "text": "16/10/2026 18:04",
+    "source": "human_review_of_original_png"
+  },
+  {
+    "insertionId": 3105,
+    "targetDate": "2026-10-25",
+    "sourceJobId": "1792970677657-7ko5q6",
+    "sha256": "f992db5b94f5457a3494599ce009cd7171206969573979827716f34c153a36c5",
+    "text": "25/10/2026 19:25",
+    "source": "human_review_of_original_png"
+  }
+];
+  return reviews.find((review) => review.insertionId === metadata?.insertionId
+    && review.targetDate === metadata?.targetDate && review.sourceJobId === metadata?.sourceJobId) || null;
+}
+
+export function evaluateClockCaptionSeparation(metadata: any) {
+  const label = metadata?.reconstruction?.presentationLabel;
+  if (typeof label !== "string" || !label.startsWith("Reconstrução histórica gerada em ")) return { ok: true, required: false };
+  const box = metadata?.finalPngSlotAudit?.slotBox;
+  const height = Number(metadata?.pageScrollMetrics?.viewportHeight);
+  const bottom = Number(box?.top) + Number(box?.height);
+  // The capture-only notice occupies 26 CSS pixels, plus 4px below it.
+  const gap = height - bottom;
+  return { ok: Number.isFinite(height) && Number.isFinite(bottom) && gap >= 36, required: true, gap };
+}
+
+export function evaluateFinalPageClockProof(metadata: any) {
+  const proof = metadata?.visiblePageDateAudit;
+  const box = proof?.box;
+  const viewport = proof?.viewport;
+  const pixels = proof?.pixelAudit;
+  const roi = pixels?.slotBox;
+  const crop = pixels?.cropBox;
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  const inside = box && viewport && [box.x, box.y, box.width, box.height, viewport.width, viewport.height, viewport.scrollX, viewport.scrollY].every(finite)
+    && box.x >= 0 && box.y >= 0 && box.width > 0 && box.height > 0
+    && viewport.width > 0 && viewport.height > 0
+    && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height;
+  const matchingRoi = inside && roi && [roi.left, roi.top, roi.width, roi.height].every(finite)
+    && Math.abs(roi.left - box.x) <= 0.5 && Math.abs(roi.top - box.y) <= 0.5
+    && Math.abs(roi.width - box.width) <= 0.5 && Math.abs(roi.height - box.height) <= 0.5;
+  const matchingCrop = matchingRoi && finite(pixels?.pixelScale) && pixels.pixelScale > 0
+    && finite(metadata?.chromeFrameHeight) && metadata.chromeFrameHeight >= 0
+    && crop && [crop.left, crop.top, crop.width, crop.height].every(finite)
+    && crop.left === Math.round(box.x * pixels.pixelScale)
+    && crop.top === Math.round(metadata.chromeFrameHeight + box.y * pixels.pixelScale)
+    && crop.width === Math.max(1, Math.round(box.width * pixels.pixelScale))
+    && crop.height === Math.max(1, Math.round(box.height * pixels.pixelScale))
+    && pixels.cropSize?.width === crop.width && pixels.cropSize?.height === crop.height;
+  const expectedClockAt = metadata?.requestedCaptureAt || metadata?.liveClockSynchronization?.synchronizedAt;
+  const textMatches = typeof expectedClockAt === "string"
+    && proof?.requestedCaptureAt === expectedClockAt
+    && typeof proof?.renderedText === "string"
+    && pageTextMatchesRequestedCaptureAt(proof.renderedText, expectedClockAt);
+  return {
+    ok: Boolean(proof?.version === 2 && proof?.source === "final_viewport_page_clock"
+      && proof.ok === true && proof.skipped === false && textMatches && inside
+      && proof.fullyInsideViewport === true && proof.effectiveVisible === true && proof.occlusion === "clear"
+      && pixels?.ok === true && pixels.source === "auditFinalPngSlotPixels_page_clock_roi"
+      && pixels.comparedTo === "viewportPng_page_clock_roi" && matchingCrop
+      && Array.isArray(pixels.issues) && pixels.issues.length === 0
+      && finite(pixels.similarityScore) && finite(pixels.minSimilarity)
+      && pixels.minSimilarity >= 0.82 && pixels.minSimilarity <= 1
+      && pixels.similarityScore >= pixels.minSimilarity && pixels.similarityScore <= 1
+      && finite(pixels.finalCropMeanStddev) && finite(pixels.finalCropMinContentStddev)
+      && pixels.finalCropMinContentStddev >= 4 && pixels.finalCropMeanStddev >= pixels.finalCropMinContentStddev),
+  };
+}
+
+export function evaluateCaptureMetadata(metadata: any, targetDate: string, now = new Date(), options: {
+  finalPageClockRequired?: boolean;
+  preUploadReceivedAt?: Date;
+} = {}) {
   if (!metadata) {
     return {
       requestedCaptureAt: null,
@@ -266,16 +759,43 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       ok: false,
     };
   }
+  const serverProvenance = readServerCaptureProvenance(metadata);
+  const persistedTargetDate = serverProvenance?.targetDate ?? null;
+  const canonicalTargetDate = ISO_DATE_REGEXP.test(targetDate) ? targetDate : null;
+  const recordedCaptureClassRaw = typeof metadata.captureClass === "string" ? metadata.captureClass.trim() : "";
+  const recordedCaptureClass = normalizeCaptureClassValue(recordedCaptureClassRaw);
+  const explicitCaptureClass = typeof metadata.captureClass === "string" && metadata.captureClass.trim().length > 0;
+  const declaredSourceJobId = typeof metadata.sourceJobId === "string" && metadata.sourceJobId.trim()
+    ? metadata.sourceJobId.trim()
+    : null;
+  const sourceJobId = serverProvenance && declaredSourceJobId === serverProvenance.sourceJobId
+    ? serverProvenance.sourceJobId
+    : null;
+  const auditPolicyVersion = typeof metadata.auditPolicyVersion === "string" ? metadata.auditPolicyVersion.trim() : null;
+  const capturedAt = serverProvenance?.capturedAt ?? null;
+  const captureClassTrustContext = buildCaptureClassTrustContext({
+    canonicalTargetDate,
+    metadataTargetDate: persistedTargetDate,
+    captureClass: recordedCaptureClass,
+    sourceJobId,
+    capturedAt,
+    auditPolicyVersion,
+  });
+  const normalizedCaptureClass = captureClassTrustContext.trusted ? recordedCaptureClass : null;
   const requestedCaptureAt = typeof metadata.requestedCaptureAt === "string" ? metadata.requestedCaptureAt : null;
   const systemDateTime = typeof metadata.systemDateTime === "string" ? metadata.systemDateTime : "";
   const pageDateText = typeof metadata.pageDateText === "string" ? metadata.pageDateText : "";
   const pageDateObserved = typeof metadata.pageDateObserved === "string" ? metadata.pageDateObserved : "";
-  const pageDateReference = pageDateObserved || pageDateText;
+  const verifiedClockPixelReview = resolveVerifiedClockPixelReview(metadata);
+  const pageDateReference = verifiedClockPixelReview?.text || (typeof metadata.visiblePageDateAudit?.renderedText === "string" && metadata.visiblePageDateAudit.renderedText) || pageDateObserved || pageDateText;
   const formatText = typeof metadata.format === "string" ? metadata.format : "";
   const isVideoCapture = /VIDEO/i.test(formatText);
   const visualAudit = metadata.visualAudit ?? {};
   const contentDateSamples = Array.isArray(metadata.contentDateSamples)
     ? metadata.contentDateSamples.filter((value: unknown) => typeof value === "string")
+    : [];
+  const contentRelativeTimeSamples = Array.isArray(metadata.contentRelativeTimeSamples)
+    ? metadata.contentRelativeTimeSamples.filter((value: unknown) => typeof value === "string")
     : [];
   const retroContentProof = metadata.retroContentProof && typeof metadata.retroContentProof === "object"
     ? metadata.retroContentProof
@@ -296,10 +816,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     ...(getSiteIntegration(siteSigla)?.auditConfig ?? {}),
     ...(resolvedMapping?.auditOverrides ?? {}),
   };
-  const storedAuditConfig = metadata.auditConfig && typeof metadata.auditConfig === "object" ? metadata.auditConfig : {};
   const effectiveAuditConfig = {
     ...fallbackAuditConfig,
-    ...storedAuditConfig,
   } as {
     allowViewportImageMisses?: number;
     requireStableFrame?: boolean;
@@ -311,13 +829,95 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     requireRetroContentProof?: boolean;
     minRetroContentMatches?: number;
     allowAuditedReconstruction?: boolean;
+    requireAbsoluteEditorialDates?: boolean;
+    requireEditorialDateMatchTarget?: boolean;
   };
-  const desktopMatches = requestedCaptureAt
-    ? pageTextMatchesRequestedCaptureAt(systemDateTime, requestedCaptureAt)
-    : systemDateTime.includes(targetDate.split("-").reverse().join("/"));
+  // A recovery after a late publication cannot honestly recreate the editorial
+  // page as it looked on the contracted day.  It is still a valid, explicitly
+  // labelled proof of the campaign only when the portal rule permits it and
+  // the runner persisted the complete reconstruction audit trail.  Do not
+  // waive any creative, slot, media or frame gate below.
+  const reconstruction = metadata.reconstruction && typeof metadata.reconstruction === "object"
+    ? metadata.reconstruction as Record<string, unknown>
+    : null;
+  const reconstructionAt = typeof reconstruction?.reconstructedAt === "string" &&
+    !Number.isNaN(new Date(reconstruction.reconstructedAt).getTime())
+    ? reconstruction.reconstructedAt
+    : null;
+  const reconstructionProvenanceV2 = reconstruction?.provenanceVersion === 2;
+  const reconstructionProvenanceV3 = reconstruction?.provenanceVersion === 3;
+  const reconstructionProvenanceV4 = reconstruction?.provenanceVersion === 4;
+  const requiresAflArticleIdentity = siteSigla === "AFL" &&
+    normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY &&
+    reconstructionProvenanceV4 && resolvedMapping?.page === "article";
+  let aflArticleIdentityMatches = true;
+  if (requiresAflArticleIdentity) {
+    const configuredHomeUrl = getSiteIntegration(siteSigla)?.homeUrl;
+    const normalizeAflArticleIdentity = (value: unknown): string | null => {
+      if (typeof value !== "string" || !value.trim()) return null;
+      try {
+        const url = new URL(value.trim());
+        if (url.protocol !== "https:" || url.username || url.password) return null;
+        if (!configuredHomeUrl || url.origin !== new URL(configuredHomeUrl).origin) return null;
+        return `${url.origin}${url.pathname.replace(/\/+$/, "") || "/"}`;
+      } catch {
+        return null;
+      }
+    };
+    const manifest = metadata.retroContentManifest && typeof metadata.retroContentManifest === "object"
+      ? metadata.retroContentManifest
+      : {};
+    const expectedUrl = Array.isArray(manifest.expectedPosts)
+      ? normalizeAflArticleIdentity(manifest.expectedPosts[0]?.url)
+      : null;
+    const visibleUrl = Array.isArray(manifest.visiblePosts)
+      ? normalizeAflArticleIdentity(manifest.visiblePosts[0]?.url)
+      : null;
+    const editorialUrl = Array.isArray(metadata.editorialSamples)
+      ? normalizeAflArticleIdentity(metadata.editorialSamples[0]?.url)
+      : null;
+    const pageUrl = normalizeAflArticleIdentity(metadata.pageUrl);
+    aflArticleIdentityMatches = Boolean(
+      pageUrl && expectedUrl === pageUrl && visibleUrl === pageUrl && editorialUrl === pageUrl,
+    );
+  }
+  const versionedReconstruction = reconstructionProvenanceV2 || reconstructionProvenanceV3 || reconstructionProvenanceV4;
+  // `capturedAt` comes from the persisted capture log, not the runner request.
+  // Keep a small allowance for upload/audit latency, but never let a supplied
+  // historical timestamp stand in for real capture provenance.
+  const reconstructionTimestampMatchesServerCapture = Boolean(reconstructionAt && capturedAt) &&
+    Math.abs(new Date(reconstructionAt!).getTime() - new Date(capturedAt!).getTime()) <= 15 * 60 * 1000;
+  const declaredLatePublicationRecovery = effectiveAuditConfig.allowAuditedReconstruction === true &&
+    reconstruction?.reason === "late_publication_recovery" &&
+    reconstruction?.contractedDate === canonicalTargetDate &&
+    typeof reconstruction?.mediaUrl === "string" &&
+    reconstruction.mediaUrl.trim().length > 0;
+  const auditedLatePublicationRecovery = declaredLatePublicationRecovery &&
+    (!versionedReconstruction || reconstructionTimestampMatchesServerCapture);
+  const declaredHistoricalReconstruction = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY && versionedReconstruction;
+  const expectedEvaluationDate = canonicalTargetDate ? canonicalTargetDate.split("-").reverse().join("/") : "";
+  const reconstructionLocalTime = reconstructionProvenanceV3 && reconstructionAt
+    ? new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "America/Cuiaba",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(reconstructionAt)).replace(" ", "T")
+    : null;
+  // v4 intentionally presents both visible clocks as the contracted reference;
+  // capturedAt/reconstructedAt still retain the real creation instant above.
+  const desktopExpectedAt = reconstructionLocalTime || requestedCaptureAt;
+  const desktopMatches = desktopExpectedAt
+    ? pageTextMatchesRequestedCaptureAt(systemDateTime, desktopExpectedAt)
+      || Boolean(reconstructionProvenanceV3 && reconstructionAt && pageTextMatchesRequestedCaptureAt(systemDateTime, reconstructionAt))
+    : Boolean(expectedEvaluationDate) && systemDateTime.includes(expectedEvaluationDate);
   const pageMatches = requestedCaptureAt
     ? pageTextMatchesRequestedCaptureAt(pageDateReference, requestedCaptureAt)
-    : pageTextMatchesTargetDate(pageDateReference, targetDate);
+    : Boolean(canonicalTargetDate && pageTextMatchesTargetDate(pageDateReference, canonicalTargetDate)
+      && pageTextMatchesRequestedCaptureAt(pageDateReference, systemDateTime));
   const viewportImagesTotal = Number(visualAudit.viewportImagesTotal ?? 0);
   const viewportImagesLoaded = Number(visualAudit.viewportImagesLoaded ?? 0);
   const allowViewportImageMisses = Math.max(0, Number(effectiveAuditConfig.allowViewportImageMisses ?? 0));
@@ -347,17 +947,19 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
   const viewportBackgroundsLoaded = Number(visualAudit.viewportBackgroundsLoaded ?? 0);
   const viewportVideosTotal = Number(visualAudit.viewportVideosTotal ?? 0);
   const viewportVideosLoaded = Number(visualAudit.viewportVideosLoaded ?? 0);
+  const readinessAudit = metadata.readinessAudit && typeof metadata.readinessAudit === "object"
+    ? metadata.readinessAudit as Record<string, unknown>
+    : null;
+  const metadataRequiredGates = metadata.requiredGates && typeof metadata.requiredGates === "object"
+    ? metadata.requiredGates as Record<string, unknown>
+    : null;
+  const readinessRequired = metadataRequiredGates?.requireReadinessAudit === true;
+  const readinessOk = !readinessRequired || readinessAudit?.approved === true;
   const videoProofCurrentTime = Number(videoProof.currentTime ?? 0);
   const videoProofDuration = Number(videoProof.duration ?? 0);
-  const videoProgressVisible = videoProof.progressVisible === true || videoProof.overlayInjected === true;
-  const playerProofOk = !isVideoCapture || Boolean(
-    videoProof &&
-    videoProof.ok === true &&
-    videoProof.controls === true &&
-    videoProgressVisible &&
-    videoProofCurrentTime > 0.5 &&
-    videoProofDuration > 0,
-  );
+  const videoPlayerProof = evaluateVideoPlayerProof(metadata, isVideoCapture);
+  const videoProgressVisible = videoPlayerProof.progressVisible;
+  const playerProofOk = videoPlayerProof.ok;
   const visualAuditAvailable = visualAudit && typeof visualAudit === "object";
   const slotStableFrameOk = metadata.slotStableFrameOk === true;
   const slotLegibilityOk = metadata.slotLegibilityOk === true;
@@ -386,16 +988,83 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     gifAllowedFrameRanges.some(([start, end]) => gifChosenFrameIndex >= start && gifChosenFrameIndex <= end)
   );
   const slotMostlyVisible = slotVisibility?.mostlyVisible === true;
-  const contentTimeline = evaluateContentTimeline(contentDateSamples, requestedCaptureAt);
-  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true;
-  const contentTimelineOk = contentTimeline.ok || (!requireRetroContentProof && contentTimeline.reason !== "future_samples");
+  const isScheduledLikeCaptureClass = normalizedCaptureClass === CAPTURE_CLASS_SCHEDULED || normalizedCaptureClass === CAPTURE_CLASS_SAME_DAY_RETRY;
+  // Scheduled captures do not have a requested retroactive instant. Their
+  // server-correlated capture time is the only safe reference for checking
+  // observed article dates against future content.
+  const receivedAt = options.preUploadReceivedAt;
+  const sameDayPreUploadReferenceAt = receivedAt instanceof Date
+    && Number.isFinite(receivedAt.getTime())
+    && canonicalTargetDate !== null
+    && formatIsoDate(receivedAt) === canonicalTargetDate
+    && !isFutureCaptureAt(receivedAt.toISOString(), now)
+    ? receivedAt.toISOString()
+    : null;
+  const contentTimelineReferenceAt = requestedCaptureAt ?? (
+    isScheduledLikeCaptureClass && captureClassTrustContext.trusted ? capturedAt : null
+  ) ?? sameDayPreUploadReferenceAt;
+  const contentTimeline = evaluateContentTimeline(contentDateSamples, contentTimelineReferenceAt);
+  const requiresHistoricalEditorialAudit = normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY ||
+    (normalizedCaptureClass === null && requiresRetroEditorialProof(canonicalTargetDate ?? "", now));
+  const requireRetroContentProof = effectiveAuditConfig.requireRetroContentProof === true &&
+    (normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY ||
+      (normalizedCaptureClass === null && requiresRetroEditorialProof(canonicalTargetDate ?? "", now))) &&
+    !auditedLatePublicationRecovery;
+  const contentTimelineOk = contentTimeline.ok ||
+    (contentTimeline.reason === "empty_samples" && (isScheduledLikeCaptureClass || auditedLatePublicationRecovery));
   const retroContentProofOk = !requireRetroContentProof || retroContentProof?.status === "approved";
+  const sourceEvidence = reconstruction?.sourceEvidence as Record<string, unknown> | undefined;
+  let partialSourceEditorialOk = true;
+  if (sourceEvidence?.proofScope === "position_only") {
+    const manifest = metadata.retroContentManifest ?? {};
+    const normalizePost = (value: unknown): string | null => {
+      try {
+        const url = new URL(String(value ?? ""));
+        return url.protocol === "https:" && url.origin === "https://roonoticias.com" && !url.username && !url.password
+          ? url.pathname.replace(/\/+$/, "") || "/" : null;
+      } catch { return null; }
+    };
+    const expected = new Set((Array.isArray(manifest.expectedPosts) ? manifest.expectedPosts : [])
+      .map((post: any) => normalizePost(post?.url)).filter(Boolean));
+    const allSamples = Array.isArray(metadata.editorialSamples) ? metadata.editorialSamples : [];
+    const editorialTimeline = evaluateContentTimeline(allSamples.map((sample: any) => sample?.date), requestedCaptureAt);
+    const expectedTimeline = evaluateContentTimeline((Array.isArray(manifest.expectedPosts) ? manifest.expectedPosts : [])
+      .map((post: any) => post?.date), requestedCaptureAt);
+    const samples = allSamples
+      .filter((sample: any) => normalizePost(sample?.url) && evaluateContentTimeline([sample?.date], requestedCaptureAt).ok);
+    const matched = new Set(samples.map((sample: any) => normalizePost(sample.url)).filter((url: string) => expected.has(url)));
+    partialSourceEditorialOk = siteSigla === "ROO" && normalizedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
+      && reconstructionProvenanceV4 && resolvedMapping?.page === "home" && resolvedMapping?.groupId === 1
+      && effectiveAuditConfig.allowAuditedReconstruction === true && effectiveAuditConfig.requireRetroContentProof === true
+      && sourceEvidence.sourceEditorialProofStatus === "missing_legacy"
+      && Number.isInteger(retroContentProof?.expectedCount) && Number.isInteger(retroContentProof?.visibleMatchCount)
+      && Number.isInteger(retroContentProof?.minimumRequired)
+      && retroContentProof?.status === "approved" && retroContentProof?.expectedCount >= 3
+      && retroContentProof?.visibleMatchCount >= 3 && retroContentProof?.minimumRequired >= 3
+      && retroContentProof?.futureCount === 0 && /^[a-f0-9]{64}$/i.test(retroContentProof?.manifestHash ?? "")
+      && expected.size >= 3 && matched.size >= 3 && contentTimeline.parsedCount >= 3
+      && editorialTimeline.ok && editorialTimeline.parsedCount >= 3 && expectedTimeline.ok && expectedTimeline.parsedCount >= 3;
+  }
+  // Gates added after an evidence was captured cannot invalidate its persisted contract.
+  // New captures explicitly declare every gate they were produced to satisfy.
+  const requireAbsoluteEditorialDates = requiresHistoricalEditorialAudit &&
+    effectiveAuditConfig.requireAbsoluteEditorialDates === true &&
+    metadataRequiredGates?.requireAbsoluteEditorialDates === true;
+  const requireEditorialDateMatchTarget = effectiveAuditConfig.requireEditorialDateMatchTarget === true &&
+    metadataRequiredGates?.requireEditorialDateMatchTarget === true;
+  const relativeContentTimeline = {
+    ok: !requireAbsoluteEditorialDates || contentRelativeTimeSamples.length === 0,
+    required: requireAbsoluteEditorialDates,
+    relativeSamples: contentRelativeTimeSamples.slice(0, 10),
+  };
+  const captureClassContractOk = captureClassTrustContext.trusted || !explicitCaptureClass;
   const visualsOk = Boolean(
     visualAuditAvailable &&
     viewportImagesOk &&
     slotImagesTotal === slotImagesLoaded &&
     viewportBackgroundsTotal === viewportBackgroundsLoaded &&
     viewportVideosTotal === viewportVideosLoaded &&
+    readinessOk &&
     (!requireStableFrame || slotStableFrameOk) &&
     (!requireLegibleFrame || slotLegibilityOk) &&
     (!requireIdentityFrame || identityFrameOk) &&
@@ -403,13 +1072,49 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     playerProofOk,
   );
   const issues: Array<{ code: string; label: string; detail: string }> = [];
+  if (!aflArticleIdentityMatches) {
+    issues.push({
+      code: "article_context_mismatch",
+      label: "Página não corresponde à notícia comprovada",
+      detail: "A reconstrução histórica v4 de artigo da AFL exige que a página aberta, a notícia esperada e as notícias visíveis identifiquem a mesma origem e caminho.",
+    });
+  }
+  if (!captureClassTrustContext.trusted && explicitCaptureClass) {
+    const trustIssues: Array<{ code: string; label: string; detail: string }> = captureClassTrustContext.reasons
+      .map((reason) => {
+        const codeMap: Record<string, string> = {
+          target_date_invalid: "capture_class_target_date_invalid",
+          target_date_persisted_invalid_or_missing: "capture_class_target_date_missing",
+          source_job_id_missing: "capture_class_source_job_missing",
+          audit_policy_version_unknown: "capture_class_policy_version_unknown",
+          captured_at_invalid_or_missing: "capture_class_capture_at_invalid",
+          target_date_mismatch: "capture_class_target_date_mismatch",
+          captured_at_date_mismatch: "capture_class_capture_at_date_mismatch",
+          capture_class_missing: "capture_class_missing",
+        };
+        const code = codeMap[reason] ?? "capture_class_untrusted";
+        return {
+          code,
+          label: "Classificação de captura não confiável",
+          detail: `A evidência definiu ${recordedCaptureClassRaw}, porém o contrato não foi validado: ${reason}.`,
+        };
+      });
+    issues.push(...trustIssues.slice(0, 6));
+  }
+  if (declaredHistoricalReconstruction && !reconstructionTimestampMatchesServerCapture) {
+    issues.push({
+      code: "reconstruction_provenance_invalid",
+      label: "Timestamp de reconstrução não confiável",
+      detail: "A data real de reconstrução deve ser válida e corresponder ao registro de captura persistido pelo servidor.",
+    });
+  }
   if (!desktopMatches) {
     issues.push({
       code: "desktop_time_mismatch",
       label: "Hora da moldura divergente",
       detail: requestedCaptureAt
-        ? `A moldura do sistema não mostrou o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
-        : `A moldura do sistema não mostrou a data esperada para ${targetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
+        ? `A moldura do sistema não mostrou o horário esperado para ${desktopExpectedAt || requestedCaptureAt}. Valor encontrado: ${systemDateTime || "não encontrado"}.`
+        : `A moldura do sistema não mostrou a data esperada para ${canonicalTargetDate}. Valor encontrado: ${systemDateTime || "não encontrado"}.`,
     });
   }
   if (!pageMatches) {
@@ -418,16 +1123,49 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       label: "Hora do site divergente",
       detail: requestedCaptureAt
         ? `O site não exibiu o horário esperado para ${requestedCaptureAt}. Valor encontrado: ${pageDateReference || "não encontrado"}.`
-        : `O site não exibiu a data esperada para ${targetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
+        : `O site não exibiu a data esperada para ${canonicalTargetDate}. Valor encontrado: ${pageDateReference || "não encontrado"}.`,
     });
   }
-  if (!contentTimeline.ok && (requireRetroContentProof || contentTimeline.reason === "future_samples")) {
+  const finalPageClockRequired = reconstructionProvenanceV4 && recordedCaptureClass === CAPTURE_CLASS_HISTORICAL_RECOVERY
+    && (options.finalPageClockRequired === true || metadata.visiblePageDateAudit?.version === 2);
+  const clockCaptionSeparation = evaluateClockCaptionSeparation(metadata);
+  const finalPageClockVerified = !(finalPageClockRequired || metadata.liveClockSynchronization?.version === 1) || evaluateFinalPageClockProof(metadata).ok && clockCaptionSeparation.ok;
+  if (!clockCaptionSeparation.ok) issues.push({ code: "reconstruction_notice_occludes_proof", label: "Aviso sobrepõe o banner", detail: "A reconstrução precisa reservar 36px livres abaixo do banner para o aviso." });
+  if (!finalPageClockVerified) {
+    issues.push({
+      code: "final_page_clock_unverified",
+      label: "Relógio do site ausente ou não comprovado no PNG final",
+      detail: "O candidato histórico precisa comprovar data/hora renderizadas, visibilidade no viewport final e correspondência dos pixels da região do relógio.",
+    });
+  }
+  if (!contentTimelineOk) {
     issues.push({
       code: contentTimeline.reason === "future_samples" ? "content_time_mismatch" : "retro_content_unverified",
       label: contentTimeline.reason === "future_samples" ? "Conteúdo da página não está retroativo" : "Conteúdo editorial retroativo não comprovado",
       detail: contentTimeline.reason === "future_samples"
         ? `Foram detectadas datas posteriores ao captureAt. maxObserved=${contentTimeline.maxObserved || "n/a"}; exemplos=${contentTimeline.futureSamples.join(" | ") || "n/a"}.`
         : `A evidência não contém amostras editoriais válidas. reason=${contentTimeline.reason}; parsed=${contentTimeline.parsedCount}/${contentTimeline.sampleCount}.`,
+    });
+  }
+  if (requireAbsoluteEditorialDates && !contentTimeline.maxObserved) {
+    issues.push({
+      code: "absolute_content_time_missing",
+      label: "Data editorial absoluta ausente",
+      detail: "A prova histórica precisa conter ao menos uma data editorial absoluta visível.",
+    });
+  }
+  if (requireEditorialDateMatchTarget && contentTimeline.targetDateMatches !== true) {
+    issues.push({
+      code: "editorial_date_target_mismatch",
+      label: "Data interna da notícia divergente",
+      detail: `A notícia visível precisa ter a data-alvo ${canonicalTargetDate}. Datas encontradas: ${contentTimeline.observedDates.join(", ") || "nenhuma"}.`,
+    });
+  }
+  if (!relativeContentTimeline.ok) {
+    issues.push({
+      code: "relative_content_time_unresolved",
+      label: "Data editorial relativa na prova",
+      detail: `A prova histórica exige datas absolutas, mas contém: ${relativeContentTimeline.relativeSamples.join(" | ")}.`,
     });
   }
   if (requireRetroContentProof && retroContentProof?.status !== "approved") {
@@ -449,6 +1187,10 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       }
     }
   }
+  if (!partialSourceEditorialOk) {
+    issues.push({ code: "partial_source_editorial_unverified", label: "Prova editorial nova incompleta",
+      detail: "A fonte legada comprova somente a posição; o candidato ROO v4 exige três notícias válidas, zero futuras e hash editorial." });
+  }
   if (requireSlotVisibleInViewport && !slotMostlyVisible) {
     issues.push({
       code: "slot_position_mismatch",
@@ -468,6 +1210,15 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       code: "slot_images_incomplete",
       label: "Imagens do anúncio incompletas",
       detail: `${slotImagesLoaded}/${slotImagesTotal} imagens do slot do anúncio carregaram completamente.`,
+    });
+  }
+  if (!readinessOk) {
+    issues.push({
+      code: readinessAudit ? "readiness_audit_failed" : "readiness_audit_missing",
+      label: "Conteúdo crítico incompleto",
+      detail: readinessAudit
+        ? `readinessAudit.approved=false: ${JSON.stringify(readinessAudit)}`
+        : "A captura exige readinessAudit, mas o metadado está ausente.",
     });
   }
   if (!mediaMatchesInsertion) {
@@ -567,14 +1318,20 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     issues.push({
       code: "video_player_proof_incomplete",
       label: "Player do vídeo incompleto",
-      detail: `A prova do vídeo precisa mostrar controles e barra de progresso. Estado atual: ${videoProofCurrentTime.toFixed(2)}s de ${videoProofDuration.toFixed(2)}s, controls=${videoProof.controls === true ? "sim" : "nao"}, progress=${videoProgressVisible ? "sim" : "nao"}.`,
+      detail: `A prova do vídeo precisa mostrar controles e barra de progresso${videoPlayerProof.nativeRequired ? " nativos, medidos e preservados no PNG final" : " conforme o contrato legado"}. Estado atual: ${videoProofCurrentTime.toFixed(2)}s de ${videoProofDuration.toFixed(2)}s, controls=${videoPlayerProof.controlsVisible ? "sim" : "nao"}, progress=${videoProgressVisible ? "sim" : "nao"}.`,
     });
   }
   return {
+    captureClass: normalizedCaptureClass,
+    targetDate: canonicalTargetDate,
+    auditPolicyVersion,
+    capturedAt,
+    sourceJobId,
     requestedCaptureAt,
     systemDateTime,
     pageDateText,
     pageDateObserved,
+    verifiedClockPixelReview,
     isVideoCapture,
     playerProof: {
       ok: playerProofOk,
@@ -582,8 +1339,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       duration: videoProofDuration,
       targetTime: typeof videoProof.targetTime === "number" ? videoProof.targetTime : null,
       randomSeed: typeof videoProof.randomSeed === "number" ? videoProof.randomSeed : null,
-      controlsVisible: videoProof.controls === true,
+      controlsVisible: videoPlayerProof.controlsVisible,
       progressVisible: videoProgressVisible,
+      progressSource: videoPlayerProof.progressSource,
+      nativeProgressRequired: videoPlayerProof.nativeRequired,
+      nativeProgressVerified: videoPlayerProof.nativeProgressVerified,
+      finalProgressPixelsVerified: videoPlayerProof.finalProgressPixelsVerified,
       playResolved: videoProof.playResolved === true,
     },
     visualAudit: {
@@ -596,6 +1357,8 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       viewportBackgroundsLoaded,
       viewportVideosTotal,
       viewportVideosLoaded,
+      readinessAudit,
+      readinessOk,
       slotStableFrameOk,
       slotLegibilityOk,
       slotMotionScore: typeof metadata.slotMotionScore === "number" ? metadata.slotMotionScore : null,
@@ -622,6 +1385,7 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
       resolvedGroupId: resolvedMapping?.groupId ?? null,
     },
     contentTimeline,
+    relativeContentTimeline,
     retroContentProof,
     mediaProof: {
       ok: mediaMatchesInsertion,
@@ -649,10 +1413,12 @@ export function evaluateCaptureMetadata(metadata: any, targetDate: string) {
     slotVisibility,
     desktopMatches,
     pageMatches,
+    finalPageClockRequired,
+    finalPageClockVerified,
     playerProofOk,
     visualsOk,
     issues,
-    ok: desktopMatches && pageMatches && visualsOk && contentTimelineOk && retroContentProofOk && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
+    ok: captureClassContractOk && desktopMatches && pageMatches && finalPageClockVerified && clockCaptionSeparation.ok && visualsOk && contentTimelineOk && retroContentProofOk && partialSourceEditorialOk && aflArticleIdentityMatches && (!requireAbsoluteEditorialDates || Boolean(contentTimeline.maxObserved)) && (!requireEditorialDateMatchTarget || contentTimeline.targetDateMatches === true) && relativeContentTimeline.ok && mediaMatchesInsertion && finalProofStyle !== "viewport_with_slot_inset" && finalPngSlotAuditOk && headerAdPolicyAuditOk && finalPngHeaderAdPolicyAuditOk && (!requireSlotVisibleInViewport || slotMostlyVisible),
   };
 }
 
@@ -707,7 +1473,11 @@ export function resolveRegenerationCaptureAt(
   targetDate: string,
   insertionId: number,
   audit?: ReturnType<typeof evaluateCaptureMetadata> | null,
+  now = new Date(),
 ) {
+  if (targetDate === formatIsoDate(now)) {
+    return null;
+  }
   if (audit?.requestedCaptureAt && isCaptureAtInRetroWindow(audit.requestedCaptureAt)) {
     return audit.requestedCaptureAt.slice(0, 16);
   }

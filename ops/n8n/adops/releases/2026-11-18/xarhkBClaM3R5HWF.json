@@ -1,0 +1,329 @@
+{
+  "id": "xarhkBClaM3R5HWF",
+  "name": "ADOPS — Confirmar resposta WhatsApp",
+  "active": true,
+  "versionId": "2512f5b4-ea4e-4b76-a305-436847746f28",
+  "nodes": [
+    {
+      "id": "4829608f-3ed3-4d4e-b33d-6af4b1ac778e",
+      "name": "Consumir ACK após resposta persistida",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "ef590340-296e-435a-8446-4faf2655006a",
+      "name": "Reservar ACK único",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/feedback/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "4af38a08-e62e-4e8e-a85a-ca3f0b9686da",
+      "name": "Existe ACK novo reservado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Reservar ACK único\").first().json.items.length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "219ecaa6-6bab-451c-a188-271a4209b1f6",
+      "name": "Enviar ACK uma única vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://cod5-evolution-evolution-1:8080/message/sendText/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Reservar ACK único\").first().json.items[0].request }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      }
+    },
+    {
+      "id": "dcfdc90e-32b0-48a6-85f3-071c03dafe58",
+      "name": "Guardar recibo do mesmo ACK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/feedback/receipts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {messageKey: $(\"Reservar ACK único\").first().json.items[0].messageKey,receipt: $(\"Enviar ACK uma única vez\").first().json} }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "7c89e649-d513-4445-9184-ac4321439399",
+      "name": "Consultar estado do ACK por providerId",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/whatsapp/feedback/status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "15141ec4-2329-40d9-a278-9e628dc80555",
+      "name": "Mesmo ACK e providerId persistidos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.items.some(x => x.message_key === $(\"Guardar recibo do mesmo ACK\").first().json.messageKey && x.provider_id === $(\"Guardar recibo do mesmo ACK\").first().json.providerId) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2cb7b482-74fd-4495-b394-e12ddce522e7",
+      "name": "Conferir ACK pendente a cada minuto",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "17 * * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1585c49b-b75a-432e-8890-63483cfbfef3",
+      "name": "Recibo divergente: preservar sem reenviar",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "errorMessage": "Feedback sem confirmação do mesmo providerId. Preservar tentativa; não reenviar."
+      }
+    }
+  ],
+  "connections": {
+    "Consumir ACK após resposta persistida": {
+      "main": [
+        [
+          {
+            "node": "Reservar ACK único",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar ACK único": {
+      "main": [
+        [
+          {
+            "node": "Existe ACK novo reservado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Existe ACK novo reservado?": {
+      "main": [
+        [
+          {
+            "node": "Enviar ACK uma única vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar ACK uma única vez": {
+      "main": [
+        [
+          {
+            "node": "Guardar recibo do mesmo ACK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar recibo do mesmo ACK": {
+      "main": [
+        [
+          {
+            "node": "Consultar estado do ACK por providerId",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar estado do ACK por providerId": {
+      "main": [
+        [
+          {
+            "node": "Mesmo ACK e providerId persistidos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir ACK pendente a cada minuto": {
+      "main": [
+        [
+          {
+            "node": "Reservar ACK único",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo ACK e providerId persistidos?": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Recibo divergente: preservar sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromAList",
+    "callerIds": "ME2wagCk0TbmuOzF"
+  }
+}

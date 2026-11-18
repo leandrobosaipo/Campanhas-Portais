@@ -5,7 +5,19 @@ const {
   parseIsoLikeDate,
   evaluateContentTimeline,
   evaluateRetroContentProof,
+  requiresRetroEditorialProof,
 } = require("./capture-insertion-proof.cjs");
+
+assert.equal(
+  requiresRetroEditorialProof("2026-07-10", new Date("2026-07-10T23:00:00Z")),
+  false,
+  "captura do próprio dia não exige prova editorial de reconstrução retroativa",
+);
+assert.equal(
+  requiresRetroEditorialProof("2026-07-09", new Date("2026-07-10T23:00:00Z")),
+  true,
+  "captura de dia anterior continua exigindo prova editorial retroativa",
+);
 
 assert.equal(
   parseIsoLikeDate("10/07/2026")?.toISOString(),

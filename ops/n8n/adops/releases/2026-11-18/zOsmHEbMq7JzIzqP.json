@@ -1,0 +1,1045 @@
+{
+  "id": "zOsmHEbMq7JzIzqP",
+  "name": "ADOPS — Preparar candidata histórica com referência",
+  "active": true,
+  "versionId": "7be0520d-4e53-4ce9-b7a3-47bb3a28e0a4",
+  "nodes": [
+    {
+      "id": "39c974a2-0094-4cad-af2f-e44b04ced43f",
+      "name": "Iniciar preparação manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "9376d8f6-c4bd-4e51-8fb6-301f44b7a91d",
+      "name": "Definir entrada vazia segura",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "captureAt",
+              "name": "captureAt",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "sourceCaptureJobId",
+              "name": "sourceCaptureJobId",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ded74c59-2c9b-4337-a770-0b87162e6c84",
+      "name": "Normalizar alvo",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($json.insertionId || 0) }}"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ String($json.date || \"\") }}"
+            },
+            {
+              "id": "captureAt",
+              "name": "captureAt",
+              "type": "string",
+              "value": "={{ String($json.captureAt || \"\") }}"
+            },
+            {
+              "id": "sourceCaptureJobId",
+              "name": "sourceCaptureJobId",
+              "type": "string",
+              "value": "={{ String($json.sourceCaptureJobId || \"\") }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "114688d0-f0c7-4a06-91ef-baab41629ca0",
+      "name": "Consultar inserção publicada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "16a130e0-24fe-46af-8db1-3d7012fa9a5a",
+      "name": "Alvo histórico elegível?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const i = $(\"Consultar inserção publicada\").item.json; const a = $(\"Normalizar alvo\").first().json; const f = String(i.localFormatoNormalizado || i.localFormato || \"\").normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g, \"\").toUpperCase().trim(); const group11Formats = [\"INTERNO DE NOTICIAS\", \"BANNER INTERNO NOTICIAS\", \"INTERNO DE NOTICIA\", \"INTERNO NOTICIA\", \"INTERNO — MATERIA — 728X90\", \"INTERNO — 728X90 — MATERIA\"]; const date = String(a.date); const captureAt = String(a.captureAt); const sourceJobId = String(a.sourceCaptureJobId || \"\"); const safeSourceJobId = /^[A-Za-z0-9._:-]{1,160}$/.test(sourceJobId) && !sourceJobId.includes(\"..\"); const today = $now.setZone(\"America/Cuiaba\").toISODate(); const start = String(i.periodoInicio || \"\"); const end = String(i.periodoFim || \"\"); const common = Number(a.insertionId) > 0 && i.siteSigla === \"PERRENGUE\" && i.statusNormalizado === \"publicado\" && i.bannerPublicadoNoSite === true && Boolean(i.mediaUrl) && Boolean(i.rowVersion) && !i.archivedAt && !i.supersededByInsertionId && /^\\d{4}-\\d{2}-\\d{2}$/.test(date) && date >= \"2026-10-20\" && date < today && date >= start && date <= end; const legacyGroup11 = !sourceJobId && group11Formats.includes(f) && end < today && /^\\d{4}-\\d{2}-\\d{2}T(?:18|19|20|21):[0-5]\\d:[0-5]\\d-04:00$/.test(captureAt) && captureAt.slice(0, 10) === date; const failedHome2Source = safeSourceJobId && f === \"HOME 2\" && end >= today && !captureAt; return common && (legacyGroup11 || failedHome2Source); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "821ce415-d9f5-4362-bbe4-0d243947fef2",
+      "name": "Consultar prova canônica existente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/status?date=\" + encodeURIComponent($(\"Normalizar alvo\").first().json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "596ce1bb-d638-4585-aa33-f65229161e53",
+      "name": "Já existe prova canônica válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar prova canônica existente\").item.json.status === \"audited\" && $(\"Consultar prova canônica existente\").item.json.checklistValidation?.approved === true && $(\"Consultar prova canônica existente\").item.json.audit?.ok === true && Array.isArray($(\"Consultar prova canônica existente\").item.json.audit?.issues) && $(\"Consultar prova canônica existente\").item.json.audit.issues.length === 0 && $(\"Consultar prova canônica existente\").item.json.isReachable === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "448e6fd9-668c-4e32-99de-95d6dd3b95a4",
+      "name": "Preservar prova válida",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo\").first().json.insertionId) }}"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $(\"Normalizar alvo\").first().json.date }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "preserved_valid_proof"
+            },
+            {
+              "id": "proof",
+              "name": "proof",
+              "type": "object",
+              "value": "={{ $(\"Consultar prova canônica existente\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fb04cc12-fd3a-415c-9386-c061f5bfb783",
+      "name": "Falta confirmada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar prova canônica existente\").item.json.status === \"missing\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "763c73ba-6209-4631-90b0-67eb278417dc",
+      "name": "Solicitar referência administrativa uma vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs/historical-capture-reference",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-historical-ref:\" + String($(\"Normalizar alvo\").first().json.insertionId) + \":\" + String($(\"Normalizar alvo\").first().json.date) + ($(\"Normalizar alvo\").first().json.sourceCaptureJobId ? \":source:\" + String($(\"Normalizar alvo\").first().json.sourceCaptureJobId) : \":\" + String($(\"Normalizar alvo\").first().json.captureAt).replace(/[^A-Za-z0-9._:-]/g, \"_\")) + \":v1\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $(\"Normalizar alvo\").first().json.sourceCaptureJobId ? {insertionId:Number($(\"Normalizar alvo\").first().json.insertionId),date:String($(\"Normalizar alvo\").first().json.date),sourceCaptureJobId:String($(\"Normalizar alvo\").first().json.sourceCaptureJobId)} : {insertionId:Number($(\"Normalizar alvo\").first().json.insertionId),date:String($(\"Normalizar alvo\").first().json.date),captureAt:String($(\"Normalizar alvo\").first().json.captureAt)} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "4d77372f-9d16-45fe-8d2c-34eef687bce5",
+      "name": "Consultar o mesmo job de referência",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Solicitar referência administrativa uma vez\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "8adcc641-2f3b-4b43-8a1e-1162a210ae0e",
+      "name": "Referência ainda em andamento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        32
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\",\"ready_for_runner\",\"running\"].includes($(\"Consultar o mesmo job de referência\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "82db3d2e-4ec4-4046-bb17-1d104a3aa02f",
+      "name": "Aguardar referência sem reenviar",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        80
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "webhookId": "6716c23b-a179-4f03-8191-910a7c7ebd4f"
+    },
+    {
+      "id": "89a36384-15b3-405b-8d02-e8b2985028d6",
+      "name": "Referência concluída e vinculada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        272
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const r = $(\"Consultar o mesmo job de referência\").item.json.result?.execution?.reference; const a = $(\"Normalizar alvo\").first().json; const i = $(\"Consultar inserção publicada\").item.json; const j = $(\"Solicitar referência administrativa uma vez\").first().json; const source = String(a.sourceCaptureJobId || \"\"); const common = $(\"Consultar o mesmo job de referência\").item.json.status === \"completed\" && r?.sourceJobId === j.jobId && Number(r?.insertionId) === Number(a.insertionId) && r?.date === a.date && r?.historicalDisplayConfirmed === false && /^[a-f0-9]{64}$/i.test(String(r?.referenceHash || \"\")) && typeof r?.captureAt === \"string\" && r.captureAt.startsWith(String(a.date) + \"T\"); const failedSource = !source || (r?.siteSigla === \"PERRENGUE\" && Number(r?.groupId) === 3 && r?.page === \"home\" && r?.slotSelector === \".g.g-3\" && r?.contextSelector === \".g.g-3\" && r?.periodStart === i.periodoInicio && r?.periodEnd === i.periodoFim && r?.rowVersion === i.rowVersion && r?.mediaUrl === i.mediaUrl && r?.sourceKind === \"registered_adrotate_schedule\" && r?.failureSource?.sourceCaptureJobId === source && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(r?.failureSource?.sourceCaptureLogId || \"\")) && /^[a-f0-9]{64}$/i.test(String(r?.failureSource?.sourceHash || \"\")) && /^[a-f0-9]{64}$/i.test(String(r?.failureSource?.viewportSha256 || \"\")) && r?.failureSource?.errorCode === \"final_identity_media_clipped\" && r?.failureSource?.date === a.date && Number(r?.failureSource?.insertionId) === Number(a.insertionId) && typeof r?.failureSource?.originalCaptureAt === \"string\" && r.failureSource.originalCaptureAt.startsWith(String(a.date) + \"T\") && r.captureAt === r.failureSource.originalCaptureAt && r?.historicalDisplayConfirmed === false); const captureAtMatches = source ? failedSource : r?.captureAt === a.captureAt; return common && failedSource && captureAtMatches; })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "56387ad2-728d-4f30-ab95-e874bd562392",
+      "name": "Solicitar captura candidata uma vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2688,
+        272
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/jobs\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-historical-capture:\" + String($(\"Normalizar alvo\").first().json.insertionId) + \":\" + String($(\"Normalizar alvo\").first().json.date) + ($(\"Normalizar alvo\").first().json.sourceCaptureJobId ? \":source:\" + String($(\"Normalizar alvo\").first().json.sourceCaptureJobId) : \"\") + \":\" + String($(\"Solicitar referência administrativa uma vez\").first().json.jobId) + \":v1\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {date:String($(\"Normalizar alvo\").first().json.date),captureAt:String($(\"Consultar o mesmo job de referência\").item.json.result.execution.reference.captureAt),candidate:true,promote:false,replace:false,referenceJobId:String($(\"Solicitar referência administrativa uma vez\").first().json.jobId)} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "c3102b42-b042-4afb-95f0-ef4215f051cf",
+      "name": "Consultar o mesmo job de captura",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2912,
+        272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/jobs/\" + encodeURIComponent($(\"Solicitar captura candidata uma vez\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "de7a1509-66ea-4403-95dd-600fc3cc2be4",
+      "name": "Captura ainda em andamento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3136,
+        224
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\",\"ready_for_runner\",\"running\"].includes($(\"Consultar o mesmo job de captura\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "6c06ad04-e6c5-4052-8f68-68c0f5f18173",
+      "name": "Aguardar captura sem reenviar",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        272
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "webhookId": "c1065ed4-4a26-47c8-be73-51b662e3b309"
+    },
+    {
+      "id": "fcee248c-e6ca-485e-bf86-960d459016bd",
+      "name": "Captura candidata concluída?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3360,
+        464
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const j = $(\"Consultar o mesmo job de captura\").item.json; const items = Array.isArray(j.items) ? j.items : []; const item = items[0]; const a = $(\"Normalizar alvo\").first().json; const reference = $(\"Consultar o mesmo job de referência\").item.json.result?.execution?.reference; const expectedCaptureAt = a.sourceCaptureJobId ? reference?.captureAt : a.captureAt; return j.status === \"completed\" && Number(j.failedTargets || 0) === 0 && items.length === 1 && Number(item?.insertionId) === Number(a.insertionId) && item?.targetDate === a.date && typeof expectedCaptureAt === \"string\" && item?.captureAt === expectedCaptureAt && item?.status === \"ok\" && item?.candidateOnly === true && Boolean(item?.uploadedUrl) && /^[a-f0-9]{64}$/i.test(String(item?.manifestHash || \"\")); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "71503395-1355-4cae-872c-ed5c509e1e4b",
+      "name": "Registrar candidato para revisão humana",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3584,
+        384
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/recovery/candidates",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {insertionId:Number($(\"Normalizar alvo\").first().json.insertionId),date:String($(\"Normalizar alvo\").first().json.date),sourceJobId:String($(\"Solicitar captura candidata uma vez\").first().json.jobId)} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": false
+    },
+    {
+      "id": "35dc5d29-193c-452d-b6b8-71975e7dc93c",
+      "name": "Retornar candidato sem auditoria ou promoção",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3808,
+        384
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo\").first().json.insertionId) }}"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $(\"Normalizar alvo\").first().json.date }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $(\"Registrar candidato para revisão humana\").item.json.ok === true && $(\"Registrar candidato para revisão humana\").item.json.candidate?.state === \"registered\" && $(\"Registrar candidato para revisão humana\").item.json.candidate?.sourceJobId === $(\"Solicitar captura candidata uma vez\").first().json.jobId && Number($(\"Registrar candidato para revisão humana\").item.json.candidate?.insertionId) === Number($(\"Normalizar alvo\").first().json.insertionId) && $(\"Registrar candidato para revisão humana\").item.json.candidate?.targetDate === $(\"Normalizar alvo\").first().json.date && $(\"Registrar candidato para revisão humana\").item.json.candidate?.historicalDisplayConfirmed === false ? \"candidate_pending_review\" : \"candidate_registration_unconfirmed\" }}"
+            },
+            {
+              "id": "referenceJobId",
+              "name": "referenceJobId",
+              "type": "string",
+              "value": "={{ String($(\"Solicitar referência administrativa uma vez\").first().json.jobId) }}"
+            },
+            {
+              "id": "captureJobId",
+              "name": "captureJobId",
+              "type": "string",
+              "value": "={{ String($(\"Solicitar captura candidata uma vez\").first().json.jobId) }}"
+            },
+            {
+              "id": "candidate",
+              "name": "candidate",
+              "type": "object",
+              "value": "={{ $(\"Registrar candidato para revisão humana\").item.json.candidate }}"
+            },
+            {
+              "id": "reference",
+              "name": "reference",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de referência\").item.json.result.execution.reference }}"
+            },
+            {
+              "id": "capture",
+              "name": "capture",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job de captura\").item.json.items[0] }}"
+            },
+            {
+              "id": "historicalDisplayConfirmed",
+              "name": "historicalDisplayConfirmed",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "meaning",
+              "name": "meaning",
+              "type": "string",
+              "value": "A referência administrativa foi conferida e a captura foi registrada como candidata. Ela não comprova exibição original na data; auditoria e decisão humana continuam pendentes."
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "84a94cad-1abc-4957-9d0b-c5f642e64a7d",
+      "name": "Preservar falha real da captura",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        3584,
+        576
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Captura candidata não concluída; estado real=\" + String($(\"Consultar o mesmo job de captura\").item.json.status || \"desconhecido\") + \". O candidato não foi registrado; auditoria e promoção não foram executadas.\""
+      }
+    },
+    {
+      "id": "d8c209fa-1448-497c-92f2-a8edea635c08",
+      "name": "Parar sem referência confirmada",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        464
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Referência não confirmada; estado real=\" + String($(\"Consultar o mesmo job de referência\").item.json.status || \"desconhecido\") + \". Nenhuma captura candidata foi solicitada.\""
+      }
+    },
+    {
+      "id": "a440664b-8130-45d3-925a-0869093fa270",
+      "name": "Preservar estado inconclusivo",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        288
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Sem falta canônica confirmada para \" + String($(\"Normalizar alvo\").first().json.insertionId) + \" em \" + String($(\"Normalizar alvo\").first().json.date) + \"; estado atual=\" + String($(\"Consultar prova canônica existente\").item.json.status || \"desconhecido\") + \". Nenhum trabalho foi solicitado.\""
+      }
+    },
+    {
+      "id": "44e15aa5-aef1-4ef6-b2bd-d71407bdc10c",
+      "name": "Bloquear fora do escopo histórico",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        288
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Preparação bloqueada. Exige grupo 11 encerrado com captureAt autorizado, ou inserção PERRENGUE/HOME 2 ainda vigente com sourceCaptureJobId seguro; a data deve ser histórica e estar no período."
+      }
+    },
+    {
+      "id": "fefa6926-63cc-4a43-ba49-107f8fcace14",
+      "name": "Receber alvo histórico",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        288
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "insertionId",
+              "type": "number"
+            },
+            {
+              "name": "date",
+              "type": "string"
+            },
+            {
+              "name": "captureAt",
+              "type": "string"
+            },
+            {
+              "name": "sourceCaptureJobId",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Iniciar preparação manual": {
+      "main": [
+        [
+          {
+            "node": "Definir entrada vazia segura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir entrada vazia segura": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar alvo": {
+      "main": [
+        [
+          {
+            "node": "Consultar inserção publicada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar inserção publicada": {
+      "main": [
+        [
+          {
+            "node": "Alvo histórico elegível?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar prova canônica existente": {
+      "main": [
+        [
+          {
+            "node": "Já existe prova canônica válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já existe prova canônica válida?": {
+      "main": [
+        [
+          {
+            "node": "Preservar prova válida",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Falta confirmada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falta confirmada?": {
+      "main": [
+        [
+          {
+            "node": "Solicitar referência administrativa uma vez",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar estado inconclusivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solicitar referência administrativa uma vez": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de referência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar o mesmo job de referência": {
+      "main": [
+        [
+          {
+            "node": "Referência ainda em andamento?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Referência ainda em andamento?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar referência sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Referência concluída e vinculada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar referência sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de referência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Referência concluída e vinculada?": {
+      "main": [
+        [
+          {
+            "node": "Solicitar captura candidata uma vez",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parar sem referência confirmada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solicitar captura candidata uma vez": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar o mesmo job de captura": {
+      "main": [
+        [
+          {
+            "node": "Captura ainda em andamento?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Captura ainda em andamento?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar captura sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Captura candidata concluída?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar captura sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job de captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Captura candidata concluída?": {
+      "main": [
+        [
+          {
+            "node": "Registrar candidato para revisão humana",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar falha real da captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar candidato para revisão humana": {
+      "main": [
+        [
+          {
+            "node": "Retornar candidato sem auditoria ou promoção",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber alvo histórico": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alvo histórico elegível?": {
+      "main": [
+        [
+          {
+            "node": "Consultar prova canônica existente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear fora do escopo histórico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

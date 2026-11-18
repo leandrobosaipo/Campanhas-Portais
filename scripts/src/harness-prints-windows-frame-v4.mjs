@@ -45,7 +45,7 @@ function readCaptureMetadata(metaPath) {
   try {
     const data = JSON.parse(readFileSync(path.join(repoRoot, metaPath), "utf8"));
     const ok =
-      data.frameTemplateVersion === "windows11-chrome-light-similar-v4" &&
+      ["windows11-chrome-light-similar-v4", "windows11-chrome-light-similar-v5"].includes(data.frameTemplateVersion) &&
       data.chromeTopTheme === "light" &&
       data.tabSurfaceRendered === true &&
       data.tabTitleRendered === true &&
@@ -64,7 +64,7 @@ function readCaptureMetadata(metaPath) {
         tabIconFallback: data.tabIconFallback,
         finalPng: metaPath.replace("-meta.json", "-proof.png"),
       }, null, 2),
-      stderr: ok ? "" : "metadata da moldura v4 nao passou no contrato",
+      stderr: ok ? "" : "metadata da moldura v4/v5 nao passou no contrato",
     });
   } catch (error) {
     results.push({
@@ -140,4 +140,3 @@ console.log(JSON.stringify({
 }, null, 2));
 
 if (failed > 0) process.exit(1);
-

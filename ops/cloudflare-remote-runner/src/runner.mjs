@@ -1,12 +1,36 @@
+import { currentDrivePackages } from "./drive-monitor-resource.mjs";
+import { schedulingOwnedByN8n } from "../../shared/scheduling-owner.mjs";
+import {assertCampaignExecutionGuard} from '../../shared/campaign-execution-guard.mjs';
+import { selectDrivePackagePdf } from "./drive-pdf-selection.mjs";
 import { execFile } from "node:child_process";
+import { parseRequiredEvidenceDates, assertRequiredInsertionScope } from "../../shared/required-evidence-dates.mjs";
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import net from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import os from "node:os";
 import process from "node:process";
+import { buildRunnerPools } from "./runner-concurrency.mjs";
+import { cod5_coordenar_reservas } from "./runner-polling.mjs";
+import { filterOperationalMediaCandidates, planCampaignPublicationReconciliation } from "./publication-reconcile-policy.mjs";
+import { planCommercialReconciliation } from "./commercial-reconcile-policy.mjs";
+import { classifyDailyPrintOutcome, classifyDailyReconciliationOperation } from "../../shared/daily-operations-policy.mjs";
+import { selectDailyPrintCandidates, resolveDailyPrintCompetencia } from "../../shared/daily-print-candidates.mjs";
+import { buildDailyPrintLiveProgress } from "../../shared/daily-print-status.mjs";
+import { aggregateCaptureTimings, summarizeCaptureJobTimings } from "../../shared/capture-stage-timings.mjs";
+import { isReusableAuditedEvidence, isScheduledMonthlyReportPayload, resolveMonthlyReportEvidenceWindow } from "../../../scripts/src/monthly-evidence-contract.mjs";
+import { executeSheetCorrection } from "./sheet-correction.mjs";
+import { deliverDrivePiTelegram } from "./drive-pi-telegram-policy.mjs";
+import { DEFAULT_VIDEO_DISK_RESERVE_BYTES, DEFAULT_VIDEO_MEDIA_MAX_BYTES, assertExpectedDriveMediaMd5, findVerifiedArchivedMedia, isVideoMedia, mediaMaxBytes, probeVideoMetadata, streamDriveMediaToArchive } from "./drive-pi-media-download.mjs";
+import { COD5_VIDEO_COMPRESSOR_URL_SOURCE_THRESHOLD_BYTES, COD5_VIDEO_COMPRESSOR_ADOPS_SOURCE_MAX_BYTES, resolveAdopsVideoCompressorApiBase, shouldUseAdopsVideoSourceUrl, assertLargeAdopsVideoDriveMd5, buildAdopsVideoSourceIdempotencyKey, buildAdopsVideoSourceUrl, identifyAdopsVideoSource } from "./adops-video-source-policy.mjs";
+import { identifyAdopsSourceFile, ensureAdopsSourceUploaded } from './adops-source-upload.mjs';
 
+import { maintenanceScope, maintenanceAdMatchesFromSnapshot, assertMaintenancePreview, assertMaintenanceCacheReadback, purgeScopedCloudflare, cloudflareCredentials, classifyMaintenanceTransportError, maintenanceStep } from './cache-maintenance-policy.mjs';
+import historicalReferencePolicy from '../../shared/historical-capture-reference.cjs';
 const execFileAsync = promisify(execFile);
 
 const OPS_API_BASE_URL = (process.env.OPS_API_BASE_URL || "https://adops-api.codigo5.com.br").replace(/\/$/, "");
@@ -16,10 +40,17 @@ const PRIVATE_ADOPS_API_TOKEN = process.env.PRIVATE_ADOPS_API_TOKEN || "";
 const RUNNER_ID = process.env.RUNNER_ID || `runner-${process.pid}`;
 const PROJECT_ROOT = process.env.CAMPANHAS_PORTAIS_ROOT || process.cwd();
 const POLL_INTERVAL_MS = Number.parseInt(process.env.OPS_POLL_INTERVAL_MS || "5000", 10);
+const OPS_CAMPAIGN_EXPORT_CONCURRENCY = Number.parseInt(process.env.OPS_CAMPAIGN_EXPORT_CONCURRENCY || "3", 10);
 const RUNNER_HEALTH_PORT = Number.parseInt(process.env.ADOPS_RUNNER_HEALTH_PORT || "0", 10);
 const WATCHDOG_INTERVAL_MS = Number.parseInt(process.env.OPS_WATCHDOG_INTERVAL_MS || "60000", 10);
 const RUNNER_HEARTBEAT_INTERVAL_MS = Number.parseInt(process.env.ADOPS_RUNNER_HEARTBEAT_INTERVAL_MS || "60000", 10);
+const SCHEDULER_INTERVAL_MS = Number.parseInt(process.env.ADOPS_SCHEDULER_INTERVAL_MS || "60000", 10);
+const CONTROL_PLANE_PROVIDER = (process.env.ADOPS_CONTROL_PLANE_PROVIDER || "disabled").trim();
 const RUNNER_VERSION = (process.env.ADOPS_RELEASE_SHA || process.env.ADOPS_IMAGE_TAG || "development").trim();
+const RUNNER_LOADED_SOURCE_SHA = crypto.createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex");
+const RUNNER_LOADED_MEDIA_SHA = crypto.createHash("sha256").update(await readFile(new URL("./drive-pi-media-download.mjs", import.meta.url))).digest("hex");
+const RUNNER_LOADED_REFERENCE_SHA = crypto.createHash('sha256').update(await readFile(new URL('../../shared/historical-capture-reference.cjs', import.meta.url))).digest('hex');
+const RUNNER_REPORT_VERSION = `${RUNNER_VERSION};media=${RUNNER_LOADED_MEDIA_SHA};source=${RUNNER_LOADED_SOURCE_SHA}`;
 const ANALYTICS_REPORT_PROJECT_ROOT = process.env.ANALYTICS_REPORT_PROJECT_ROOT || "/Users/leandrobosaipo/.openclaw/workspace-codigo5-manutencao/projects/perrengue-ga4-relatorio-analytics";
 const ANALYTICS_REPORT_PYTHON = process.env.ANALYTICS_REPORT_PYTHON || path.join(ANALYTICS_REPORT_PROJECT_ROOT, ".venv/bin/python");
 const ANALYTICS_REPORT_HOOK_URL = (process.env.ANALYTICS_REPORT_HOOK_URL || "").trim();
@@ -29,7 +60,7 @@ const DRIVE_PI_MONITOR_ROOT_FOLDER_ID = (process.env.DRIVE_PI_MONITOR_ROOT_FOLDE
 const DRIVE_PI_MONITOR_INTERVAL_MS = Number.parseInt(process.env.DRIVE_PI_MONITOR_INTERVAL_MS || "300000", 10);
 const DRIVE_PI_MONITOR_STATE_FILE = process.env.DRIVE_PI_MONITOR_STATE_FILE || "/var/lib/adops/drive-pi-monitor-state.json";
 const DRIVE_PI_MONITOR_MAX_ITEMS = Number.parseInt(process.env.DRIVE_PI_MONITOR_MAX_ITEMS || "2000", 10);
-const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "30000", 10);
+const ADOPS_DRIVE_REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_DRIVE_REQUEST_TIMEOUT_MS || "300000", 10);
 const ADOPS_DRIVE_RETRY_MAX_ATTEMPTS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_ATTEMPTS || "7", 10);
 const ADOPS_DRIVE_RETRY_BASE_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_BASE_MS || "2000", 10);
 const ADOPS_DRIVE_RETRY_MAX_MS = Number.parseInt(process.env.ADOPS_DRIVE_RETRY_MAX_MS || "30000", 10);
@@ -40,6 +71,10 @@ const GOOGLE_DRIVE_ACCESS_TOKEN = (process.env.GOOGLE_DRIVE_ACCESS_TOKEN || "").
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || "").trim();
 const GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON = (process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || "").trim();
 const ADOPS_DRIVE_PI_ALLOW_MUTATION = process.env.ADOPS_DRIVE_PI_ALLOW_MUTATION === "true";
+// This gate is intentionally independent from the generic Drive/AI intake.
+// It permits only the deterministic planilha + snapshot reconciliation flow.
+const ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED = process.env.ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED === "true";
+const ADOPS_COMMERCIAL_RECONCILE_APPLY_ENABLED = process.env.ADOPS_COMMERCIAL_RECONCILE_APPLY_ENABLED === "true";
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const ADOPS_PI_AGENT_ENABLED = process.env.ADOPS_PI_AGENT_ENABLED === "true";
 const ADOPS_PI_AGENT_AUTO_APPLY = process.env.ADOPS_PI_AGENT_AUTO_APPLY === "true";
@@ -50,6 +85,7 @@ const ADOPS_PI_AGENT_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PI_AGENT_TIM
 const ADOPS_PI_AGENT_RETRIES = Number.parseInt(process.env.ADOPS_PI_AGENT_RETRIES || "1", 10);
 const ADOPS_PI_AGENT_VERSION = "adops-pi-agent-v1";
 const COD5_VIDEO_COMPRESSOR_API_BASE = (process.env.COD5_VIDEO_COMPRESSOR_API_BASE || "https://video-compress.codigo5.com.br").replace(/\/$/, "");
+const COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE = resolveAdopsVideoCompressorApiBase(process.env);
 const COD5_VIDEO_COMPRESSOR_API_TOKEN = (process.env.COD5_VIDEO_COMPRESSOR_API_TOKEN || "").trim();
 const COD5_VIDEO_COMPRESSOR_PROFILE = (process.env.COD5_VIDEO_COMPRESSOR_PROFILE || "balanced-720p").trim();
 const COD5_VIDEO_COMPRESSOR_TIMEOUT_MS = Number.parseInt(process.env.COD5_VIDEO_COMPRESSOR_TIMEOUT_MS || "900000", 10);
@@ -66,6 +102,7 @@ const ADOPS_VIDEO_MEDIA_BUCKET_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_BUCKET_BY
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL = (process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE = process.env.ADOPS_VIDEO_MEDIA_PUBLIC_BASE_BY_SITE || "";
 const ADOPS_MEDIA_MAX_BYTES = Number.parseInt(process.env.ADOPS_MEDIA_MAX_BYTES || String(256 * 1024 * 1024), 10);
+const ADOPS_VIDEO_MEDIA_MAX_BYTES = Number.parseInt(process.env.ADOPS_VIDEO_MEDIA_MAX_BYTES || String(DEFAULT_VIDEO_MEDIA_MAX_BYTES), 10);
 const ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS = (process.env.ADOPS_DRIVE_PI_ALLOWED_SITE_SIGLAS || "")
   .split(",")
   .map((item) => item.trim().toUpperCase())
@@ -82,13 +119,14 @@ const ADOPS_PERRENGUE_CONTAINER_WP_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER
 const ADOPS_PERRENGUE_CONTAINER_PHP_BIN = (process.env.ADOPS_PERRENGUE_CONTAINER_PHP_BIN || "php").trim();
 const ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH = (process.env.ADOPS_PERRENGUE_CONTAINER_WP_CLI_PATH || "wp").trim();
 const ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE = process.env.ADOPS_PERRENGUE_PORTAINER_TLS_INSECURE === "true";
-const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "600000", 10);
+const ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS || "1200000", 10);
 const ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS = Number.parseInt(process.env.ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS || "5000", 10);
-const kinds = (process.env.OPS_JOB_KINDS || "sync-planilha,print-batch,print-backfill,print-single,analytics-report,pi-site-export,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,telegram-send-evidence,runtime-readiness-probe")
+const kinds = ((process.env.OPS_JOB_KINDS || "sync-planilha,sheet-correction,print-batch,print-backfill,print-single,analytics-report,pi-site-export,campaign-fulfillment,campaign-evidence-export,evidence-monthly-report,campaign-publication-reconcile,drive-pi-ingest,drive-inventory-refresh,reconcile-adrotate,adrotate-link,adrotate-publish,drive-pi-reconcile,telegram-send-evidence,runtime-readiness-probe") + ",cache-maintenance" + (["runner-1", "drive-pi-monitor"].includes(RUNNER_ID) ? ",historical-capture-reference" : ""))
   .split(",")
   .map((item) => item.trim())
-  .filter(Boolean);
+  .filter((item) => Boolean(item) && (item !== "cache-maintenance" || (ADOPS_PERRENGUE_ADROTATE_EXEC_MODE === "portainer" && PORTAINER_URL && PORTAINER_API_KEY)));
 let lastWatchdogAt = 0;
+let lastSchedulerAt = 0;
 let lastDrivePiMonitorAt = 0;
 let lastRunnerHeartbeatAt = 0;
 let runnerLastCycleError = null;
@@ -134,6 +172,7 @@ function startRunnerHealthServer() {
 async function request(pathname, init = {}) {
   const response = await fetch(`${OPS_API_BASE_URL}${pathname}`, {
     ...init,
+    signal: init.signal ?? AbortSignal.timeout(30_000),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${OPS_API_TOKEN}`,
@@ -147,29 +186,111 @@ async function request(pathname, init = {}) {
   return payload;
 }
 
-async function privateApi(pathname, body) {
+async function privateApi(pathname, body, extraHeaders = {}) {
   const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
+      ...extraHeaders,
     },
     body: JSON.stringify(body || {}),
+    signal: AbortSignal.timeout(300000),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
 
-async function sendRunnerHeartbeat(force = false) {
+function competenciaForEvidenceDate(date) {
+  const match = String(date || "").match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  const months = ["", "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
+  return `${months[Number(match[2])]}/${match[1]}`;
+}
+
+async function markMonthlyReportRefreshAfterApproval(date, insertionId) {
+  const competencia = competenciaForEvidenceDate(date);
+  if (!competencia) return null;
+  try {
+    return await request("/api/ops/monthly-report-refreshes", {
+      method: "POST",
+      body: JSON.stringify({
+        targetDate: date,
+        competencia,
+        insertionId,
+        source: "runner-evidence-approved",
+      }),
+    });
+  } catch (error) {
+    console.warn(`[runner] atualização incremental do relatório não foi agendada para #${insertionId}/${date}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function buildRunnerCaptureIdempotencyKey(outerJobId, operationalAttempt, insertionId, date) {
+  return `runner-capture:${outerJobId}:attempt:${Math.max(1, Number(operationalAttempt) || 1)}:${insertionId}:${date}`;
+}
+
+async function enqueueAndWaitCaptureProof({ outerJobId, outerAttempt = 1, insertionId, date, captureAt = null, replace = false, force = false, candidate = false, promote = false, reconstructionReason = null, assertLease = () => undefined }) {
+  if (!outerJobId) throw new Error("Captura assíncrona exige o ID estável do job externo.");
+  assertLease();
+  const idempotencyKey = buildRunnerCaptureIdempotencyKey(outerJobId, outerAttempt, insertionId, date);
+  const accepted = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
+    date,
+    captureAt,
+    replace: replace || force,
+    force,
+    candidate,
+    promote,
+    reconstructionReason,
+  }, { "Idempotency-Key": idempotencyKey });
+  const jobId = String(accepted?.jobId || "").trim();
+  if (!jobId) throw new Error(`API não retornou jobId para captura ${insertionId}/${date}.`);
+
+  const deadline = Date.now() + 30 * 60_000;
+  while (Date.now() < deadline) {
+    assertLease();
+    const job = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/jobs/${encodeURIComponent(jobId)}`);
+    await progressJob(outerJobId, {
+      stage: "capture_async_wait",
+      captureJobId: jobId,
+      insertionId,
+      date,
+      captureStatus: job?.status ?? "unknown",
+    });
+    if (job?.status === "completed") {
+      const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
+      if (!item || item.status !== "ok") throw new Error(item?.error || `Captura assíncrona ${jobId} concluiu sem item aprovado.`);
+      await markMonthlyReportRefreshAfterApproval(date, insertionId);
+      return { jobId, job, item, timings: summarizeCaptureJobTimings(job) };
+    }
+    if (["failed", "cancelled"].includes(String(job?.status || ""))) {
+      const item = Array.isArray(job?.items) ? job.items.find((entry) => Number(entry?.insertionId) === insertionId && entry?.targetDate === date) : null;
+      const error = new Error(item?.error || `Captura assíncrona ${jobId} terminou como ${job.status}.`);
+      error.code = String(item?.errorCode || job?.errorCode || "retroactive_capture_failed");
+      error.captureJobId = jobId;
+      error.blockingIssues = Array.isArray(item?.blockingIssues) ? item.blockingIssues : [];
+      error.captureTimings = summarizeCaptureJobTimings(job);
+      throw error;
+    }
+    await sleep(5000);
+    assertLease();
+  }
+  throw new Error(`Timeout aguardando captura assíncrona ${jobId} para ${insertionId}/${date}.`);
+}
+
+async function sendRunnerHeartbeat(force = false, jobId = null) {
   const now = Date.now();
   if (!force && now - lastRunnerHeartbeatAt < RUNNER_HEARTBEAT_INTERVAL_MS) return null;
   lastRunnerHeartbeatAt = now;
   return privateApi("/api/ops/runner/heartbeat", {
     runnerId: RUNNER_ID,
-    version: RUNNER_VERSION,
+    version: RUNNER_REPORT_VERSION,
     capabilities: {
       jobKinds: kinds,
       driveMonitorEnabled: DRIVE_PI_MONITOR_ENABLED,
@@ -178,7 +299,38 @@ async function sendRunnerHeartbeat(force = false) {
     lastCycleAt: new Date(now).toISOString(),
     lastSuccessAt: runnerLastSuccessAt,
     lastError: runnerLastCycleError,
+    jobId,
+    heartbeatAt: new Date(now).toISOString(),
   });
+}
+
+async function runWithJobHeartbeat(jobId, operation, sender, intervalMs, leaseTimeoutMs = Math.max(intervalMs * 3, 60_000)) {
+  await sender(jobId);
+  let leaseError = null;
+  let lastAcceptedAt = Date.now();
+  const assertLease = () => {
+    if (leaseError) throw leaseError;
+    if (Date.now() - lastAcceptedAt >= leaseTimeoutMs) throw new Error("lease_timeout");
+  };
+  const timer = setInterval(() => {
+    void sender(jobId).then(() => {
+      lastAcceptedAt = Date.now();
+    }).catch((error) => {
+      if (String(error instanceof Error ? error.message : error).includes("lease_lost") || Date.now() - lastAcceptedAt >= leaseTimeoutMs) {
+        leaseError = error instanceof Error ? error : new Error(String(error));
+      }
+    });
+  }, intervalMs);
+  try {
+    const result = await operation(assertLease);
+    try { assertLease(); } catch (error) {
+      if (error && typeof error === 'object' && error.jobResult === undefined) error.jobResult = result;
+      throw error;
+    }
+    return result;
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 async function privateApiPatch(pathname, body) {
@@ -192,44 +344,128 @@ async function privateApiPatch(pathname, body) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
 
-async function privateApiGet(pathname) {
+async function privateApiGet(pathname, options = {}) {
   const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
     method: "GET",
+    ...(options.signal ? { signal: options.signal } : {}),
     headers: {
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
     },
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    const error = new Error(payload?.details || payload?.error || `Falha na API privada ${pathname}`);
+    error.code = String(payload?.code || payload?.errorCode || `http_${response.status}`);
+    throw error;
   }
   return payload;
 }
 
-async function privateApiDownload(pathname) {
-  const response = await fetch(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
-    method: "GET",
+function httpDownloadBuffer(url, {
+  method = "GET",
+  headers = {},
+  body = undefined,
+  timeoutMs = 20 * 60_000,
+  maxBytes = ADOPS_MEDIA_MAX_BYTES,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const client = parsed.protocol === "http:" ? http : https;
+    const requestBody = body === undefined ? null : Buffer.from(body);
+    let settled = false;
+    let deadline = null;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      reject(error);
+    };
+    const succeed = (result) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      resolve(result);
+    };
+    const req = client.request({
+      method,
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "http:" ? 80 : 443),
+      path: `${parsed.pathname}${parsed.search}`,
+      headers: {
+        ...headers,
+        ...(requestBody ? { "content-length": String(requestBody.length) } : {}),
+      },
+    }, (response) => {
+      const declaredLength = Number(response.headers["content-length"] || 0);
+      if (declaredLength > maxBytes) {
+        const error = new Error(`Download excede o limite de ${maxBytes} bytes.`);
+        fail(error);
+        response.destroy(error);
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      response.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > maxBytes) {
+          const error = new Error(`Download excede o limite de ${maxBytes} bytes.`);
+          fail(error);
+          response.destroy(error);
+          return;
+        }
+        chunks.push(Buffer.from(chunk));
+      });
+      response.on("error", fail);
+      response.on("end", () => succeed({
+        statusCode: response.statusCode || 0,
+        contentType: String(response.headers["content-type"] || "application/octet-stream").split(";", 1)[0],
+        dateScopeHash: String(response.headers["x-adops-export-date-scope-sha256"] || ""),
+        buffer: Buffer.concat(chunks),
+      }));
+    });
+    const timeoutError = () => new Error(`Timeout após ${timeoutMs} ms no download da API privada.`);
+    deadline = setTimeout(() => {
+      const error = timeoutError();
+      fail(error);
+      req.destroy(error);
+    }, timeoutMs);
+    req.setTimeout(timeoutMs, () => {
+      const error = timeoutError();
+      fail(error);
+      req.destroy(error);
+    });
+    req.on("error", fail);
+    if (requestBody) req.write(requestBody);
+    req.end();
+  });
+}
+
+async function privateApiDownload(pathname, body = undefined) {
+  const result = await httpDownloadBuffer(`${PRIVATE_ADOPS_API_BASE_URL}${pathname}`, {
+    method: body === undefined ? "GET" : "POST",
     headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...(PRIVATE_ADOPS_API_TOKEN ? { "x-adops-api-token": PRIVATE_ADOPS_API_TOKEN } : {}),
     },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok) {
-    const details = await response.text().catch(() => "");
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    const details = result.buffer.toString("utf8");
     throw new Error(details || `Falha na API privada ${pathname}`);
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = result.buffer;
   if (!buffer.length) throw new Error("A API privada concluiu o export sem conteúdo.");
-  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) {
-    throw new Error(`Artefato excede ADOPS_MEDIA_MAX_BYTES (${buffer.length} bytes).`);
-  }
   return {
     buffer,
-    contentType: String(response.headers.get("content-type") || "application/octet-stream").split(";", 1)[0],
+    contentType: result.contentType,
+    dateScopeHash: result.dateScopeHash,
   };
 }
 
@@ -244,7 +480,7 @@ function normalizeText(value) {
 function normalizeSiteAlias(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized) return null;
-  if (/\b(a folha livre|afolha livre|afl)\b/.test(normalized)) return "AFL";
+  if (/\b(a folha livre|afolha livre|folha liivre|afl)\b/.test(normalized)) return "AFL";
   if (/\b(o matogrossense|omatogrossense|matogrossense|omt)\b/.test(normalized)) return "OMT";
   if (/\b(perrengue|perrengue mt|perrengue mato grosso)\b/.test(normalized)) return "PERRENGUE";
   if (/\b(portal norte mt|portal norte|norte mt|pnmt|nmt)\b/.test(normalized)) return "PNMT";
@@ -253,18 +489,82 @@ function normalizeSiteAlias(value) {
   return null;
 }
 
+function exactSiteFolderAlias(value) {
+  const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  const aliases = new Map([
+    ["a folha livre", "AFL"], ["afolha livre", "AFL"], ["afl", "AFL"],
+    ["o matogrossense", "OMT"], ["omatogrossense", "OMT"], ["matogrossense", "OMT"], ["omt", "OMT"],
+    ["perrengue", "PERRENGUE"], ["perrengue mt", "PERRENGUE"], ["perrengue mato grosso", "PERRENGUE"],
+    ["portal norte mt", "PNMT"], ["portal norte", "PNMT"], ["norte mt", "PNMT"], ["pnmt", "PNMT"], ["nmt", "PNMT"],
+    ["portal pantanal mt", "PPMT"], ["portal pantanal", "PPMT"], ["pantanal mt", "PPMT"], ["ppmt", "PPMT"], ["pmmt", "PPMT"],
+    ["roo noticias", "ROO"], ["roo news", "ROO"], ["roo", "ROO"],
+  ]);
+  return aliases.get(normalized) || null;
+}
+
+function observedSiteFolderAliases(value) {
+  return Array.from(new Set(
+    String(value || "")
+      .split(/[\\/]+/)
+      .map(exactSiteFolderAlias)
+      .filter(Boolean),
+  ));
+}
+
+function observedCanonicalSiteAliases(value) {
+  const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  const matches = [
+    ["AFL", /\b(a folha livre|afolha livre|afl)\b/],
+    ["OMT", /\b(o matogrossense|omatogrossense|matogrossense|omt)\b/],
+    ["PERRENGUE", /\b(perrengue|perrengue mt|perrengue mato grosso)\b/],
+    ["PNMT", /\b(portal norte mt|portal norte|norte mt|pnmt|nmt)\b/],
+    ["PPMT", /\b(portal pantanal mt|portal pantanal|pantanal mt|ppmt|pmmt)\b/],
+    ["ROO", /\b(roo noticias|roo news|roo)\b/],
+  ];
+  return matches.filter(([, pattern]) => pattern.test(normalized)).map(([sigla]) => sigla);
+}
+
 function clientAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
-  if (/\b(secom|governo|gov mt|governo do estado)\b/.test(normalized)) candidates.push("Governo do Estado");
-  if (/\b(municipio de cuiaba|prefeitura de cuiaba|pref cba|cuiaba)\b/.test(normalized)) candidates.push("Prefeitura de Cuiabá");
+  if (/\b(assembleia legislativa|almt)\b/.test(normalized)) candidates.push("ALMT");
+  if (/\b(secom|gov mt|governo do estado|secretaria de estado de comunicacao)\b/.test(normalized)) candidates.push("Governo do Estado");
+  if (/\b(municipio de cuiaba|prefeitura de cuiaba|pref cba)\b/.test(normalized)) candidates.push("Prefeitura de Cuiabá");
+  if (/\b(pref mun de rondonopolis|municipio de rondonopolis|prefeitura de rondonopolis|pref roo)\b/.test(normalized)) candidates.push("Prefeitura de Rondonópolis");
   if (/\b(tribunal de contas|tce mt|tce)\b/.test(normalized)) candidates.push("TCE-MT");
   return candidates;
+}
+
+function normalizeClientIdentity(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeClientCnpj(value) {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  return digits.length === 14 ? digits : null;
+}
+
+function resolveClientIdFromCatalog(source, clients) {
+  if (!Array.isArray(clients)) return null;
+  const sourceCnpj = normalizeClientCnpj(source?.clientCnpj);
+  const sourceNames = [source?.clientName, source?.clientLegalName]
+    .map(normalizeClientIdentity)
+    .filter(Boolean);
+  const aliases = clientAliasCandidates(sourceNames.join(" ")).map(normalizeClientIdentity).filter(Boolean);
+  const sourceNameKeys = new Set([...sourceNames, ...aliases]);
+  const matches = sourceCnpj
+    ? clients.filter((item) => normalizeClientCnpj(item?.cnpj) === sourceCnpj)
+    : clients.filter((item) => sourceNameKeys.has(normalizeClientIdentity(item?.nome)));
+  if (matches.length !== 1) return null;
+  const id = Number(matches[0]?.id);
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 function agencyAliasCandidates(value) {
   const normalized = normalizeText(value).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   const candidates = [];
+  if (/\b(zimmermann publicidade|zimmermann|z3)\b/.test(normalized)) candidates.push("Z3");
   if (/\b(spm comunicacao|spm)\b/.test(normalized)) candidates.push("DMD");
   if (/\b(renca)\b/.test(normalized)) candidates.push("Renca");
   if (/\b(genius)\b/.test(normalized)) candidates.push("Genius");
@@ -433,6 +733,9 @@ function selectObservedMediaLink(packageContext, kind) {
 }
 
 function resolveDrivePiClickUrl(fields, packageContext) {
+  if(fields?.raw?.destinationMode==='none'&&Object.hasOwn(fields.raw,'clickUrl')&&fields.raw.clickUrl===null){
+    return {fields:{...fields,clickUrl:null,insertions:(fields.insertions||[]).map(i=>({...i,clickUrl:null,urlDestino:null,linkDestino:null,destinationUrl:null}))},clickUrl:null,source:'explicit_user_no_destination',ambiguousCandidates:[]};
+  }
   const explicit = firstNonEmptyString(fields?.clickUrl, readUrlRecord(fields?.raw || {}, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]));
   const unknownLinks = Array.from(new Set(
     (Array.isArray(packageContext?.textObservations) ? packageContext.textObservations : [])
@@ -471,8 +774,14 @@ function scoreImageMediaForInsertion(mediaItem, raw, fields) {
   return score;
 }
 
-function selectDriveImageForInsertion(packageContext, raw, fields) {
-  const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(isImageMediaItem);
+function selectDriveImageForInsertion(packageContext, raw, fields, profile) {
+  const allowed = (profile?.formats || ['GIF', 'PNG', 'JPEG', 'WEBP']).map(value => String(value).toUpperCase().replace(/^JPG$/, 'JPEG'));
+  const pi = normalizePiDigits(fields?.piCodigo);
+  const images = (Array.isArray(packageContext?.media) ? packageContext.media : []).filter(item => {
+    const extension = path.extname(item?.name || '').slice(1).toUpperCase().replace(/^JPG$/, 'JPEG');
+    const namedPi = String(item?.name || '').match(/\bPI[\s_-]*(\d+)\b/i)?.[1];
+    return isImageMediaItem(item) && allowed.includes(extension) && (!namedPi || !pi || normalizePiDigits(namedPi) === pi);
+  });
   if (images.length === 0) return { mediaItem: null, ambiguous: false, candidates: 0 };
   const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
   if (explicitDriveFileId) {
@@ -482,23 +791,42 @@ function selectDriveImageForInsertion(packageContext, raw, fields) {
       : { mediaItem: null, ambiguous: false, candidates: 0, selectedBy: "explicit_drive_file_id_missing" };
   }
   if (images.length === 1) return { mediaItem: images[0], ambiguous: false, candidates: 1 };
-  const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => b.score - a.score);
+  const expectedChecksum = readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]);
+  const checksumMatch = expectedChecksum && images.find((item) => String(item.md5Checksum || "").toLowerCase() === expectedChecksum.toLowerCase());
+  if (checksumMatch) return { mediaItem: checksumMatch, ambiguous: false, candidates: images.length, selectedBy: "existing_checksum" };
+  const ranked = images.map((item) => ({ item, score: scoreImageMediaForInsertion(item, raw, fields) })).sort((a, b) => {
+    return String(b.item?.modifiedTime || "").localeCompare(String(a.item?.modifiedTime || ""))
+      || b.score - a.score
+      || String(a.item?.driveFileId || "").localeCompare(String(b.item?.driveFileId || ""));
+  });
   return {
     mediaItem: ranked[0].item,
-    ambiguous: ranked[0].score === ranked[1].score,
+    ambiguous: false,
+    selectedBy: "latest_eligible_drive_image",
     candidates: images.length,
     score: ranked[0].score,
   };
+}
+
+function imageAspectWarning(mediaItem, profile) {
+  const expectedWidth = Number(profile?.width || 0);
+  const expectedHeight = Number(profile?.height || 0);
+  const match = String(mediaItem?.name || "").match(/(\d{2,4})\s*[x×]\s*(\d{2,4})/i);
+  if (!expectedWidth || !expectedHeight || !match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!width || !height || (width === expectedWidth && height === expectedHeight)) return null;
+  return `aspect_ratio_advisory:${width}x${height}:expected_${expectedWidth}x${expectedHeight}`;
 }
 
 async function downloadExternalMediaToArchive(url, fallbackName = "media") {
   const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120000) });
   if (!response.ok) throw new Error(`Falha ao baixar mídia externa: HTTP ${response.status}`);
   const declaredLength = Number(response.headers.get("content-length") || 0);
-  if (declaredLength > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Mídia externa excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Mídia externa excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
   const mimeType = response.headers.get("content-type")?.split(";")[0] || "application/octet-stream";
+  const fileHint = { name: mediaBasenameFromUrl(response.url || url) || fallbackName, mimeType };
+  const maxBytes = mediaMaxBytes(fileHint, { imageMaxBytes: ADOPS_MEDIA_MAX_BYTES, videoMaxBytes: ADOPS_VIDEO_MEDIA_MAX_BYTES });
+  if (declaredLength > maxBytes) throw new Error(`Mídia externa excede limite operacional de ${maxBytes} bytes.`);
   let sourceName = safeFileName(mediaBasenameFromUrl(response.url || url) || fallbackName, fallbackName);
   if (!path.extname(sourceName)) {
     const extension = ({
@@ -512,9 +840,28 @@ async function downloadExternalMediaToArchive(url, fallbackName = "media") {
     })[mimeType];
     if (extension) sourceName += extension;
   }
-  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
+  const isGoogleDocument = file.mimeType === "application/vnd.google-apps.document";
   const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
   await mkdir(dir, { recursive: true });
+  if (isVideoMedia(fileHint)) {
+    const archived = await streamDriveMediaToArchive({
+      response,
+      directory: dir,
+      fileName: sourceName,
+      expectedBytes: declaredLength || null,
+      maxBytes,
+      reserveBytes: DEFAULT_VIDEO_DISK_RESERVE_BYTES,
+    });
+    return {
+      ...archived,
+      sourceName,
+      mimeType: mimeType === "application/octet-stream" ? contentTypeForMediaName(sourceName) : mimeType,
+      sourceUrl: url,
+    };
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > maxBytes) throw new Error(`Mídia externa excede limite operacional de ${maxBytes} bytes.`);
+  const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
   const filePath = path.join(dir, `${sha256.slice(0, 12)}-${sourceName}`);
   await writeFile(filePath, buffer);
   return {
@@ -528,20 +875,23 @@ async function downloadExternalMediaToArchive(url, fallbackName = "media") {
   };
 }
 
-async function materializeMediaSource({ driveItem, observedLink, fallbackName }) {
+async function materializeMediaSource({ driveItem, observedLink, fallbackName, includeBuffer = true }) {
   if (observedLink?.driveFileId) {
     const metadata = await googleDriveRequest(`files/${encodeURIComponent(observedLink.driveFileId)}`, {
-      fields: "id,name,mimeType,size,webViewLink",
+      fields: "id,name,mimeType,size,md5Checksum,videoMediaMetadata,webViewLink",
       supportsAllDrives: "true",
     }).catch(() => null);
     const archived = await downloadDriveFileToArchive({
       driveFileId: observedLink.driveFileId,
       name: metadata?.name || fallbackName,
       mimeType: metadata?.mimeType || "application/octet-stream",
+      size: metadata?.size,
+      md5Checksum: metadata?.md5Checksum,
+      videoMediaMetadata: metadata?.videoMediaMetadata,
     });
     return {
       ...archived,
-      buffer: await readFile(archived.filePath),
+      ...(includeBuffer ? { buffer: await readFile(archived.filePath) } : {}),
       sourceUrl: observedLink.url,
       sourceName: metadata?.name || archived.sourceName,
       mimeType: metadata?.mimeType || contentTypeForMediaName(metadata?.name || archived.sourceName),
@@ -552,7 +902,7 @@ async function materializeMediaSource({ driveItem, observedLink, fallbackName })
     const archived = await downloadDriveFileToArchive(driveItem);
     return {
       ...archived,
-      buffer: await readFile(archived.filePath),
+      ...(includeBuffer ? { buffer: await readFile(archived.filePath) } : {}),
       mimeType: driveItem.mimeType || contentTypeForMediaName(driveItem.name),
       sourceName: driveItem.name,
     };
@@ -560,55 +910,223 @@ async function materializeMediaSource({ driveItem, observedLink, fallbackName })
   return null;
 }
 
-async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey }) {
+async function lookupAdopsVideoCompressorJob({ idempotencyKey, sourceSha256, apiBase = COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE }) {
+  const query = new URLSearchParams({ source_sha256: sourceSha256, profile: COD5_VIDEO_COMPRESSOR_PROFILE });
+  const response = await fetch(`${apiBase}/v1/video-compression/jobs/idempotency/${encodeURIComponent(idempotencyKey)}?${query}`, {
+    headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (response.status === 404) return null;
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`compressor_idempotency_lookup_failed:${response.status}`);
+  return payload?.job_id ? payload : null;
+}
+
+async function lookupAdopsVideoCompressorJobBounded({ idempotencyKey, sourceSha256, apiBase = COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE }) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const job = await lookupAdopsVideoCompressorJob({ idempotencyKey, sourceSha256, apiBase });
+      if (job) return job;
+    } catch {
+      // Keep an uncertain POST outcome explicit; never issue another POST here.
+    }
+    if (attempt < 2) await sleep(250 * (attempt + 1));
+  }
+  return null;
+}
+
+function compressorFailure(code, { stage, idempotencyKey = null, sourceSha256 = null, jobId = null, httpStatus = null } = {}, cause = null) {
+  const rawCause = String(cause?.cause?.code || cause?.code || cause?.name || "unknown").toUpperCase().replace(/[^A-Z0-9_]/g, "_").slice(0, 48);
+  const error = new Error(code);
+  error.code = code;
+  error.compressorDiagnostic = {
+    stage,
+    code,
+    status: "needs_review",
+    idempotencyKey,
+    sourceSha256,
+    jobId,
+    ...(Number.isInteger(httpStatus) ? { httpStatus } : {}),
+    causeCode: /^[A-Z0-9_]{1,48}$/.test(rawCause) ? rawCause : "UNKNOWN",
+  };
+  return error;
+}
+
+async function compressVideoWithCod5Api({ inputPath, sourceName, idempotencyKey, expectedSha256, expectedMd5, sourceBucket, sourcePublicBase, onJobCreated, onSourceStage }) {
   if (!COD5_VIDEO_COMPRESSOR_API_TOKEN) {
     throw new Error("COD5_VIDEO_COMPRESSOR_API_TOKEN ausente no runner");
   }
   const inputStat = await stat(inputPath);
-  if (inputStat.size > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Vídeo excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
-  const bytes = await readFile(inputPath);
-  const form = new FormData();
-  form.append("profile", COD5_VIDEO_COMPRESSOR_PROFILE);
-  form.append("file", new Blob([bytes], { type: "video/mp4" }), safeFileName(sourceName, "video.mp4"));
-  const createResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}`,
-      "Idempotency-Key": idempotencyKey,
-    },
-    body: form,
-  });
-  const created = await createResponse.json().catch(() => null);
-  if (!createResponse.ok) {
-    throw new Error(created?.detail || created?.error || `Falha ao criar job no compressor: ${createResponse.status}`);
+  if (inputStat.size > ADOPS_VIDEO_MEDIA_MAX_BYTES) throw new Error(`Vídeo de origem excede limite operacional de ${ADOPS_VIDEO_MEDIA_MAX_BYTES} bytes.`);
+  let jobId = null;
+  let adopsIdempotencyKey = null;
+  let adopsSourceSha256 = null;
+  if (shouldUseAdopsVideoSourceUrl(inputStat.size)) {
+    if (inputStat.size > COD5_VIDEO_COMPRESSOR_ADOPS_SOURCE_MAX_BYTES) throw new Error("adops_video_source_exceeds_512_mib_limit");
+    const sourceIdentity = await identifyAdopsSourceFile(inputPath, expectedSha256, expectedMd5);
+    const { sha256: actualSha256, md5: actualMd5 } = sourceIdentity;
+    const contentKey = `adops-sources/video/${actualSha256}.mp4`;
+    const sourceUrl = buildAdopsVideoSourceUrl(sourcePublicBase, actualSha256);
+    const contentAddressedKey = buildAdopsVideoSourceIdempotencyKey(actualSha256, COD5_VIDEO_COMPRESSOR_PROFILE);
+    adopsIdempotencyKey = contentAddressedKey;
+    adopsSourceSha256 = actualSha256;
+    let existing;
+    try {
+      for(let readAttempt=0;readAttempt<3;readAttempt++){
+        try{existing = await lookupAdopsVideoCompressorJob({ idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, apiBase: COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE });break;}
+        catch(error){if(readAttempt===2)throw error;await sleep([2000,5000][readAttempt]);}
+      }
+    } catch (error) {
+      throw compressorFailure("compressor_idempotency_lookup_failed", {
+        stage: "idempotency_lookup", idempotencyKey: contentAddressedKey, sourceSha256: actualSha256,
+      }, error);
+    }
+    if (existing) {
+      jobId = existing.job_id;
+    } else {
+      try {
+        const encodedKey = contentKey.split('/').map(encodeURIComponent).join('/');
+        await ensureAdopsSourceUploaded({ inputPath, url: `${DO_SPACES_ENDPOINT}/${encodeURIComponent(sourceBucket)}/${encodedKey}`, identity: sourceIdentity, sign: signSpacesRequest,
+          checkpoint: async (stage) => { if (typeof onSourceStage === 'function') await onSourceStage(stage); },
+        });
+      } catch (cause) {
+        const error = compressorFailure('compressor_source_upload_failed', { stage: cause?.sourceUploadDiagnostic?.stage || 'source_checkpoint', idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, httpStatus: cause?.sourceUploadDiagnostic?.httpStatus }, cause);
+        if (cause?.sourceUploadDiagnostic) error.compressorDiagnostic.sourceUpload = cause.sourceUploadDiagnostic;
+        throw error;
+      }
+      let createResponse = null;
+      try {
+        createResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE}/v1/video-compression/jobs/adops-from-url`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": contentAddressedKey,
+          },
+          body: JSON.stringify({
+            source_url: sourceUrl,
+            profile: COD5_VIDEO_COMPRESSOR_PROFILE,
+            source_sha256: actualSha256,
+            source_md5: actualMd5,
+          }),
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (error) {
+        const recovered = await lookupAdopsVideoCompressorJobBounded({ idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, apiBase: COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE });
+        if (!recovered) throw compressorFailure("compressor_create_outcome_unknown", {
+          stage: "job_create", idempotencyKey: contentAddressedKey, sourceSha256: actualSha256,
+        }, error);
+        jobId = recovered.job_id;
+      }
+      if (createResponse) {
+        const created = await createResponse.json().catch(() => null);
+        if (!createResponse.ok) {
+          const recovered = createResponse.status >= 500
+            ? await lookupAdopsVideoCompressorJobBounded({ idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, apiBase: COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE })
+            : null;
+          if (!recovered && createResponse.status >= 500) throw compressorFailure("compressor_create_outcome_unknown", {
+            stage: "job_create", idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, httpStatus: createResponse.status,
+          });
+          if (!recovered) throw compressorFailure("compressor_create_rejected", {
+            stage: "job_create", idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, httpStatus: createResponse.status,
+          });
+          jobId = recovered.job_id;
+        } else {
+          jobId = created?.job_id || null;
+          if (!jobId) {
+            const recovered = await lookupAdopsVideoCompressorJobBounded({ idempotencyKey: contentAddressedKey, sourceSha256: actualSha256, apiBase: COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE });
+            if (!recovered) throw compressorFailure("compressor_create_outcome_unknown", {
+              stage: "job_create", idempotencyKey: contentAddressedKey, sourceSha256: actualSha256,
+            });
+            jobId = recovered.job_id;
+          }
+        }
+      }
+    }
+  } else {
+    const bytes = await readFile(inputPath);
+    const form = new FormData();
+    form.append("profile", COD5_VIDEO_COMPRESSOR_PROFILE);
+    form.append("file", new Blob([bytes], { type: "video/mp4" }), safeFileName(sourceName, "video.mp4"));
+    const createResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}`,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: form,
+    });
+    const created = await createResponse.json().catch(() => null);
+    if (!createResponse.ok) throw new Error(`compressor_create_failed:${createResponse.status}`);
+    jobId = created?.job_id || created?.id || null;
   }
-  const jobId = created?.job_id || created?.id;
   if (!jobId) throw new Error("Compressor nao retornou job_id");
+
+  if (adopsIdempotencyKey && typeof onJobCreated === "function") {
+    try {
+      await onJobCreated({ jobId, idempotencyKey: adopsIdempotencyKey || idempotencyKey, sourceSha256: adopsSourceSha256 });
+    } catch (error) {
+      throw compressorFailure("compressor_job_id_checkpoint_failed", {
+        stage: "job_id_checkpoint", idempotencyKey: adopsIdempotencyKey || idempotencyKey,
+        sourceSha256: adopsSourceSha256, jobId,
+      }, error);
+    }
+  }
 
   const deadline = Date.now() + COD5_VIDEO_COMPRESSOR_TIMEOUT_MS;
   let statusPayload = null;
   while (Date.now() < deadline) {
-    const statusResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}`, {
-      headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
-    });
+    let statusResponse;
+    try {
+      statusResponse = await fetch(`${adopsIdempotencyKey ? COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE : COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}`, {
+        headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch (error) {
+      if (adopsIdempotencyKey) throw compressorFailure("compressor_status_read_failed", {
+        stage: "job_status_poll", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId,
+      }, error);
+      throw error;
+    }
     statusPayload = await statusResponse.json().catch(() => null);
     if (!statusResponse.ok) {
-      throw new Error(statusPayload?.detail || statusPayload?.error || `Falha ao consultar compressor: ${statusResponse.status}`);
+      if (adopsIdempotencyKey) throw compressorFailure("compressor_status_read_failed", {
+        stage: "job_status_poll", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId, httpStatus: statusResponse.status,
+      });
+      throw new Error(`Falha ao consultar compressor: ${statusResponse.status}`);
     }
     if (statusPayload?.status === "done") break;
     if (["failed", "error", "cancelled"].includes(String(statusPayload?.status || ""))) {
-      throw new Error(statusPayload?.error || `Compressor terminou com status ${statusPayload?.status}`);
+      if (adopsIdempotencyKey) throw compressorFailure("compressor_job_terminal_failure", {
+        stage: "job_status_poll", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId,
+      });
+      throw new Error(`Compressor terminou com status ${statusPayload?.status}`);
     }
     await sleep(COD5_VIDEO_COMPRESSOR_POLL_INTERVAL_MS);
   }
   if (statusPayload?.status !== "done") {
+    if (adopsIdempotencyKey) throw compressorFailure("compressor_job_poll_timeout", {
+      stage: "job_status_poll", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId,
+    });
     throw new Error(`Timeout aguardando compressor concluir job ${jobId}`);
   }
 
-  const downloadResponse = await fetch(`${COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}/download`, {
-    headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
-  });
+  let downloadResponse;
+  try {
+    downloadResponse = await fetch(`${adopsIdempotencyKey ? COD5_VIDEO_COMPRESSOR_ADOPS_API_BASE : COD5_VIDEO_COMPRESSOR_API_BASE}/v1/video-compression/jobs/${encodeURIComponent(jobId)}/download`, {
+      headers: { Authorization: `Bearer ${COD5_VIDEO_COMPRESSOR_API_TOKEN}` },
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (error) {
+    if (adopsIdempotencyKey) throw compressorFailure("compressor_download_failed", {
+      stage: "compressed_video_download", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId,
+    }, error);
+    throw error;
+  }
   if (!downloadResponse.ok) {
+    if (adopsIdempotencyKey) throw compressorFailure("compressor_download_failed", {
+      stage: "compressed_video_download", idempotencyKey: adopsIdempotencyKey, sourceSha256: adopsSourceSha256, jobId, httpStatus: downloadResponse.status,
+    });
     throw new Error(`Falha ao baixar video comprimido: ${downloadResponse.status}`);
   }
   const compressedLength = Number(downloadResponse.headers.get("content-length") || 0);
@@ -743,14 +1261,15 @@ function isImageMediaItem(item) {
   return /^image\//.test(mimeType) || /\.(gif|png|jpe?g|webp)$/i.test(name);
 }
 
-function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName }) {
+function buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName, contentHash = null }) {
   const periodoInicio = readStringRecord(raw, ["periodoInicio", "inicio"]) || todayInCuiaba();
   const month = periodoInicio.slice(0, 7);
   const extension = path.extname(String(sourceName || "")).toLowerCase() || ".bin";
   const filename = [
-    slugifyPathPart(fields?.piCodigo || "pi"),
+    slugifyPathPart(fields?.piCodigo || fields?.operationalIdentityKey || "operational"),
     slugifyPathPart(fields?.campaignName || "campanha"),
     slugifyPathPart(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"),
+    ...(contentHash ? [slugifyPathPart(String(contentHash).slice(0, 16))] : []),
   ].join("-") + extension;
   return [ADOPS_VIDEO_MEDIA_BASE_PATH, slugifyPathPart(siteSigla || "site"), month, filename].filter(Boolean).join("/");
 }
@@ -759,13 +1278,23 @@ function mediaPublicUrl(siteSigla, bucket, objectKey) {
   return `${spacesPublicBaseForSite(siteSigla, bucket)}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
 }
 
-async function getSiteSiglaByIdMap() {
-  const sites = await privateApiGet("/api/sites?limit=500").catch(() => []);
-  const map = new Map();
-  for (const site of Array.isArray(sites) ? sites : []) {
-    if (site?.id && site?.sigla) map.set(Number(site.id), String(site.sigla).toUpperCase());
+async function getSiteSiglaByIdMap(requiredInsertions = []) {
+  const requiredIds = [...new Set(requiredInsertions.map(raw => Number(raw.siteId)).filter(id => id > 0))];
+  let reason = "unavailable";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const sites = await privateApiGet("/api/sites?limit=500", { signal: AbortSignal.timeout(15000) });
+      if (!Array.isArray(sites)) throw new Error("invalid_catalog_shape");
+      const map = new Map(sites.filter(site => Number(site?.id) > 0 && typeof site?.sigla === "string" && site.sigla.trim()).map(site => [Number(site.id), site.sigla.trim().toUpperCase()]));
+      const missing = requiredIds.filter(id => !map.has(id));
+      if (map.size && !missing.length) return map;
+      reason = missing.length ? "missing_site_ids:" + missing.join(",") : "empty_catalog";
+    } catch (error) {
+      reason = error?.message === "invalid_catalog_shape" ? "invalid_catalog_shape" : "request_unavailable";
+    }
+    if (attempt < 2) await sleep(250 * (attempt + 1));
   }
-  return map;
+  throw new Error("site_catalog_unavailable_after_3_attempts:" + reason);
 }
 
 async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
@@ -775,14 +1304,16 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
   if (!insertions.some((item) => isVideoInsertion(item) && !readStringRecord(item, ["mediaUrl", "media_url"]))) {
     return { fields, videoMediaProcessing: { skipped: true, results, issues } };
   }
-  const siteSiglaById = await getSiteSiglaByIdMap();
+  const siteSiglaById = await getSiteSiglaByIdMap(insertions);
   const resolvedInsertions = [];
   for (const raw of insertions) {
     if (!isVideoInsertion(raw) || readStringRecord(raw, ["mediaUrl", "media_url"])) {
       resolvedInsertions.push(raw);
       continue;
     }
-    const observed = selectObservedMediaLink(packageContext, "video");
+    const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
+    const observed = explicitDriveFileId || payload?.expectedInsertionId || payload?.recoveryTarget
+      ? { link: null, ambiguous: false } : selectObservedMediaLink(packageContext, "video");
     const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveVideoForInsertion(packageContext, raw, fields);
     if (!observed.link && !selected.mediaItem?.driveFileId) {
       issues.push(`video_media_missing:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "video"}`);
@@ -790,6 +1321,8 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
       continue;
     }
     try {
+      if (selected.ambiguous || observed.ambiguous) throw new Error("Mais de uma mídia de vídeo candidata; revisão obrigatória.");
+      assertExpectedDriveMediaMd5(readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]), selected.mediaItem);
       await updateDrivePiState(payload, "packaging", {
         parseRun: {
           fields: {
@@ -800,16 +1333,57 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
           alerts: ["Comprimindo video da PI no cod5-video-compressor antes de criar a insercao."],
         },
       });
-      if (selected.ambiguous || observed.ambiguous) throw new Error("Mais de uma mídia de vídeo candidata; revisão obrigatória.");
       const archivedVideo = await materializeMediaSource({
         driveItem: selected.mediaItem,
         observedLink: observed.link,
         fallbackName: "video-source.mp4",
+        includeBuffer: false,
       });
+      let sourceMetadata = null;
+      if (payload?.preflightOnly === true || payload?.expectedInsertionId || payload?.recoveryTarget) {
+        sourceMetadata = await readOperationalVideoMetadata(archivedVideo.filePath);
+        const expectedMd5 = selected.mediaItem?.md5Checksum;
+        if (!expectedMd5 || archivedVideo.md5 !== expectedMd5 || !(sourceMetadata.width > 0 && sourceMetadata.height > 0)) throw new Error("Vídeo Drive inválido ou checksum divergente.");
+      }
+      if (payload?.preflightOnly === true) {
+        results.push({ siteId: readNumberRecord(raw, ["siteId"]),
+          localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+          sourceDriveFileId: selected.mediaItem.driveFileId, md5: archivedVideo.md5,
+          sourceBytes: archivedVideo.bytes,
+          sourceMetadata,
+          validated: true, uploaded: false });
+        resolvedInsertions.push(raw);
+        continue;
+      }
+      const siteId = readNumberRecord(raw, ["siteId"]);
+      const siteSigla = siteSiglaById.get(Number(siteId));
+      if (!siteSigla) throw new Error(`site_catalog_identity_missing:${siteId}`);
+      const bucket = spacesBucketForSite(siteSigla);
+      const sourceExpectedMd5 = String(selected.mediaItem?.md5Checksum || "").toLowerCase();
+      assertLargeAdopsVideoDriveMd5(archivedVideo.bytes, archivedVideo.md5, sourceExpectedMd5);
       const compressed = await compressVideoWithCod5Api({
         inputPath: archivedVideo.filePath,
         sourceName: archivedVideo.sourceName,
         idempotencyKey: buildVideoCompressorIdempotencyKey(payload, selected.mediaItem || observed.link, raw, fields),
+        expectedSha256: archivedVideo.sha256,
+        expectedMd5: sourceExpectedMd5,
+        sourceBucket: bucket,
+        sourcePublicBase: spacesPublicBaseForSite(siteSigla, bucket),
+        onSourceStage: async (sourceUpload) => updateDrivePiState(payload, 'packaging', {
+          parseRun: { fields: { piCodigo: fields.piCodigo, campaignName: fields.campaignName, sourceUpload }, alerts: ['Transferência da fonte de vídeo: '+sourceUpload.stage] },
+        }),
+        onJobCreated: async ({ jobId, idempotencyKey, sourceSha256 }) => updateDrivePiState(payload, "packaging", {
+          parseRun: {
+            fields: {
+              piCodigo: fields.piCodigo,
+              campaignName: fields.campaignName,
+              compressorJobId: jobId,
+              compressorIdempotencyKey: idempotencyKey,
+              compressorSourceSha256: sourceSha256,
+            },
+            alerts: ["Job de compressão registrado; acompanhando o mesmo ID."],
+          },
+        }),
       });
       await updateDrivePiState(payload, "packaging", {
         parseRun: {
@@ -821,9 +1395,6 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
           alerts: ["Subindo video comprimido para DigitalOcean Spaces."],
         },
       });
-      const siteId = readNumberRecord(raw, ["siteId"]);
-      const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
-      const bucket = spacesBucketForSite(siteSigla);
       const objectKey = buildSpacesVideoObjectKey({ siteSigla, fields, raw });
       await uploadVideoToSpaces({ buffer: compressed.buffer, bucket, objectKey });
       const publicUrl = `${spacesPublicBaseForSite(siteSigla, bucket)}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
@@ -835,6 +1406,7 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
         sourceUrl: observed.link?.url || null,
         sourceName: archivedVideo.sourceName,
         compressorJobId: compressed.jobId,
+        uploadedBytes: compressed.buffer.length,
         bucket,
         objectKey,
         mediaUrl: publicUrl,
@@ -846,6 +1418,13 @@ async function resolveDrivePiVideoMedia(fields, packageContext, payload) {
         mediaProcessingNote: `Video comprimido no Mac Mini e publicado no Spaces: ${objectKey}`,
       });
     } catch (error) {
+      if (error?.compressorDiagnostic) {
+        results.push({
+          siteId: readNumberRecord(raw, ["siteId"]),
+          sourceDriveFileId: selected.mediaItem?.driveFileId || null,
+          compressorDiagnostic: error.compressorDiagnostic,
+        });
+      }
       issues.push(`video_media_processing_failed:${error instanceof Error ? error.message : String(error)}`);
       resolvedInsertions.push(raw);
     }
@@ -866,28 +1445,57 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
   const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
   const unresolved = insertions.filter((item) => !isVideoInsertion(item) && !readStringRecord(item, ["mediaUrl", "media_url"]));
   if (!unresolved.length) return { fields, imageMediaProcessing: { skipped: true, results, issues } };
-  const siteSiglaById = await getSiteSiglaByIdMap();
+  const siteSiglaById = await getSiteSiglaByIdMap(insertions);
   const resolvedInsertions = [];
   for (const raw of insertions) {
     if (isVideoInsertion(raw) || readStringRecord(raw, ["mediaUrl", "media_url"])) {
       resolvedInsertions.push(raw);
       continue;
     }
-    const observed = selectObservedMediaLink(packageContext, "image");
-    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields);
+    const siteId = readNumberRecord(raw, ["siteId"]);
+    const siteSigla = siteSiglaById.get(Number(siteId));
+    if (!siteSigla) throw new Error(`site_catalog_identity_missing:${siteId}`);
+    const profile = await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+    // Explicitly scoped repairs may only reuse binaries present in the confirmed folder.
+    const explicitDriveFileId = readStringRecord(raw, ["mediaDriveFileId", "sourceDriveFileId", "driveFileId"]);
+    const observed = explicitDriveFileId || payload?.expectedInsertionId || payload?.recoveryTarget
+      ? { link: null, ambiguous: false } : selectObservedMediaLink(packageContext, "image");
+    const selected = observed.link ? { mediaItem: null, ambiguous: observed.ambiguous, candidates: observed.candidates } : selectDriveImageForInsertion(packageContext, raw, fields, profile);
     if ((!observed.link && !selected.mediaItem?.driveFileId) || observed.ambiguous || selected.ambiguous) {
       issues.push(`${observed.ambiguous || selected.ambiguous ? "image_media_ambiguous" : "image_media_missing"}:${readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]) || "banner"}`);
       resolvedInsertions.push(raw);
       continue;
     }
     try {
+      assertExpectedDriveMediaMd5(readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]), selected.mediaItem);
       const materialized = await materializeMediaSource({
         driveItem: selected.mediaItem,
         observedLink: observed.link,
         fallbackName: "banner.gif",
       });
-      const siteId = readNumberRecord(raw, ["siteId"]);
-      const siteSigla = siteSiglaById.get(Number(siteId)) || readStringRecord(raw, ["siteSigla"]) || "SITE";
+      if (payload?.recoveryTarget || payload?.expectedInsertionId) {
+        const expectedMd5 = String(selected.mediaItem?.md5Checksum || "").toLowerCase();
+        if (!expectedMd5 || String(materialized.md5 || "").toLowerCase() !== expectedMd5) throw new Error("Checksum autoritativo da mídia Drive ausente ou divergente.");
+        const confirmedMd5 = readStringRecord(raw, ["mediaMd5Checksum", "md5Checksum"]);
+        if (confirmedMd5 && confirmedMd5.toLowerCase() !== expectedMd5) throw new Error("Checksum da mídia diverge da confirmação explícita.");
+        const extension = path.extname(materialized.sourceName || "").slice(1).toUpperCase();
+        const allowed = (profile.formats || []).map(value => String(value).toUpperCase().replace(/^JPG$/, 'JPEG'));
+        if (!allowed.includes(extension.replace(/^JPG$/, 'JPEG'))) throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+        {
+          const metadata = await readOperationalImageMetadata(materialized.filePath);
+          if (String(metadata.format || "").toUpperCase() !== (extension === "JPG" ? "JPEG" : extension) || !metadata.nonUniform) {
+            throw new Error("Tipo binário da mídia não corresponde ao formato contratado.");
+          }
+        }
+      }
+      if (payload?.preflightOnly === true) {
+        results.push({ siteId, siteSigla, sourceDriveFileId: selected.mediaItem?.driveFileId,
+          localFormato: readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]),
+          sourceName: materialized.sourceName, md5: materialized.md5, sha256: materialized.sha256,
+          validated: true, uploaded: false, aspectWarning: imageAspectWarning(selected.mediaItem, profile) });
+        resolvedInsertions.push(raw);
+        continue;
+      }
       const bucket = spacesBucketForSite(siteSigla);
       const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: materialized.sourceName });
       await uploadBufferToSpaces({
@@ -923,6 +1531,7 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
         stagedUrl,
         mediaUrl,
         wordpressImport,
+        aspectWarning: imageAspectWarning(selected.mediaItem, profile),
       });
       resolvedInsertions.push({
         ...raw,
@@ -938,6 +1547,23 @@ async function resolveDrivePiImageMedia(fields, packageContext, payload) {
     fields: { ...fields, insertions: resolvedInsertions, imageMediaProcessing: { skipped: false, results, issues } },
     imageMediaProcessing: { skipped: false, results, issues },
   };
+}
+
+function extendSitePeriodForSocialDelivery(insertions) {
+  const values = Array.isArray(insertions) ? insertions : [];
+  return values.map((insertion) => {
+    if (isSocialInsertion(insertion)) return insertion;
+    const siteId = Number(readNumberRecord(insertion, ["siteId"]) || 0);
+    const socialEnds = values
+      .filter((candidate) => isSocialInsertion(candidate) && Number(readNumberRecord(candidate, ["siteId"]) || 0) === siteId
+        && normalizePiDigits(candidate.piCodigo) === normalizePiDigits(insertion.piCodigo)
+        && normalizeText(candidate.campaignName || candidate.campanhaNome) === normalizeText(insertion.campaignName || insertion.campanhaNome)
+        && String(candidate.commercialBlockId || "") === String(insertion.commercialBlockId || ""))
+      .map((candidate) => readStringRecord(candidate, ["periodoFim", "fim"]))
+      .filter(Boolean);
+    const latestEnd = [readStringRecord(insertion, ["periodoFim", "fim"]), ...socialEnds].filter(Boolean).sort().at(-1);
+    return latestEnd ? { ...insertion, periodoFim: latestEnd, periodoSource: "PI" } : insertion;
+  });
 }
 
 async function ensureRuntimeDirs() {
@@ -1017,6 +1643,47 @@ function readAgentSource(source, keys) {
 function firstMatch(text, pattern) {
   const match = String(text || "").match(pattern);
   return match ? String(match[1] || "").trim() : null;
+}
+
+function extractFlattenedClientVehicle(text) {
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if ((line.match(/\bVE[IÍ]CULO\b/gi) || []).length !== 1) continue;
+    const match = line.trim().match(
+      /^CLIENTE\s*:?\s+(.+?)\s+VE[IÍ]CULO\s*:?\s+((?:SITE|PORTAL)\b.+)$/i,
+    );
+    const vehicleName = String(match?.[2] || "").trim();
+    if (match && observedCanonicalSiteAliases(vehicleName).length === 1) {
+      return {
+        clientName: String(match[1] || "").trim() || null,
+        vehicleName,
+      };
+    }
+  }
+  return null;
+}
+
+function extractPdfCommercialLabels(text) {
+  const source = String(text || "");
+  const lines = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const flattenedLabels = extractFlattenedClientVehicle(source);
+  const clientName = flattenedLabels?.clientName || firstMatch(source, /^CLIENTE\s*:?\s*(.+)$/im);
+  const firstEntityBoundary = lines.findIndex((line) => /^(?:VE[IÍ]CULO|CLIENTE|RAZÃO SOCIAL|CNPJ)\b/i.test(line));
+  const preamble = lines.slice(0, firstEntityBoundary < 0 ? lines.length : firstEntityBoundary);
+  const agencyCandidates = preamble.filter((line) => (
+    !/^(?:CLIENTE|RAZÃO SOCIAL|VE[IÍ]CULO|CAMPANHA|PRODUTO|CNPJ)\b/i.test(line)
+    && /\b(?:ZIMMERMANN|DMD|SPM COMUNICAÇÃO|SPM COMUNICACAO|RENCA|GENIUS)\b/i.test(line)
+  ));
+  const agencyIdentities = new Set(agencyCandidates.map((line) => (
+    agencyAliasCandidates(line)[0] || normalizeText(line)
+  )));
+  const legacyLegalName = clientName ? null : firstMatch(source, /^RAZÃO SOCIAL\s*:?\s*(.+)$/im);
+  const legacyCnpj = clientName ? null : firstMatch(source, /^CNPJ\s*:?\s*(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/im);
+  return {
+    clientName,
+    clientLegalName: legacyLegalName,
+    clientCnpj: legacyCnpj,
+    agencyName: agencyIdentities.size === 1 ? agencyCandidates[0] : null,
+  };
 }
 
 function monthNameToNumber(value) {
@@ -1101,39 +1768,43 @@ function parsePeriodoFromBboxText(bboxText, competencia) {
   const year = firstMatch(competencia, /(\d{4})/) || String(new Date().getFullYear());
   const month = monthNameToNumber(firstMatch(competencia, /([A-ZÇÃÉÍÓÚ]+)\/\d{4}/i) || "");
   if (!month) return {};
+  const expectedLastDay = new Date(Number(year), Number(month), 0).getDate();
 
   const lines = groupWordsByLine(words);
-  const headerLine = lines.find((line) => {
+  const headerLines = lines.filter((line) => {
     const values = line.words.map((word) => word.text);
-    const days = values.filter((text) => /^\d{2}$/.test(text)).map((text) => Number(text));
-    return days.includes(1) && days.includes(15) && days.includes(31);
+    const days = values.filter((text) => /^\d{1,2}$/.test(text)).map((text) => Number(text));
+    return days.includes(1) && days.includes(15) && days.includes(expectedLastDay);
   });
-  if (!headerLine) return {};
+  if (headerLines.length !== 1) return {};
+  const headerLine = headerLines[0];
 
   const dayWords = headerLine.words
-    .filter((word) => /^\d{2}$/.test(word.text))
+    .filter((word) => /^\d{1,2}$/.test(word.text))
     .map((word) => ({ ...word, day: Number(word.text) }))
-    .filter((word) => word.day >= 1 && word.day <= 31)
     .sort((a, b) => a.day - b.day);
-  if (dayWords.length < 28) return {};
+  const uniqueHeaderDays = new Set(dayWords.map((word) => word.day));
+  const hasCompleteMonthHeader = dayWords.length === expectedLastDay && uniqueHeaderDays.size === expectedLastDay
+    && Array.from({ length: expectedLastDay }, (_, index) => index + 1).every((day) => uniqueHeaderDays.has(day));
+  if (!hasCompleteMonthHeader) return {};
 
   const minDayX = Math.min(...dayWords.map((word) => word.xCenter));
   const maxDayX = Math.max(...dayWords.map((word) => word.xCenter));
   const candidateRows = lines
     .filter((line) => line.yCenter > headerLine.yCenter + 15 && line.yCenter < headerLine.yCenter + 80)
     .map((line) => {
+      const rowText = line.words.map((word) => word.text).join(" ");
       const markers = line.words.filter((word) =>
         word.text === "1" &&
         word.xCenter >= minDayX - 6 &&
         word.xCenter <= maxDayX + 6
       );
-      return { line, markers };
+      return { line, markers, formatMatch: /\bMEGA\s*BANNER\s+TOPO\b/i.test(rowText) };
     })
-    .filter((row) => row.markers.length > 0)
-    .sort((a, b) => b.markers.length - a.markers.length);
+    .filter((row) => row.formatMatch && row.markers.length > 0);
 
+  if (candidateRows.length !== 1) return {};
   const row = candidateRows[0];
-  if (!row) return {};
 
   const usedDays = [];
   for (const marker of row.markers) {
@@ -1172,13 +1843,27 @@ function parsePeriodoFromLayoutText(layoutText, competencia) {
 
   const month = monthNameToNumber(firstMatch(competencia, /([A-ZÇÃÉÍÓÚ]+)\/\d{4}/i) || "");
   if (!month) return {};
+  const expectedLastDay = new Date(Number(year), Number(month), 0).getDate();
   const lines = String(layoutText || "").split(/\r?\n/);
-  const header = lines.find((line) => /\b01\s+02\s+03\b/.test(line));
-  const insertionLine = lines.find((line) => /^\s*C\s+.*\b1\b/.test(line));
-  if (!header || !insertionLine) return {};
+  const headerIndexes = lines.map((line, index) => ({ line, index })).filter(({ line }) => {
+    const days = Array.from(line.matchAll(/\b(\d{1,2})\b/g)).map((match) => Number(match[1]));
+    const uniqueDays = new Set(days);
+    return days.includes(1) && days.includes(15) && days.includes(expectedLastDay)
+      && days.length === expectedLastDay && uniqueDays.size === expectedLastDay
+      && Array.from({ length: expectedLastDay }, (_, index) => uniqueDays.has(index + 1)).every(Boolean);
+  }).map(({ index }) => index);
+  if (headerIndexes.length !== 1) return {};
+  const headerIndex = headerIndexes[0];
+  const header = lines[headerIndex];
+  const insertionLines = headerIndex >= 0
+    ? lines.slice(headerIndex + 1, headerIndex + 7)
+      .filter((line) => (line.match(/\bMEGA\s*BANNER\s+TOPO\b/gi) || []).length === 1 && (line.match(/\b1\b/g) || []).length > 0)
+    : [];
+  if (!header || insertionLines.length !== 1) return {};
+  const insertionLine = insertionLines[0];
 
   const dayColumns = [];
-  for (const match of header.matchAll(/\b(\d{2})\b/g)) {
+  for (const match of header.matchAll(/\b(\d{1,2})\b/g)) {
     const day = Number(match[1]);
     if (day >= 1 && day <= 31) dayColumns.push({ day, index: match.index || 0 });
   }
@@ -1232,21 +1917,12 @@ async function resolveDrivePiEntityIds(parsedFromPdf) {
     privateApiGet("/api/sites"),
   ]);
 
-  const clientText = normalizeText(`${parsedFromPdf.clientName || ""} ${parsedFromPdf.clientLegalName || ""} ${parsedFromPdf.clientCnpj || ""}`);
   const agencyText = normalizeText(parsedFromPdf.agencyName || "");
   const vehicleText = normalizeText(parsedFromPdf.vehicleName || "");
   const vehicleAlias = normalizeSiteAlias(parsedFromPdf.vehicleName);
-  const clientAliases = clientAliasCandidates(`${parsedFromPdf.clientName || ""} ${parsedFromPdf.clientLegalName || ""}`);
   const agencyAliases = agencyAliasCandidates(parsedFromPdf.agencyName || "");
 
-  const client = Array.isArray(clients)
-    ? clients.find((item) => normalizeText(item?.cnpj) && normalizeText(item.cnpj) === normalizeText(parsedFromPdf.clientCnpj))
-      || clients.find((item) => clientAliases.some((alias) => normalizeText(item?.nome) === normalizeText(alias)))
-      || clients.find((item) => {
-        const name = normalizeText(item?.nome);
-        return clientText && name && (clientText.includes(name) || name.includes(clientText.split(" ")[0] || ""));
-      })
-    : null;
+  const clienteId = resolveClientIdFromCatalog(parsedFromPdf, clients);
   const agency = Array.isArray(agencies)
     ? agencies.find((item) => agencyAliases.some((alias) => normalizeText(item?.nome) === normalizeText(alias)))
       || agencies.find((item) => {
@@ -1265,10 +1941,40 @@ async function resolveDrivePiEntityIds(parsedFromPdf) {
     : null;
 
   return {
-    clienteId: client?.id ? Number(client.id) : null,
+    clienteId,
     agenciaId: agency?.id ? Number(agency.id) : null,
     siteId: site?.id ? Number(site.id) : null,
   };
+}
+
+function extractPdfCompetencia(text) {
+  return firstMatch(text, /(?:PERÍODO|COLOCAÇÃO|VEICULAÇÃO)\s*:?\s*([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
+}
+
+function extractPdfVehicleName(text, layout = "") {
+  const values = [];
+  const add = (value) => {
+    const candidate = String(value || "").trim();
+    if (candidate && !values.some((item) => normalizeText(item) === normalizeText(candidate))) values.push(candidate);
+  };
+  for (const match of String(text || "").matchAll(/(?:^|\n)[ \t]*VE[IÍ]CULO\b[ \t]*:?[ \t]*([^\n]+)/gi)) add(match[1]);
+  for (const match of String(layout || "").matchAll(/\bVE[IÍ]CULO\b[ \t]*:?[ \t]*([^\r\n]*?)(?=[ \t]+PER[IÍ]ODO\b|$)/gi)) add(match[1]);
+  const flattened = extractFlattenedClientVehicle(text)?.vehicleName;
+  if (flattened) add(flattened);
+  return values.length === 1 ? values[0] : null;
+}
+
+function buildDrivePiPdfInsertions({ siteId, localFormato, periodo, clickUrl }) {
+  if (!siteId || !localFormato || !periodo?.periodoInicio || !periodo?.periodoFim) return [];
+  return [{
+    siteId,
+    localFormato: localFormato.replace(/\s*-\s*[0-9 Xx]+$/, "").trim(),
+    localFormatoNormalizado: "MEGABANNER TOPO",
+    periodoInicio: periodo.periodoInicio,
+    periodoFim: periodo.periodoFim,
+    periodoOriginal: periodo.periodoOriginal,
+    clickUrl,
+  }];
 }
 
 async function parseDrivePiPdfFields(archived) {
@@ -1276,25 +1982,28 @@ async function parseDrivePiPdfFields(archived) {
   if (!extracted) return {};
   const text = extracted.plain || "";
   const layout = extracted.layout || text;
-  const piNumber = firstMatch(text, /\bPI\s+PEDIDO DE INSERÇÃO\s+(\d{3,})/i) || firstMatch(text, /\bPI\s*(\d{3,})\b/i);
-  const competencia = firstMatch(text, /PERÍODO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i) || firstMatch(text, /COLOCAÇÃO\s+([A-ZÇÃÉÍÓÚ]+\/\d{4})/i);
+  const explicitPiCandidates = extractExplicitPisFromPdfText(`${text}\n${layout}`);
+  const piNumber = selectSingleExplicitPiCandidate(explicitPiCandidates);
+  const competencia = extractPdfCompetencia(text) || extractPdfCompetencia(layout);
   const campaignName = firstMatch(text, /CAMPANHA:\s*([^\n]+)/i);
-  const localFormato = firstMatch(text, /(MEGABANNER TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGABANNER TOPO)/i);
+  const localFormato = firstMatch(text, /(MEGA\s*BANNER\s+TOPO\s*-\s*[0-9 Xx]+)/i) || firstMatch(text, /(MEGA\s*BANNER\s+TOPO)/i);
   const bboxPeriodo = parsePeriodoFromBboxText(extracted.bbox, competencia);
+  const commercialLabels = extractPdfCommercialLabels(text);
   const parsed = {
     piCodigo: piNumber ? `PI ${piNumber}` : null,
     campaignName,
     competencia,
-    clientName: firstMatch(text, /CLIENTE\s+([^\n]+)/i),
-    clientLegalName: firstMatch(text, /RAZÃO SOCIAL\s+([^\n]+)/i),
-    clientCnpj: firstMatch(text, /CNPJ\s+(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/i),
-    agencyName: firstMatch(text, /^([A-Z0-9 .&-]*DMD[^\n]+)/im) || "DMD",
-    vehicleName: firstMatch(text, /VEÍCULO\s+([^\n]+)/i),
+    clientName: commercialLabels.clientName,
+    clientLegalName: commercialLabels.clientLegalName,
+    clientCnpj: commercialLabels.clientCnpj,
+    agencyName: commercialLabels.agencyName,
+    vehicleName: extractPdfVehicleName(text, layout),
     valorLiquido: parseCurrencyPtBr(firstMatch(text, /LIQUIDO R\$\s+([\d.,]+)/i)),
     clickUrl: firstMatch(text, /(https:\/\/[^\s)]+)/i),
     periodo: bboxPeriodo.periodoInicio ? bboxPeriodo : parsePeriodoFromLayoutText(layout, competencia),
     rawTextExcerpt: text.slice(0, 1200),
     parseError: extracted.error || null,
+    explicitPiCandidates,
   };
   const ids = await resolveDrivePiEntityIds(parsed);
   return {
@@ -1307,18 +2016,41 @@ async function parseDrivePiPdfFields(archived) {
     clickUrl: parsed.clickUrl,
     rawTextExcerpt: parsed.rawTextExcerpt,
     parseError: parsed.parseError,
-    insertions: ids.siteId && parsed.localFormato && parsed.periodo.periodoInicio && parsed.periodo.periodoFim
-      ? [{
-          siteId: ids.siteId,
-          localFormato: parsed.localFormato.replace(/\s*-\s*[0-9 Xx]+$/, "").trim(),
-          localFormatoNormalizado: "MEGABANNER TOPO",
-          periodoInicio: parsed.periodo.periodoInicio,
-          periodoFim: parsed.periodo.periodoFim,
-          periodoOriginal: parsed.periodo.periodoOriginal,
-          clickUrl: parsed.clickUrl,
-        }]
-      : [],
+    explicitPiCandidates: parsed.explicitPiCandidates,
+    insertions: buildDrivePiPdfInsertions({
+      siteId: ids.siteId,
+      localFormato,
+      periodo: parsed.periodo,
+      clickUrl: parsed.clickUrl,
+    }),
   };
+}
+
+function extractExplicitPiFromPdfText(text) {
+  return extractExplicitPisFromPdfText(text)[0] || null;
+}
+
+function selectSingleExplicitPiCandidate(candidates) {
+  const values = Array.from(new Set((Array.isArray(candidates) ? candidates : [])
+    .map(normalizeExpectedPiIdentity)
+    .filter(Boolean)));
+  if (values.length > 1) throw new Error("PDF contém mais de uma PI explícita; recuperação bloqueada por ambiguidade.");
+  return values[0] || null;
+}
+
+function extractExplicitPisFromPdfText(text) {
+  const values = [];
+  const patterns = [
+    /\bP\.?\s*I\.?(?:\s+PEDIDO\s+DE\s+INSERÇÃO)?\s*(?:(?:N[ÚU]MERO|N\s*[º°o.]?)\s*)?[:#-]?\s*(\d{3,})\b/gi,
+    /\bINSER[ÇC][ÃA]O\s*[:#-]?\s*0*(\d{3,})\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of String(text || "").matchAll(pattern)) {
+      const normalized = normalizeExpectedPiIdentity(match[1]);
+      if (normalized && !values.includes(normalized)) values.push(normalized);
+    }
+  }
+  return values;
 }
 
 function mergeFieldValue(primary, fallback) {
@@ -1372,6 +2104,19 @@ function buildDrivePiTextHints(payload, archived, packageContext) {
   ].filter(Boolean).join(" ");
 }
 
+function buildDrivePiFolderIdentityText(payload, packageContext) {
+  const folder = packageContext?.folder;
+  if (folder?.path) return String(folder.path);
+  if (folder?.name) return String(folder.name);
+  if (String(payload?.mimeType || "") === "application/vnd.google-apps.folder") {
+    return String(payload?.path || payload?.name || "");
+  }
+  const payloadPath = String(payload?.path || "").trim();
+  if (!payloadPath || !payload?.parentFolderId) return "";
+  const folderPath = path.posix.dirname(payloadPath);
+  return folderPath;
+}
+
 async function resolveDrivePiPackageFolder(payload) {
   if (!payload?.driveFileId) return null;
   const mimeType = String(payload.mimeType || "");
@@ -1401,7 +2146,7 @@ async function listDrivePiPackageItems(folderId, basePath = "") {
     try {
       payload = await googleDriveRequest("files", {
         q: `'${folderId}' in parents and trashed = false`,
-        fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size)",
+        fields: "files(id,name,mimeType,modifiedTime,webViewLink,parents,size,md5Checksum,videoMediaMetadata)",
         pageSize: 1000,
         supportsAllDrives: "true",
         includeItemsFromAllDrives: "true",
@@ -1423,6 +2168,8 @@ async function listDrivePiPackageItems(folderId, basePath = "") {
     modifiedTime: file.modifiedTime || null,
     webViewLink: file.webViewLink || null,
     size: file.size || null,
+    md5Checksum: file.md5Checksum || null,
+    videoMediaMetadata: file.videoMediaMetadata || null,
   }));
 }
 
@@ -1430,31 +2177,94 @@ async function downloadDriveFileToArchive(file) {
   if (!file?.driveFileId || String(file.mimeType || "").includes("folder")) {
     return null;
   }
-  if (Number(file.size || 0) > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
-  const accessToken = await getGoogleDriveAccessToken();
+  const maxBytes = mediaMaxBytes(file, { imageMaxBytes: ADOPS_MEDIA_MAX_BYTES, videoMaxBytes: ADOPS_VIDEO_MEDIA_MAX_BYTES });
+  const videoFile = isVideoMedia(file);
+  if (Number(file.size || 0) > maxBytes) throw new Error(`Arquivo do Drive excede limite operacional de ${maxBytes} bytes.`);
+  if (videoFile && (!(Number(file.size) > 0) || !/^[a-f0-9]{32}$/i.test(String(file.md5Checksum || "")))) {
+    throw new Error("Vídeo do Drive sem tamanho e MD5 válidos para download controlado.");
+  }
   const isGoogleDocument = file.mimeType === "application/vnd.google-apps.document";
+  const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
+  const archiveName = isGoogleDocument && !/\.txt$/i.test(String(file.name || "")) ? `${file.name || file.driveFileId}.txt` : file.name;
+  if (videoFile) {
+    const cached = await findVerifiedArchivedMedia({ directory: dir, fileName: safeFileName(archiveName), expectedBytes: Number(file.size), expectedMd5: file.md5Checksum });
+    if (cached) return { ...cached, sourceDriveFileId: file.driveFileId, sourceName: file.name };
+  }
   const downloadUrl = isGoogleDocument
     ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}/export?mimeType=${encodeURIComponent("text/plain")}`
     : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.driveFileId)}?alt=media`;
-  const response = await fetch(downloadUrl, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Falha ao baixar arquivo do Drive: ${response.status}`);
+  let response = null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS; attempt += 1) {
+    let retryAfterMs = 0;
+    try {
+      const accessToken = await getGoogleDriveAccessToken();
+      response = await fetch(downloadUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(ADOPS_DRIVE_REQUEST_TIMEOUT_MS),
+      });
+      if (response.ok) break;
+      const payload = await response.json().catch(() => null);
+      const failure = classifyGoogleDriveDownloadFailure(response.status, payload);
+      const error = new Error(`Falha ao baixar ${safeFileName(file.name || file.driveFileId)} do Drive: ${failure.code} (HTTP ${response.status}).`);
+      error.code = failure.code;
+      error.owner = failure.owner;
+      error.httpStatus = response.status;
+      error.retryable = failure.retryable;
+      if (!failure.retryable) throw error;
+      lastError = error;
+      const retryAfterSeconds = Number.parseFloat(response.headers.get("retry-after") || "0");
+      retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (lastError.retryable === false) throw lastError;
+      if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) throw lastError;
+    }
+    if (attempt >= ADOPS_DRIVE_RETRY_MAX_ATTEMPTS) break;
+    const exponentialMs = ADOPS_DRIVE_RETRY_BASE_MS * (2 ** (attempt - 1));
+    const delayMs = Math.min(ADOPS_DRIVE_RETRY_MAX_MS, Math.max(retryAfterMs, exponentialMs));
+    console.warn(`[runner] Download Google Drive temporariamente indisponível; retry ${attempt}/${ADOPS_DRIVE_RETRY_MAX_ATTEMPTS} em ${delayMs}ms`);
+    await sleep(delayMs);
+  }
+  if (!response?.ok) throw lastError || new Error("Download Google Drive indisponível após retries.");
+  await mkdir(dir, { recursive: true });
+  if (videoFile) {
+    const archived = await streamDriveMediaToArchive({
+      response,
+      directory: dir,
+      fileName: safeFileName(archiveName),
+      expectedBytes: Number(file.size || 0) || null,
+      expectedMd5: file.md5Checksum,
+      maxBytes,
+      reserveBytes: DEFAULT_VIDEO_DISK_RESERVE_BYTES,
+    });
+    return { ...archived, sourceDriveFileId: file.driveFileId, sourceName: file.name };
   }
   const declaredLength = Number(response.headers.get("content-length") || 0);
-  if (declaredLength > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
+  if (declaredLength > maxBytes) throw new Error(`Arquivo do Drive excede limite operacional de ${maxBytes} bytes.`);
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length > ADOPS_MEDIA_MAX_BYTES) throw new Error(`Arquivo do Drive excede limite operacional de ${ADOPS_MEDIA_MAX_BYTES} bytes.`);
+  if (bytes.length > maxBytes) throw new Error(`Arquivo do Drive excede limite operacional de ${maxBytes} bytes.`);
   const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
-  const dir = path.join(DRIVE_PI_ARCHIVE_DIR, new Date().toISOString().slice(0, 10));
-  await mkdir(dir, { recursive: true });
-  const archiveName = isGoogleDocument && !/\.txt$/i.test(String(file.name || "")) ? `${file.name || file.driveFileId}.txt` : file.name;
   const filePath = path.join(dir, `${sha256.slice(0, 12)}-${safeFileName(archiveName)}`);
   await writeFile(filePath, bytes);
-  return { filePath, sha256, bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
+  return { filePath, sha256, md5: crypto.createHash("md5").update(bytes).digest("hex"), bytes: bytes.length, sourceDriveFileId: file.driveFileId, sourceName: file.name };
+}
+
+function classifyGoogleDriveDownloadFailure(status, payload) {
+  const rawReason = String(payload?.error?.errors?.[0]?.reason || "");
+  const reason = /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(rawReason) ? rawReason : `HTTP ${status}`;
+  const quotaLimited = Number(status) === 403 && /quota|rate.?limit|userratelimitexceeded|downloadquotaexceeded/i.test(reason);
+  const code = Number(status) === 401 ? "drive_authorization_missing"
+    : Number(status) === 403 && !quotaLimited ? "drive_permission_denied"
+      : Number(status) === 404 ? "drive_source_not_found"
+        : quotaLimited || Number(status) === 429 ? "drive_rate_limited"
+          : Number(status) >= 500 ? "drive_upstream_unavailable" : "drive_download_failed";
+  return {
+    reason,
+    code,
+    owner: Number(status) === 401 ? "operator_credentials" : Number(status) === 403 && !quotaLimited ? "drive_file_permissions" : Number(status) === 404 ? "source_file" : "upstream_or_network",
+    retryable: Number(status) === 429 || Number(status) >= 500 || quotaLimited,
+  };
 }
 
 function trimUrlPunctuation(value) {
@@ -1463,6 +2273,436 @@ function trimUrlPunctuation(value) {
 
 function extractUrlsFromText(text) {
   return Array.from(new Set((String(text || "").match(/https?:\/\/[^\s<>"']+/gi) || []).map(trimUrlPunctuation)));
+}
+
+function resolveOperationalDestination(observations) {
+  return resolveOptionalOperationalDestination(observations).url;
+}
+
+function resolveOptionalOperationalDestination(observations) {
+  const items = Array.isArray(observations) ? observations : [];
+  if (items.length === 0) return { mode: "none", url: null, statusText: "Banner informativo, sem link" };
+  if (items.some((item) => item?.error)) throw new Error("O link fornecido precisa ser corrigido: o documento não pôde ser lido.");
+  const urls = Array.from(new Set(items.flatMap((item) => extractUrlsFromText(item?.text))));
+  if (urls.length > 1) throw new Error("Foram encontrados links diferentes; informe somente um destino.");
+  if (urls.length === 0) throw new Error("O link fornecido precisa ser corrigido: o documento não contém um endereço válido.");
+  let parsed;
+  try {
+    parsed = new URL(urls[0]);
+  } catch {
+    throw new Error("O link fornecido precisa ser corrigido.");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || isReservedDestinationHost(parsed.hostname) || /(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname)) {
+    throw new Error("O link fornecido precisa ser corrigido: use um único endereço HTTPS público.");
+  }
+  return { mode: "https", url: urls[0], statusText: "Link válido encontrado" };
+}
+
+function isReservedDestinationHost(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (!net.isIP(host)) return false;
+  if (host === "::1" || host === "::" || /^fe[89ab]/i.test(host) || /^fc|^fd/i.test(host)) return true;
+  if (host.startsWith("::ffff:")) return isReservedDestinationHost(host.slice(7));
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4) return false;
+  return octets[0] === 0 || octets[0] === 10 || octets[0] === 127 || octets[0] >= 224
+    || (octets[0] === 169 && octets[1] === 254)
+    || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+    || (octets[0] === 192 && octets[1] === 168)
+    || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127)
+    || (octets[0] === 198 && (octets[1] === 18 || octets[1] === 19));
+}
+
+async function assertPublicOperationalDestination(value) {
+  const parsed = new URL(value);
+  const addresses = await dnsLookup(parsed.hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((item) => isReservedDestinationHost(item.address))) {
+    throw new Error("Destino HTTPS não resolve exclusivamente para endereços públicos.");
+  }
+  return value;
+}
+
+function normalizeOperationalValue(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function validateOperationalPublicationScope({ campaignId, insertionId, siteSigla, identityMode }) {
+  if (!readPositiveInteger(campaignId) || !readPositiveInteger(insertionId)) {
+    throw new Error("Preflight operacional sem campanha ou inserção canônica.");
+  }
+  const normalizedSite = normalizeOperationalValue(siteSigla);
+  const supported = identityMode === "sheet_drive_composite"
+    ? new Set(["PERRENGUE", "ROO", "AFL"]).has(normalizedSite)
+    : normalizedSite === "PERRENGUE";
+  if (!supported) {
+    throw new Error("Identidade operacional sem PDF recusada: portal ainda não suportado pelo publicador seguro.");
+  }
+  return true;
+}
+
+function validateOperationalPublicationContract(payload, { insertion, campaign, site }) {
+  const campaignId = readPositiveInteger(insertion?.campanhaId ?? insertion?.campaignId);
+  const checks = [
+    [Number(insertion?.id) === Number(payload?.expectedInsertionId), "inserção"],
+    [campaignId === Number(payload?.expectedCampaignId) && Number(campaign?.id) === Number(payload?.expectedCampaignId), "campanha"],
+    [normalizeOperationalValue(site?.sigla) === normalizeOperationalValue(payload?.expectedSiteSigla), "portal"],
+    [normalizeOperationalValue(insertion?.localFormatoNormalizado ?? insertion?.localFormato) === normalizeOperationalValue(payload?.expectedFormat), "formato"],
+    [String(insertion?.periodoInicio || "") === String(payload?.expectedPeriodStart || ""), "início"],
+    [String(insertion?.periodoFim || "") === String(payload?.expectedPeriodEnd || ""), "fim"],
+  ];
+  const failed = checks.find(([ok]) => !ok);
+  if (failed) throw new Error(`Preflight operacional divergiu em ${failed[1]}; nenhuma mutação foi aplicada.`);
+  const commercialPis = [campaign?.piCodigo, insertion?.piCodigo].filter((value) => String(value || "").trim());
+  const commercialPi = firstNonEmptyString(...commercialPis);
+  if (payload?.identityMode === "sheet_drive_composite") {
+    const expectedPiCodigo = normalizeExpectedPiIdentity(payload?.expectedPiCodigo);
+    if (!expectedPiCodigo) throw new Error("Identidade composta sem PI canônica esperada.");
+    for (const value of commercialPis) {
+      if (normalizeExpectedPiIdentity(value) !== expectedPiCodigo) {
+        throw new Error("PI da campanha ou inserção diverge da identidade composta; nenhuma mutação foi aplicada.");
+      }
+    }
+    return { ok: true, preserveCommercialPi: commercialPi, expectedPiCodigo };
+  }
+  if (commercialPis.some((value) => /\d{3,}/.test(String(value)))) {
+    throw new Error("Identidade operacional não pode publicar com PI numérica ainda não confirmada por PDF.");
+  }
+  return { ok: true, preserveCommercialPi: commercialPi };
+}
+
+function validateCompositePdfEvidence({ expectedPiCodigo, expectedDocument, archive, parsedPdf }) {
+  const expectedPi = normalizeExpectedPiIdentity(expectedPiCodigo);
+  const expectedSize = Number(expectedDocument?.size || 0);
+  const expectedMd5 = String(expectedDocument?.md5Checksum || "").trim().toLowerCase();
+  if (!expectedPi || expectedSize <= 0 || !/^[a-f0-9]{32}$/.test(expectedMd5)) {
+    throw new Error("Identidade composta exige checksum e tamanho autoritativos do PDF.");
+  }
+  if (!archive || Number(archive.bytes || 0) !== expectedSize || String(archive.md5 || "").trim().toLowerCase() !== expectedMd5) {
+    throw new Error("PDF baixado diverge do checksum ou tamanho do snapshot aprovado.");
+  }
+  if (parsedPdf?.parseError) throw new Error("O PDF não pôde ser lido com segurança; nenhuma mutação foi aplicada.");
+  const explicitPis = Array.from(new Set([
+    ...(Array.isArray(parsedPdf?.explicitPiCandidates) ? parsedPdf.explicitPiCandidates : []),
+    parsedPdf?.piCodigo,
+  ].map(normalizeExpectedPiIdentity).filter(Boolean)));
+  if (explicitPis.some((value) => value !== expectedPi) || explicitPis.length > 1) {
+    throw new Error("O PDF contém PI explícita divergente ou ambígua para a identidade composta.");
+  }
+  return true;
+}
+
+function validateCompositePendingGuard(liveItem, guard) {
+  if (!liveItem || liveItem?.identityMode !== guard?.identityMode || liveItem?.publicationStatus !== "ready_for_publication") {
+    throw new Error("Identidade composta não está mais liberada para publicação.");
+  }
+  if (String(liveItem?.operationalIdentity?.fingerprint || "") !== String(guard?.fingerprint || "")) {
+    throw new Error("Fingerprint operacional mudou; nenhuma mutação foi aplicada.");
+  }
+  const expectedPi = normalizeExpectedPiIdentity(guard?.expectedPiCodigo);
+  const currentPi = normalizeExpectedPiIdentity(liveItem?.sourceIdentity?.canonicalPi);
+  if (guard?.identityMode === "sheet_drive_composite" && (!expectedPi || currentPi !== expectedPi)) {
+    throw new Error("PI canônica da identidade composta mudou; nenhuma mutação foi aplicada.");
+  }
+  return true;
+}
+
+function validateAdrotatePublicationGuard(guard, { insertion, campaign, site }) {
+  const checks = [
+    [Number(insertion?.id) === Number(guard?.expectedInsertionId), "inserção"],
+    [Number(insertion?.campanhaId ?? insertion?.campaignId) === Number(guard?.expectedCampaignId) && Number(campaign?.id) === Number(guard?.expectedCampaignId), "campanha"],
+    [normalizeOperationalValue(site?.sigla) === normalizeOperationalValue(guard?.expectedSiteSigla), "portal"],
+    [normalizeOperationalValue(insertion?.localFormatoNormalizado ?? insertion?.localFormato) === normalizeOperationalValue(guard?.expectedFormat), "formato"],
+    [String(insertion?.periodoInicio || "") === String(guard?.expectedPeriodStart || ""), "início"],
+    [String(insertion?.periodoFim || "") === String(guard?.expectedPeriodEnd || ""), "fim"],
+    [String(insertion?.mediaUrl || "") === String(guard?.expectedMediaUrl || ""), "mídia"],
+  ];
+  const failed = checks.find(([ok]) => !ok);
+  if (failed) throw new Error(`Guard de publicação divergiu em ${failed[1]}; nenhuma mutação AdRotate foi aplicada.`);
+  if (guard?.expectedRowVersion != null) {
+    const expectedRowVersion = requireRowVersion(guard.expectedRowVersion, "guard de publicação");
+    const currentRowVersion = requireRowVersion(insertion?.rowVersion, "leitura da inserção para publicação");
+    if (currentRowVersion !== expectedRowVersion) {
+      throw new Error("Versão CAS da inserção mudou; nenhuma mutação AdRotate foi aplicada.");
+    }
+  }
+  const expectedPi = normalizeExpectedPiIdentity(guard?.expectedPiCodigo);
+  if (expectedPi) {
+    for (const [label, value] of [["campanha", campaign?.piCodigo], ["inserção", insertion?.piCodigo]]) {
+      const currentPi = normalizeExpectedPiIdentity(value);
+      if (currentPi && currentPi !== expectedPi) throw new Error(`Guard de publicação divergiu na PI da ${label}.`);
+    }
+  }
+  return true;
+}
+
+function validateOperationalDriveItem(expected, actual, label) {
+  const expectedId = firstNonEmptyString(expected?.id, expected?.driveFileId);
+  const actualId = firstNonEmptyString(actual?.id, actual?.driveFileId);
+  if (!expectedId || expectedId !== actualId) throw new Error(`${label} operacional não corresponde mais ao ID aprovado.`);
+  for (const key of ["name", "mimeType", "modifiedTime", "size", "md5Checksum"]) {
+    const expectedValue = expected?.[key] == null ? null : String(expected[key]).trim();
+    const actualValue = actual?.[key] == null ? null : String(actual[key]).trim();
+    if (expectedValue && expectedValue !== actualValue) throw new Error(`${label} operacional mudou em ${key}; nenhuma mutação foi aplicada.`);
+  }
+  return true;
+}
+
+async function readOperationalImageMetadata(filePath) {
+  const script = `
+import json, sys
+from PIL import Image
+p=sys.argv[1]
+with Image.open(p) as im:
+    im.verify()
+with Image.open(p) as im:
+    frames=getattr(im, "n_frames", 1)
+    durations=[]
+    for frame_index in range(frames):
+        im.seek(frame_index)
+        durations.append(im.info.get("duration", 0))
+    im.seek(0)
+    rgb=im.convert("RGB")
+    extrema=rgb.getextrema()
+    non_uniform=any(lo != hi for lo, hi in extrema)
+    print(json.dumps({"format": im.format, "width": im.width, "height": im.height, "frames": frames, "durations": durations, "loop": im.info.get("loop", 0), "nonUniform": non_uniform}))
+`;
+  const { stdout } = await execFileAsync("python3", ["-c", script, filePath], { timeout: 30000, maxBuffer: 1024 * 1024 });
+  return JSON.parse(stdout);
+}
+
+async function inspectOperationalImage(filePath, expected) {
+  const metadata = await readOperationalImageMetadata(filePath);
+  if (String(metadata.format || "").toUpperCase() !== String(expected?.format || "").toUpperCase()) throw new Error("Formato binário da mídia diverge do esperado.");
+  if (Number(metadata.width) !== Number(expected?.width) || Number(metadata.height) !== Number(expected?.height)) throw new Error("Dimensões binárias da mídia divergem do formato contratado.");
+  if (!metadata.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  return metadata;
+}
+
+async function prepareOperationalDeliveryImage(filePath, profile) {
+  const source = await readOperationalImageMetadata(filePath);
+  const expectedFormat = String(source.format || "").toUpperCase();
+  if (!(profile?.formats || ["GIF"]).map(value => String(value).toUpperCase().replace(/^JPG$/, "JPEG")).includes(expectedFormat)) throw new Error("Formato binário da mídia diverge do esperado.");
+  if (!source.nonUniform) throw new Error("Mídia operacional possui conteúdo uniforme e não pode ser publicada.");
+  if (!Number(profile?.width) || !Number(profile?.height)) return { transformed: false, source, metadata: source, filePath, transform: null };
+  if (Number(source.width) === Number(profile?.width) && Number(source.height) === Number(profile?.height)) {
+    return { transformed: false, source, metadata: source, filePath, transform: null };
+  }
+
+  const transform = profile?.deliveryTransform;
+  const exactTransform = transform?.mode === "pad-horizontal"
+    && Number(transform.sourceWidth) === Number(source.width)
+    && Number(transform.sourceHeight) === Number(source.height)
+    && Number(transform.targetWidth) === Number(profile?.width)
+    && Number(transform.targetHeight) === Number(profile?.height)
+    && Number(transform.targetWidth) > Number(transform.sourceWidth)
+    && Number(transform.targetHeight) === Number(transform.sourceHeight);
+  if (!exactTransform) return { transformed: false, source, metadata: source, filePath, transform: null,
+    aspectWarning: `aspect_ratio_advisory:${source.width}x${source.height}:expected_${profile.width}x${profile.height}` };
+
+  const outputPath = path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath, path.extname(filePath))}-${transform.targetWidth}x${transform.targetHeight}-delivery.gif`,
+  );
+  const script = `
+import sys
+from PIL import Image, ImageSequence
+source_path, output_path = sys.argv[1], sys.argv[2]
+target_width, target_height = int(sys.argv[3]), int(sys.argv[4])
+with Image.open(source_path) as source:
+    frames=[]
+    durations=[]
+    loop=source.info.get("loop", 0)
+    for frame in ImageSequence.Iterator(source):
+        rgba=frame.convert("RGBA")
+        if rgba.height != target_height or rgba.width >= target_width:
+            raise ValueError("invalid pad-horizontal source")
+        background=rgba.getpixel((0, 0))
+        canvas=Image.new("RGBA", (target_width, target_height), background)
+        canvas.alpha_composite(rgba, ((target_width-rgba.width)//2, 0))
+        frames.append(canvas)
+        durations.append(frame.info.get("duration", source.info.get("duration", 100)))
+    if not frames:
+        raise ValueError("empty GIF")
+    frames[0].save(output_path, format="GIF", save_all=True, append_images=frames[1:], duration=durations, loop=loop, disposal=2, optimize=False)
+`;
+  await execFileAsync("python3", ["-c", script, filePath, outputPath, String(transform.targetWidth), String(transform.targetHeight)], { timeout: 30000, maxBuffer: 1024 * 1024 });
+  const metadata = await inspectOperationalImage(outputPath, {
+    width: Number(profile.width),
+    height: Number(profile.height),
+    format: expectedFormat,
+  });
+  if (Number(metadata.frames) !== Number(source.frames)) throw new Error("Transformação de entrega não preservou todos os frames do GIF.");
+  if (JSON.stringify(metadata.durations) !== JSON.stringify(source.durations) || Number(metadata.loop) !== Number(source.loop)) {
+    throw new Error("Transformação de entrega não preservou duração/loop do GIF.");
+  }
+  return { transformed: true, source, metadata, filePath: outputPath, transform };
+}
+
+async function readOperationalVideoMetadata(filePath) {
+  return probeVideoMetadata(filePath, execFileAsync);
+}
+
+async function prepareOperationalDeliveryMedia(filePath, profile) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== ".mp4") return prepareOperationalDeliveryImage(filePath, profile);
+  const mediaFormat = "MP4";
+  const allowed = (Array.isArray(profile?.formats) ? profile.formats : []).map((value) => String(value).toUpperCase());
+  if (!allowed.includes(mediaFormat)) throw new Error(`Perfil vigente não permite ${mediaFormat}.`);
+
+  const source = await readOperationalVideoMetadata(filePath);
+  const transform = profile?.deliveryTransforms?.MP4;
+  if (transform?.mode === "passthrough") {
+    return { transformed: false, source, metadata: source, filePath, transform };
+  }
+  const exactTransform = transform?.mode === "contain-pad"
+    && Number(transform.sourceWidth) === source.width
+    && Number(transform.sourceHeight) === source.height
+    && Number(transform.contentWidth) > 0
+    && Number(transform.contentHeight) > 0
+    && Number(transform.targetWidth) === Number(profile?.width)
+    && Number(transform.targetHeight) === Number(profile?.height)
+    && Number(transform.contentWidth) <= Number(transform.targetWidth)
+    && Number(transform.contentHeight) <= Number(transform.targetHeight);
+  if (!exactTransform) throw new Error("Dimensões do MP4 divergem da transformação autorizada para o formato contratado.");
+  const outputPath = path.join(path.dirname(filePath), `${path.basename(filePath, extension)}-${transform.targetWidth}x${transform.targetHeight}-delivery.mp4`);
+  const filter = `scale=${Number(transform.contentWidth)}:${Number(transform.contentHeight)}:flags=lanczos,pad=${Number(transform.targetWidth)}:${Number(transform.targetHeight)}:(ow-iw)/2:(oh-ih)/2:color=black`;
+  await execFileAsync("ffmpeg", [
+    "-y", "-v", "error", "-i", filePath, "-vf", filter, "-an",
+    "-c:v", "libx264", "-pix_fmt", String(transform.pixelFormat || "yuv420p"),
+    ...(transform.faststart ? ["-movflags", "+faststart"] : []),
+    outputPath,
+  ], { timeout: 180000, maxBuffer: 4 * 1024 * 1024 });
+  const metadata = await readOperationalVideoMetadata(outputPath);
+  if (metadata.width !== Number(profile.width) || metadata.height !== Number(profile.height) || metadata.pixelFormat !== String(transform.pixelFormat || "yuv420p") || metadata.codec !== "h264") {
+    throw new Error("Conversão MP4 não produziu o perfil HOME 1 aprovado.");
+  }
+  if (Math.abs(metadata.duration - source.duration) > 0.15) throw new Error("Conversão MP4 alterou a duração da peça.");
+  return { transformed: true, source, metadata, filePath: outputPath, transform };
+}
+
+async function assertOperationalMediaReadback({ mediaUrl, expectedSha256, expectedProfile, archivePath }) {
+  const url = new URL(mediaUrl);
+  url.searchParams.set("adops_sha", String(expectedSha256).slice(0, 16));
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { "Cache-Control": "no-cache" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error(`Mídia canônica não respondeu HTTP válido: ${response.status}.`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const actualSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (actualSha256 !== expectedSha256) throw new Error("Readback público da mídia divergiu do SHA-256 da entrega.");
+  const expectedFormat = String(expectedProfile?.format || expectedProfile?.formats?.find((value) => String(value).toUpperCase() === "MP4") || "GIF").toUpperCase();
+  const readbackPath = `${archivePath}.public-readback.${expectedFormat === "MP4" ? "mp4" : "gif"}`;
+  await writeFile(readbackPath, bytes);
+  try {
+    const metadata = expectedFormat === "MP4"
+      ? await readOperationalVideoMetadata(readbackPath)
+      : await readOperationalImageMetadata(readbackPath);
+    if (expectedFormat !== "MP4" && (String(metadata.format).toUpperCase() !== expectedFormat || !metadata.nonUniform)) throw new Error("Readback público contém imagem inválida.");
+    if (expectedFormat === "MP4" && (Number(metadata.width) !== Number(expectedProfile.width) || Number(metadata.height) !== Number(expectedProfile.height))) throw new Error("Readback público da mídia divergiu das dimensões aprovadas.");
+    return { ok: true, sha256: actualSha256, bytes: bytes.length, metadata };
+  } finally {
+    await rm(readbackPath, { force: true });
+  }
+}
+
+function normalizeOperationalMediaProfile(profile) {
+  if (!profile || typeof profile !== "object") return null;
+  const deliveryTransform = profile.deliveryTransform && typeof profile.deliveryTransform === "object"
+    ? {
+        mode: String(profile.deliveryTransform.mode || ""),
+        sourceWidth: Number(profile.deliveryTransform.sourceWidth),
+        sourceHeight: Number(profile.deliveryTransform.sourceHeight),
+        targetWidth: Number(profile.deliveryTransform.targetWidth),
+        targetHeight: Number(profile.deliveryTransform.targetHeight),
+      }
+    : null;
+  const deliveryTransforms = profile.deliveryTransforms && typeof profile.deliveryTransforms === "object"
+    ? Object.fromEntries(Object.entries(profile.deliveryTransforms).sort(([left], [right]) => left.localeCompare(right)).map(([format, value]) => [String(format).toUpperCase(), Object.fromEntries(Object.entries(value || {}).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, typeof item === "number" ? Number(item) : item]))]))
+    : null;
+  return {
+    groupId: Number(profile.groupId),
+    ...(Number(profile.width) > 0 && Number(profile.height) > 0 ? {width: Number(profile.width), height: Number(profile.height)} : {}),
+    formats: (Array.isArray(profile.formats) ? profile.formats : []).map((value) => String(value).toUpperCase()).sort(),
+    ...(deliveryTransform ? { deliveryTransform } : {}),
+    ...(deliveryTransforms ? { deliveryTransforms } : {}),
+  };
+}
+
+async function loadOperationalMediaProfile(siteSigla, localFormat) {
+  const config = JSON.parse(await readFile(path.join(PROJECT_ROOT, "config/adrotate-sites.json"), "utf8"));
+  const siteConfig = config?.[String(siteSigla || "").toUpperCase()];
+  const normalizedFormat = normalizeOperationalValue(localFormat);
+  const normalizedFormats = new Set([
+    normalizedFormat,
+    normalizedFormat.replace(/\s*(?:[-—–]\s*)?\d+\s*X\s*\d+$/, "").trim(),
+  ]);
+  const matches = (siteConfig?.formatMappings || []).filter((mapping) => [...(mapping?.aliases || []), ...(mapping?.inputAliases || [])].some((alias) => normalizedFormats.has(normalizeOperationalValue(alias))));
+  const context = `${String(siteSigla || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0,40)}:${normalizedFormat.replace(/[^A-Z0-9 _-]/g, "").slice(0,80)}:matches=${matches.length}`;
+  if (matches.length !== 1) throw new Error("operational_media_profile_mapping_not_unique:" + context);
+  const profile = matches[0].operationalMediaProfile
+    ?? (normalizedFormat === "VIDEO"
+      ? { formats: ["MP4"], deliveryTransforms: { MP4: { mode: "passthrough" } } }
+      : String(siteSigla || "").toUpperCase() === "PERRENGUE" && normalizedFormat === "LATERAL"
+        ? { width: 380, height: 120, formats: ["GIF"] }
+        : null);
+  if (!profile) throw new Error("operational_media_profile_missing:" + context);
+  return normalizeOperationalMediaProfile({ groupId: Number(matches[0].groupId), ...profile });
+}
+
+function localImportAssetIdentity(mediaUrl) {
+  let url;
+  try { url = new URL(mediaUrl); } catch { return null; }
+  const endpoint = new URL(DO_SPACES_ENDPOINT);
+  const region = DO_SPACES_REGION || endpoint.hostname.split(".")[0] || "nyc3";
+  const fallbackBase = endpoint.hostname.endsWith(".digitaloceanspaces.com")
+    ? `https://${ADOPS_VIDEO_MEDIA_BUCKET}.${region}.digitaloceanspaces.com`
+    : `${endpoint.origin}/${encodeURIComponent(ADOPS_VIDEO_MEDIA_BUCKET)}`;
+  const publicBase = new URL(ADOPS_VIDEO_MEDIA_PUBLIC_BASE_URL || fallbackBase);
+  if (url.protocol !== "https:" || url.origin !== publicBase.origin || url.username || url.password || url.search || url.hash) return null;
+  const basePath = ADOPS_VIDEO_MEDIA_BASE_PATH.replace(/^\/+|\/+$/g, "");
+  const prefix = `${publicBase.pathname.replace(/\/$/, "")}/${basePath}/local-imports/`;
+  if (!url.pathname.startsWith(prefix)) return null;
+  const match = url.pathname.slice(prefix.length).match(/^([a-f0-9]{64})\.(gif|png|jpe?g|webp|mp4)$/i);
+  if (!match) return null;
+  return { sha256: match[1].toLowerCase(), extension: match[2].toLowerCase() === "jpeg" ? "jpg" : match[2].toLowerCase() };
+}
+
+function assertLocalImportProfile(identity, metadata, profile, groupId) {
+  if (Number(profile?.groupId) !== Number(groupId)) throw new Error("Mídia local pertence a outro grupo/posição operacional.");
+  const format = identity.extension === "jpg" ? "JPEG" : identity.extension.toUpperCase();
+  const allowed = (profile?.formats || []).map((item) => String(item).toUpperCase().replace(/^JPG$/, "JPEG"));
+  if (!allowed.includes(format) || String(metadata?.format || "").toUpperCase() !== format) throw new Error("Formato binário da mídia local diverge do perfil operacional.");
+  if (format !== "MP4" && metadata?.nonUniform !== true) throw new Error("Mídia local sem conteúdo visual verificável.");
+  if (Number(profile?.width) > 0 && Number(metadata?.width) !== Number(profile.width)) throw new Error("Largura da mídia local diverge do slot operacional.");
+  if (Number(profile?.height) > 0 && Number(metadata?.height) !== Number(profile.height)) throw new Error("Altura da mídia local diverge do slot operacional.");
+  return true;
+}
+
+async function preflightLocalImportedMedia({ mediaUrl, siteSigla, localFormat, groupId }) {
+  const identity = localImportAssetIdentity(mediaUrl);
+  if (!identity) return null;
+  const profile = await loadOperationalMediaProfile(siteSigla, localFormat);
+  if (Number(profile.groupId) !== Number(groupId)) throw new Error("Mídia local não corresponde ao grupo resolvido pelo checklist.");
+  const response = await httpDownloadBuffer(mediaUrl, { timeoutMs: 30000, maxBytes: 32 * 1024 * 1024 });
+  if (response.statusCode !== 200) throw new Error(`Readback público da mídia local falhou: HTTP ${response.statusCode}.`);
+  const sha256 = crypto.createHash("sha256").update(response.buffer).digest("hex");
+  if (sha256 !== identity.sha256) throw new Error("Readback público da mídia local diverge do SHA-256 importado.");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "adops-local-media-preflight-"));
+  const filePath = path.join(directory, `asset.${identity.extension}`);
+  try {
+    await writeFile(filePath, response.buffer);
+    const metadata = identity.extension === "mp4"
+      ? await readOperationalVideoMetadata(filePath)
+      : await readOperationalImageMetadata(filePath);
+    assertLocalImportProfile(identity, metadata, profile, groupId);
+    return { sha256, bytes: response.buffer.length, profile, metadata };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 function extractMediaLinksFromText(text) {
@@ -1553,11 +2793,12 @@ async function buildDrivePiPackageContext(payload, archived) {
   const pdfItems = items.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
   const mediaItems = items.filter((item) => /^image\//.test(item.mimeType) || /^video\//.test(item.mimeType) || /\.(gif|png|jpe?g|webp|mp4)$/i.test(item.name));
   const textObservations = await readDriveTextObservations(items);
-  let primaryArchive = archived;
-  if (!primaryArchive && pdfItems.length) {
-    primaryArchive = await downloadDriveFileToArchive(pdfItems[0]);
+  const pdfSelection = selectDrivePackagePdf(items, archived, payload);
+  let primaryArchive = pdfSelection.archive;
+  if (!primaryArchive && pdfSelection.item) {
+    primaryArchive = await downloadDriveFileToArchive(pdfSelection.item);
   }
-  const extracted = await extractTextFromArchivedPdf(primaryArchive);
+  const extracted = primaryArchive ? await extractTextFromArchivedPdf(primaryArchive) : null;
   return {
     event: {
       name: payload?.name ?? null,
@@ -1575,16 +2816,21 @@ async function buildDrivePiPackageContext(payload, archived) {
       modifiedTime: item.modifiedTime,
       webViewLink: item.webViewLink,
       size: item.size,
+      md5Checksum: item.md5Checksum,
     })),
     media: mediaItems.map((item) => ({
       driveFileId: item.driveFileId,
       name: item.name,
       path: item.path,
       mimeType: item.mimeType,
+      modifiedTime: item.modifiedTime,
       webViewLink: item.webViewLink,
       size: item.size,
+      md5Checksum: item.md5Checksum,
     })),
     textObservations,
+    pdfSelectionIssues: pdfSelection.issues,
+    pdfCandidates: pdfSelection.candidates,
     pdf: primaryArchive ? {
       filePath: primaryArchive.filePath,
       sha256: primaryArchive.sha256,
@@ -1592,6 +2838,7 @@ async function buildDrivePiPackageContext(payload, archived) {
       sourceDriveFileId: primaryArchive.sourceDriveFileId || payload?.driveFileId || null,
       sourceName: primaryArchive.sourceName || payload?.name || null,
       textExcerpt: String(extracted?.plain || extracted?.layout || "").slice(0, 12000),
+      layoutExcerpt: String(extracted?.layout || "").slice(0, 12000),
       parseError: extracted?.error || null,
     } : null,
     primaryArchive,
@@ -1606,7 +2853,7 @@ function classifyDrivePiPackage(packageContext, payload, archived) {
   const eventLooksMedia = /^image\//.test(mimeType) || /^video\//.test(mimeType) || /\.(gif|png|jpe?g|webp|mp4)$/i.test(name);
   const itemCount = Array.isArray(packageContext?.items) ? packageContext.items.length : 0;
   const mediaCount = Array.isArray(packageContext?.media) ? packageContext.media.length : 0;
-  const hasPdf = Boolean(packageContext?.pdf || archived || eventLooksPdf);
+  const hasPdf = Boolean(packageContext?.pdf && !packageContext.pdf.parseError && packageContext.pdf.textExcerpt?.trim());
   const hasMedia = mediaCount > 0 || eventLooksMedia;
 
   let packageClass = "unknown";
@@ -1628,6 +2875,7 @@ function classifyDrivePiPackage(packageContext, payload, archived) {
   }
 
   return {
+    pdfSelectionIssues: packageContext?.pdfSelectionIssues || [],
     class: packageClass,
     aliases: [
       packageClass === "missing_media" ? "pdf_only" : null,
@@ -1759,6 +3007,7 @@ async function callPiAgentOpenAI(packageContext) {
       "Extraia dados de PI para AdOps.",
       "Responda apenas JSON no schema solicitado.",
       "Nao invente campos; use null quando nao houver evidencia.",
+      "Agencia ausente deve ser registrada em missingFields, mas nao transforma sozinha o status em needs_review: e pendencia comercial, nao bloqueio operacional.",
       "Use citacao curta da PI, nome de arquivo ou caminho para cada campo critico.",
       "Quando houver periodoInicio e periodoFim no mesmo mes, preencha competencia como MM/YYYY a partir do periodoInicio.",
       "A IA nao aplica mudancas; scripts deterministas validam e executam depois.",
@@ -1775,6 +3024,7 @@ async function callPiAgentOpenAI(packageContext) {
         sha256: packageContext.pdf.sha256,
         bytes: packageContext.pdf.bytes,
         textExcerpt: packageContext.pdf.textExcerpt,
+        layoutExcerpt: packageContext.pdf.layoutExcerpt,
         parseError: packageContext.pdf.parseError,
       } : null,
     },
@@ -1946,21 +3196,34 @@ async function normalizeAgentParsedPi(agentParsedPi) {
   };
 }
 
-function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true } = {}) {
-  const parsedInsertions = parsed.insertions?.length
-    ? parsed.insertions
-    : allowPdfInsertions
-      ? parsedFromPdf.insertions || []
-      : [];
+function mergeDrivePiFields(parsed, parsedFromPdf, {
+  allowPdfInsertions = true,
+  preferPdfInsertions = false,
+  preferPdfCommercialIdentity = false,
+} = {}) {
+  const pdfInsertions = allowPdfInsertions ? parsedFromPdf.insertions || [] : [];
+  const parsedInsertions = preferPdfInsertions && pdfInsertions.length
+    ? pdfInsertions
+    : parsed.insertions?.length
+      ? parsed.insertions
+      : extendSitePeriodForSocialDelivery(pdfInsertions);
   const mergedCompetencia = mergeFieldValue(parsed.competencia, parsedFromPdf.competencia);
   const inferredCompetencia = mergedCompetencia ? null : inferCompetenciaFromInsertionPeriod(parsedInsertions);
   return {
     ...parsed,
     piCodigo: mergeFieldValue(parsed.piCodigo, parsedFromPdf.piCodigo),
+    pdfPiCodigo: parsedFromPdf.piCodigo || null,
     campaignName: mergeFieldValue(parsed.campaignName, parsedFromPdf.campaignName),
+    pdfCampaignName: parsedFromPdf.campaignName || null,
     competencia: mergedCompetencia || inferredCompetencia,
-    clienteId: mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
-    agenciaId: mergeFieldValue(parsed.agenciaId, parsedFromPdf.agenciaId),
+    pdfCompetencia: parsedFromPdf.competencia || null,
+    pdfInsertions: Array.isArray(parsedFromPdf.insertions) ? parsedFromPdf.insertions : [],
+    clienteId: preferPdfCommercialIdentity && parsedFromPdf.clienteId
+      ? parsedFromPdf.clienteId
+      : mergeFieldValue(parsed.clienteId, parsedFromPdf.clienteId),
+    agenciaId: preferPdfCommercialIdentity && parsedFromPdf.agenciaId
+      ? parsedFromPdf.agenciaId
+      : mergeFieldValue(parsed.agenciaId, parsedFromPdf.agenciaId),
     valorLiquido: mergeFieldValue(readNumberRecord(parsed.raw, ["valorLiquido"]), parsedFromPdf.valorLiquido),
     clickUrl: mergeFieldValue(readUrlRecord(parsed.raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]), parsedFromPdf.clickUrl),
     insertions: parsedInsertions,
@@ -1974,6 +3237,172 @@ function mergeDrivePiFields(parsed, parsedFromPdf, { allowPdfInsertions = true }
         : null,
     },
   };
+}
+
+function mergeExpectedDrivePiContext(fields, { insertion, campaign, sourceText = "" }) {
+  const canonicalInsertion = {
+    siteId: readNumberRecord(insertion, ["siteId"]),
+    siteSigla: readStringRecord(insertion, ["siteSigla"]),
+    localFormato: readStringRecord(insertion, ["localFormato", "localFormatoNormalizado"]),
+    localFormatoNormalizado: readStringRecord(insertion, ["localFormatoNormalizado", "localFormato"]),
+    periodoInicio: readStringRecord(insertion, ["periodoInicio"]),
+    periodoFim: readStringRecord(insertion, ["periodoFim"]),
+    periodoOriginal: readStringRecord(insertion, ["periodoOriginal"]),
+  };
+  const parsedInsertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const sourceSiteAliases = observedSiteFolderAliases(sourceText);
+  const expectedSiteSigla = normalizeSiteAlias(canonicalInsertion.siteSigla);
+  const canHydrateUniqueSite = parsedInsertions.length === 1
+    && !readNumberRecord(parsedInsertions[0], ["siteId"])
+    && Boolean(canonicalInsertion.siteId)
+    && Boolean(expectedSiteSigla)
+    && sourceSiteAliases.length === 1
+    && sourceSiteAliases[0] === expectedSiteSigla
+    && normalizeSlotKey(readStringRecord(parsedInsertions[0], ["localFormatoNormalizado", "localFormato"]) || "")
+      === normalizeSlotKey(canonicalInsertion.localFormatoNormalizado || canonicalInsertion.localFormato)
+    && readStringRecord(parsedInsertions[0], ["periodoInicio", "inicio"]) === canonicalInsertion.periodoInicio
+    && readStringRecord(parsedInsertions[0], ["periodoFim", "fim"]) === canonicalInsertion.periodoFim;
+  const insertions = parsedInsertions.length
+    ? canHydrateUniqueSite
+      ? [{ ...parsedInsertions[0], siteId: canonicalInsertion.siteId }]
+      : parsedInsertions.map((raw) => {
+        const sameExpectedSlot = Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(canonicalInsertion.siteId || 0)
+          && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+            === normalizeSlotKey(canonicalInsertion.localFormatoNormalizado || canonicalInsertion.localFormato)
+          && readStringRecord(raw, ["periodoInicio", "inicio"]) === canonicalInsertion.periodoInicio;
+        return sameExpectedSlot && !readStringRecord(raw, ["mediaUrl", "media_url"]) && readStringRecord(insertion, ["mediaUrl"])
+          ? { ...raw, mediaUrl: readStringRecord(insertion, ["mediaUrl"]) }
+          : raw;
+      })
+    : [canonicalInsertion];
+  return {
+    ...fields,
+    campaignName: readStringRecord(campaign, ["nome", "campaignName"]) || fields?.campaignName,
+    competencia: readStringRecord(campaign, ["competencia"]) || fields?.competencia,
+    // An expected campaign means the API has already fixed the commercial
+    // identity. Preserve the PDF extraction in raw audit data, but hydrate
+    // these fields from the canonical campaign before any mutation gate.
+    clienteId: readNumberRecord(campaign, ["clienteId"]),
+    agenciaId: readNumberRecord(campaign, ["agenciaId"]),
+    insertions,
+  };
+}
+
+function validateRequestedSiteIdentity(insertions, siteSiglaById) {
+  for (const raw of insertions || []) {
+    const siteId = readNumberRecord(raw, ["siteId"]);
+    const sigla = readStringRecord(raw, ["siteSigla"]);
+    if (siteId && (!siteSiglaById.has(Number(siteId)) || (sigla && siteSiglaById.get(Number(siteId)) !== sigla.toUpperCase()))) {
+      throw new Error("site_identity_mismatch: número e sigla do portal divergem; nenhuma mídia foi enviada.");
+    }
+  }
+}
+
+function validateExpectedSheetScope(source, insertion, payload) {
+  const downloadedAt = source?.source?.downloadedAt || source?.sheet?.downloadedAt;
+  const age = Date.now() - Date.parse(downloadedAt || "");
+  if (!Number.isFinite(age) || age < -60000 || age > 15 * 60000) throw new Error("sheet_source_stale: planilha fresca obrigatória antes de publicar.");
+  const rows = (source?.items || []).filter((row) => Number(row?.adops?.insertionId) === Number(insertion.id)
+    && Number(row?.adops?.campaignId) === Number(insertion.campanhaId)
+    && normalizePiDigits(row.piCodigo) === normalizePiDigits(payload.expectedPiCodigo)
+    && String(row.siteSigla).toUpperCase() === String(insertion.siteSigla).toUpperCase());
+  if (rows.length !== 1) {
+    const explicitOperationalTarget = payload?.operationMode === "operational_minimum"
+      && readPositiveInteger(payload?.expectedCampaignId)
+      && readPositiveInteger(payload?.expectedInsertionId)
+      && payload?.explicitFolder === true
+      && String(payload?.driveFileId || "") !== "";
+    if (!explicitOperationalTarget) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+    if (rows.length > 1) throw new Error("sheet_target_ambiguous: planilha não confirmou alvo único.");
+    const periodStart = readStringRecord(insertion, ["periodoInicio"]);
+    const periodEnd = readStringRecord(insertion, ["periodoFim"]);
+    if (!periodStart || !periodEnd || periodStart > periodEnd) throw new Error("sheet_period_invalid");
+    return {
+      sheetSource: { source: "explicit_operational_target", campaignId: Number(payload.expectedCampaignId), insertionId: Number(payload.expectedInsertionId) },
+      drive: { status: "matched", folderId: payload.driveFileId },
+      format: { resolution: { safeToApply: true, groupId: null } },
+      canonicalSelection: { decision: "confirmed", insertionId: Number(insertion.id), compatibleInsertionIds: [Number(insertion.id)] },
+      period: { start: periodStart, end: periodEnd, original: insertion.periodoOriginal || null },
+    };
+  }
+  const row = rows[0];
+  if (row.drive?.status !== "matched" || row.drive?.folderId !== payload.driveFileId) throw new Error("sheet_drive_mismatch: pasta não corresponde ao alvo da planilha.");
+  if (!row.format?.resolution?.safeToApply || row.canonicalSelection?.decision !== "confirmed"
+    || Number(row.canonicalSelection.insertionId) !== Number(insertion.id)
+    || !row.canonicalSelection.compatibleInsertionIds?.some(id => Number(id) === Number(insertion.id))) throw new Error("sheet_scope_unsafe: posição ou inserção ambígua.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(row.period?.start || "") || !/^\d{4}-\d{2}-\d{2}$/.test(row.period?.end || "") || row.period.start > row.period.end) throw new Error("sheet_period_invalid");
+  return row;
+}
+
+function recoveryTargetKey(target) {
+  return [
+    normalizePiDigits(target?.piCodigo),
+    normalizeText(target?.siteSigla),
+    normalizeSlotKey(target?.localFormato),
+    target?.periodoInicio || "",
+    target?.periodoFim || "",
+  ].join("|");
+}
+
+function hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla) {
+  if (!target) return fields;
+  const expectedKey = recoveryTargetKey(target);
+  const rows = (Array.isArray(monthlySource?.items) ? monthlySource.items : []).filter((item) => recoveryTargetKey({
+    piCodigo: item?.piCodigo,
+    siteSigla: item?.siteSigla,
+    localFormato: item?.format?.normalized || item?.format?.sheet,
+    periodoInicio: item?.period?.start,
+    periodoFim: item?.period?.end,
+  }) === expectedKey && item?.sourceIdentity?.decision === "confirmed" && item?.format?.resolution?.safeToApply === true);
+  if (rows.length !== 1) throw new Error(rows.length ? "Fonte mensal contém alvo de recuperação ambíguo." : "Fonte mensal fresca não confirmou PI/portal/formato/período alvo.");
+  const row = rows[0];
+  const compatibleIds = row?.canonicalSelection?.compatibleInsertionIds;
+  const matchCount = row?.adops?.operationalMatchCount;
+  if (!Array.isArray(compatibleIds) || !Number.isInteger(matchCount)
+    || compatibleIds.length > 1 || matchCount > 1
+    || (target.insertionId && (compatibleIds.length !== 1 || matchCount !== 1 || Number(compatibleIds[0]) !== Number(target.insertionId)))) {
+    throw new Error("recovery_duplicate_or_unconfirmed_insertion");
+  }
+  const siteId = siteIdBySigla.get(String(target.siteSigla).toUpperCase());
+  if (!siteId) throw new Error("Portal alvo não existe no catálogo AdOps.");
+  const pdfPi = normalizeExpectedPiIdentity(fields?.pdfPiCodigo);
+  if (!pdfPi || pdfPi !== normalizeExpectedPiIdentity(target.piCodigo)) throw new Error("PDF não confirma a PI do alvo de recuperação.");
+  const pdfScope = Array.isArray(fields?.pdfInsertions) ? fields.pdfInsertions : [];
+  const matchingPdfScopes = pdfScope.filter((item) => Number(item?.siteId) === Number(siteId)
+    && normalizeSlotKey(item?.localFormatoNormalizado || item?.localFormato) === normalizeSlotKey(target.localFormato)
+    && item?.periodoInicio === target.periodoInicio && item?.periodoFim === target.periodoFim);
+  if (matchingPdfScopes.length !== 1) {
+    throw new Error("PDF não confirma formato e período do alvo de recuperação.");
+  }
+  return {
+    ...fields,
+    piCodigo: target.piCodigo,
+    insertions: [{
+      siteId,
+      siteSigla: String(target.siteSigla).toUpperCase(),
+      localFormato: target.localFormato,
+      localFormatoNormalizado: target.localFormato,
+      periodoInicio: target.periodoInicio,
+      periodoFim: target.periodoFim,
+      periodoOriginal: row?.period?.original || null,
+    }],
+    recoveryTarget: compatibleIds.length === 1 ? { ...target, insertionId: Number(compatibleIds[0]) } : target,
+  };
+}
+
+async function hydrateDrivePiRecoveryTarget(fields, payload) {
+  const target = payload?.recoveryTarget;
+  if (!target) return fields;
+  const competencia = fields?.competencia;
+  if (!competencia) throw new Error("Recuperação exige competência confirmada pelo PDF.");
+  const [monthlySource, sites] = await Promise.all([
+    privateApiGet(`/api/campaign-operations/evidence-monthly-source?competencia=${encodeURIComponent(competencia)}&asOfDate=${encodeURIComponent(todayInCuiaba())}`),
+    privateApiGet("/api/sites"),
+  ]);
+  const siteIdBySigla = new Map((Array.isArray(sites) ? sites : []).map((site) => [String(site?.sigla || "").toUpperCase(), Number(site?.id)]));
+  const hydrated = hydrateRecoveryTarget(fields, target, monthlySource, siteIdBySigla);
+  payload.recoveryTarget = hydrated.recoveryTarget;
+  return hydrated;
 }
 
 async function extractDrivePiFields(payload, archived, agentParsedPi = null, packageContext = null) {
@@ -2006,16 +3435,27 @@ async function extractDrivePiFields(payload, archived, agentParsedPi = null, pac
     raw: parsed,
   };
   const parsedFromPdf = await parseDrivePiPdfFields(archived);
-  return mergeDrivePiFields(baseFields, parsedFromPdf, { allowPdfInsertions: payload?.allowPdfInsertions !== false });
+  return mergeDrivePiFields(baseFields, parsedFromPdf, {
+    allowPdfInsertions: payload?.allowPdfInsertions !== false,
+    preferPdfInsertions: Boolean(
+      readPositiveInteger(payload?.expectedInsertionId)
+      && readPositiveInteger(payload?.expectedCampaignId),
+    ),
+    // Once the API has resolved a canonical campaign/insertion, its client
+    // and agency are the authoritative commercial identity. The PDF remains
+    // auditable in `raw`, but cannot overwrite or falsely block that target.
+    preferPdfCommercialIdentity: false,
+  });
 }
 
 function validateDrivePiApplyFields(fields) {
   const missing = [];
+  const commercialWarnings = [];
   if (!fields.piCodigo) missing.push("piCodigo");
   if (!fields.campaignName) missing.push("campanhaNome");
   if (!fields.competencia) missing.push("competencia");
   if (!fields.clienteId) missing.push("clienteId");
-  if (!fields.agenciaId) missing.push("agenciaId");
+  if (!fields.agenciaId) commercialWarnings.push("missing_agenciaId");
   if (!fields.insertions.length) missing.push("insertions");
   if (fields.agentQuality && !fields.agentQuality.ok) missing.push("agentQuality");
 
@@ -2033,16 +3473,79 @@ function validateDrivePiApplyFields(fields) {
   return {
     ok: missing.length === 0 && invalidInsertions.length === 0,
     missing,
+    commercialWarnings,
     invalidInsertions,
     agentQuality: fields.agentQuality || null,
   };
+}
+
+function validateDrivePiClientlessSourceProof(fields, { canonicalTarget = false } = {}) {
+  if (fields?.clienteId || !fields?.piCodigo || !fields?.campaignName || !fields?.competencia) return false;
+  if (canonicalTarget) return ["sheetVerified", "explicit_operational_target"].includes(fields.sheetVerified?.source)
+    && fields.insertions?.length === 1
+    && fields.insertions.every((item) => Boolean(readNumberRecord(item, ["siteId"]))
+      && Boolean(readStringRecord(item, ["localFormato", "localFormatoNormalizado"]))
+      && Boolean(readStringRecord(item, ["periodoInicio", "inicio"]))
+      && Boolean(readStringRecord(item, ["periodoFim", "fim"]))
+      && Boolean(readStringRecord(item, ["mediaUrl", "media_url"])));
+
+  const pdfPi = normalizeExpectedPiIdentity(fields.pdfPiCodigo);
+  const fieldPi = normalizeExpectedPiIdentity(fields.piCodigo);
+  const pdfCompetencia = normalizeCompetenciaKey(fields.pdfCompetencia);
+  const fieldCompetencia = normalizeCompetenciaKey(fields.competencia);
+  if (!pdfPi || pdfPi !== fieldPi || !pdfCompetencia || pdfCompetencia !== fieldCompetencia) return false;
+  const pdfName = normalizeClientIdentity(fields.pdfCampaignName);
+  if (!pdfName || pdfName !== normalizeClientIdentity(fields.campaignName)) return false;
+  const pdfInsertions = Array.isArray(fields.pdfInsertions) ? fields.pdfInsertions : [];
+  if (!pdfInsertions.length || pdfInsertions.length !== fields.insertions?.length) return false;
+  const unmatchedPdf = [...pdfInsertions];
+  return fields.insertions.every((item) => {
+    const index = unmatchedPdf.findIndex((pdfItem) => Number(readNumberRecord(item, ["siteId"]) || 0) === Number(readNumberRecord(pdfItem, ["siteId"]) || 0)
+      && normalizeSlotKey(readStringRecord(item, ["localFormato", "localFormatoNormalizado"]) || "")
+        === normalizeSlotKey(readStringRecord(pdfItem, ["localFormato", "localFormatoNormalizado"]) || "")
+      && readStringRecord(item, ["periodoInicio", "inicio"]) === readStringRecord(pdfItem, ["periodoInicio", "inicio"])
+      && readStringRecord(item, ["periodoFim", "fim"]) === readStringRecord(pdfItem, ["periodoFim", "fim"]));
+    if (index < 0 || !readStringRecord(item, ["mediaUrl", "media_url"])) return false;
+    unmatchedPdf.splice(index, 1);
+    return true;
+  });
+}
+
+function getDrivePiClientlessProofSource(fields, { canonicalTarget = false } = {}) {
+  if (!validateDrivePiClientlessSourceProof(fields, { canonicalTarget })) return null;
+  return canonicalTarget ? fields.sheetVerified.source : "PDF";
 }
 
 function uniqueStrings(values) {
   return Array.from(new Set(values.filter(Boolean).map(String)));
 }
 
-async function validateDrivePiDedupeSafety(fields) {
+function isDiscardableDraftCampaign(detail, relationsByInsertionId = new Map()) {
+  const insertions = Array.isArray(detail?.insertions) ? detail.insertions : [];
+  const trustedDraftOrigin = ["google-drive-monitor", "planilha_sincronizada"].includes(String(detail?.origem || "").trim().toLowerCase());
+  if (!trustedDraftOrigin) return false;
+  return insertions.every((insertion) => {
+    const status = normalizeText(insertion?.statusNormalizado);
+    const knownDraftOrigin = /^(criado a partir do drive|sincronizado da planilha)/.test(normalizeText(insertion?.observacoes));
+    const relation = relationsByInsertionId.get(Number(insertion?.id)) || {};
+    const hasAdrotateHistory = Boolean(
+      firstNonEmptyString(relation?.plannedSelf?.mediaUrl)
+      || Number(relation?.plannedSelf?.adId || relation?.plannedSelf?.adrotateBannerId || 0) > 0
+      || relation?.publicationConfirmation
+      || (Array.isArray(relation?.exactLiveMatches) && relation.exactLiveMatches.length)
+      || (Array.isArray(relation?.historicalAdminMatches) && relation.historicalAdminMatches.length),
+    );
+    return knownDraftOrigin
+      && ["rascunho", "aguardando_publicacao", "cancelado"].includes(status)
+      && insertion?.bannerPublicadoNoSite !== true
+      && !firstNonEmptyString(insertion?.mediaUrl)
+      && Number(insertion?.totalEvidencias || 0) === 0
+      && insertion?.printGerado !== true
+      && !hasAdrotateHistory;
+  });
+}
+
+async function validateDrivePiDedupeSafety(fields, expectedTarget = null) {
   const piKey = normalizePiDigits(fields.piCodigo);
   const competenciaKey = normalizeCompetenciaKey(fields.competencia);
   if (!piKey || !competenciaKey) return { ok: true, conflicts: [], checkedCampaignIds: [] };
@@ -2066,6 +3569,66 @@ async function validateDrivePiDedupeSafety(fields) {
     normalizeText(item?.nome) === normalizeText(fields.campaignName) &&
     Number(item?.agenciaId ?? 0) === Number(fields.agenciaId)
   );
+
+  const expectedCampaignId = readPositiveInteger(expectedTarget?.expectedCampaignId);
+  const expectedInsertionId = readPositiveInteger(expectedTarget?.expectedInsertionId);
+  if (expectedCampaignId && expectedInsertionId) {
+    const campaign = campaignCandidates.find((item) => Number(item?.id) === expectedCampaignId);
+    if (!campaign) {
+      return { ok: false, conflicts: [`dedupe_conflict: campanha canônica #${expectedCampaignId} não corresponde mais à PI/competência`], checkedCampaignIds: [] };
+    }
+    const detail = await privateApiGet(`/api/campaigns/${expectedCampaignId}`).catch(() => null);
+    const expectedInsertion = Array.isArray(detail?.insertions)
+      ? detail.insertions.find((item) => Number(item?.id) === expectedInsertionId)
+      : null;
+    const raw = fields.insertions.length === 1 ? fields.insertions[0] : null;
+    const allowSheetPeriodCorrection = expectedTarget?.periodSource === "sheet" && expectedTarget?.allowPeriodCorrection === true;
+    const sameScope = Boolean(raw && expectedInsertion
+      && Number(expectedInsertion.siteId ?? 0) === Number(readNumberRecord(raw, ["siteId"]) || 0)
+      && normalizeSlotKey(expectedInsertion.localFormatoNormalizado ?? expectedInsertion.localFormato) === normalizeSlotKey(readStringRecord(raw, ["localFormato", "localFormatoNormalizado"]))
+      && expectedInsertion.periodoInicio === readStringRecord(raw, ["periodoInicio", "inicio"])
+      && (expectedInsertion.periodoFim === readStringRecord(raw, ["periodoFim", "fim"])
+        || (allowSheetPeriodCorrection && readStringRecord(raw, ["periodoFim", "fim"]) > expectedInsertion.periodoFim)));
+    if (!sameScope) {
+      return { ok: false, conflicts: [`dedupe_conflict: inserção canônica #${expectedInsertionId} não corresponde mais ao portal/formato/período`], checkedCampaignIds: [expectedCampaignId] };
+    }
+    const ignoredDraftCampaignIds = [];
+    for (const competitor of campaignCandidates.filter((item) => Number(item?.id) !== expectedCampaignId)) {
+      const competitorDetail = await privateApiGet(`/api/campaigns/${competitor.id}`).catch(() => null);
+      if (!Array.isArray(competitorDetail?.insertions)) {
+        return { ok: false, conflicts: [`dedupe_check_failed: não foi possível validar a campanha concorrente #${competitor.id}`], checkedCampaignIds: [expectedCampaignId] };
+      }
+      const relations = new Map();
+      for (const insertion of competitorDetail.insertions) {
+        const relation = await privateApiGet(`/api/integrations/adrotate/insertions/${insertion.id}/relation`).catch(() => null);
+        if (!relation) {
+          return { ok: false, conflicts: [`dedupe_check_failed: não foi possível validar o histórico AdRotate da inserção #${insertion.id}`], checkedCampaignIds: [expectedCampaignId] };
+        }
+        relations.set(Number(insertion.id), relation);
+      }
+      const allowedCoexistence = expectedTarget?.allowCoexistence === true
+        && Number(expectedTarget?.coexistingInsertionId) > 0
+        && String(expectedTarget?.coexistenceConfirmation || "").trim().length >= 8
+        && competitorDetail.insertions.every((insertion) => Number(insertion?.id) === Number(expectedTarget.coexistingInsertionId)
+          && Number(insertion?.siteId) === Number(expectedInsertion.siteId)
+          && Number(relations.get(Number(insertion?.id))?.plannedSelf?.adrotateGroupId || 0) === Number(expectedTarget?.coexistenceGroupId || 0));
+      if (!isDiscardableDraftCampaign(competitorDetail, relations) && !allowedCoexistence) {
+        return { ok: false, conflicts: [`dedupe_conflict: campanha concorrente #${competitor.id} possui publicação, mídia, evidência ou origem não descartável`], checkedCampaignIds: [expectedCampaignId, Number(competitor.id)] };
+      }
+      ignoredDraftCampaignIds.push(Number(competitor.id));
+    }
+    return {
+      ok: true,
+      conflicts: [],
+      checkedCampaignIds: [expectedCampaignId],
+      ignoredDraftCampaignIds,
+      coexistence: expectedTarget?.allowCoexistence === true ? {
+        insertionId: Number(expectedTarget.coexistingInsertionId),
+        groupId: Number(expectedTarget.coexistenceGroupId),
+        reason: String(expectedTarget.coexistenceConfirmation).trim(),
+      } : null,
+    };
+  }
 
   const conflicts = [];
   if (campaignCandidates.length > 1 && exactCandidates.length !== 1) {
@@ -2140,6 +3703,7 @@ function buildDrivePiReviewReasons({
   if (packageMissing.includes("media") && packageReadiness?.issues?.includes("missing_media")) reasons.push("missing_media");
   for (const item of packageReadiness?.issues || []) reasons.push(item);
   for (const item of validation?.missing || []) reasons.push(`missing_${item}`);
+  for (const item of validation?.commercialWarnings || []) reasons.push(item);
   if (validation?.invalidInsertions?.length) reasons.push("invalid_insertions");
   if (validation?.agentQuality && !validation.agentQuality.ok) reasons.push("agent_quality");
   if (rollout && !rollout.ok) reasons.push("rollout_blocked");
@@ -2154,14 +3718,73 @@ function buildDrivePiReviewReasons({
   return uniqueStrings(reasons);
 }
 
-function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false } = {}) {
+function hasHttpsDrivePiDestination(fields, expectedInsertion = null) {
+  const globalDestination = readUrlRecord(fields, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+  if (String(globalDestination || "").toLowerCase().startsWith("https://")) return true;
+
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const hasHttps = (item) => String(readUrlRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || "")
+    .toLowerCase()
+    .startsWith("https://");
+  if (expectedInsertion) {
+    const scoped = insertions.filter((raw) => (
+      Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expectedInsertion.siteId || 0)
+      && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+        === normalizeSlotKey(expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato)
+      && readStringRecord(raw, ["periodoInicio", "inicio"]) === expectedInsertion.periodoInicio
+      && readStringRecord(raw, ["periodoFim", "fim"]) === expectedInsertion.periodoFim
+    ));
+    return scoped.length === 1 && hasHttps(scoped[0]);
+  }
+  return insertions.length > 0 && insertions.every(hasHttps);
+}
+
+function validateOptionalDrivePiDestination(fields, expectedInsertion = null) {
+  const values = [];
+  const globalDestination = readStringRecord(fields, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+  if (globalDestination) values.push(globalDestination);
+  const insertions = Array.isArray(fields?.insertions) ? fields.insertions : [];
+  const scoped = expectedInsertion
+    ? insertions.filter((raw) => (
+        Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expectedInsertion.siteId || 0)
+        && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "") === normalizeSlotKey(expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato)
+        && readStringRecord(raw, ["periodoInicio", "inicio"]) === expectedInsertion.periodoInicio
+        && readStringRecord(raw, ["periodoFim", "fim"]) === expectedInsertion.periodoFim
+      ))
+    : insertions;
+  for (const item of scoped) {
+    const value = readStringRecord(item, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]);
+    if (value) values.push(value);
+  }
+  const unique = [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+  if (unique.length === 0) return { ok: true, mode: "none", url: null, issue: null };
+  if (unique.length > 1) return { ok: false, mode: "ambiguous", url: null, issue: "ambiguous_destination" };
+  try {
+    const parsed = new URL(unique[0]);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || /(^|\.)(?:drive|docs)\.google\.com$/i.test(parsed.hostname) || isReservedDestinationHost(parsed.hostname)) {
+      return { ok: false, mode: "invalid", url: null, issue: "invalid_provided_destination" };
+    }
+    return { ok: true, mode: "https", url: unique[0], issue: null };
+  } catch {
+    return { ok: false, mode: "invalid", url: null, issue: "invalid_provided_destination" };
+  }
+}
+
+function validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing = null, { requireResolvedMedia = false, requireHttpsDestination = false, expectedInsertion = null, preflightOnly = false } = {}) {
   const hasInsertionMedia = fields.insertions.some((item) => readStringRecord(item, ["mediaUrl", "media_url"]));
-  const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"]));
-  const issues = [];
-  if (!packageClassification?.hasPdf) issues.push("missing_pi_pdf");
+  const unresolvedMedia = fields.insertions.filter((item) => !readStringRecord(item, ["mediaUrl", "media_url"])
+    && !(preflightOnly && mediaProcessing?.results?.some(result => result.validated === true && result.uploaded === false
+      && Number(result.siteId) === Number(item.siteId)
+      && normalizeSlotKey(result.localFormato) === normalizeSlotKey(item.localFormato || item.localFormatoNormalizado))));
+  const issues = [...(packageClassification?.pdfSelectionIssues || [])];
+  if (!packageClassification?.hasPdf && !fields.sheetVerified) issues.push("missing_pi_pdf");
   if (!packageClassification?.hasMedia && !hasInsertionMedia) issues.push("missing_media");
   if (unresolvedMedia.some(isVideoInsertion)) issues.push("video_media_url_missing_after_processing");
   if (requireResolvedMedia && unresolvedMedia.length) issues.push("insertion_media_url_missing_after_processing");
+  if (requireHttpsDestination) {
+    const destination = validateOptionalDrivePiDestination(fields, expectedInsertion);
+    if (!destination.ok && destination.issue) issues.push(destination.issue);
+  }
   for (const issue of mediaProcessing?.issues || []) issues.push(issue);
   return {
     ok: issues.length === 0,
@@ -2169,6 +3792,34 @@ function validateDrivePiPackageReadiness(packageClassification, fields, mediaPro
     hasPdf: Boolean(packageClassification?.hasPdf),
     hasMedia: Boolean(packageClassification?.hasMedia || hasInsertionMedia),
   };
+}
+
+function getDrivePiReadiness(validation, packageReadiness, rollout, dedupe, operationMode, clientlessVerified = false) {
+  const minimumMissing = new Set(["piCodigo", "campanhaNome", "competencia", "clienteId", "agentQuality"]);
+  const operationalValidation = {
+    ...validation,
+    missing: (validation.missing || []).filter((item) => !minimumMissing.has(item)),
+    ok: (validation.invalidInsertions || []).length === 0
+      && Boolean(validation.missing?.includes("insertions") === false),
+  };
+  const operationalPackage = {
+    ...packageReadiness,
+    issues: (packageReadiness.issues || []).filter((item) => item !== "missing_pi_pdf"),
+  };
+  operationalPackage.ok = operationalPackage.issues.length === 0 && operationalPackage.hasMedia;
+  const strictMissing = (validation.missing || []).filter((item) => !(clientlessVerified && item === "clienteId"));
+  const strictValidation = {
+    ...validation,
+    missing: strictMissing,
+    commercialWarnings: clientlessVerified
+      ? uniqueStrings([...(validation.commercialWarnings || []), "missing_clienteId"])
+      : validation.commercialWarnings,
+    ok: strictMissing.length === 0 && (validation.invalidInsertions || []).length === 0,
+  };
+  const strictReady = strictValidation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
+  const operationalReady = operationMode === "operational_minimum"
+    && operationalValidation.ok && operationalPackage.ok && rollout.ok && dedupe.ok;
+  return { operationalValidation, operationalPackage, strictValidation, strictReady, operationalReady };
 }
 
 async function updateDrivePiState(payload, status, extra = {}) {
@@ -2191,19 +3842,12 @@ async function downloadDriveFileIfConfigured(payload) {
   return downloadDriveFileToArchive(payload);
 }
 
-async function notifyDrivePiTelegram(summary) {
-  if (!ADOPS_TELEGRAM_BOT_URL) return { skipped: "ADOPS_TELEGRAM_BOT_URL ausente" };
-  const response = await fetch(`${ADOPS_TELEGRAM_BOT_URL}/ops/drive-pi-event`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPS_API_TOKEN}`,
-    },
-    body: JSON.stringify(summary),
+async function notifyDrivePiTelegram(summary, { sendTelegram = true } = {}) {
+  return deliverDrivePiTelegram(summary, {
+    sendTelegram,
+    botUrl: ADOPS_TELEGRAM_BOT_URL,
+    apiToken: OPS_API_TOKEN,
   });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(payload?.details || payload?.error || `Telegram drive-pi-event falhou: ${response.status}`);
-  return payload;
 }
 
 async function notifyDrivePiStageTelegram(payload, status, extra = {}) {
@@ -2216,7 +3860,7 @@ async function notifyDrivePiStageTelegram(payload, status, extra = {}) {
     webViewLink: payload?.webViewLink,
     falsePositive: false,
     ...extra,
-  }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+  }, { sendTelegram: payload?.sendTelegram !== false }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
 }
 
 async function runPnpm(args, options) {
@@ -2410,6 +4054,7 @@ $apply = getenv('ADOPS_APPLY') === '1';
 if (!$payload_path || !is_readable($payload_path)) {
   throw new RuntimeException('Payload JSON ausente ou ilegivel.');
 }
+
 require_once rtrim($wp_path, '/') . '/wp-load.php';
 require_once WP_CONTENT_DIR . '/plugins/adrotate/adrotate-adops.php';
 if (!function_exists('adrotate_adops_publish_payload')) {
@@ -2440,6 +4085,370 @@ echo wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_U
     endpointId: ADOPS_PERRENGUE_PORTAINER_ENDPOINT_ID,
     wpPath: ADOPS_PERRENGUE_CONTAINER_WP_PATH,
   };
+}
+
+function buildPerrenguePhpCommand(runnerPhp, input, mode) {
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  return [
+    `tmp_runner="$(mktemp /tmp/adops-${mode}.XXXXXX.php)"`,
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(ADOPS_PERRENGUE_CONTAINER_WP_PATH)} ADOPS_ROLLBACK_INPUT=${shellEscape(input)} ${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+}
+
+function buildPerrengueAdrotateSnapshotPhp() {
+  return `<?php
+$wp_path=getenv('ADOPS_WP_PATH') ?: '/app/web/wp'; $input=json_decode(base64_decode(getenv('ADOPS_ROLLBACK_INPUT') ?: ''),true);
+require_once rtrim($wp_path,'/').'/wp-load.php'; global $wpdb;
+$at=$wpdb->prefix.'adrotate'; $st=$wpdb->prefix.'adrotate_schedule'; $lt=$wpdb->prefix.'adrotate_linkmeta';
+$iid=(int)($input['insertionId'] ?? 0); $key=sanitize_text_field($input['externalKey'] ?? '');
+$ads=$wpdb->get_results($wpdb->prepare('SELECT * FROM '.$at.' WHERE adops_insertion_id=%d OR adops_external_key=%s ORDER BY id',$iid,$key),ARRAY_A);
+$ids=array_map(fn($r)=>(int)$r['id'],$ads); $links=[]; $schedules=[];
+if ($ids) { $sqlids=implode(',',array_map('intval',$ids)); $links=$wpdb->get_results('SELECT * FROM '.$lt.' WHERE ad IN ('.$sqlids.') ORDER BY id',ARRAY_A); $sids=array_values(array_unique(array_filter(array_map(fn($r)=>(int)($r['schedule'] ?? 0),$links)))); if ($sids) $schedules=$wpdb->get_results('SELECT * FROM '.$st.' WHERE id IN ('.implode(',',array_map('intval',$sids)).') ORDER BY id',ARRAY_A); }
+echo wp_json_encode(['ads'=>$ads,'links'=>$links,'schedules'=>$schedules],JSON_UNESCAPED_SLASHES).PHP_EOL;
+`;
+}
+
+function buildPerrengueAdrotateRestorePhp() {
+  return `<?php
+$wp_path=getenv('ADOPS_WP_PATH') ?: '/app/web/wp'; $input=json_decode(base64_decode(getenv('ADOPS_ROLLBACK_INPUT') ?: ''),true);
+require_once rtrim($wp_path,'/').'/wp-load.php'; global $wpdb;
+$at=$wpdb->prefix.'adrotate'; $st=$wpdb->prefix.'adrotate_schedule'; $lt=$wpdb->prefix.'adrotate_linkmeta';
+$iid=(int)($input['insertionId'] ?? 0); $key=sanitize_text_field($input['externalKey'] ?? ''); $snap=$input['snapshot'] ?? [];
+$must=function($result,$label){ if ($result === false) throw new RuntimeException('Falha WPDB: '.$label.'; '.$GLOBALS['wpdb']->last_error); return $result; };
+foreach ([$at,$st,$lt] as $table) { $status=$wpdb->get_row($wpdb->prepare('SHOW TABLE STATUS LIKE %s',$table),ARRAY_A); if (!$status || strtoupper((string)($status['Engine'] ?? '')) !== 'INNODB') throw new RuntimeException('Rollback exige tabelas InnoDB: '.$table); }
+$must($wpdb->query('START TRANSACTION'),'start transaction');
+try { $current=$wpdb->get_results($wpdb->prepare('SELECT id FROM '.$at.' WHERE adops_insertion_id=%d OR adops_external_key=%s',$iid,$key),ARRAY_A); $ids=array_map(fn($r)=>(int)$r['id'],$current); $sids=[];
+if ($ids) { $sqlids=implode(',',array_map('intval',$ids)); $sids=$wpdb->get_col('SELECT DISTINCT schedule FROM '.$lt.' WHERE ad IN ('.$sqlids.') AND schedule>0'); $must($wpdb->query('DELETE FROM '.$lt.' WHERE ad IN ('.$sqlids.')'),'delete current links'); $must($wpdb->query('DELETE FROM '.$at.' WHERE id IN ('.$sqlids.')'),'delete current ads'); }
+foreach (($snap['schedules'] ?? []) as $row) $must($wpdb->replace($st,$row),'restore schedule'); foreach (($snap['ads'] ?? []) as $row) $must($wpdb->replace($at,$row),'restore ad'); foreach (($snap['links'] ?? []) as $row) $must($wpdb->replace($lt,$row),'restore link');
+foreach ($sids as $sid) { $sid=(int)$sid; $original=array_filter(($snap['schedules'] ?? []),fn($r)=>(int)$r['id']===$sid); if ($sid>0 && !$original && !(int)$wpdb->get_var($wpdb->prepare('SELECT COUNT(*) FROM '.$lt.' WHERE schedule=%d',$sid))) $must($wpdb->delete($st,['id'=>$sid]),'delete orphan schedule'); }
+$must($wpdb->query('COMMIT'),'commit');
+$maintenance=null; $maintenance_error=null;
+try { if (function_exists('adrotate_adops_run_maintenance')) $maintenance=adrotate_adops_run_maintenance(); else $maintenance_error='adrotate_adops_run_maintenance indisponível'; } catch (Throwable $maintenance_exception) { $maintenance_error=$maintenance_exception->getMessage(); }
+echo wp_json_encode(['restored'=>true,'ads'=>count($snap['ads'] ?? []),'maintenance'=>$maintenance,'maintenance_error'=>$maintenance_error]).PHP_EOL; } catch (Throwable $e) { $wpdb->query('ROLLBACK'); throw $e; }
+`;
+}
+
+function normalizePerrengueAdrotateSnapshot(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Snapshot AdRotate inválido.");
+  const normalized = {};
+  for (const key of ["ads", "links", "schedules"]) {
+    if (!Array.isArray(value[key])) throw new Error(`Snapshot AdRotate inválido: ${key}.`);
+    normalized[key] = value[key].map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row) || !readPositiveInteger(row.id)) throw new Error(`Snapshot AdRotate inválido: linha ${key}.`);
+      return Object.fromEntries(Object.entries(row).sort(([left], [right]) => left.localeCompare(right)));
+    }).sort((left, right) => Number(left.id) - Number(right.id));
+  }
+  return normalized;
+}
+
+async function snapshotPerrengueAdrotate({ insertionId, externalKey }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey })).toString("base64");
+  const runnerPhp = buildPerrengueAdrotateSnapshotPhp();
+  const execution = await execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, "snapshot"), 120000);
+  return normalizePerrengueAdrotateSnapshot(parseWpCliJsonObject(execution.stdout));
+}
+
+async function restorePerrengueAdrotate({ insertionId, externalKey, snapshot }) {
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey, snapshot: expectedSnapshot })).toString("base64");
+  const runnerPhp = buildPerrengueAdrotateRestorePhp();
+  const execution = await execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, "restore"), 120000);
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.restored) throw new Error("Rollback AdRotate não confirmou restauração.");
+  const readback = await snapshotPerrengueAdrotate({ insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate divergiu no readback pós-restauração.");
+  return { ...result, readbackVerified: true };
+}
+
+function isRestrictedKvm8GatewaySite(site) {
+  return String(site?.sshUser || "") === "cod5adops" && String(site?.sshHost || "") === "93.127.210.71";
+}
+
+function assertSqlIdentifier(value, label) {
+  const identifier = String(value || "");
+  if (!/^[A-Za-z0-9_]+$/.test(identifier)) throw new Error(`${label} SQL inválido.`);
+  return identifier;
+}
+
+async function executeRestrictedWpDbQuery({ site, siteSigla, sql, skipColumnNames = true }) {
+  if (!isRestrictedKvm8GatewaySite(site)) throw new Error(`Portal ${siteSigla} não usa o gateway DB restrito.`);
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const remoteCommand = [
+    shellEscape(site.phpBin ?? "php"),
+    shellEscape(site.wpCliPath ?? "/home/cod5adops/wp-cli.phar"),
+    "--allow-root",
+    `--path=${shellEscape(site.wpPath)}`,
+    "db",
+    "query",
+    shellEscape(sql),
+    "--batch",
+    "--quiet",
+    ...(skipColumnNames ? ["--skip-column-names"] : []),
+  ].join(" ");
+  if (remoteCommand.length > 95000) throw new Error("Query de rollback excede o limite seguro do gateway restrito.");
+  return execFileAsync("ssh", [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "UserKnownHostsFile=/tmp/adops-known-hosts",
+    ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+    "-p", String(site.sshPort),
+    `${site.sshUser}@${site.sshHost}`,
+    remoteCommand,
+  ], { maxBuffer: 4 * 1024 * 1024, timeout: 120000 });
+}
+
+function parseRestrictedDbRows(stdout, columns) {
+  const safeColumns = columns.map((column) => assertSqlIdentifier(column, "Coluna"));
+  const lines = String(stdout || "").split(/\r?\n/).filter((line) => line.length > 0);
+  return lines.map((line) => {
+    const values = line.split("\t");
+    if (values.length !== safeColumns.length) throw new Error("Snapshot DB restrito retornou quantidade inesperada de colunas.");
+    return Object.fromEntries(safeColumns.map((column, index) => [
+      column,
+      values[index] === "~" ? null : decodeRestrictedHexUtf8(values[index]),
+    ]));
+  });
+}
+
+function decodeRestrictedHexUtf8(value) {
+  const hex = String(value ?? "");
+  if (!/^(?:[0-9a-fA-F]{2})*$/.test(hex)) throw new Error("Snapshot DB restrito retornou HEX inválido.");
+  const bytes = Buffer.from(hex, "hex");
+  const decoded = bytes.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(bytes)) {
+    throw new Error("Snapshot DB restrito contém bytes não UTF-8; rollback foi bloqueado.");
+  }
+  return decoded;
+}
+
+async function restrictedTableColumns({ site, siteSigla, table }) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql: `SHOW COLUMNS FROM \`${safeTable}\`` });
+  const columns = String(result.stdout || "").split(/\r?\n/).filter(Boolean).map((line) => line.split("\t")[0]);
+  if (!columns.length) throw new Error(`Tabela ${safeTable} não retornou colunas.`);
+  return columns.map((column) => assertSqlIdentifier(column, "Coluna"));
+}
+
+async function restrictedSelectRows({ site, siteSigla, table, columns, whereSql }) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  const projection = restrictedProjectionSql(columns);
+  const sql = `SELECT CONCAT_WS('\\t',${projection}) FROM \`${safeTable}\` WHERE ${whereSql}`;
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql });
+  return parseRestrictedDbRows(result.stdout, columns);
+}
+
+function restrictedProjectionSql(columns) {
+  return columns.map((column) => `IF(\`${assertSqlIdentifier(column, "Coluna")}\` IS NULL,${restrictedBinaryLiteral("~")},HEX(CAST(\`${column}\` AS BINARY)))`).join(",");
+}
+
+function restrictedBinaryLiteral(value) {
+  const hex = Buffer.from(String(value ?? ""), "utf8").toString("hex");
+  return hex ? `0x${hex}` : "LEFT(0x00,0)";
+}
+
+function parseRestrictedAdrotateBaseTable(stdout) {
+  const matches = String(stdout || "").split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => /^[A-Za-z0-9_]+_adrotate$/.test(value));
+  if (matches.length !== 1) throw new Error(`Portal restrito precisa de uma única tabela base AdRotate; encontradas ${matches.length}.`);
+  return assertSqlIdentifier(matches[0], "Tabela AdRotate");
+}
+
+async function resolveRestrictedAdrotateTables({ site, siteSigla }) {
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql: "SHOW TABLES LIKE '%adrotate'" });
+  const ads = parseRestrictedAdrotateBaseTable(result.stdout);
+  const prefix = ads.slice(0, -"adrotate".length);
+  return {
+    ads,
+    links: assertSqlIdentifier(`${prefix}adrotate_linkmeta`, "Tabela linkmeta"),
+    schedules: assertSqlIdentifier(`${prefix}adrotate_schedule`, "Tabela schedule"),
+  };
+}
+
+async function validateRestrictedAdrotateEngines({ site, siteSigla, tables }) {
+  const names = Object.values(tables).map((table) => `'${assertSqlIdentifier(table, "Tabela")}'`).join(",");
+  const result = await executeRestrictedWpDbQuery({
+    site,
+    siteSigla,
+    sql: `SELECT table_name,engine FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN (${names}) ORDER BY table_name`,
+  });
+  const rows = String(result.stdout || "").split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
+  if (rows.length !== 3 || rows.some((row) => row.length < 2 || String(row[1]).toUpperCase() !== "INNODB")) {
+    throw new Error("Rollback restrito exige exatamente as três tabelas AdRotate em InnoDB.");
+  }
+  return true;
+}
+
+function buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, externalKey }) {
+  const safeInsertionId = readPositiveInteger(insertionId);
+  if (!safeInsertionId) throw new Error("Snapshot DB restrito exige insertionId positivo.");
+  const safeTables = Object.fromEntries(Object.entries(tables).map(([key, table]) => [key, assertSqlIdentifier(table, "Tabela")]));
+  const externalKeyLiteral = restrictedBinaryLiteral(externalKey);
+  const adPredicate = `adops_insertion_id=${safeInsertionId} OR BINARY adops_external_key=${externalKeyLiteral}`;
+  const adIds = `SELECT id FROM \`${safeTables.ads}\` WHERE ${adPredicate}`;
+  const scheduleIds = `SELECT DISTINCT schedule FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) AND schedule>0`;
+  return [
+    "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+    "START TRANSACTION WITH CONSISTENT SNAPSHOT",
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("ADS")},COUNT(*) FROM \`${safeTables.ads}\` WHERE ${adPredicate}`,
+    `SELECT ${restrictedBinaryLiteral("ADS")},${restrictedProjectionSql(columns.ads)} FROM \`${safeTables.ads}\` WHERE ${adPredicate} ORDER BY id`,
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("LINKS")},COUNT(*) FROM \`${safeTables.links}\` WHERE ad IN (${adIds})`,
+    `SELECT ${restrictedBinaryLiteral("LINKS")},${restrictedProjectionSql(columns.links)} FROM \`${safeTables.links}\` WHERE ad IN (${adIds}) ORDER BY id`,
+    `SELECT ${restrictedBinaryLiteral("META")},${restrictedBinaryLiteral("SCHEDULES")},COUNT(*) FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds})`,
+    `SELECT ${restrictedBinaryLiteral("SCHEDULES")},${restrictedProjectionSql(columns.schedules)} FROM \`${safeTables.schedules}\` WHERE id IN (${scheduleIds}) ORDER BY id`,
+    "COMMIT",
+  ].join(";");
+}
+
+function parseRestrictedAdrotateSnapshotOutput(stdout, columns) {
+  const datasets = { ADS: [], LINKS: [], SCHEDULES: [] };
+  const expectedCounts = {};
+  for (const line of String(stdout || "").split(/\r?\n/).filter(Boolean)) {
+    const [dataset, ...values] = line.split("\t");
+    if (dataset === "META") {
+      const [target, rawCount] = values;
+      if (values.length !== 2 || !Object.hasOwn(datasets, target) || Object.hasOwn(expectedCounts, target) || !/^\d+$/.test(rawCount || "")) {
+        throw new Error("Snapshot DB restrito retornou metadados inválidos ou duplicados.");
+      }
+      expectedCounts[target] = Number(rawCount);
+      continue;
+    }
+    if (!Object.hasOwn(datasets, dataset)) throw new Error(`Snapshot DB restrito retornou dataset inesperado: ${dataset}.`);
+    const safeColumns = columns[dataset.toLowerCase()];
+    if (!Array.isArray(safeColumns) || values.length !== safeColumns.length) {
+      throw new Error(`Snapshot DB restrito retornou colunas inválidas para ${dataset}.`);
+    }
+    datasets[dataset].push(Object.fromEntries(safeColumns.map((column, index) => [
+      assertSqlIdentifier(column, "Coluna"),
+      values[index] === "~" ? null : decodeRestrictedHexUtf8(values[index]),
+    ])));
+  }
+  for (const dataset of Object.keys(datasets)) {
+    if (!Object.hasOwn(expectedCounts, dataset) || datasets[dataset].length !== expectedCounts[dataset]) {
+      const expected = Object.hasOwn(expectedCounts, dataset) ? expectedCounts[dataset] : "missing";
+      throw new Error(`Snapshot DB restrito incompleto para ${dataset}: esperado=${expected} recebido=${datasets[dataset].length}.`);
+    }
+  }
+  return normalizePerrengueAdrotateSnapshot({
+    ads: datasets.ADS,
+    links: datasets.LINKS,
+    schedules: datasets.SCHEDULES,
+  });
+}
+
+function summarizeRestrictedSnapshotOutput(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return "empty";
+  return lines.map((line) => {
+    const [dataset, target, count] = line.split("\t");
+    return dataset === "META" ? `META:${target}:${count}` : String(dataset || "unknown").slice(0, 24);
+  }).join(",").slice(0, 500);
+}
+
+async function snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey }) {
+  const tables = await resolveRestrictedAdrotateTables({ site, siteSigla });
+  await validateRestrictedAdrotateEngines({ site, siteSigla, tables });
+  const columns = {
+    ads: await restrictedTableColumns({ site, siteSigla, table: tables.ads }),
+    links: await restrictedTableColumns({ site, siteSigla, table: tables.links }),
+    schedules: await restrictedTableColumns({ site, siteSigla, table: tables.schedules }),
+  };
+  const sql = buildRestrictedAdrotateSnapshotSql({ tables, columns, insertionId, externalKey });
+  const result = await executeRestrictedWpDbQuery({ site, siteSigla, sql });
+  try {
+    return parseRestrictedAdrotateSnapshotOutput(result.stdout, columns);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)} saída=${summarizeRestrictedSnapshotOutput(result.stdout)}`);
+  }
+}
+
+function restrictedReplaceSql(table, rows) {
+  const safeTable = assertSqlIdentifier(table, "Tabela");
+  return rows.map((row) => {
+    const columns = Object.keys(row).map((column) => assertSqlIdentifier(column, "Coluna"));
+    const values = columns.map((column) => row[column] == null
+      ? "NULL"
+      : `FROM_BASE64(${restrictedBinaryLiteral(Buffer.from(String(row[column]), "utf8").toString("base64"))})`);
+    return `REPLACE INTO \`${safeTable}\` (${columns.map((column) => `\`${column}\``).join(",")}) VALUES (${values.join(",")})`;
+  }).join(";");
+}
+
+async function restoreRestrictedAdrotate({ site, siteSigla, insertionId, externalKey, snapshot }) {
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const tables = await resolveRestrictedAdrotateTables({ site, siteSigla });
+  await validateRestrictedAdrotateEngines({ site, siteSigla, tables });
+  const externalKeyLiteral = restrictedBinaryLiteral(externalKey);
+  const statements = [
+    "SET autocommit=0",
+    `LOCK TABLES \`${tables.ads}\` WRITE, \`${tables.links}\` WRITE, \`${tables.schedules}\` WRITE`,
+    "CREATE TEMPORARY TABLE cod5_adops_current_ads (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
+    "CREATE TEMPORARY TABLE cod5_adops_current_schedules (id BIGINT UNSIGNED PRIMARY KEY) ENGINE=MEMORY",
+    `INSERT IGNORE INTO cod5_adops_current_ads (id) SELECT id FROM \`${tables.ads}\` WHERE adops_insertion_id=${Number(insertionId)} OR BINARY adops_external_key=${externalKeyLiteral}`,
+    `INSERT IGNORE INTO cod5_adops_current_schedules (id) SELECT schedule FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads) AND schedule>0`,
+    `DELETE FROM \`${tables.links}\` WHERE ad IN (SELECT id FROM cod5_adops_current_ads)`,
+    `DELETE FROM \`${tables.ads}\` WHERE id IN (SELECT id FROM cod5_adops_current_ads)`,
+  ];
+  for (const [table, rows] of [[tables.schedules, expectedSnapshot.schedules], [tables.ads, expectedSnapshot.ads], [tables.links, expectedSnapshot.links]]) {
+    const replaceSql = restrictedReplaceSql(table, rows);
+    if (replaceSql) statements.push(replaceSql);
+  }
+  const expectedScheduleIds = expectedSnapshot.schedules.map((row) => readPositiveInteger(row.id)).filter(Boolean);
+  statements.push(`DELETE FROM \`${tables.schedules}\` WHERE id IN (SELECT id FROM cod5_adops_current_schedules)${expectedScheduleIds.length ? ` AND id NOT IN (${expectedScheduleIds.join(",")})` : ""} AND id NOT IN (SELECT schedule FROM \`${tables.links}\` WHERE schedule>0)`);
+  statements.push("COMMIT", "UNLOCK TABLES", "SET autocommit=1");
+  await executeRestrictedWpDbQuery({ site, siteSigla, sql: statements.join(";") });
+  const readback = await snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate restrito divergiu no readback pós-restauração.");
+  return { restored: true, readbackVerified: true, transport: "restricted_wp_db_query" };
+}
+
+async function executeSiteRollbackPhp({ site, siteSigla, runnerPhp, input, mode }) {
+  if (shouldUsePerrenguePortainerAdrotate(siteSigla)) {
+    const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+    return execPortainerContainerCommand(container.Id, buildPerrenguePhpCommand(runnerPhp, input, mode), 120000);
+  }
+  if (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath) throw new Error(`Portal ${siteSigla} sem transporte de rollback AdRotate.`);
+  const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
+  const remoteCommand = [
+    `tmp_runner="$(mktemp /tmp/adops-${mode}.XXXXXX.php)"`,
+    `printf %s ${shellEscape(runnerBase64)} | base64 -d > "$tmp_runner"`,
+    `ADOPS_WP_PATH=${shellEscape(site.wpPath)} ADOPS_ROLLBACK_INPUT=${shellEscape(input)} ${shellEscape(site.phpBin ?? "php")} "$tmp_runner"; rc=$?`,
+    'rm -f "$tmp_runner"',
+    "exit $rc",
+  ].join(" && ");
+  const sshKeyPath = sshKeyPathForSite(siteSigla);
+  return execFileAsync("ssh", [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "UserKnownHostsFile=/tmp/adops-known-hosts",
+    ...(sshKeyPath ? ["-i", sshKeyPath] : []),
+    "-p", String(site.sshPort),
+    `${site.sshUser}@${site.sshHost}`,
+    remoteCommand,
+  ], { maxBuffer: 2 * 1024 * 1024, timeout: 120000 });
+}
+
+async function snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey }) {
+  if (isRestrictedKvm8GatewaySite(site)) return snapshotRestrictedAdrotate({ site, siteSigla, insertionId, externalKey });
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey })).toString("base64");
+  const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateSnapshotPhp(), input, mode: "snapshot" });
+  return normalizePerrengueAdrotateSnapshot(parseWpCliJsonObject(execution.stdout));
+}
+
+async function restoreSiteAdrotate({ site, siteSigla, insertionId, externalKey, snapshot }) {
+  if (isRestrictedKvm8GatewaySite(site)) return restoreRestrictedAdrotate({ site, siteSigla, insertionId, externalKey, snapshot });
+  const expectedSnapshot = normalizePerrengueAdrotateSnapshot(snapshot);
+  const input = Buffer.from(JSON.stringify({ insertionId, externalKey, snapshot: expectedSnapshot })).toString("base64");
+  const execution = await executeSiteRollbackPhp({ site, siteSigla, runnerPhp: buildPerrengueAdrotateRestorePhp(), input, mode: "restore" });
+  const result = parseWpCliJsonObject(execution.stdout);
+  if (!result?.restored) throw new Error("Rollback AdRotate não confirmou restauração.");
+  const readback = await snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey });
+  if (JSON.stringify(readback) !== JSON.stringify(expectedSnapshot)) throw new Error("Rollback AdRotate divergiu no readback pós-restauração.");
+  return { ...result, readbackVerified: true };
 }
 
 async function importPerrengueMediaFromUrl({ sourceUrl, filename, mediaKey }) {
@@ -2512,9 +4521,72 @@ echo wp_json_encode(['ready' => true, 'health_status' => 200]) . PHP_EOL;
   return result;
 }
 
-async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache }) {
+function buildPerrengueRebuildTriggerReason({ insertionId, operation, operationId }) {
+  const cod5_insertion_id = readPositiveInteger(insertionId);
+  if (!cod5_insertion_id) throw new Error("Trigger de rebuild exige insertionId positivo.");
+  const cod5_operation = operation === "rollback" ? "rollback" : operation === "publish" ? "publish" : null;
+  if (!cod5_operation) throw new Error("Trigger de rebuild exige operação publish ou rollback.");
+  const cod5_operation_id = String(operationId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  if (!cod5_operation_id) throw new Error("Trigger de rebuild exige operationId rastreável.");
+  return `adops_adrotate_${cod5_operation}_${cod5_insertion_id}_${cod5_operation_id}`;
+}
+
+function evaluatePerrengueRebuildHealth(health, expectedReason) {
+  const candidates = [
+    health?.last && typeof health.last === "object" ? health.last : null,
+    ...(Array.isArray(health?.recentRuns) ? health.recentRuns : []),
+  ].filter(Boolean);
+  const match = candidates.find((item) => String(item?.trigger?.reason || "") === String(expectedReason || "")) || null;
+  const matched = Boolean(match);
+  const status = matched ? String(match?.status || "").toLowerCase() || null : null;
+  const terminalFailure = new Set(["failed", "error", "cancelled", "canceled"]);
+  const terminalSuccess = new Set(["ok", "completed", "complete", "success", "succeeded"]);
+  return {
+    matched,
+    completed: matched && terminalSuccess.has(status),
+    failed: matched && terminalFailure.has(status),
+    status,
+  };
+}
+
+function normalizePerrengueRebuildHealthPayload(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const last = source.last && typeof source.last === "object"
+    ? source.last
+    : source.lastRun && typeof source.lastRun === "object"
+      ? source.lastRun
+      : {};
+  const recentRuns = Array.isArray(source.recentRuns)
+    ? source.recentRuns
+    : Array.isArray(source.runs)
+      ? source.runs
+      : Array.isArray(source.recent)
+        ? source.recent
+        : [];
+  return {
+    available: source.available !== false,
+    running: Boolean(source.running),
+    queued: Boolean(source.queued),
+    last,
+    recentRuns,
+    lastStatus: last?.status ?? null,
+    lastStartedAt: last?.startedAt ?? null,
+    lastFinishedAt: last?.finishedAt ?? null,
+  };
+}
+
+async function executePerrengueHeadlessRebuild({ insertionId, adId, mediaBasename, purgeCache, operation = "publish" }) {
   const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
-  const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache })).toString("base64");
+  const triggerReason = buildPerrengueRebuildTriggerReason({
+    insertionId,
+    operation,
+    operationId: crypto.randomUUID(),
+  });
+  const input = Buffer.from(JSON.stringify({ insertionId, adId, mediaBasename, purgeCache, triggerReason })).toString("base64");
   const timeoutSeconds = Math.max(60, Math.ceil(ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS / 1000));
   const pollMicroseconds = Math.max(1000000, ADOPS_PERRENGUE_REBUILD_POLL_INTERVAL_MS * 1000);
   const runnerPhp = `<?php
@@ -2533,26 +4605,35 @@ $read_health = static function () use ($url) {
   if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) return ['available' => false];
   $body = json_decode((string) wp_remote_retrieve_body($response), true);
   if (!is_array($body)) return ['available' => false];
-  $last = isset($body['last']) && is_array($body['last']) ? $body['last'] : [];
-  return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
+$last = isset($body['last']) && is_array($body['last']) ? $body['last'] : (isset($body['lastRun']) && is_array($body['lastRun']) ? $body['lastRun'] : []);
+$recent_runs = isset($body['recentRuns']) && is_array($body['recentRuns']) ? $body['recentRuns'] : (isset($body['runs']) && is_array($body['runs']) ? $body['runs'] : (isset($body['recent']) && is_array($body['recent']) ? $body['recent'] : []));
+return ['available' => true, 'running' => !empty($body['running']), 'queued' => !empty($body['queued']), 'last' => $last, 'recentRuns' => $recent_runs, 'lastStatus' => $last['status'] ?? null, 'lastStartedAt' => $last['startedAt'] ?? null, 'lastFinishedAt' => $last['finishedAt'] ?? null];
 };
-$before = $read_health();
 $insertion_id = (int) ($input['insertionId'] ?? 0);
-$payload = ['reason' => 'adops_adrotate_publish_' . $insertion_id, 'status' => 'publish', 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
+$trigger_reason = (string) ($input['triggerReason'] ?? '');
+if ($trigger_reason === '') throw new RuntimeException('Trigger único do rebuild ausente.');
+$payload = ['reason' => $trigger_reason, 'status' => 'publish', 'priority' => true, 'insertion_id' => $insertion_id, 'ad_id' => (int) ($input['adId'] ?? 0), 'media_basename' => sanitize_file_name((string) ($input['mediaBasename'] ?? '')), 'purge_routes' => !empty($input['purgeCache']) ? ['/', '/index.html', '/cod5-static-export.json'] : []];
 $response = wp_remote_post($url, ['timeout' => 10, 'blocking' => true, 'headers' => ['content-type' => 'application/json', 'x-cod5-webhook-secret' => $secret], 'body' => wp_json_encode($payload)]);
 if (is_wp_error($response)) throw new RuntimeException($response->get_error_message());
 $code = (int) wp_remote_retrieve_response_code($response);
 if ($code < 200 || $code >= 300) throw new RuntimeException('Webhook rejeitou rebuild com HTTP ' . $code);
 $deadline = time() + ${timeoutSeconds};
-$seen_new_run = false;
 while (time() < $deadline) {
   usleep(${pollMicroseconds});
   $health = $read_health();
-  $seen_new_run = $seen_new_run || (!empty($health['lastStartedAt']) && $health['lastStartedAt'] !== ($before['lastStartedAt'] ?? null)) || !empty($health['running']) || !empty($health['queued']);
-  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && ($health['lastStatus'] ?? null) === 'ok') { echo wp_json_encode(['accepted' => true, 'completed' => true, 'health' => $health]) . PHP_EOL; exit(0); }
-  if ($seen_new_run && empty($health['running']) && empty($health['queued']) && !empty($health['lastStatus']) && $health['lastStatus'] !== 'ok') throw new RuntimeException('Rebuild terminou com status ' . $health['lastStatus']);
+  $candidates = array_merge([isset($health['last']) && is_array($health['last']) ? $health['last'] : []], isset($health['recentRuns']) && is_array($health['recentRuns']) ? $health['recentRuns'] : []);
+  $matched_run = null;
+  foreach ($candidates as $candidate) {
+    $candidate_trigger = isset($candidate['trigger']) && is_array($candidate['trigger']) ? $candidate['trigger'] : [];
+    if ((string) ($candidate_trigger['reason'] ?? '') === $trigger_reason) { $matched_run = $candidate; break; }
+  }
+  $matched = is_array($matched_run);
+  $last_status = $matched ? strtolower((string) ($matched_run['status'] ?? '')) : '';
+  if ($matched && in_array($last_status, ['ok', 'completed', 'complete', 'success', 'succeeded'], true)) { echo wp_json_encode(['accepted' => true, 'completed' => true, 'triggerReason' => $trigger_reason, 'health' => $health]) . PHP_EOL; exit(0); }
+  $terminal_failure = in_array($last_status, ['failed', 'error', 'cancelled', 'canceled'], true);
+  if ($matched && $terminal_failure) throw new RuntimeException('Rebuild ' . $trigger_reason . ' terminou com status ' . $last_status);
 }
-throw new RuntimeException('Timeout aguardando rebuild headless concluir.');
+throw new RuntimeException('Timeout aguardando rebuild headless concluir para ' . $trigger_reason . '.');
 `;
   const runnerBase64 = Buffer.from(runnerPhp).toString("base64");
   const command = [
@@ -2565,7 +4646,7 @@ throw new RuntimeException('Timeout aguardando rebuild headless concluir.');
   const execution = await execPortainerContainerCommand(container.Id, command, ADOPS_PERRENGUE_REBUILD_TIMEOUT_MS + 30000);
   const result = parseWpCliJsonObject(execution.stdout);
   if (!result?.completed) throw new Error(`Rebuild headless não confirmou conclusão: ${safeProcessOutput(execution.stdout)}`);
-  return result;
+  return { ...result, triggerReason };
 }
 
 function todayInCuiaba() {
@@ -2605,7 +4686,7 @@ function destinationUrlFromObservations(value) {
   return match?.[1] ? trimUrlPunctuation(match[1]) : null;
 }
 
-function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence }) {
+function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, targetDate, replaceExisting, purgeCache, generateEvidence, identityMode, destinationOverride }) {
   const groupId = readPositiveInteger(checklist?.expectedSelectors?.groupId);
   const mediaUrl = firstNonEmptyString(
     checklist?.expectedMedia?.mediaUrl,
@@ -2624,17 +4705,19 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
     insertion.campaignPiCodigo,
     campaign?.piCodigo,
   );
-  const linkUrl = firstNonEmptyString(
-    insertion.linkUrl,
-    insertion.urlDestino,
-    insertion.destinationUrl,
-    insertion.destinoUrl,
-    insertion.campanha?.linkUrl,
-    insertion.campaign?.linkUrl,
-    campaign?.linkUrl,
-    campaign?.urlDestino,
-    destinationUrlFromObservations(insertion.observacoes),
-  );
+  const linkUrl = destinationOverride !== undefined
+    ? destinationOverride
+    : firstNonEmptyString(
+        insertion.linkUrl,
+        insertion.urlDestino,
+        insertion.destinationUrl,
+        insertion.destinoUrl,
+        insertion.campanha?.linkUrl,
+        insertion.campaign?.linkUrl,
+        campaign?.linkUrl,
+        campaign?.urlDestino,
+        destinationUrlFromObservations(insertion.observacoes),
+      );
   if (!groupId) throw new Error(`Checklist da inserção ${insertion.id} não resolveu groupId.`);
   if (!mediaUrl) throw new Error(`Inserção ${insertion.id} sem mediaUrl resolvida.`);
   if (!campaignId) throw new Error(`Inserção ${insertion.id} sem campanha vinculada.`);
@@ -2644,7 +4727,7 @@ function buildAdrotatePublishPayload({ insertion, campaign, site, checklist, tar
   return {
     insertion_id: insertion.id,
     campaign_id: campaignId,
-    pi_code: piCodigo,
+    pi_code: identityMode === "operational_identity" ? null : piCodigo,
     external_key: externalKey,
     title: buildAdrotatePublishTitle(insertion, campaign),
     group_id: groupId,
@@ -2692,50 +4775,279 @@ function compactAdrotateRelation(relation) {
   };
 }
 
+function matchingPublicationCheckpointAd(checkpoint, relation) {
+  const matches = Array.isArray(relation?.historicalAdminMatches) ? relation.historicalAdminMatches.filter((item) => (
+    Number(item?.groupId) === Number(checkpoint?.groupId)
+    && Number(item?.adopsInsertionId) === Number(checkpoint?.insertionId)
+    && String(item?.adopsExternalKey || "") === String(checkpoint?.externalKey || "")
+    && String(item?.adopsMediaBasename || "") === String(checkpoint?.mediaBasename || "")
+    && (!checkpoint?.adId || Number(item?.adId) === Number(checkpoint.adId))
+  )) : [];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function publicationCheckpointMatches(checkpoint, relation) {
+  return Boolean(checkpoint?.adId && matchingPublicationCheckpointAd(checkpoint, relation));
+}
+
+function selectPublicationRecoveryCheckpoint(sourceJob, insertionId) {
+  const payload = sourceJob?.payload;
+  const result = sourceJob?.result;
+  const checkpoint = result?.publicationCheckpoint ?? result?.partialResult?.publicationCheckpoint;
+  if (sourceJob?.kind !== "adrotate-publish" || sourceJob?.status !== "failed"
+    || payload?.apply !== true || Number(payload?.insertionId) !== Number(insertionId)
+    || !checkpoint || typeof checkpoint !== "object") {
+    throw new Error(`publication_recovery_source_invalid:${insertionId}`);
+  }
+  return checkpoint;
+}
+
+function isAdrotatePublicationConfirmed({ activeToday, relationAfter, adId, groupId, insertionId, externalKey, publicHtmlOk }) {
+  if (publicHtmlOk === true) return true;
+  const live = Array.isArray(relationAfter?.exactLiveMatches) ? relationAfter.exactLiveMatches : [];
+  if (live.some((item) => Number(item?.adId) === Number(adId) && Number(item?.groupId) === Number(groupId))) return true;
+  if (activeToday) return false;
+  const historical = Array.isArray(relationAfter?.historicalAdminMatches) ? relationAfter.historicalAdminMatches : [];
+  return historical.some((item) => (
+    Number(item?.adId) === Number(adId)
+    && Number(item?.groupId) === Number(groupId)
+    && (Number(item?.adopsInsertionId) === Number(insertionId) || String(item?.adopsExternalKey || "") === String(externalKey || ""))
+  ));
+}
+
 function sitePublicHomeUrl(site) {
-  const domain = firstNonEmptyString(site?.domain, site?.dominio, site?.url);
+  const domain = firstNonEmptyString(site?.siteUrl, site?.domain, site?.dominio, site?.url);
   if (!domain) return null;
   if (/^https?:\/\//i.test(domain)) return new URL("/", domain).toString();
   return `https://${domain.replace(/^\/+|\/+$/g, "")}/`;
 }
 
-async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename }) {
-  const url = sitePublicHomeUrl(site);
-  if (!url) return { ok: false, url: null, error: "site_public_url_missing" };
+function extractSameOriginArticleCandidates(homeUrl, html, limit = 12) {
+  const home = new URL(homeUrl);
+  const ignoredPrefixes = [
+    "/blog/", "/categoria/", "/category/", "/tag/", "/author/", "/busca/",
+    "/midia-kit/", "/quem-somos/", "/fale-conosco/", "/politica-de-privacidade/",
+    "/cod5-status/", "/feed/", "/comments/", "/wp/", "/wp-json/", "/assets/",
+  ];
+  const urls = [];
+  const seen = new Set();
+  for (const match of String(html || "").matchAll(/\bhref=["']([^"'#]+)["']/gi)) {
+    let candidate;
+    try {
+      candidate = new URL(match[1], home);
+    } catch {
+      continue;
+    }
+    if (candidate.origin !== home.origin || candidate.pathname === "/") continue;
+    if (ignoredPrefixes.some((prefix) => candidate.pathname.startsWith(prefix))) continue;
+    if (!/^\/[a-z0-9][a-z0-9-]+\/$/i.test(candidate.pathname)) continue;
+    candidate.search = "";
+    candidate.hash = "";
+    const normalized = candidate.toString();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    urls.push(normalized);
+    if (urls.length >= limit) break;
+  }
+  return urls;
+}
+
+function mediaInPublishedSlot(html, slotSelector, mediaBasename, mediaUrl = null) {
+  const groupMatch = String(slotSelector || "").match(/\.g-(\d+)\b/);
+  if (!groupMatch) return { slotFound: false, mediaFound: false };
+  const groupClass = `g-${groupMatch[1]}`;
+  const tags = [...String(html || "").matchAll(/<\/?div\b[^>]*>/gi)];
+  let slotFound = false;
+  for (let index = 0; index < tags.length; index += 1) {
+    const tag = tags[index];
+    if (tag[0].startsWith("</")) continue;
+    const classes = tag[0].match(/\bclass\s*=\s*["']([^"']+)["']/i)?.[1]?.split(/\s+/) || [];
+    if (!classes.includes(groupClass)) continue;
+    slotFound = true;
+    let depth = 1;
+    let end = String(html).length;
+    for (let cursor = index + 1; cursor < tags.length; cursor += 1) {
+      depth += tags[cursor][0].startsWith("</") ? -1 : 1;
+      if (depth === 0) { end = tags[cursor].index + tags[cursor][0].length; break; }
+    }
+    const slotHtml = String(html).slice(tag.index, end);
+    const mediaFound = mediaUrl
+      ? [...slotHtml.matchAll(/\b(?:src|data-src|poster)\s*=\s*["']([^"']+)["']/gi)].some((match) => {
+          try { return /^(?:https?:)?\/\//i.test(match[1]) && new URL(match[1].replaceAll("&amp;", "&"), mediaUrl).href === new URL(mediaUrl).href; }
+          catch { return false; }
+        })
+      : Boolean(mediaBasename && slotHtml.includes(mediaBasename));
+    if (mediaFound) return { slotFound: true, mediaFound: true };
+  }
+  return { slotFound, mediaFound: false };
+}
+
+async function validatePublishedAdHtml({ site, insertionId, adId, mediaBasename, mediaUrl = null, page, slotSelector = null, maxAttempts = 8 }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl) return { ok: false, url: null, error: "site_public_url_missing" };
+  const needsArticle = String(page || "").toLowerCase() === "article";
   let lastResult = null;
-  for (let attempt = 1; attempt <= 8; attempt += 1) {
-    const attemptUrl = new URL(url);
-    attemptUrl.searchParams.set("cod5_adops_verify", `${insertionId}-${attempt}-${Date.now()}`);
-    const response = await fetch(attemptUrl, {
+  const headers = { "User-Agent": "Mozilla/5.0 (compatible; Cod5AdOps/1.0)", Accept: "text/html", "Cache-Control": "no-cache" };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const homeResponse = await fetch(homeUrl, {
       redirect: "follow",
-      headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" },
+      headers,
       signal: AbortSignal.timeout(30000),
     });
+    const homeHtml = await homeResponse.text();
+    const validationUrls = needsArticle
+      ? [
+          firstNonEmptyString(site?.artigoExemploUrl, site?.articleFallbackUrl),
+          ...extractSameOriginArticleCandidates(homeUrl, homeHtml),
+        ].filter(Boolean)
+      : [homeUrl];
+    const triedUrls = [];
+    for (const candidateUrl of validationUrls) {
+      const candidate = new URL(candidateUrl);
+      candidate.search = "";
+      candidate.hash = "";
+      const response = candidate.origin === new URL(homeResponse.url).origin && candidate.pathname === new URL(homeResponse.url).pathname
+        ? homeResponse
+        : await fetch(candidate, {
+            redirect: "follow",
+            headers,
+            signal: AbortSignal.timeout(30000),
+          });
+      const html = response === homeResponse ? homeHtml : await response.text();
+      const slot = slotSelector ? mediaInPublishedSlot(html, slotSelector, mediaBasename, mediaUrl) : null;
+      const mediaFound = slot ? slot.mediaFound : Boolean(mediaUrl ? html.includes(mediaUrl) || html.includes(mediaUrl.replaceAll("&", "&amp;")) : mediaBasename && html.includes(mediaBasename));
+      const insertionFound = html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`);
+      const adFound = Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)));
+      triedUrls.push(response.url);
+      lastResult = {
+        ok: response.ok && mediaFound && (!slot || slot.slotFound),
+        url: response.url,
+        status: response.status,
+        page: needsArticle ? "article" : "home",
+        slotFound: slot?.slotFound ?? null,
+        mediaFound,
+        insertionFound,
+        adFound,
+        attempts: attempt,
+        triedUrls,
+      };
+      if (lastResult.ok) return lastResult;
+    }
+    if (attempt < maxAttempts) await sleep(750);
+  }
+  return lastResult ?? { ok: false, url: homeUrl, error: "article_url_not_found" };
+}
+
+async function validateMediaAbsentFromPublicHtml({ site, insertionId, mediaBasename }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl || !mediaBasename) throw new Error("Rollback público sem URL ou mídia para validar ausência.");
+  let last = null;
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const url = new URL(homeUrl);
+    url.searchParams.set("cod5_adops_rollback", `${insertionId}-${attempt}-${Date.now()}`);
+    const response = await fetch(url, { redirect: "follow", headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" }, signal: AbortSignal.timeout(30000) });
     const html = await response.text();
-    const mediaFound = Boolean(mediaBasename && html.includes(mediaBasename));
-    const insertionFound = html.includes(`ADOPS-PERRENGUE-${insertionId}`) || html.includes(`ADOPS-${insertionId}`);
-    const adFound = Boolean(adId && (html.includes(`a-${adId}`) || html.includes(`data-ad-id=\"${adId}\"`)));
-    lastResult = {
-      ok: response.ok && (mediaFound || insertionFound || adFound),
-      url: response.url,
-      status: response.status,
-      mediaFound,
-      insertionFound,
-      adFound,
-      attempts: attempt,
-    };
-    if (lastResult.ok) return lastResult;
+    last = { ok: response.ok && !html.includes(mediaBasename), url: response.url, status: response.status, attempts: attempt };
+    if (last.ok) return last;
     await sleep(750);
   }
-  return lastResult;
+  return last;
+}
+
+async function validateRestoredAdHtml({ site, insertionId, previousAdId, previousMediaBasename, rejectedMediaBasename }) {
+  const homeUrl = sitePublicHomeUrl(site);
+  if (!homeUrl || !previousAdId || !previousMediaBasename || !rejectedMediaBasename) throw new Error("Rollback público sem identidade estrita do anúncio anterior e rejeitado.");
+  let last = null;
+  for (let attempt = 1; attempt <= 8; attempt += 1) {
+    const url = new URL(homeUrl);
+    url.searchParams.set("cod5_adops_rollback", `${insertionId}-${attempt}-${Date.now()}`);
+    const response = await fetch(url, { redirect: "follow", headers: { "Cache-Control": "no-cache, no-store", Pragma: "no-cache" }, signal: AbortSignal.timeout(30000) });
+    const html = await response.text();
+    const strict = evaluateRestoredAdHtml(html, { previousAdId, previousMediaBasename, rejectedMediaBasename });
+    last = { ok: response.ok && strict.ok, url: response.url, status: response.status, ...strict, attempts: attempt };
+    if (last.ok) return last;
+    await sleep(750);
+  }
+  return last;
+}
+
+function evaluateRestoredAdHtml(html, { previousAdId, previousMediaBasename, rejectedMediaBasename }) {
+  const source = String(html || "");
+  const previousMediaFound = Boolean(previousMediaBasename && source.includes(previousMediaBasename));
+  const previousAdFound = Boolean(previousAdId && (source.includes(`a-${previousAdId}`) || source.includes(`data-ad-id=\"${previousAdId}\"`)));
+  const rejectedMediaAbsent = Boolean(rejectedMediaBasename) && !source.includes(rejectedMediaBasename);
+  return { ok: rejectedMediaAbsent && (previousMediaFound || previousAdFound), previousMediaFound, previousAdFound, rejectedMediaAbsent };
+}
+
+function selectCanonicalSnapshotAd(snapshot) {
+  return (Array.isArray(snapshot?.ads) ? snapshot.ads : []).slice().sort((left, right) => Number(right?.id || 0) - Number(left?.id || 0))[0] || null;
+}
+
+function isAdrotateSnapshotPublicationConfirmed(snapshot, expected) {
+  const normalized = normalizePerrengueAdrotateSnapshot(snapshot);
+  const adId = Number(expected?.adId || 0);
+  const groupId = Number(expected?.groupId || 0);
+  const scheduleId = Number(expected?.scheduleId || 0);
+  const insertionId = Number(expected?.insertionId || 0);
+  const externalKey = String(expected?.externalKey || "");
+  const mediaBasename = String(expected?.mediaBasename || "");
+  const ad = normalized.ads.find((item) => Number(item?.id) === adId);
+  if (!ad || Number(ad?.adops_insertion_id || 0) !== insertionId || String(ad?.adops_external_key || "") !== externalKey) return false;
+  if (mediaBasename && String(ad?.adops_media_basename || "") !== mediaBasename) return false;
+  const link = normalized.links.find((item) => Number(item?.ad) === adId && Number(item?.group) === groupId && Number(item?.schedule) === scheduleId);
+  if (!link) return false;
+  return normalized.schedules.some((item) => Number(item?.id) === scheduleId);
+}
+
+function isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult }) {
+  return Boolean(apply && purgeCache && (
+    wpCliResult?.cache_maintenance_requested !== true
+    || wpCliResult?.cache_maintenance_ok !== true
+  ));
+}
+
+function publicationFailureDiagnostic({ wpCliResult, headlessRebuild, publicHtmlValidation, exactLiveCount }) {
+  return JSON.stringify({
+    cacheRequested: wpCliResult?.cache_maintenance_requested === true,
+    cacheOk: wpCliResult?.cache_maintenance_ok === true,
+    cacheWarnings: Array.isArray(wpCliResult?.cache_maintenance_warnings)
+      ? wpCliResult.cache_maintenance_warnings.map((warning) => safeProcessOutput(warning, 240))
+      : [],
+    rebuildCompleted: headlessRebuild?.completed === true,
+    publicHtmlOk: publicHtmlValidation?.ok === true,
+    publicHtmlError: publicHtmlValidation?.error ? safeProcessOutput(publicHtmlValidation.error, 500) : null,
+    exactLiveCount,
+  });
 }
 
 async function captureAndValidatePublishedProof({ insertionId, targetDate, captureAt }) {
+  if (targetDate === todayInCuiaba() && !captureAt) {
+    const queued = await privateApi(`/api/insertions/${insertionId}/capture-proof/jobs`, {
+      date: targetDate, capturePurpose: "publication_acceptance", candidate: true,
+      replace: false, force: false,
+    }, { "Idempotency-Key": `publication-acceptance:${targetDate}:${insertionId}` });
+    let backfill = null;
+    try {
+      const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+      if (insertion.periodoInicio && insertion.periodoInicio < targetDate) {
+        const yesterday = new Date(Date.parse(`${targetDate}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+        // Existing scoped, idempotent API owns historical eligibility and audit.
+        backfill = await privateApi('/api/ops/jobs/print-backfill', { insertionId, fromDate: insertion.periodoInicio, toDate: yesterday, replace: false, force: false });
+      }
+    } catch (error) {
+      backfill = { status: "needs_review", error: safeProcessOutput(error instanceof Error ? error.message : String(error), 500) };
+    }
+    return { status: "queued", purpose: "publication_acceptance", jobId: queued.jobId, canonicalDailyPreserved: true, backfill };
+  }
+  const existing = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`);
+  if (existing?.status === "audited" && existing?.checklistValidation?.approved === true && !(existing?.blockingIssues || []).length) {
+    return { skipped: true, reason: "already_audited", status: existing };
+  }
   const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
     date: targetDate,
     captureAt: captureAt || undefined,
-    replace: true,
-    force: true,
+    replace: false,
+    force: false,
   });
   const checklist = await privateApi("/api/audit-checklists/validate-proof", { insertionId, date: targetDate });
   const status = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(targetDate)}`);
@@ -2744,6 +5056,7 @@ async function captureAndValidatePublishedProof({ insertionId, targetDate, captu
     && (status?.blockingIssues || checklist?.blockingIssues || []).length === 0
     && Boolean(status?.arquivoUrl || status?.evidence?.arquivoUrl || capture?.arquivoUrl || capture?.capture?.arquivoUrl);
   if (!approved) throw new Error(`Evidência da inserção ${insertionId} não foi aprovada: ${JSON.stringify({ status: status?.status, blockingIssues: status?.blockingIssues || checklist?.blockingIssues || [] })}`);
+  await markMonthlyReportRefreshAfterApproval(targetDate, insertionId);
   return { capture, checklist, status };
 }
 
@@ -2980,7 +5293,7 @@ function drivePiEventType(item, previous) {
 }
 
 async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Map()) {
-  if (seen.size >= DRIVE_PI_MONITOR_MAX_ITEMS) return seen;
+
   let pageToken = null;
   do {
     const payload = await googleDriveRequest("files", {
@@ -2992,6 +5305,7 @@ async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Ma
       includeItemsFromAllDrives: "true",
     });
     for (const file of payload.files || []) {
+      if (!seen.has(file.id) && seen.size >= DRIVE_PI_MONITOR_MAX_ITEMS) throw new Error("drive_inventory_incomplete_max_items");
       const itemPath = `${basePath}/${file.name || file.id}`;
       seen.set(file.id, {
         driveFileId: file.id,
@@ -3007,10 +5321,10 @@ async function listDrivePiFolderRecursive(folderId, basePath = "", seen = new Ma
       if (file.mimeType === "application/vnd.google-apps.folder") {
         await listDrivePiFolderRecursive(file.id, itemPath, seen);
       }
-      if (seen.size >= DRIVE_PI_MONITOR_MAX_ITEMS) break;
+
     }
     pageToken = payload.nextPageToken || null;
-  } while (pageToken && seen.size < DRIVE_PI_MONITOR_MAX_ITEMS);
+  } while (pageToken);
   return seen;
 }
 
@@ -3044,6 +5358,7 @@ async function postDrivePiMonitorEvent(item, previous) {
 }
 
 async function runDrivePiMonitorOnce({ force = false } = {}) {
+  if (schedulingOwnedByN8n("drive")) return null;
   if (!DRIVE_PI_MONITOR_ENABLED && !force) return null;
   const now = Date.now();
   if (!force && now - lastDrivePiMonitorAt < DRIVE_PI_MONITOR_INTERVAL_MS) return null;
@@ -3089,6 +5404,38 @@ async function runDrivePiMonitorOnce({ force = false } = {}) {
   return { baseline: !state.initialized, scanned: currentMap.size, sent, snapshot };
 }
 
+async function collectReadOnlyDrivePackages(currentMap) {
+  const cacheFile = `${DRIVE_PI_MONITOR_STATE_FILE}.n8n-packages.json`;
+  const cache = await readJsonFile(cacheFile, { packages: {} });
+  const result = [];
+  for (const group of currentDrivePackages([...currentMap.values()])) {
+    const cached=cache.packages?.[group.folderId];
+    if (cached?.revision === group.revision && cached.parserVersion === "n8n-pdf-text-v2" && Array.isArray(cached.textObservations) && !cached.textObservations.some(item=>item.error)) {
+      result.push(cached);
+      continue;
+    }
+    if(cached?.revision===group.revision&&["n8n-pdf-v1","n8n-pdf-text-v2"].includes(cached.parserVersion)){
+      const textObservations=await readDriveTextObservations(group.files);
+      result.push({...cached,parserVersion:"n8n-pdf-text-v2",textObservations});
+      continue;
+    }
+    try {
+      const context = await buildDrivePiPackageContext({ driveFileId: group.folderId,
+        mimeType: "application/vnd.google-apps.folder", path: group.path, eventType: "folder_updated" }, null);
+      const pdf = context.pdf ? { sourceDriveFileId: context.pdf.sourceDriveFileId,
+        sourceName: context.pdf.sourceName, sha256: context.pdf.sha256,
+        textExcerpt: context.pdf.textExcerpt, layoutExcerpt: context.pdf.layoutExcerpt, parseError: context.pdf.parseError } : null;
+      const issues = [...(context.pdfSelectionIssues || []), ...(pdf?.parseError ? ["pdf_extraction_failed"] : [])];
+      result.push({ folderId: group.folderId, path: group.path, revision: group.revision, parserVersion: "n8n-pdf-text-v2", pdf, issues, textObservations:context.textObservations||[] });
+    } catch {
+      // Keep the source incomplete; do not cache a transient failure as a successful read.
+      throw new Error(`drive_package_read_failed:${group.folderId}`);
+    }
+  }
+  await writeJsonFile(cacheFile, { packages: Object.fromEntries(result.map(item => [item.folderId, item])) });
+  return result;
+}
+
 async function executeDriveInventoryRefresh(job) {
   await progressJob(job.id, { stage: "scanning", stageKey: "scanning", percentTotal: 20 });
   const currentMap = await listDrivePiFolderRecursive(DRIVE_PI_MONITOR_ROOT_FOLDER_ID);
@@ -3099,8 +5446,9 @@ async function executeDriveInventoryRefresh(job) {
     itemsDone: 0,
     itemsTotal: currentMap.size,
   });
+  const packages = job?.payload?.monitorOnly === true ? await collectReadOnlyDrivePackages(currentMap) : [];
   const snapshot = await syncDriveInventorySnapshot(currentMap, job?.payload?.scanId || crypto.randomUUID());
-  await writeJsonFile(DRIVE_PI_MONITOR_STATE_FILE, {
+  if (job?.payload?.monitorOnly !== true) await writeJsonFile(DRIVE_PI_MONITOR_STATE_FILE, {
     initialized: true,
     rootFolderId: DRIVE_PI_MONITOR_ROOT_FOLDER_ID,
     checkedAt: snapshot.scannedAt,
@@ -3111,6 +5459,8 @@ async function executeDriveInventoryRefresh(job) {
     stage: "completed",
     stageKey: "completed",
     percentTotal: 100,
+    complete: true,
+    packages,
     scanned: currentMap.size,
     snapshot,
   };
@@ -3164,7 +5514,139 @@ async function findOrCreateDrivePiCampaign(fields, payload) {
   return { campaign, created: true, dedupedBy: null };
 }
 
+function normalizeExpectedPiIdentity(value) {
+  return normalizePiDigits(value)?.replace(/^0+(?=\d)/, "") || null;
+}
+
+function requireRowVersion(value, context = "inserção") {
+  const rowVersion = String(value ?? "");
+  if (!/^\d{1,10}$/.test(rowVersion)) {
+    throw new Error(`Versão CAS ausente ou inválida para ${context}; operação bloqueada.`);
+  }
+  return rowVersion;
+}
+
+function validateExpectedDrivePiIdentity({ expectedPiCodigo, fieldsPiCodigo, pdfPiCodigo, campaignPiCodigo, insertionPiCodigo, allowMissingPdf = false }) {
+  const expected = normalizeExpectedPiIdentity(expectedPiCodigo);
+  const merged = normalizeExpectedPiIdentity(fieldsPiCodigo);
+  const fromPdf = normalizeExpectedPiIdentity(pdfPiCodigo);
+  if (!expected || (!fromPdf && !allowMissingPdf)) {
+    throw new Error("O PDF não confirmou uma PI numérica; nenhuma mutação foi aplicada.");
+  }
+  if (fromPdf && fromPdf !== expected) {
+    throw new Error("A PI lida no PDF diverge da PI que liberou a retomada.");
+  }
+  if (merged && merged !== expected) {
+    throw new Error("A PI consolidada diverge da PI que liberou a retomada.");
+  }
+  for (const [label, value] of [["campanha", campaignPiCodigo], ["inserção", insertionPiCodigo]]) {
+    const current = normalizeExpectedPiIdentity(value);
+    if (current && current !== expected) {
+      throw new Error(`A PI atual da ${label} diverge da PI esperada; nenhuma mutação foi aplicada.`);
+    }
+  }
+  return true;
+}
+
+function validateExpectedDrivePiCommercialContext({ campaignCompetencia, fieldsCompetencia, pdfCompetencia }) {
+  const expected = normalizeCompetenciaKey(campaignCompetencia);
+  const consolidated = normalizeCompetenciaKey(fieldsCompetencia);
+  const fromPdf = normalizeCompetenciaKey(pdfCompetencia);
+  if (!expected || !consolidated || consolidated !== expected || (fromPdf && fromPdf !== expected)) {
+    throw new Error("A competência lida ou consolidada diverge da campanha canônica; nenhuma mutação foi aplicada.");
+  }
+  return true;
+}
+
+async function applyDrivePiToExpectedInsertion(fields, payload) {
+  const expectedInsertionId = Number(payload?.expectedInsertionId || 0);
+  const expectedCampaignId = Number(payload?.expectedCampaignId || 0);
+  const expectedPiCodigo = normalizeExpectedPiIdentity(payload?.expectedPiCodigo);
+  if (!Number.isInteger(expectedInsertionId) || expectedInsertionId <= 0 || !Number.isInteger(expectedCampaignId) || expectedCampaignId <= 0 || !expectedPiCodigo) {
+    throw new Error("Retomada de campanha sem alvo canônico completo.");
+  }
+  const [expected, campaign] = await Promise.all([
+    privateApiGet(`/api/insertions/${expectedInsertionId}`),
+    privateApiGet(`/api/campaigns/${expectedCampaignId}`),
+  ]);
+  if (Number(expected?.campanhaId || 0) !== expectedCampaignId || Number(campaign?.id || 0) !== expectedCampaignId) {
+    throw new Error("A inserção canônica não pertence à campanha esperada.");
+  }
+  validateExpectedDrivePiIdentity({
+    expectedPiCodigo,
+    fieldsPiCodigo: fields.piCodigo,
+    pdfPiCodigo: fields.pdfPiCodigo,
+    campaignPiCodigo: campaign?.piCodigo,
+    insertionPiCodigo: expected?.piCodigo,
+    allowMissingPdf: Boolean(fields.sheetVerified),
+  });
+  if (payload?.operationMode !== "operational_minimum") validateExpectedDrivePiCommercialContext({
+    campaignCompetencia: campaign?.competencia,
+    fieldsCompetencia: fields.competencia,
+    pdfCompetencia: fields.pdfCompetencia,
+  });
+  if (payload?.operationMode !== "operational_minimum"
+    && (Number(campaign?.clienteId || 0) !== Number(fields.clienteId || 0) || Number(campaign?.agenciaId || 0) !== Number(fields.agenciaId || 0))) {
+    throw new Error("Cliente ou agência do PDF divergem da campanha já cadastrada.");
+  }
+  const allowSheetPeriodCorrection = Boolean(fields.sheetVerified);
+  const scoped = fields.insertions.filter((raw) => (
+    Number(readNumberRecord(raw, ["siteId"]) || 0) === Number(expected.siteId || 0)
+    && normalizeSlotKey(readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]) || "")
+      === normalizeSlotKey(expected.localFormatoNormalizado || expected.localFormato)
+    && readStringRecord(raw, ["periodoInicio", "inicio"]) === expected.periodoInicio
+    && (readStringRecord(raw, ["periodoFim", "fim"]) === expected.periodoFim
+      || (allowSheetPeriodCorrection && readStringRecord(raw, ["periodoFim", "fim"]) > expected.periodoFim))
+  ));
+  if (scoped.length !== 1) {
+    throw new Error("O PDF não contém exatamente o portal, formato e período da inserção canônica.");
+  }
+  const raw = scoped[0];
+  const mediaUrl = readStringRecord(raw, ["mediaUrl"]);
+  if (!mediaUrl) throw new Error("A mídia validada não produziu URL canônica para a inserção esperada.");
+  const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
+  await privateApiPatch(`/api/campaigns/${expectedCampaignId}`, { piCodigo: fields.piCodigo });
+  await privateApiPatch(`/api/insertions/${expectedInsertionId}`, {
+    mediaUrl,
+    ...(allowSheetPeriodCorrection ? {
+      periodoFim: readStringRecord(raw, ["periodoFim", "fim"]),
+      periodoOriginal: readStringRecord(raw, ["periodoOriginal"]) || expected.periodoOriginal,
+    } : {}),
+    observacoes: [
+      expected.observacoes,
+      `Mídia e PI validadas pelo reconciliador: ${payload.path}`,
+      clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null,
+      readStringRecord(raw, ["mediaProcessingNote"]),
+    ].filter(Boolean).join("\n"),
+  });
+  return {
+    campaignId: expectedCampaignId,
+    campaignCreated: false,
+    campaignDedupedBy: "expected_campaign_and_insertion",
+    createdInsertions: [],
+    skippedInsertions: [{ id: expectedInsertionId, reason: "updated_expected_insertion" }],
+  };
+}
+
 async function applyDrivePiToAdOps(fields, payload) {
+  if (payload?.recoveryTarget?.insertionId) {
+    const existing = await privateApiGet(`/api/insertions/${payload.recoveryTarget.insertionId}`);
+    const campaignId = readPositiveInteger(existing?.campanhaId ?? existing?.campaignId);
+    if (!campaignId) throw new Error("Alvo de recuperação não possui campanha canônica.");
+    const target = payload.recoveryTarget;
+    if (Number(existing.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing.localFormatoNormalizado || existing.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing.periodoInicio !== target.periodoInicio || existing.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção canônica diverge do alvo explícito de recuperação.");
+    }
+    return applyDrivePiToExpectedInsertion(fields, {
+      ...payload,
+      expectedInsertionId: target.insertionId,
+      expectedCampaignId: campaignId,
+      expectedPiCodigo: target.piCodigo,
+    });
+  }
+  if (payload?.expectedInsertionId) return applyDrivePiToExpectedInsertion(fields, payload);
   const { campaign, created, dedupedBy } = await findOrCreateDrivePiCampaign(fields, payload);
   const campaignDetail = await privateApiGet(`/api/campaigns/${campaign.id}`);
   const existingInsertions = Array.isArray(campaignDetail?.insertions) ? campaignDetail.insertions : [];
@@ -3183,6 +5665,13 @@ async function applyDrivePiToAdOps(fields, payload) {
       item.periodoFim === periodoFim
     );
     if (duplicate) {
+      const approved=payload?._campaignExecutionGuard?.registrations;
+      const approvedRow=approved?.find(item=>Number(item.id)===Number(duplicate.id));
+      if(approved){
+        if(!approvedRow)throw Error('campaign_registration_not_in_authorized_scope');
+        const live=await privateApiGet(`/api/insertions/${duplicate.id}`);
+        if(String(live.rowVersion)!==String(approvedRow.rowVersion))throw Error('campaign_authorized_registration_changed');
+      }
       const duplicatePatch = {};
       const mediaUrl = readStringRecord(raw, ["mediaUrl"]);
       const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
@@ -3191,6 +5680,7 @@ async function applyDrivePiToAdOps(fields, payload) {
         duplicatePatch.periodoOriginal = readStringRecord(raw, ["periodoOriginal"]);
       }
       if (Object.keys(duplicatePatch).length) {
+        if(approvedRow)duplicatePatch.expectedRowVersion=String(approvedRow.rowVersion);
         duplicatePatch.observacoes = [
           duplicate.observacoes,
           clickUrl ? `Link destino informado na PI/arte: ${clickUrl}` : null,
@@ -3203,6 +5693,7 @@ async function applyDrivePiToAdOps(fields, payload) {
       skippedInsertions.push({ id: duplicate.id, reason: "duplicate" });
       continue;
     }
+    if(payload?._campaignExecutionGuard?.registrations?.some(item=>Number(item.siteId)===Number(siteId)&&normalizeSlotKey(item.localFormato)===normalizeSlotKey(localFormato)&&item.start===periodoInicio&&item.end===periodoFim))throw Error('campaign_authorized_registration_missing');
     const clickUrl = readUrlRecord(raw, ["clickUrl", "urlDestino", "linkDestino", "destinationUrl"]) || fields.clickUrl;
     const insertion = await privateApi("/api/insertions", {
       campanhaId: campaign.id,
@@ -3243,6 +5734,10 @@ function insertionScopeKey(raw) {
 }
 
 async function reconcileDrivePiStrictScope(applied, fields, payload) {
+  if (payload?.preserveOtherInsertions === true) return { skipped: true, reason: "confirmed_scope_preserves_other_insertions", cancelledInsertions: [] };
+  if (payload?.expectedInsertionId || payload?.recoveryTarget) {
+    return { skipped: true, reason: "expected_insertion_scope_preserved", cancelledInsertions: [] };
+  }
   if (payload?.strictInsertionScope !== true || !applied?.campaignId) {
     return { skipped: true, reason: "strict_insertion_scope_disabled", cancelledInsertions: [] };
   }
@@ -3285,10 +5780,33 @@ async function executeSyncPlanilha(payload) {
     env: process.env,
     maxBuffer: 1024 * 1024 * 10,
   });
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.targetDate || ""))
+    ? String(payload.targetDate)
+    : todayInCuiaba();
+  const operations = await privateApiGet(`/api/campaign-operations/active?${new URLSearchParams({ date: targetDate, includeEvidence: "false" }).toString()}`);
+  const diagnostics = (Array.isArray(operations?.items) ? operations.items : []).map((item) => {
+    const insertionId = readPositiveInteger(item?.adops?.insertionId);
+    const classification = classifyDailyReconciliationOperation(item);
+    return {
+      piCodigo: item?.piCodigo ?? null,
+      siteSigla: item?.siteSigla ?? null,
+      campaignName: item?.campaignName ?? null,
+      campaignId: readPositiveInteger(item?.adops?.campaignId),
+      insertionId,
+      status: classification.status,
+      reason: classification.reason,
+    };
+  });
   return {
     mode: payload?.mode || "latest",
+    targetDate,
     stdout: safeProcessOutput(stdout),
     stderr: safeProcessOutput(stderr),
+    diagnostics: {
+      total: diagnostics.length,
+      byStatus: diagnostics.reduce((counts, item) => ({ ...counts, [item.status]: Number(counts[item.status] || 0) + 1 }), {}),
+      items: diagnostics,
+    },
   };
 }
 
@@ -3373,6 +5891,11 @@ async function executeAdrotateLinkJob(payload) {
   }
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? null;
   const sshKeyPath = sshKeyPathForSite(siteSigla);
+  const restrictedKvm8Gateway = String(site.sshUser || "") === "cod5adops"
+    && String(site.sshHost || "") === "93.127.210.71";
+  const commandPiCodigo = restrictedKvm8Gateway
+    ? piCodigo.replace(/\s+/g, "-").replace(/[^A-Za-z0-9._/-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+    : piCodigo;
 
   const args = [
     shellEscape(site.phpBin ?? "php"),
@@ -3385,7 +5908,7 @@ async function executeAdrotateLinkJob(payload) {
     String(adId),
     `--insertion=${String(insertionId)}`,
     `--campaign=${String(campaignId)}`,
-    `--pi=${shellEscape(piCodigo)}`,
+    `--pi=${shellEscape(commandPiCodigo)}`,
     `--external-key=${shellEscape(`adops-${insertionId}`)}`,
   ];
   if (mediaBasename) args.push(`--media-basename=${shellEscape(mediaBasename)}`);
@@ -3421,6 +5944,7 @@ async function executeAdrotateLinkJob(payload) {
     adId,
     campaignId,
     piCodigo,
+    commandPiCodigo,
     siteId,
     siteSigla,
     mediaBasename,
@@ -3431,7 +5955,38 @@ async function executeAdrotateLinkJob(payload) {
   };
 }
 
-async function executeAdrotatePublishJob(payload) {
+function requireVerifiedFutureSchedule(wp, intent) {
+  const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
+  if (wp?.schedule_verified !== true || !positive(wp.ad_id) || !positive(wp.schedule_id) ||
+      Number(wp.insertion_id) !== Number(intent.insertion_id) || Number(wp.group_id) !== Number(intent.group_id) ||
+      wp.period_start !== intent.period_start || wp.period_end !== intent.period_end) {
+    throw new Error("future_schedule_wp_readback_mismatch");
+  }
+}
+
+// Recover an interrupted intent by reading the WP rows without running apply a second time.
+function readFutureScheduleCheckpoint(snapshot, intent, probe, checkpoint) {
+  const { ads, links, schedules } = normalizePerrengueAdrotateSnapshot(snapshot);
+  const [ad] = ads, [schedule] = schedules;
+  const groupIds = [...new Set(links.filter(row => Number(row.group) > 0).map(row => Number(row.group)))];
+  const scheduleIds = [...new Set(links.filter(row => Number(row.schedule) > 0).map(row => Number(row.schedule)))];
+  if (ads.length !== 1 || schedules.length !== 1 || links.some(row => Number(row.ad) !== Number(ad.id)) ||
+      groupIds.length !== 1 || groupIds[0] !== Number(intent.group_id) ||
+      scheduleIds.length !== 1 || scheduleIds[0] !== Number(schedule.id) ||
+      (checkpoint.adId && Number(checkpoint.adId) !== Number(ad.id)) ||
+      (checkpoint.scheduleId && Number(checkpoint.scheduleId) !== Number(schedule.id)) ||
+      Number(ad.adops_insertion_id) !== Number(intent.insertion_id) || Number(ad.adops_campaign_id) !== Number(intent.campaign_id) ||
+      ad.adops_external_key !== intent.external_key || ad.type !== "active" || ad.image !== intent.media_url ||
+      !probe?.ad_data?.bannercode || ad.bannercode !== probe.ad_data.bannercode ||
+      Number(schedule.starttime) !== Date.parse(intent.period_start + "T00:00:00Z") / 1000 ||
+      Number(schedule.stoptime) !== Date.parse(intent.period_end + "T23:59:00Z") / 1000) {
+    throw new Error("future_schedule_checkpoint_readback_mismatch");
+  }
+  return { schedule_verified: true, ad_id: Number(ad.id), schedule_id: Number(schedule.id), group_id: groupIds[0],
+    insertion_id: intent.insertion_id, period_start: intent.period_start, period_end: intent.period_end };
+}
+
+async function executeAdrotatePublishJob(payload, { compositePendingGuardAlreadyValidated = false, jobId = null, previousCheckpoint = null } = {}) {
   const insertionId = readPositiveInteger(payload?.insertionId);
   if (!insertionId) {
     throw new Error("adrotate-publish exige insertionId positivo.");
@@ -3452,6 +6007,11 @@ async function executeAdrotatePublishJob(payload) {
   }
   const periodStart = firstNonEmptyString(insertion.periodoInicio);
   const periodEnd = firstNonEmptyString(insertion.periodoFim);
+  const futureSchedule = Boolean(periodStart && periodStart > todayInCuiaba());
+  if ((payload?.scheduleOnly || previousCheckpoint?.scheduleOnly) && !futureSchedule) throw new Error("future_schedule_period_changed");
+  if (futureSchedule && (!periodEnd || periodEnd < periodStart || ["cancelado","concluido","arquivado"].includes(insertion.statusNormalizado))) {
+    throw new Error("future_schedule_invalid_period_or_status");
+  }
   const targetInPeriod = Boolean(periodStart && periodEnd && targetDate >= periodStart && targetDate <= periodEnd);
   const checklistDate = targetInPeriod ? targetDate : periodStart || targetDate;
   const checklist = await privateApiGet(`/api/audit-checklists/resolve?insertionId=${insertionId}&date=${encodeURIComponent(checklistDate)}`);
@@ -3467,6 +6027,14 @@ async function executeAdrotatePublishJob(payload) {
   const campaignId = readPositiveInteger(insertion.campanhaId ?? insertion.campaignId ?? insertion.campanha?.id ?? insertion.campaign?.id);
   const campaign = campaignId ? await privateApiGet(`/api/campaigns/${campaignId}`).catch(() => null) : null;
   const siteSigla = site.sigla ?? insertion.siteSigla ?? insertion.site?.sigla ?? checklist.insertion?.siteSigla ?? null;
+  if (payload?.publicationGuard) {
+    validateAdrotatePublicationGuard(payload.publicationGuard, { insertion, campaign, site });
+    if (payload.publicationGuard.identityMode === "sheet_drive_composite" && !compositePendingGuardAlreadyValidated) {
+      const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(futureSchedule ? periodStart : targetDate)}`);
+      const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
+      validateCompositePendingGuard(liveItem, payload.publicationGuard);
+    }
+  }
   if (!shouldUsePerrenguePortainerAdrotate(siteSigla) && (!site?.sshHost || !site?.sshPort || !site?.sshUser || !site?.wpPath)) {
     throw new Error(`Site ${siteId} sem configuração SSH/WP-CLI para AdRotate.`);
   }
@@ -3482,7 +6050,54 @@ async function executeAdrotatePublishJob(payload) {
     replaceExisting,
     purgeCache,
     generateEvidence,
+    identityMode: payload?.identityMode,
+    destinationOverride: payload?.publicationGuard?.destinationMode
+      ? payload.publicationGuard.destinationUrl ?? null
+      : undefined,
   });
+  if(payload?.publicationGuard?.expectedGroupId&&Number(publishPayload.group_id)!==Number(payload.publicationGuard.expectedGroupId))throw Error('campaign_authorized_group_changed');
+  let scheduleProbe = null;
+  if (futureSchedule) {
+    publishPayload.schedule_only = true;
+    publishPayload.purge_cache = false;
+    publishPayload.generate_evidence = false;
+    if (apply) {
+      const probe = await executeAdrotatePublishJob({ ...payload, apply: false, scheduleOnly: true }, { compositePendingGuardAlreadyValidated });
+      if (probe.wpCliResult?.future_schedule_version !== 1 || JSON.stringify(probe.publishPayload) !== JSON.stringify(publishPayload)) {
+        throw new Error("future_schedule_capability_or_intent_mismatch");
+      }
+      scheduleProbe = probe.wpCliResult;
+    }
+  }
+  const localMediaPreflight = await preflightLocalImportedMedia({
+    mediaUrl: publishPayload.media_url,
+    siteSigla,
+    localFormat: insertion.localFormatoNormalizado ?? insertion.localFormato,
+    groupId: publishPayload.group_id,
+  });
+  const checkpointIdentity = {
+    ...(futureSchedule ? { scheduleOnly: true, periodStart, periodEnd, destination: publishPayload.link_url ?? null } : {}),
+    insertionId,
+    groupId: publishPayload.group_id,
+    externalKey: publishPayload.external_key,
+    mediaBasename: publishPayload.media_basename,
+    mediaUrl: publishPayload.media_url,
+  };
+  let resumedAd = null, recoveredSchedule = null;
+  if (apply && previousCheckpoint) {
+    const sameIntent = Object.entries(checkpointIdentity).every(([key, value]) => previousCheckpoint[key] === value);
+    if (!sameIntent) throw new Error(`publication_resume_identity_changed:${insertionId}`);
+    if (futureSchedule) {
+      const snapshot = await snapshotSiteAdrotate({ site, siteSigla, insertionId, externalKey: publishPayload.external_key });
+      recoveredSchedule = readFutureScheduleCheckpoint(snapshot, publishPayload, scheduleProbe, previousCheckpoint);
+    } else {
+      const relation = compactAdrotateRelation(await privateApiGet(`/api/integrations/adrotate/insertions/${insertionId}/relation`));
+      resumedAd = matchingPublicationCheckpointAd(previousCheckpoint, relation);
+      if (!resumedAd) throw new Error(`publication_resume_requires_exact_adrotate_readback:${insertionId}`);
+    }
+  } else if (apply && jobId) {
+    await progressJob(jobId, { stage: "wp_intent", publicationCheckpoint: { ...checkpointIdentity, state: "wp_intent" } });
+  }
   const payloadJson = JSON.stringify(publishPayload);
   const wpCliCommand = [
     shellEscape(site.phpBin ?? "php"),
@@ -3535,10 +6150,19 @@ async function executeAdrotatePublishJob(payload) {
         "exit $rc",
       ].join(" && ");
 
-  const headlessReadiness = String(siteSigla || "").toUpperCase() === "PERRENGUE"
+  const headlessReadiness = !futureSchedule && String(siteSigla || "").toUpperCase() === "PERRENGUE"
     ? await validatePerrengueHeadlessRebuildReadiness()
     : null;
-  const execution = shouldUsePerrenguePortainerAdrotate(siteSigla)
+  const execution = recoveredSchedule
+    ? { stdout: JSON.stringify(recoveredSchedule), stderr: "", executor: "checkpoint" }
+    : resumedAd
+    ? { stdout: JSON.stringify({
+        ad_id: resumedAd.adId,
+        group_id: resumedAd.groupId,
+        cache_maintenance_requested: previousCheckpoint?.cacheMaintenanceRequested === true,
+        cache_maintenance_ok: previousCheckpoint?.cacheMaintenanceOk === true,
+      }), stderr: "", executor: "checkpoint" }
+    : shouldUsePerrenguePortainerAdrotate(siteSigla)
     ? await executePerrenguePortainerWpCliPublish({ payloadJson, apply })
     : {
         ...(await execFileAsync(
@@ -3564,14 +6188,48 @@ async function executeAdrotatePublishJob(payload) {
 
   const wpCliResult = parseWpCliJsonObject(stdout);
   const wpCliPublished = Boolean(wpCliResult?.ad_id && wpCliResult?.group_id);
+  if (apply && futureSchedule) requireVerifiedFutureSchedule(wpCliResult, publishPayload);
+  const appliedCheckpoint = apply && wpCliPublished ? {
+    ...checkpointIdentity,
+    adId: wpCliResult.ad_id,
+    ...(futureSchedule ? { scheduleId: wpCliResult.schedule_id } : {}),
+    state: "wp_applied",
+    cacheMaintenanceRequested: wpCliResult?.cache_maintenance_requested === true,
+    cacheMaintenanceOk: wpCliResult?.cache_maintenance_ok === true,
+  } : null;
+  if (jobId && appliedCheckpoint && !resumedAd) {
+    await progressJob(jobId, { stage: "wp_applied", publicationCheckpoint: appliedCheckpoint });
+  }
+  if (apply && futureSchedule) {
+    const expectedRowVersion = requireRowVersion(payload?.publicationGuard?.expectedRowVersion ?? insertion.rowVersion, "agendamento futuro");
+    if (insertion.statusNormalizado !== "agendado" || insertion.bannerPublicadoNoSite !== false) {
+      await privateApiPatch(`/api/insertions/${insertionId}`, { expectedRowVersion, statusNormalizado: "agendado", bannerPublicadoNoSite: false });
+    }
+    const insertionAfterPublish = await privateApiGet(`/api/insertions/${insertionId}`);
+    if (Number(insertionAfterPublish.id) !== insertionId || insertionAfterPublish.statusNormalizado !== "agendado" ||
+        insertionAfterPublish.bannerPublicadoNoSite !== false || insertionAfterPublish.periodoInicio !== periodStart ||
+        insertionAfterPublish.periodoFim !== periodEnd || insertionAfterPublish.mediaUrl !== publishPayload.media_url) {
+      throw new Error("future_schedule_adops_readback_mismatch");
+    }
+    return { mode: "apply", apply, insertionId, siteSigla, publishPayload, wpCliResult, insertionAfterPublish,
+      scheduled: true, evidenceJob: { skipped: true, reason: "future_date" } };
+  }
   let headlessRebuild = null;
   if (apply && wpCliPublished && String(siteSigla || "").toUpperCase() === "PERRENGUE") {
-    headlessRebuild = await executePerrengueHeadlessRebuild({
+    headlessRebuild = previousCheckpoint?.state === "rebuild_completed" && previousCheckpoint.headlessRebuild?.completed === true
+      ? previousCheckpoint.headlessRebuild
+      : await executePerrengueHeadlessRebuild({
       insertionId,
       adId: wpCliResult.ad_id,
       mediaBasename: publishPayload.media_basename,
       purgeCache,
     });
+    if (jobId && appliedCheckpoint && headlessRebuild?.completed === true) {
+      await progressJob(jobId, { stage: "rebuild_completed", publicationCheckpoint: {
+        ...appliedCheckpoint, state: "rebuild_completed",
+        headlessRebuild: { completed: true, triggerReason: headlessRebuild.triggerReason ?? null },
+      } });
+    }
   }
 
   const relationAfter = apply
@@ -3579,20 +6237,50 @@ async function executeAdrotatePublishJob(payload) {
     : null;
   const exactLiveCount = relationAfter?.exactLiveMatches?.length ?? 0;
   const publicHtmlValidation = apply && wpCliPublished
-    ? await validatePublishedAdHtml({
+      ? await validatePublishedAdHtml({
         site,
         insertionId,
         adId: wpCliResult.ad_id,
         mediaBasename: publishPayload.media_basename,
+        mediaUrl: publishPayload.media_url,
+        page: publishPayload.page,
+        slotSelector: checklist.resolvedRule?.slotSelector,
       }).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
     : null;
   const activeToday = todayInCuiaba() >= String(insertion.periodoInicio || "") && todayInCuiaba() <= String(insertion.periodoFim || "");
-  if (apply && wpCliPublished && activeToday && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
-    throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}.`);
+  const publicationConfirmed = apply && wpCliPublished
+    ? isAdrotatePublicationConfirmed({
+        activeToday,
+        relationAfter,
+        adId: wpCliResult.ad_id,
+        groupId: wpCliResult.group_id,
+        insertionId,
+        externalKey: publishPayload.external_key,
+        publicHtmlOk: publicHtmlValidation?.ok === true,
+      })
+    : false;
+  const cacheMaintenanceDegraded = isCacheMaintenanceDegraded({ apply, purgeCache, wpCliResult });
+  const failureDiagnostic = publicationFailureDiagnostic({
+    wpCliResult,
+    headlessRebuild,
+    publicHtmlValidation,
+    exactLiveCount,
+  });
+  if (apply && wpCliPublished && activeToday && cacheMaintenanceDegraded && publicHtmlValidation?.ok !== true) {
+    throw new Error(`Manutenção de cache falhou e o anúncio não apareceu no HTML público da inserção ${insertionId}. Diagnóstico: ${failureDiagnostic}`);
+  }
+  if (apply && wpCliPublished && activeToday && !cacheMaintenanceDegraded && exactLiveCount === 0 && publicHtmlValidation?.ok !== true) {
+    throw new Error(`Publicação AdRotate não apareceu na relação nem no HTML público da inserção ${insertionId}. Diagnóstico: ${failureDiagnostic}`);
   }
 
+  let insertionAfterPublish = null;
   if (apply && wpCliPublished) {
-    await privateApiPatch(`/api/insertions/${insertionId}`, {
+    insertionAfterPublish = await privateApiPatch(`/api/insertions/${insertionId}`, {
+      ...(payload?.publicationGuard?.expectedRowVersion != null
+        ? { expectedRowVersion: requireRowVersion(payload.publicationGuard.expectedRowVersion, "guard após publicação") }
+        : payload?.publicationGuard?.expectedUpdatedAt
+          ? { expectedUpdatedAt: payload.publicationGuard.expectedUpdatedAt }
+          : {}),
       bannerPublicadoNoSite: true,
       statusNormalizado: "publicado",
       observacoes: [
@@ -3602,18 +6290,24 @@ async function executeAdrotatePublishJob(payload) {
           ? "Relação pública validada após publicação."
           : "Publicação agendada/criada no WordPress; relação pública pode ficar vazia antes do início do período.",
       ].filter(Boolean).join("\n"),
-    }).catch(() => null);
+    });
   }
 
   let evidenceJob = null;
   if (apply && generateEvidence) {
-    evidenceJob = targetInPeriod && targetDate <= todayInCuiaba()
-      ? await captureAndValidatePublishedProof({
+    try {
+      evidenceJob = targetInPeriod && targetDate <= todayInCuiaba()
+        ? await captureAndValidatePublishedProof({
           insertionId,
           targetDate,
           captureAt: firstNonEmptyString(payload?.captureAt),
         })
-      : { skipped: true, reason: targetInPeriod ? "future_date" : "date_out_of_period", targetDate, checklistDate };
+        : { skipped: true, reason: targetInPeriod ? "future_date" : "date_out_of_period", targetDate, checklistDate };
+    } catch (error) {
+      // Publication is already committed and publicly checked. Capture has its
+      // own state so an outage cannot turn it into a publication failure/retry.
+      evidenceJob = { status: "needs_review", publicationPreserved: true, targetDate, error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1500) };
+    }
   }
 
   return {
@@ -3641,6 +6335,7 @@ async function executeAdrotatePublishJob(payload) {
     resolvedRule: checklist.resolvedRule,
     expectedSelectors: checklist.expectedSelectors,
     expectedMedia: checklist.expectedMedia,
+    localMediaPreflight,
     headlessReadiness,
     publishPayload: {
       ...publishPayload,
@@ -3651,8 +6346,11 @@ async function executeAdrotatePublishJob(payload) {
     stderr: safeProcessOutput(stderr, 8000),
     relationAfter,
     relationOk: apply ? exactLiveCount > 0 : null,
+    historicalRelationOk: apply && !activeToday ? publicationConfirmed : null,
+    cacheMaintenanceDegraded,
     headlessRebuild,
     publicHtmlValidation,
+    insertionAfterPublish,
     evidenceJob,
     requiredFollowUp: apply
       ? ["validate_adrotate_relation", "validate_public_html", ...(generateEvidence ? ["validate_capture_proof"] : [])]
@@ -3713,11 +6411,12 @@ async function notifyDrivePiErrorTelegram(payload, error) {
     webViewLink: payload?.webViewLink,
     error: error instanceof Error ? error.message : String(error),
     falsePositive: false,
-  }).catch((telegramError) => ({ error: telegramError instanceof Error ? telegramError.message : String(telegramError) }));
+  }, { sendTelegram: payload?.sendTelegram !== false }).catch((telegramError) => ({ error: telegramError instanceof Error ? telegramError.message : String(telegramError) }));
 }
 
-async function executeDrivePiIngest(payload) {
+async function executeDrivePiIngest(payload, parentJobId = null) {
   const preflightOnly = payload?.preflightOnly === true;
+  const operationMode = payload?.operationMode === "operational_minimum" ? "operational_minimum" : "strict";
   await updateDrivePiState(payload, "received", {
     parseRun: {
       fields: null,
@@ -3750,7 +6449,7 @@ async function executeDrivePiIngest(payload) {
     webViewLink: payload.webViewLink,
     intakeLock: intakeLock.key,
     falsePositive: false,
-  }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+  }, { sendTelegram: payload?.sendTelegram !== false }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
 
   let archived = null;
   try {
@@ -3812,6 +6511,10 @@ async function executeDrivePiIngest(payload) {
   });
 
   const packageHasReadableContent = Boolean(packageContext?.pdf) || (Array.isArray(packageContext?.items) && packageContext.items.length > 0);
+  if(payload?.campaignActionId){
+    const guard=await privateApiGet(`/api/monitoring/campaign-actions/actions/${encodeURIComponent(payload.campaignActionId)}/execution-guard?jobId=${encodeURIComponent(parentJobId)}`);
+    payload={...payload,_campaignExecutionGuard:assertCampaignExecutionGuard(guard,payload,packageContext?.pdf?.sha256)};
+  }
   if (!payload?.parsedPi && packageHasReadableContent) {
     await updateDrivePiState(payload, "agent_analysis", {
       contentSha256: archived?.sha256 ?? null,
@@ -3842,13 +6545,135 @@ async function executeDrivePiIngest(payload) {
   }
 
   let fields = await extractDrivePiFields(payload, archived, agentResult?.parsedPi || null, packageContext);
+  const siteCatalog = await getSiteSiglaByIdMap(fields.insertions);
+  validateRequestedSiteIdentity(payload?.parsedPi?.insertions || [], siteCatalog);
+  validateRequestedSiteIdentity(fields.insertions, siteCatalog);
+  fields = await hydrateDrivePiRecoveryTarget(fields, payload);
+  // Existing published media is immutable in recovery: never enter upload/PATCH paths.
+  if (payload?.recoveryTarget?.insertionId) {
+    const target = payload.recoveryTarget;
+    const existing = await privateApiGet(`/api/insertions/${target.insertionId}`);
+    if (normalizePiDigits(existing?.piCodigo) !== normalizePiDigits(target.piCodigo)
+      || Number(existing?.siteId) !== Number(fields.insertions[0]?.siteId)
+      || normalizeSlotKey(existing?.localFormatoNormalizado || existing?.localFormato) !== normalizeSlotKey(target.localFormato)
+      || existing?.periodoInicio !== target.periodoInicio || existing?.periodoFim !== target.periodoFim) {
+      throw new Error("Inserção atual diverge do alvo de recuperação; nenhuma mídia foi alterada.");
+    }
+    if (existing.bannerPublicadoNoSite === true) {
+      if (!existing.mediaUrl) throw new Error("published_recovery_media_missing");
+      const backfill = preflightOnly ? null : await executeRecoveryEvidenceBackfill(target.insertionId, target, parentJobId);
+      await updateDrivePiState(payload, preflightOnly ? "validated" : "applied", {
+        parseRun: { fields: { recoveryTarget: target, backfill }, alerts: ["Publicação e mídia existentes preservadas; recuperação somente de evidências."] },
+      });
+      return { stage: preflightOnly ? "preflight_only" : "applied", eventId: payload.eventId, recoveryTarget: target, preservedPublishedMedia: true, backfill };
+    }
+  }
+  let expectedInsertionContext = null;
+  if (readPositiveInteger(payload?.expectedInsertionId) && readPositiveInteger(payload?.expectedCampaignId)) {
+    const [expectedInsertion, expectedCampaign] = await Promise.all([
+      privateApiGet(`/api/insertions/${readPositiveInteger(payload.expectedInsertionId)}`),
+      privateApiGet(`/api/campaigns/${readPositiveInteger(payload.expectedCampaignId)}`),
+    ]);
+    if (Number(expectedInsertion?.campanhaId || 0) !== Number(expectedCampaign?.id || 0)) {
+      throw new Error("A inserção canônica não pertence mais à campanha esperada; nenhuma mutação foi aplicada.");
+    }
+    expectedInsertionContext = expectedInsertion;
+    fields = mergeExpectedDrivePiContext(fields, {
+      insertion: expectedInsertion,
+      campaign: expectedCampaign,
+      sourceText: buildDrivePiFolderIdentityText(payload, packageContext),
+    });
+    const scopeDate = !payload?.recoveryTarget && expectedInsertion.periodoInicio > todayInCuiaba() ? expectedInsertion.periodoInicio : todayInCuiaba();
+    const monthlySource = await privateApiGet(`/api/campaign-operations/evidence-monthly-source?date=${encodeURIComponent(scopeDate)}`);
+    const sheetRow = validateExpectedSheetScope(monthlySource, expectedInsertion, payload);
+    // Legacy variants can share the slot but never silently displace a live or exact-period insertion.
+    for (const id of sheetRow.canonicalSelection.compatibleInsertionIds.filter(id => Number(id) !== Number(expectedInsertion.id))) {
+      const sibling = await privateApiGet(`/api/insertions/${id}`);
+      const relation = await privateApiGet(`/api/integrations/adrotate/insertions/${id}/relation`);
+      if (sibling.mediaUrl || sibling.bannerPublicadoNoSite || relation?.exactLiveMatches?.length
+        || (sibling.periodoInicio === sheetRow.period.start && sibling.periodoFim === sheetRow.period.end)) {
+        throw new Error(`sheet_duplicate_insertion:${id}: variante exige revisão; nenhuma publicação alterada.`);
+      }
+    }
+    if (payload.allowCoexistence === true && Number(payload.coexistenceGroupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("coexistence_group_mismatch: grupo deve corresponder à planilha.");
+    validateExpectedDrivePiIdentity({ expectedPiCodigo: payload.expectedPiCodigo, fieldsPiCodigo: fields.piCodigo,
+      pdfPiCodigo: fields.pdfPiCodigo, campaignPiCodigo: expectedCampaign.piCodigo,
+      insertionPiCodigo: expectedInsertion.piCodigo, allowMissingPdf: true });
+    const requested = payload?.parsedPi?.insertions || [];
+    if (requested.length > 1) throw new Error("Alvo explícito aceita somente uma inserção.");
+    const canonicalProfile = await loadOperationalMediaProfile(
+      expectedInsertion.siteSigla,
+      expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato,
+    );
+    if (sheetRow.format.resolution.groupId != null
+      && Number(canonicalProfile.groupId) !== Number(sheetRow.format.resolution.groupId)) {
+      throw new Error("Posição canônica diverge do grupo resolvido para o alvo; nenhuma aplicação foi executada.");
+    }
+    for (const raw of [...requested, ...fields.insertions.filter((item) => !isSocialInsertion(item))]) {
+      if (Number(raw.siteId || expectedInsertion.siteId) !== Number(expectedInsertion.siteId)) throw new Error("Portal diverge da inserção esperada.");
+      const profile = await loadOperationalMediaProfile(expectedInsertion.siteSigla, raw.localFormatoNormalizado || raw.localFormato);
+      if (sheetRow.format.resolution.groupId != null && Number(profile.groupId) !== Number(sheetRow.format.resolution.groupId)) throw new Error("Posição diverge da planilha atual.");
+    }
+    const raw = requested[0] || fields.insertions[0] || {};
+    fields.insertions = [{ ...raw, siteId: expectedInsertion.siteId, siteSigla: expectedInsertion.siteSigla,
+      localFormato: expectedInsertion.localFormato, localFormatoNormalizado: expectedInsertion.localFormatoNormalizado || expectedInsertion.localFormato,
+      periodoInicio: sheetRow.period.start, periodoFim: sheetRow.period.end, periodoOriginal: sheetRow.period.original,
+      mediaUrl: expectedInsertion.mediaUrl || null }];
+    const scopeSource = sheetRow.sheetSource?.source === "explicit_operational_target"
+      ? "explicit_operational_target"
+      : "sheetVerified";
+    if (scopeSource === "explicit_operational_target") {
+      const expectedPi = normalizeExpectedPiIdentity(payload.expectedPiCodigo);
+      if (!expectedPi
+        || normalizeExpectedPiIdentity(expectedCampaign.piCodigo) !== expectedPi
+        || normalizeExpectedPiIdentity(expectedInsertion.piCodigo) !== expectedPi) {
+        throw new Error("explicit_operational_target_pi_unverified: campanha e inserção devem comprovar a PI; nenhuma identidade será inferida.");
+      }
+      fields.piCodigo = expectedCampaign.piCodigo;
+    } else {
+      const sheetPi = normalizeExpectedPiIdentity(sheetRow.piCodigo);
+      if (!fields.piCodigo && sheetPi && sheetPi === normalizeExpectedPiIdentity(payload.expectedPiCodigo)) {
+        fields.piCodigo = sheetRow.piCodigo;
+      }
+    }
+    fields.sheetVerified = {
+      source: scopeSource,
+      downloadedAt: monthlySource.source?.downloadedAt,
+      row: sheetRow.sheetSource,
+      folderId: sheetRow.drive.folderId,
+    };
+    payload.periodSource = scopeSource === "sheetVerified" ? "sheet" : "explicit_operational_target";
+    payload.allowPeriodCorrection = scopeSource === "sheetVerified";
+    // This marker is derived from a real matching sheet row; an explicit target
+    // fallback is recorded separately and never labeled as sheet confirmation.
+    payload.verifiedSheetScope = scopeSource === "sheetVerified" ? fields.sheetVerified : null;
+    if (payload.publish === true && (sheetRow.period.end < todayInCuiaba() || (payload?.recoveryTarget && sheetRow.period.start > todayInCuiaba()))) throw new Error("publication_outside_period: recuperar evidências sem reativar campanha encerrada.");
+  }
+  if (payload.publish === true && !preflightOnly && fields.insertions.some(row => row.periodoInicio > todayInCuiaba()) &&
+      (!payload.campaignActionId || !payload._campaignExecutionGuard || payload.recoveryTarget)) {
+    throw new Error("future_schedule_requires_confirmed_campaign_action");
+  }
   const clickUrlResolution = resolveDrivePiClickUrl(fields, packageContext);
   fields = clickUrlResolution.fields;
   const insertionScope = (payload?.strictInsertionScope === true || payload?.publish === true)
     ? filterSiteInsertions(fields.insertions)
     : { accepted: fields.insertions, excluded: [] };
   fields = { ...fields, insertions: insertionScope.accepted };
-  const shouldResolveMedia = payload?.resolveMedia === true || payload?.publish === true;
+  const destinationPolicy = validateOptionalDrivePiDestination(fields, expectedInsertionContext);
+  if (payload?.publish === true && destinationPolicy.ok && destinationPolicy.url) {
+    await assertPublicOperationalDestination(destinationPolicy.url);
+  }
+  const earlyDedupe = await validateDrivePiDedupeSafety(fields, payload);
+  if (!earlyDedupe.ok) throw new Error(earlyDedupe.conflicts.join("; "));
+  const shouldResolveMedia = (payload?.resolveMedia === true || payload?.publish === true)
+    && (payload?.publish !== true || destinationPolicy.ok);
+  if (shouldResolveMedia) {
+    for (const raw of fields.insertions.filter(item => !isSocialInsertion(item))) {
+      const siteId = Number(raw.siteId), siteSigla = siteCatalog.get(siteId);
+      if (!siteSigla) throw new Error(`site_catalog_identity_missing:${siteId}`);
+      await loadOperationalMediaProfile(siteSigla, readStringRecord(raw, ["localFormatoNormalizado", "localFormato"]));
+    }
+  }
   const videoResolution = shouldResolveMedia
     ? await resolveDrivePiVideoMedia(fields, packageContext, payload)
     : { fields, videoMediaProcessing: { skipped: true, results: [], issues: [] } };
@@ -3864,15 +6689,57 @@ async function executeDrivePiIngest(payload) {
     image: imageResolution.imageMediaProcessing,
   };
   const validation = validateDrivePiApplyFields(fields);
-  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, { requireResolvedMedia: payload?.publish === true });
-  const rollout = validation.ok ? await validateDrivePiSiteRollout(fields) : { ok: true, blockedSites: [], resolvedSites: [] };
-  const dedupe = validation.ok && packageReadiness.ok && rollout.ok
-    ? await validateDrivePiDedupeSafety(fields)
+  const packageReadiness = validateDrivePiPackageReadiness(packageClassification, fields, mediaProcessing, {
+    requireResolvedMedia: payload?.publish === true || preflightOnly,
+    preflightOnly,
+    requireHttpsDestination: payload?.publish === true,
+    expectedInsertion: expectedInsertionContext,
+  });
+  const operationMinimum = payload?.operationMode === "operational_minimum";
+  const clientlessProofSource = validation.missing.length === 1
+    && validation.missing[0] === "clienteId"
+    ? getDrivePiClientlessProofSource(fields, { canonicalTarget: Boolean(expectedInsertionContext) })
+    : null;
+  const clientlessVerified = Boolean(clientlessProofSource);
+  if (clientlessProofSource) fields = { ...fields, clientlessProofSource };
+  const minimumValidation = operationMinimum
+    ? { ...validation, ok: (validation.invalidInsertions || []).length === 0 && !validation.missing.includes("insertions") }
+    : validation;
+  const rollout = (validation.ok || minimumValidation.ok || clientlessVerified)
+    ? await validateDrivePiSiteRollout(fields)
+    : { ok: true, blockedSites: [], resolvedSites: [] };
+  const dedupeTarget = readPositiveInteger(payload?.expectedCampaignId) && readPositiveInteger(payload?.expectedInsertionId)
+    ? {
+      expectedCampaignId: payload.expectedCampaignId,
+      expectedInsertionId: payload.expectedInsertionId,
+      periodSource: payload?.periodSource,
+      allowPeriodCorrection: payload?.allowPeriodCorrection === true,
+      allowCoexistence: payload?.allowCoexistence === true,
+      coexistingInsertionId: payload?.coexistingInsertionId,
+      coexistenceGroupId: payload?.coexistenceGroupId,
+      coexistenceConfirmation: payload?.coexistenceConfirmation,
+    }
+    : null;
+  const dedupe = (validation.ok || minimumValidation.ok || clientlessVerified) && (packageReadiness.ok || operationMinimum) && rollout.ok
+    ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
     : { ok: true, conflicts: [], checkedCampaignIds: [] };
-  const canApply = validation.ok && packageReadiness.ok && rollout.ok && dedupe.ok;
-  const explicitPublishFlow = payload?.publish === true && /api-publish$/.test(String(payload?.source || ""));
-  const strictExplicitPublishFlow = explicitPublishFlow && payload?.strictInsertionScope === true && Array.isArray(payload?.parsedPi?.insertions);
-  const mutationEnabled = !preflightOnly && ADOPS_DRIVE_PI_ALLOW_MUTATION && (explicitPublishFlow || ADOPS_PI_AGENT_AUTO_APPLY);
+  const readiness = getDrivePiReadiness(validation, packageReadiness, rollout, dedupe, operationMode, clientlessVerified);
+  const effectiveValidation = operationMode === "operational_minimum"
+    ? readiness.operationalValidation
+    : readiness.strictValidation;
+  const effectivePackageReadiness = operationMode === "operational_minimum" ? readiness.operationalPackage : packageReadiness;
+  const canApply = operationMode === "operational_minimum" ? readiness.operationalReady : readiness.strictReady;
+  // The protected drive-pi-publish endpoint is an explicit mutation request even
+  // when publish=false. That mode updates AdOps/media only and must not touch
+  // AdRotate, cache or evidence for an expired campaign.
+  const explicitPublishFlow = /api-publish$/.test(String(payload?.source || ""));
+  const strictExplicitPublishFlow = explicitPublishFlow
+    && payload?.strictInsertionScope === true
+    && (Array.isArray(payload?.parsedPi?.insertions) || Number(payload?.expectedInsertionId || 0) > 0 || Boolean(payload?.recoveryTarget));
+  const mutationEnabled = !preflightOnly && (
+    explicitPublishFlow
+    || (ADOPS_DRIVE_PI_ALLOW_MUTATION && ADOPS_PI_AGENT_AUTO_APPLY)
+  );
   let preApplySyncPlanilha = { skipped: true, reason: strictExplicitPublishFlow
     ? "Sync da planilha ignorado porque parsedPi.insertions define o escopo canônico estrito."
     : "Pre-apply sync executa apenas quando validacao, pacote, rollout, dedupe e flags permitem mutacao." };
@@ -3889,13 +6756,13 @@ async function executeDrivePiIngest(payload) {
   }
   const preApplySyncOk = !(canApply && mutationEnabled) || preApplySyncPlanilha.ok !== false;
   const preApplyDedupe = canApply && mutationEnabled && preApplySyncOk
-    ? await validateDrivePiDedupeSafety(fields)
+    ? await validateDrivePiDedupeSafety(fields, dedupeTarget)
     : dedupe;
   const finalCanApply = canApply && preApplySyncOk && preApplyDedupe.ok;
   const reviewReasons = buildDrivePiReviewReasons({
     packageClassification,
-    packageReadiness,
-    validation,
+    packageReadiness: effectivePackageReadiness,
+    validation: effectiveValidation,
     rollout,
     dedupe: preApplyDedupe,
     preflightOnly,
@@ -3911,6 +6778,9 @@ async function executeDrivePiIngest(payload) {
         piCodigo: fields.piCodigo,
         campaignName: fields.campaignName,
         competencia: fields.competencia,
+        clientlessProofSource: clientlessProofSource || null,
+        periodSource: payload?.periodSource === "sheet" ? "planilha" : payload?.periodSource === "explicit_operational_target" ? "explicit_operational_target" : "PI",
+        effectivePeriodEnd: fields.insertions.length === 1 ? readStringRecord(fields.insertions[0], ["periodoFim", "fim"]) : null,
         clienteId: fields.clienteId,
         agenciaId: fields.agenciaId,
         insertions: fields.insertions,
@@ -3940,21 +6810,24 @@ async function executeDrivePiIngest(payload) {
         preApplySyncPlanilha,
         reviewReasons,
       },
-      alerts: validation.ok
-        ? packageReadiness.ok
+      alerts: effectiveValidation.ok
+        ? effectivePackageReadiness.ok
           ? rollout.ok
             ? !preApplySyncOk
               ? [`PI exige revisão porque o sync da planilha falhou antes da mutação: ${preApplySyncPlanilha.error}`]
               : preApplyDedupe.ok
-              ? ["PI possui campos mínimos e pacote completo para aplicação segura."]
+              ? [
+                  "PI possui campos mínimos e pacote completo para aplicação segura.",
+                  ...(clientlessProofSource ? [`Cliente comercial pendente; prova operacional registrada como ${clientlessProofSource}.`] : []),
+                ]
               : ["PI exige revisão por conflito de deduplicação apos sincronizar a planilha.", ...preApplyDedupe.conflicts]
             : [`Portal fora do rollout atual: ${JSON.stringify(rollout.blockedSites)}`]
-          : ["PI exige revisão porque o pacote ainda não tem PDF e mídia suficientes.", ...packageReadiness.issues]
+          : ["PI exige revisão porque o pacote ainda não tem PDF e mídia suficientes.", ...effectivePackageReadiness.issues]
         : [
             "PI exige revisão antes de criar campanha/inserções.",
-            ...validation.missing.map((item) => `Campo ausente: ${item}`),
-            ...(validation.agentQuality?.issues || []),
-            ...(validation.agentQuality?.conflicts || []).map((item) => `Conflito IA: ${item}`),
+            ...effectiveValidation.missing.map((item) => `Campo ausente: ${item}`),
+            ...(effectiveValidation.agentQuality?.issues || []),
+            ...(effectiveValidation.agentQuality?.conflicts || []).map((item) => `Conflito IA: ${item}`),
           ],
       rawTextExcerpt: `${payload?.name ?? ""}\n${payload?.path ?? ""}`.slice(0, 1000),
     },
@@ -3964,10 +6837,13 @@ async function executeDrivePiIngest(payload) {
     campaignName: fields.campaignName,
     packageClass: packageClassification?.class,
     intakeLock: intakeLock.key,
-    missing: validation.missing,
-    invalidInsertions: validation.invalidInsertions,
+    missing: effectiveValidation.missing,
+    invalidInsertions: effectiveValidation.invalidInsertions,
     reviewReasons,
-    packageReadiness,
+    packageReadiness: effectivePackageReadiness,
+    operationMode,
+    strictReady: readiness.strictReady,
+    operationalReady: readiness.operationalReady,
     dedupe: preApplyDedupe,
     rollout,
     agentAnalysis: fields.agentAnalysis || agentResult,
@@ -3976,6 +6852,10 @@ async function executeDrivePiIngest(payload) {
   let applied = null;
   let evidenceCoverage = null;
   if (finalCanApply && mutationEnabled) {
+    if(payload?.campaignActionId){
+      const guard=await privateApiGet(`/api/monitoring/campaign-actions/actions/${encodeURIComponent(payload.campaignActionId)}/execution-guard?jobId=${encodeURIComponent(parentJobId)}`);
+      payload={...payload,_campaignExecutionGuard:assertCampaignExecutionGuard(guard,payload,packageContext?.pdf?.sha256)};
+    }
     await updateDrivePiState(payload, "applying", {
       parseRun: {
         fields,
@@ -3996,7 +6876,7 @@ async function executeDrivePiIngest(payload) {
       intakeLock: intakeLock.key,
       applied,
     });
-    if (payload?.publish !== true) {
+    if (payload?.publish !== true && payload?.generateEvidence === true) {
       evidenceCoverage = await ensureDrivePiEvidenceCoverage(applied);
       await notifyDrivePiStageTelegram(payload, "evidence_checked", {
         piCodigo: fields.piCodigo,
@@ -4044,7 +6924,7 @@ async function executeDrivePiIngest(payload) {
       ? "O fluxo de publicação valida a relação por inserção após o AdRotate."
       : "Nenhuma alteração nova aplicada no AdOps.",
   };
-  if (hasAdOpsChanges && payload?.publish !== true) {
+  if (hasAdOpsChanges && payload?.publish !== true && !strictExplicitPublishFlow) {
     try {
       reconcile = await executeReconcilePlanilhaAdrotate();
     } catch (error) {
@@ -4075,37 +6955,76 @@ async function executeDrivePiIngest(payload) {
     for (const insertionId of getAppliedInsertionIds(applied)) {
       const common = {
         insertionId,
-        replaceExisting: true,
+        replaceExisting: payload?.allowCoexistence !== true,
         purgeCache: payload?.purgeCache !== false,
         date: firstNonEmptyString(payload?.date) || todayInCuiaba(),
         captureAt: firstNonEmptyString(payload?.captureAt),
       };
-      const preview = await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
-      const published = await executeAdrotatePublishJob({
+      if(payload?._campaignExecutionGuard){
+        const live=await privateApiGet(`/api/insertions/${insertionId}`);
+        const expected=payload._campaignExecutionGuard.targets.find(t=>Number(t.siteId)===Number(live.siteId)&&normalizeSlotKey(t.localFormato)===normalizeSlotKey(live.localFormatoNormalizado||live.localFormato));
+        if(!expected)throw Error('campaign_publication_target_not_authorized');
+        const approved=payload.parsedPi.insertions.find(i=>Number(i.siteId)===Number(live.siteId)&&normalizeSlotKey(i.localFormato)===normalizeSlotKey(expected.localFormato));
+        common.publicationGuard={expectedCampaignId:Number(applied.campaignId),expectedInsertionId:Number(insertionId),expectedSiteSigla:siteCatalog.get(Number(live.siteId)),expectedFormat:approved.localFormato,expectedPeriodStart:approved.periodoInicio,expectedPeriodEnd:approved.periodoFim,expectedMediaUrl:live.mediaUrl,expectedPiCodigo:payload.parsedPi.piCodigo,expectedRowVersion:live.rowVersion,expectedGroupId:expected.groupId,destinationMode:'approved_campaign_url',destinationUrl:approved.clickUrl||payload.parsedPi.clickUrl};
+      }
+      const existing = payload?.recoveryTarget ? await privateApiGet(`/api/insertions/${insertionId}`) : null;
+      const alreadyPublished = existing?.bannerPublicadoNoSite === true;
+      const preview = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({ ...common, apply: false, generateEvidence: false });
+      const published = alreadyPublished ? { skipped: true, reason: "already_published" } : await executeAdrotatePublishJob({
         ...common,
         apply: true,
-        generateEvidence: payload?.generateEvidence !== false,
+        generateEvidence: payload?.recoveryTarget ? false : payload?.generateEvidence !== false,
       });
-      publicationResults.push({ insertionId, preview, published });
+      const backfill = payload?.recoveryTarget
+        ? await executeRecoveryEvidenceBackfill(insertionId, payload.recoveryTarget, parentJobId)
+        : null;
+      publicationResults.push({ insertionId, preview, published, backfill });
     }
     evidenceCoverage = {
       checked: publicationResults.map((item) => item.insertionId),
       results: publicationResults.map((item) => ({
         insertionId: item.insertionId,
-        status: item.published?.evidenceJob?.skipped
+        status: item.backfill?.ok === true
+          ? "audited"
+          : item.published?.evidenceJob?.status === "queued"
+          ? "queued"
+          : item.published?.evidenceJob?.status === "needs_review"
+          ? "needs_review"
+          : item.published?.evidenceJob?.reason === "already_audited"
+          ? "audited"
+          : item.published?.evidenceJob?.skipped
           ? "not_due"
           : item.published?.evidenceJob
             ? "audited"
             : "not_requested",
+        backfill: item.backfill,
       })),
     };
   }
-  const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "not_due", "not_requested"].includes(item?.status));
-  const finalStatus = applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
+  const visualPreviews = [];
+  if (applied && !preflightOnly && !payload?.recoveryTarget && payload?.campaignActionId && payload?._campaignExecutionGuard) {
+    for (const insertionId of getAppliedInsertionIds(applied)) {
+      try {
+        const row = await privateApiGet(`/api/insertions/${insertionId}`);
+        if (isSocialInsertion(row) || row.periodoFim < todayInCuiaba() || ["cancelado","concluido","arquivado"].includes(row.statusNormalizado)) continue;
+        if (!row.mediaUrl) throw new Error("Mídia pendente.");
+        const preview = await privateApi(`/api/insertions/${insertionId}/visual-previews`, {});
+        visualPreviews.push({ insertionId, preview });
+      } catch (error) {
+        postApplyWarnings.push(`Prévia da inserção ${insertionId}: ${safeProcessOutput(error.message, 300)}`);
+      }
+    }
+  }
+  const evidenceNeedsReview = evidenceCoverage?.results?.some((item) => !["audited", "queued", "not_due", "not_requested"].includes(item?.status));
+  const finalStatus = preflightOnly && finalCanApply ? "validated"
+    : applied ? (evidenceNeedsReview || postApplyWarnings.length ? "needs_review" : "applied") : "needs_review";
   const finalReviewReasons = buildDrivePiReviewReasons({
     packageClassification,
     packageReadiness,
-    validation,
+    operationMode,
+    strictReady: readiness.strictReady,
+    operationalReady: readiness.operationalReady,
+    validation: effectiveValidation,
     rollout,
     dedupe: preApplyDedupe,
     preflightOnly,
@@ -4152,8 +7071,8 @@ async function executeDrivePiIngest(payload) {
     clickUrl: fields.clickUrl,
     packageClass: packageClassification?.class,
     intakeLock: intakeLock.key,
-    missing: validation.missing,
-    invalidInsertions: validation.invalidInsertions,
+    missing: effectiveValidation.missing,
+    invalidInsertions: effectiveValidation.invalidInsertions,
     reviewReasons: finalReviewReasons,
     packageReadiness,
     dedupe: preApplyDedupe,
@@ -4163,10 +7082,14 @@ async function executeDrivePiIngest(payload) {
     publicationResults,
     rollout,
     agentAnalysis: fields.agentAnalysis || agentResult,
-  }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+  }, { sendTelegram: payload?.sendTelegram !== false }).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
 
   return {
     stage: finalStatus,
+    runnerBuildSha: process.env.ADOPS_IMAGE_TAG || "unknown",
+    periodSource: payload?.periodSource === "sheet" ? "planilha" : payload?.periodSource === "explicit_operational_target" ? "explicit_operational_target" : "PI",
+    effectivePeriodEnd: fields.insertions.length === 1 ? fields.insertions[0].periodoFim : null,
+    mediaProcessing,
     eventId: payload.eventId,
     documentId: payload.documentId ?? null,
     driveFileId: payload.driveFileId,
@@ -4183,7 +7106,19 @@ async function executeDrivePiIngest(payload) {
     },
     validation,
     packageClassification,
+    mediaCandidates: (Array.isArray(packageContext?.media) ? packageContext.media : []).map((item) => ({
+      driveFileId: item?.driveFileId ?? null,
+      name: item?.name ?? null,
+      path: item?.path ?? null,
+      mimeType: item?.mimeType ?? null,
+      webViewLink: item?.webViewLink ?? null,
+      size: item?.size ?? null,
+    })),
     packageReadiness,
+    operationMode,
+    strictReady: readiness.strictReady,
+    operationalReady: readiness.operationalReady,
+    ...(preflightOnly ? { sourceOperationalReview: (()=>{try{const observations=packageContext?.textObservations??[],total=(packageContext?.items??[]).filter(i=>i.mimeType==='text/plain'||i.mimeType==='application/vnd.google-apps.document'||/\.txt$/i.test(i.name??'')).length;if(total!==observations.length)throw Error('incomplete_text_review');const destination=resolveOptionalOperationalDestination(observations);return {verified:true,mode:destination.mode,url:destination.url,documentIds:observations.map(o=>o.driveFileId),source:observations.length?'Documentos de destino conferidos no Drive: '+observations.map(o=>o.driveFileId).join(', '):'Inventário completo da pasta conferido: nenhum documento de destino; banner informativo sem link.'};}catch{return {verified:false,code:'destination_source_review_required'}}})(), sourceDocument: packageContext?.pdf ? { sourceName: packageContext.pdf.sourceName, sha256: packageContext.pdf.sha256, bytes: packageContext.pdf.bytes, textExcerpt: packageContext.pdf.textExcerpt, parseError: packageContext.pdf.parseError } : null } : {}),
     reviewReasons: finalReviewReasons,
     dedupe: preApplyDedupe,
     rollout,
@@ -4196,6 +7131,7 @@ async function executeDrivePiIngest(payload) {
     evidenceCoverage,
     strictScopeReconciliation,
     publicationResults,
+    visualPreviews,
     syncPlanilha,
     reconcile,
     telegram: {
@@ -4205,13 +7141,248 @@ async function executeDrivePiIngest(payload) {
   };
 }
 
-async function executePrintBatch(payload) {
-  return privateApi("/api/insertions/capture-proof/batch", {
-    competencia: payload?.competencia ?? undefined,
-    siteId: payload?.siteId ?? undefined,
-    date: payload?.date ?? undefined,
-    captureAt: payload?.captureAt ?? undefined,
+async function executePrintBatch(job, assertLease = () => undefined) {
+  const startedAtMs = Date.now();
+  const payload = job?.payload || {};
+  if (payload.auditOnly !== undefined && typeof payload.auditOnly !== 'boolean') throw Error('daily_print_audit_only_invalid');
+  const auditOnly = payload.auditOnly === true;
+  if (auditOnly && (typeof payload.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(payload.date)
+    || !Number.isFinite(Date.parse(payload.date + 'T12:00:00Z')) || new Date(payload.date + 'T12:00:00Z').toISOString().slice(0,10) !== payload.date)) throw Error('daily_print_audit_only_invalid_date');
+  if (auditOnly && ['captureAt','force','replace','captureOpts','recoveryMode'].some(key => payload[key] != null)) throw Error('daily_print_audit_only_capture_options_rejected');
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.date || ""))
+    ? String(payload.date)
+    : todayInCuiaba();
+  const params = new URLSearchParams({ date: targetDate, includeEvidence: "true" });
+  const competencia = resolveDailyPrintCompetencia(payload);
+  const siteId = readPositiveInteger(payload?.siteId);
+  if (siteId) {
+    const site = await privateApiGet(`/api/sites/${siteId}`);
+    if (!site?.sigla) throw new Error(`print-batch não encontrou sigla para siteId ${siteId}.`);
+    params.set("siteSigla", String(site.sigla));
+  }
+  const operations = auditOnly ? null : await privateApiGet(`/api/campaign-operations/active?${params.toString()}`);
+  // The sheet is not an inventory of already-published insertions (e.g. coexisting campaigns).
+  const publishedQuery = new URLSearchParams({ date: targetDate });
+  if (siteId) publishedQuery.set('siteId', String(siteId));
+  if (competencia) publishedQuery.set('competencia', competencia);
+  const publishedAudit = await privateApiGet(`/api/insertions/capture-proof/audit?${publishedQuery}`);
+  if (!Array.isArray(publishedAudit?.items)) throw new Error('daily_print_published_scope_unavailable');
+  if (auditOnly && (publishedAudit.items.some(item => !readPositiveInteger(item?.insertionId) || item?.targetDate !== targetDate)
+    || new Set(publishedAudit.items.map(item => item.insertionId)).size !== publishedAudit.items.length)) {
+    throw Error('daily_print_audit_only_scope_invalid');
+  }
+  const representedIds = new Set((operations?.items ?? []).map(item => readPositiveInteger(item?.adops?.insertionId)));
+  const publishedInsertions = [];
+  for (const audit of publishedAudit.items) {
+    if (auditOnly || representedIds.has(audit.insertionId)) continue;
+    const insertion = await privateApiGet(`/api/insertions/${audit.insertionId}`);
+    publishedInsertions.push({ insertion, audit });
+  }
+  const pendingInsertionIds = new Set((Array.isArray(payload?.pendingInsertionIds) ? payload.pendingInsertionIds : []).map(readPositiveInteger).filter(Boolean));
+  // Closing existing proofs uses the date-scoped canonical audit, not today's
+  // publication readiness (an ad may have legitimately ended yesterday).
+  const candidates = auditOnly ? publishedAudit.items.map(audit => {
+    const approved = audit.status === 'ok' && audit.checklistValidation?.approved === true
+      && audit.audit?.ok === true && Array.isArray(audit.audit?.issues)
+      && audit.audit.issues.length === 0 && audit.isReachable === true;
+    return { adops: { insertionId: audit.insertionId }, evidence: {
+      missingDates: approved ? [] : [targetDate], invalidDates: [],
+    } };
+  }) : selectDailyPrintCandidates(operations?.items, targetDate, {
+    pendingInsertionIds: [...pendingInsertionIds],
+    competencia,
+    publishedInsertions,
   });
+  const candidateInsertionIds = candidates
+    .map((item) => readPositiveInteger(item?.adops?.insertionId))
+    .filter(Boolean);
+  if (auditOnly && candidateInsertionIds.length === 0) throw Error('daily_print_audit_only_empty_scope');
+  const blocked = (operations?.items ?? []).filter(item => {
+    const id = readPositiveInteger(item?.adops?.insertionId);
+    return !candidateInsertionIds.includes(id)
+      && (pendingInsertionIds.size === 0 || pendingInsertionIds.has(id))
+      && (!competencia || item?.adops?.competencia === competencia)
+      && item?.evidence?.requiredDates?.includes(targetDate);
+  }).map(item => ({ insertionId: readPositiveInteger(item?.adops?.insertionId), status: 'blocked_upstream',
+    error: item?.publicationHealth?.reason ?? 'canonical_insertion_not_capture_ready' }));
+  const expectedTotal = candidates.length + blocked.length;
+  const captured = [];
+  const skipped = [];
+  const failed = [...blocked];
+  const publishLiveProgress = async (runningInsertionId = null, extra = {}) => {
+    try {
+      await progressJob(job.id, {
+        stage: "capture_async_dispatch",
+        targetDate,
+        itemsDone: captured.length + skipped.length + failed.length,
+        itemsTotal: expectedTotal,
+        percentTotal: expectedTotal ? Math.round(((captured.length + skipped.length + failed.length) / expectedTotal) * 100) : 100,
+        liveProgress: buildDailyPrintLiveProgress({ candidateInsertionIds, captured, skipped, failed, runningInsertionId }),
+        ...extra,
+      });
+    } catch (error) {
+      const message = safeProcessOutput(error instanceof Error ? error.message : String(error), 800);
+      console.warn(`[runner] progresso diário não publicado para #${readPositiveInteger(extra.insertionId) || "?"}/${targetDate}: ${message}`);
+    }
+  };
+  await publishLiveProgress(null, {
+    itemsDone: blocked.length,
+    itemsTotal: expectedTotal,
+    percentTotal: expectedTotal ? Math.round(blocked.length / expectedTotal * 100) : 100,
+  });
+  let transportError = null;
+  for (const item of candidates) {
+    assertLease();
+    const insertionId = readPositiveInteger(item?.adops?.insertionId);
+    const missingDates = Array.isArray(item?.evidence?.missingDates) ? item.evidence.missingDates : [];
+    const invalidDates = Array.isArray(item?.evidence?.invalidDates) ? item.evidence.invalidDates : [];
+    if (auditOnly && (missingDates.includes(targetDate) || invalidDates.includes(targetDate))) {
+      failed.push({ insertionId, status: 'audit_only_not_approved', error: 'Apenas auditoria: nenhuma captura foi solicitada.' });
+      await publishLiveProgress(null, { insertionId });
+      continue;
+    }
+    if (!missingDates.includes(targetDate) && !invalidDates.includes(targetDate)) {
+      skipped.push({ insertionId, status: "skipped_existing", reason: "evidencia_auditada" });
+      await publishLiveProgress(null, { insertionId });
+      continue;
+    }
+    await publishLiveProgress(insertionId, {
+      insertionId,
+      replace: invalidDates.includes(targetDate),
+    });
+    try {
+      const capture = await enqueueAndWaitCaptureProof({
+        outerJobId: job.id,
+        insertionId,
+        date: targetDate,
+        captureAt: payload?.captureAt ?? null,
+        replace: invalidDates.includes(targetDate),
+        candidate: payload?.recoveryMode === "late_publication_recovery",
+        promote: payload?.recoveryMode === "late_publication_recovery",
+        reconstructionReason: payload?.recoveryMode === "late_publication_recovery" ? "late_publication_recovery" : null,
+        assertLease,
+      });
+      assertLease();
+      captured.push({ insertionId, status: "audited", captureJobId: capture.jobId, uploadedUrl: capture.item?.uploadedUrl ?? null, timings: capture.timings });
+    } catch (error) {
+      transportError = error instanceof Error ? error.message : String(error);
+      const blockedReconstruction = payload?.recoveryMode === "late_publication_recovery"
+        && /reconstruction|reconstru|retro|candidate|promot/i.test(transportError);
+      failed.push({
+        insertionId,
+        status: blockedReconstruction ? "blocked_reconstruction" : "failed",
+        error: safeProcessOutput(transportError, 800),
+        timings: error && typeof error === "object" ? error.captureTimings ?? null : null,
+      });
+      // A bad portal or audit gate must not suppress the remaining portals.
+      // The canonical audit below determines the batch outcome after every
+      // eligible insertion had its own documented attempt.
+    }
+    await publishLiveProgress(null, { insertionId });
+  }
+  const auditQuery = new URLSearchParams({ date: targetDate });
+  if (competencia) auditQuery.set("competencia", competencia);
+  if (readPositiveInteger(payload?.siteId)) auditQuery.set("siteId", String(payload.siteId));
+  auditQuery.set("insertionIds", candidates.map((item) => readPositiveInteger(item?.adops?.insertionId)).filter(Boolean).join(","));
+  const finalAuditStartedAtMs = Date.now();
+  const audit = await privateApiGet(`/api/insertions/capture-proof/audit?${auditQuery.toString()}`);
+  const finalAuditMs = Date.now() - finalAuditStartedAtMs;
+  const approvedCount = auditOnly ? Number(audit?.strictOk ?? 0) : Number(audit?.ok ?? 0);
+  const captureTimings = aggregateCaptureTimings([...captured, ...failed], finalAuditMs);
+  const outcome = classifyDailyPrintOutcome({
+    jobId: job.id,
+    childJobId: captured.at(-1)?.captureJobId ?? null,
+    expectedTotal,
+    audit: {
+      date: targetDate,
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
+      ok: approvedCount,
+      missing: Number(audit?.missing ?? 0) + blocked.length,
+      invalid: Number(audit?.invalid ?? 0),
+      missingDates: Number(audit?.missing ?? 0) > 0 ? [targetDate] : [],
+      invalidDates: Number(audit?.invalid ?? 0) > 0 ? [targetDate] : [],
+    },
+    transportError,
+  });
+  const executionResult = {
+    stage: outcome.status === "recovered" ? "recovered_after_transport_error" : outcome.status === "incident_required" ? "failed" : "completed",
+    targetDate,
+    mode: auditOnly ? "audit_only" : "async_per_insertion",
+    scopePolicy: competencia ? "explicit_commercial_month" : "effective_target_date",
+    requestedCompetencia: payload?.competencia ?? null,
+    totalCandidates: candidates.length,
+    blocked,
+    captured,
+    skipped,
+    failed,
+    liveProgress: buildDailyPrintLiveProgress({
+      candidateInsertionIds,
+      captured,
+      skipped,
+      failed,
+      runningInsertionId: null,
+    }),
+    audit: {
+      totalEligible: audit.totalEligible,
+      ok: approvedCount,
+      missing: audit.missing,
+      invalid: audit.invalid,
+    },
+    canonicalAudit: {
+      expected: expectedTotal,
+      approved: approvedCount,
+      missing: Number(audit.missing ?? 0) + blocked.length,
+      invalid: Number(audit.invalid ?? 0),
+    },
+    transportError,
+    incidentLayer: outcome.incident?.layer ?? null,
+    errorCode: outcome.status === "incident_required" ? "daily_print_audit_incomplete" : null,
+    failedInsertionIds: failed.map((item) => item.insertionId),
+    nextRecoveryAt: payload?.nextRecoveryAt ?? null,
+    timings: {
+      queueMs: (() => {
+        const createdAtMs = Date.parse(String(job?.createdAt ?? ""));
+        const claimedAtMs = Date.parse(String(payload?.claimedAt ?? ""));
+        return Number.isFinite(createdAtMs) && Number.isFinite(claimedAtMs) && claimedAtMs >= createdAtMs
+          ? claimedAtMs - createdAtMs
+          : null;
+      })(),
+      ...captureTimings,
+      totalMs: Date.now() - startedAtMs,
+    },
+    startedAt: new Date(startedAtMs).toISOString(),
+    finishedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAtMs,
+  };
+  if (outcome.status === "incident_required") {
+    const incident = outcome.incident ?? {};
+    const error = new Error(`daily_print_audit_incomplete:${JSON.stringify({
+      incidentLayer: incident.layer ?? "audit",
+      incidentSummary: incident.summary ?? null,
+      transportError: transportError ?? null,
+      errorCode: String(transportError ?? "").includes("checklist_pre_upload_failed") ? "checklist_pre_upload_failed" : "daily_print_audit_incomplete",
+      date: targetDate,
+      expectedTotal,
+      totalEligible: Number(audit?.totalEligible ?? 0) + blocked.length,
+      ok: approvedCount,
+      missing: Number(audit?.missing ?? 0) + blocked.length,
+      invalid: audit?.invalid ?? null,
+      failedInsertionIds: failed.map((item) => item.insertionId),
+      nextRecoveryAt: payload?.nextRecoveryAt ?? null,
+      startedAt: new Date(startedAtMs).toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAtMs,
+    })}`);
+    error.jobResult = executionResult;
+    throw error;
+  }
+  return executionResult;
+}
+
+function jobResultFromError(error) {
+  return error && typeof error === "object" && error.jobResult && typeof error.jobResult === "object"
+    ? error.jobResult
+    : null;
 }
 
 function isAuditApprovedStatus(status) {
@@ -4219,6 +7390,95 @@ function isAuditApprovedStatus(status) {
   const approved = status?.checklistValidation?.approved ?? status?.auditChecklist?.approved ?? status?.approved ?? null;
   const issues = Array.isArray(status?.issues) ? status.issues : [];
   return status.status === "audited" && approved === true && issues.length === 0;
+}
+
+const RETROACTIVE_RETRY_DELAYS_MS = [0, 2_000, 5_000];
+const RETROACTIVE_RETRYABLE_CODES = new Set(["http_429", "http_502", "http_503", "http_504", "network_timeout", "runner_interrupted", "upload_transient"]);
+const RETROACTIVE_RECONSTRUCTION_CODES = new Set(["reconstruction_not_allowed", "final_checklist_blocked"]);
+const RETROACTIVE_UPSTREAM_CODES = new Set(["blocked_upstream", "publication_not_live", "media_unavailable"]);
+
+function retroactiveErrorCode(error) {
+  const explicit = String(error?.code || error?.errorCode || "").trim();
+  if (explicit) return explicit;
+  return /fetch failed|econnreset|etimedout|network/i.test(String(error?.message || error || ""))
+    ? "network_timeout"
+    : "retroactive_capture_failed";
+}
+
+function isRetryableRetroactiveError(error) {
+  return RETROACTIVE_RETRYABLE_CODES.has(retroactiveErrorCode(error));
+}
+
+function classifyRetroactiveError(error) {
+  const code = retroactiveErrorCode(error);
+  return {
+    code,
+    retryable: isRetryableRetroactiveError(error),
+    status: RETROACTIVE_RECONSTRUCTION_CODES.has(code)
+      ? "blocked_reconstruction"
+      : RETROACTIVE_UPSTREAM_CODES.has(code)
+        ? "blocked_upstream"
+        : "failed",
+    message: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+    captureJobId: typeof error?.captureJobId === "string" ? error.captureJobId : null,
+    blockingIssues: Array.isArray(error?.blockingIssues) ? error.blockingIssues : [],
+  };
+}
+
+function retroactiveFailureFromLog(payload) {
+  const latest = payload?.latest && typeof payload.latest === "object" ? payload.latest : null;
+  if (!latest) return null;
+  const checklistIssues = latest?.metadata?.checklistValidation?.blockingIssues;
+  const retroIssues = latest?.summary?.retroGate?.issues;
+  const stages = Array.isArray(latest?.stages) ? latest.stages : [];
+  const blockingIssues = (Array.isArray(checklistIssues) ? checklistIssues : Array.isArray(retroIssues) ? retroIssues : [])
+    .map((issue) => typeof issue === "string" ? issue : issue?.code)
+    .filter(Boolean);
+  const stageErrorCode = [...stages].reverse().find((stage) => typeof stage?.errorCode === "string")?.errorCode;
+  return {
+    captureLogId: typeof latest.id === "string" ? latest.id : null,
+    errorCode: blockingIssues[0] || stageErrorCode || latest?.summary?.errorCode || latest.probableCause || null,
+    blockingIssues,
+    nextAction: typeof latest.nextAction === "string" ? latest.nextAction : null,
+  };
+}
+
+async function executeRetroactiveTarget(input) {
+  const identity = input?.identity || {};
+  const readStatus = input?.readStatus;
+  const capture = input?.capture;
+  const readFailure = input?.readFailure;
+  const wait = input?.sleep || sleep;
+  if (typeof readStatus !== "function" || typeof capture !== "function") throw new Error("Alvo retroativo exige readStatus e capture.");
+
+  const startedAt = new Date().toISOString();
+  let before;
+  try {
+    before = await readStatus();
+  } catch (error) {
+    const classified = classifyRetroactiveError(error);
+    return { ...identity, status: classified.status, attempts: 0, evidenceUrl: null, errorCode: classified.code, error: classified.message, captureJobId: classified.captureJobId, captureLogId: null, blockingIssues: classified.blockingIssues, nextAction: null, checklistStatus: null, startedAt, finishedAt: new Date().toISOString() };
+  }
+  if (input.skipExisting !== false && isAuditApprovedStatus(before)) {
+    return { ...identity, status: "skipped_existing", attempts: 0, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: null, error: null, captureJobId: null, captureLogId: null, blockingIssues: [], nextAction: null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+  }
+
+  for (let index = 0; index < RETROACTIVE_RETRY_DELAYS_MS.length; index += 1) {
+    if (RETROACTIVE_RETRY_DELAYS_MS[index]) await wait(RETROACTIVE_RETRY_DELAYS_MS[index]);
+    try {
+      const captureResult = await capture();
+      const after = await readStatus();
+      if (!isAuditApprovedStatus(after)) throw Object.assign(new Error("Checklist final não aprovado."), { code: "final_checklist_blocked" });
+      return { ...identity, status: "audited", attempts: index + 1, evidenceUrl: after?.arquivoUrl ?? after?.evidence?.arquivoUrl ?? captureResult?.item?.uploadedUrl ?? null, errorCode: null, error: null, captureJobId: captureResult?.jobId ?? null, captureLogId: captureResult?.item?.captureLogId ?? null, blockingIssues: [], nextAction: null, checklistStatus: after?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+    } catch (error) {
+      const classified = classifyRetroactiveError(error);
+      if (!classified.retryable || index === RETROACTIVE_RETRY_DELAYS_MS.length - 1) {
+        const observedFailure = typeof readFailure === "function" ? await readFailure().catch(() => null) : null;
+        return { ...identity, status: classified.status, attempts: index + 1, evidenceUrl: before?.arquivoUrl ?? before?.evidence?.arquivoUrl ?? null, errorCode: observedFailure?.errorCode || classified.code, error: classified.message, captureJobId: classified.captureJobId, captureLogId: observedFailure?.captureLogId ?? null, blockingIssues: observedFailure?.blockingIssues?.length ? observedFailure.blockingIssues : classified.blockingIssues, nextAction: observedFailure?.nextAction ?? null, checklistStatus: before?.status ?? null, startedAt, finishedAt: new Date().toISOString() };
+      }
+    }
+  }
+  throw new Error("Loop de retry retroativo terminou sem resultado.");
 }
 
 function clampDateRange(startDate, endDate, fromDate, toDate) {
@@ -4270,100 +7530,297 @@ async function resolveBackfillInsertionIds(payload) {
   return { mode: "legacy-filters", insertionIds: null };
 }
 
-async function executePrintBackfill(payload) {
+async function executePrintBackfill(job) {
+  const payload = job?.payload || {};
   const resolved = await resolveBackfillInsertionIds(payload);
-  if (!resolved.insertionIds) {
-    return privateApi("/api/insertions/capture-proof/backfill-overdue", {
-      competencia: payload?.competencia ?? undefined,
-      siteId: payload?.siteId ?? undefined,
-      insertionId: payload?.insertionId ?? undefined,
-    });
-  }
-
   const replaceRequested = payload?.replace === true;
   const force = payload?.force === true;
   const items = [];
   const skipped = [];
-  let totalDates = 0;
+  const captureTargets = [];
 
-  for (const insertionId of resolved.insertionIds) {
-    const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
-    const dates = clampDateRange(insertion?.periodoInicio, insertion?.periodoFim, payload?.fromDate, payload?.toDate);
-    if (!dates.length) {
-      skipped.push({ insertionId, reason: "sem_periodo_valido_ou_fora_do_intervalo" });
-      continue;
-    }
-
-    for (const date of dates) {
-      totalDates += 1;
-      const before = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
-        status: "status_error",
-        error: error instanceof Error ? error.message : String(error),
-      }));
-      if (!replaceRequested && isAuditApprovedStatus(before)) {
-        items.push({
-          insertionId,
-          date,
-          status: "skipped",
-          reason: "already_audited",
-          approved: true,
-        });
+  if (resolved.insertionIds) {
+    for (const insertionId of resolved.insertionIds) {
+      const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+      const dates = clampDateRange(insertion?.periodoInicio, insertion?.periodoFim, payload?.fromDate, payload?.toDate);
+      if (!dates.length) {
+        skipped.push({ insertionId, reason: "sem_periodo_valido_ou_fora_do_intervalo" });
         continue;
       }
-
-      const capture = await privateApi(`/api/insertions/${insertionId}/capture-proof`, {
-        date,
-        replace: replaceRequested || !isAuditApprovedStatus(before),
-        force,
-      });
-      const after = await privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`).catch((error) => ({
-        status: "status_error",
-        error: error instanceof Error ? error.message : String(error),
-      }));
-      items.push({
-        insertionId,
-        date,
-        status: isAuditApprovedStatus(after) ? "ok" : "error",
-        approved: isAuditApprovedStatus(after),
-        captureSkipped: Boolean(capture?.skipped),
-        evidenceUrl: after?.arquivoUrl ?? capture?.capture?.uploadedUrl ?? null,
-        checklistStatus: after?.status ?? null,
-        error: isAuditApprovedStatus(after) ? null : after?.error ?? capture?.error ?? "Checklist final não aprovado.",
-      });
+      captureTargets.push(...dates.map((date) => ({ insertionId, date, captureAt: null })));
+    }
+  } else {
+    const params = new URLSearchParams();
+    if (payload?.competencia) params.set("competencia", String(payload.competencia));
+    if (payload?.siteId) params.set("siteId", String(payload.siteId));
+    const preview = await privateApiGet(`/api/insertions/capture-proof/backfill-overdue/preview?${params.toString()}`);
+    const previewJobs = Array.isArray(preview?.jobs) ? preview.jobs : [];
+    for (const target of previewJobs) {
+      const insertionId = readPositiveInteger(target?.insertionId);
+      const date = String(target?.targetDate || "");
+      if (!insertionId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      if (payload?.fromDate && date < payload.fromDate) continue;
+      if (payload?.toDate && date > payload.toDate) continue;
+      captureTargets.push({ insertionId, date, captureAt: target?.captureAt ?? null });
     }
   }
 
-  const errors = items.filter((item) => item.status === "error");
-  return {
+  for (const { insertionId, date, captureAt } of captureTargets) {
+    try {
+      const result = await executeRetroactiveTarget({
+        identity: { insertionId, date },
+        readStatus: () => privateApiGet(`/api/insertions/${insertionId}/capture-proof/status?date=${encodeURIComponent(date)}`),
+        readFailure: async () => retroactiveFailureFromLog(await privateApiGet(`/api/insertions/${insertionId}/capture-proof/logs?date=${encodeURIComponent(date)}`)),
+        capture: () => enqueueAndWaitCaptureProof({
+          outerJobId: job.id,
+          outerAttempt: payload?.attempt,
+          insertionId,
+          date,
+          captureAt,
+          replace: replaceRequested,
+          force,
+          candidate: true,
+          promote: true,
+          reconstructionReason: "late_publication_recovery",
+        }),
+      });
+      items.push(result);
+    } catch (error) {
+      items.push({
+        insertionId,
+        date,
+        status: "failed",
+        attempts: 0,
+        captureSkipped: false,
+        evidenceUrl: null,
+        checklistStatus: null,
+        errorCode: retroactiveErrorCode(error),
+        error: safeProcessOutput(error instanceof Error ? error.message : String(error), 1000),
+        captureJobId: null,
+        captureLogId: null,
+        blockingIssues: [],
+        nextAction: null,
+      });
+      continue;
+    }
+  }
+
+  const errors = items.filter((item) => ["failed", "blocked_reconstruction", "blocked_upstream"].includes(item.status));
+  const executionResult = {
     ok: errors.length === 0,
     mode: resolved.mode,
     campaignId: resolved.campaignId ?? null,
     piCodigo: resolved.piCodigo ?? null,
     siteSigla: resolved.siteSigla ?? null,
-    insertionIds: resolved.insertionIds,
+    insertionIds: Array.from(new Set(captureTargets.map((target) => target.insertionId))),
     fromDate: payload?.fromDate ?? null,
     toDate: payload?.toDate ?? null,
     replace: replaceRequested,
     force,
-    totalInsertions: resolved.insertionIds.length,
-    totalDates,
-    generatedOrValidated: items.filter((item) => item.status === "ok" || item.status === "skipped").length,
+    totalInsertions: new Set(captureTargets.map((target) => target.insertionId)).size,
+    totalDates: captureTargets.length,
+    generatedOrValidated: items.filter((item) => item.status === "audited" || item.status === "skipped_existing").length,
     errors: errors.length,
     skipped,
     items,
   };
+  if (errors.length) {
+    const error = new Error(`retroactive_backfill_partial_failed:${errors.length}`);
+    error.jobResult = executionResult;
+    throw error;
+  }
+  return executionResult;
 }
 
-async function executePrintSingle(payload) {
+async function executeRecoveryEvidenceBackfill(insertionId, target, parentJobId) {
+  const result = await executePrintBackfill({
+    id: parentJobId || `drive-pi-recovery:${insertionId}`,
+    payload: {
+      insertionId,
+      fromDate: target.periodoInicio,
+      toDate: target.periodoFim < todayInCuiaba() ? target.periodoFim : todayInCuiaba(),
+      replace: false,
+      force: false,
+      reconstructionReason: "late_publication_recovery",
+    },
+  });
+  const missing = result.items.filter((item) => !["audited", "skipped_existing"].includes(item.status));
+  if (missing.length) throw new Error(`recovery_evidence_incomplete:${missing.map((item) => item.date).join(",")}`);
+  return result;
+}
+
+function shouldSkipPrintSingle(preItem, payload) {
+  return payload?.replace !== true && preItem && ["ok", "ok_best_effort"].includes(preItem.status);
+}
+
+async function executePrintSingle(job) {
+  const payload = job?.payload || {};
   if (!payload?.insertionId) {
     throw new Error("print-single sem insertionId.");
   }
-  return privateApi(`/api/insertions/${payload.insertionId}/capture-proof`, {
-    date: payload?.date ?? undefined,
-    captureAt: payload?.captureAt ?? undefined,
-    replace: payload?.replace ?? undefined,
-    force: payload?.force ?? undefined,
+  const date = String(payload?.date || payload?.captureAt || todayInCuiaba()).slice(0, 10);
+  const preAudit = await privateApiGet(`/api/insertions/capture-proof/audit?date=${encodeURIComponent(date)}&insertionIds=${Number(payload.insertionId)}`);
+  const preItem = Array.isArray(preAudit?.items) ? preAudit.items[0] : null;
+  if (shouldSkipPrintSingle(preItem, payload)) {
+    return { ok: true, skipped: true, reason: "evidencia_auditada", date, capture: null };
+  }
+  const capture = await enqueueAndWaitCaptureProof({
+    outerJobId: job.id,
+    insertionId: Number(payload.insertionId),
+    date,
+    captureAt: payload?.captureAt ?? null,
+    replace: payload?.replace === true || ["invalid_audit", "invalid_url"].includes(preItem?.status),
+    force: payload?.force === true,
+    candidate: payload?.reconstructionReason === "late_publication_recovery",
+    promote: payload?.reconstructionReason === "late_publication_recovery",
+    reconstructionReason: payload?.reconstructionReason === "late_publication_recovery"
+      ? "late_publication_recovery"
+      : null,
   });
+  return {
+    ok: true,
+    skipped: false,
+    date,
+    capture: {
+      status: "ok",
+      uploadedUrl: capture.item?.uploadedUrl ?? null,
+      captureLogId: capture.item?.captureLogId ?? null,
+    },
+    asyncJob: {
+      jobId: capture.jobId,
+      status: capture.job?.status ?? "completed",
+    },
+  };
+}
+
+async function executeEvidenceMonthlyReport(job) {
+  const startedAtMs = Date.now();
+  const timings = {};
+  const payload = job?.payload || {};
+  const incremental = payload.incremental === true;
+  const refreshRevision = incremental ? Number(payload.refreshRevision || 0) : null;
+  const targetDate = String(payload.targetDate || todayInCuiaba());
+  const competencia = String(payload.competencia || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !competencia) {
+    throw new Error("evidence-monthly-report exige targetDate e competencia.");
+  }
+  const reportTargetDate = resolveMonthlyReportEvidenceWindow({
+    reportDate: targetDate,
+    targetMonth: targetDate.slice(0, 7),
+    refreshMode: incremental ? "incremental" : "full",
+    now: new Date(),
+  }).reportDate;
+
+  await progressJob(job.id, {
+    stage: "collecting",
+    itemsDone: 0,
+    itemsTotal: 4,
+    percentStage: 5,
+    percentTotal: 5,
+  });
+  if (!incremental) {
+    // Scheduled evidence reports read already registered campaigns. A full
+    // commercial write must not be a prerequisite for exporting audited proofs.
+    if (!isScheduledMonthlyReportPayload(payload)) await runPnpm(["--filter", "@workspace/scripts", "run", "sync:planilha"], {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      timeout: 20 * 60_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    timings.sheetSyncMs = Date.now() - startedAtMs;
+    await progressJob(job.id, {
+      stage: "collecting",
+      itemsDone: 1,
+      itemsTotal: 4,
+      percentStage: 35,
+      percentTotal: 15,
+    });
+    await runPnpm(["--dir", "scripts", "run", "audit:capture-rules-integrity"], {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      timeout: 10 * 60_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+    timings.captureRulesAuditMs = Date.now() - startedAtMs - timings.sheetSyncMs;
+  } else {
+    timings.sheetSyncMs = 0;
+    timings.captureRulesAuditMs = 0;
+    await progressJob(job.id, {
+      stage: "collecting",
+      itemsDone: 2,
+      itemsTotal: 4,
+      percentStage: 50,
+      percentTotal: 30,
+      refreshMode: "incremental",
+      refreshRevision,
+    });
+  }
+  await progressJob(job.id, {
+    stage: "exporting",
+    itemsDone: 2,
+    itemsTotal: 4,
+    percentStage: 50,
+    percentTotal: 30,
+  });
+  const reportHeartbeat = setInterval(() => {
+    progressJob(job.id, {
+      stage: "exporting",
+      itemsDone: 2,
+      itemsTotal: 4,
+      percentStage: 65,
+      percentTotal: 60,
+      elapsedSeconds: Math.round((Date.now() - startedAtMs) / 1000),
+    }).catch(() => null);
+  }, 25_000);
+  let result;
+  try {
+    result = await execFileAsync("node", ["scripts/src/build-current-month-evidence-report.mjs"], {
+      cwd: PROJECT_ROOT,
+      env: {
+        ...process.env,
+        ADOPS_REPORT_DATE: reportTargetDate,
+        ADOPS_REPORT_MONTH: targetDate.slice(0, 7),
+        ADOPS_REPORT_COMPETENCIA: competencia,
+        ADOPS_REPORT_SKIP_PUBLISH: "0",
+        ADOPS_REPORT_SKIP_EXPORTS: "0",
+        ADOPS_REPORT_SCHEDULED: isScheduledMonthlyReportPayload(payload) ? "1" : "0",
+        ADOPS_REPORT_REFRESH_MODE: incremental ? "incremental" : "full",
+        ADOPS_REPORT_REFRESH_REVISION: refreshRevision ? String(refreshRevision) : "",
+      },
+      timeout: 90 * 60_000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+  } finally {
+    clearInterval(reportHeartbeat);
+  }
+  timings.reportGenerationMs = Date.now() - startedAtMs - timings.sheetSyncMs - timings.captureRulesAuditMs;
+  await progressJob(job.id, {
+    stage: "publishing",
+    itemsDone: 3,
+    itemsTotal: 4,
+    percentStage: 90,
+    percentTotal: 90,
+  });
+  const lines = String(result.stdout || "").trim().split(/\r?\n/).filter(Boolean);
+  let report = null;
+  try {
+    report = JSON.parse(lines.slice(lines.findIndex((line) => line.trim().startsWith("{"))).join("\n"));
+  } catch {
+    report = { stdout: String(result.stdout || "").slice(-4000) };
+  }
+  return {
+    ok: true,
+    refreshMode: incremental ? "incremental" : "full",
+    refreshRevision,
+    stage: "completed",
+    targetDate,
+    competencia,
+    publicUrl: report?.publicUrl || null,
+    summary: report?.summary || null,
+    timings: { ...timings, ...(report?.timings || {}), totalMs: Date.now() - startedAtMs },
+    telemetry: report?.telemetry || null,
+    report,
+  };
 }
 
 async function executeTelegramSendEvidence(payload) {
@@ -4446,7 +7903,8 @@ function namedChecks(items) {
 
 async function executeRuntimeReadinessProbe() {
   const driveOAuthReady = Boolean(GOOGLE_DRIVE_REFRESH_TOKEN && GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET);
-  const googleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const directGoogleDriveReady = Boolean(GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE || GOOGLE_DRIVE_ACCESS_TOKEN || driveOAuthReady);
+  const googleDriveReady = !DRIVE_PI_MONITOR_ENABLED || directGoogleDriveReady;
   const telegramDirectReady = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_DEFAULT_GROUP_ID);
   const telegramBridgeConfigured = Boolean(ADOPS_TELEGRAM_BOT_URL);
   const perrengueSshEnvName = "ADOPS_PERRENGUE_SSH_KEY_PATH";
@@ -4461,10 +7919,13 @@ async function executeRuntimeReadinessProbe() {
       privateApiReady: Boolean(PRIVATE_ADOPS_API_BASE_URL && PRIVATE_ADOPS_API_TOKEN),
       opsApiReady: Boolean(OPS_API_BASE_URL && OPS_API_TOKEN),
       googleDriveReady,
+      directGoogleDriveReady,
+      googleDriveRequired: DRIVE_PI_MONITOR_ENABLED,
       telegramReady: telegramBridgeConfigured || telegramDirectReady,
       telegramBridgeConfigured,
       telegramDirectReady,
       drivePiMutationAllowed: ADOPS_DRIVE_PI_ALLOW_MUTATION,
+      campaignAutoPublicationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
       piAgentEnabled: ADOPS_PI_AGENT_ENABLED,
       piAgentAutoApply: ADOPS_PI_AGENT_AUTO_APPLY,
       perrengueAdrotateExecMode: ADOPS_PERRENGUE_ADROTATE_EXEC_MODE,
@@ -4511,6 +7972,7 @@ async function executeRuntimeReadinessProbe() {
         title: "Política de mutação e IA",
         checks: namedChecks([
           { name: "ADOPS_DRIVE_PI_ALLOW_MUTATION", requiredFor: "Permitir intake aplicar cadastro." },
+          { name: "ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED", requiredFor: "Permitir reconciliação determinística criar/publicar somente itens canônicos." },
           { name: "ADOPS_PI_AGENT_ENABLED", requiredFor: "Permitir análise assistida de PI." },
           { name: "ADOPS_PI_AGENT_AUTO_APPLY", requiredFor: "Permitir auto-aplicação quando aprovado." },
           { name: "OPENAI_API_KEY", requiredFor: "Usar análise assistida de documentos quando habilitada." },
@@ -4544,6 +8006,508 @@ async function executeRuntimeReadinessProbe() {
     ],
   };
   return { stage: "completed", runnerRuntimeReadiness };
+}
+
+async function executeDrivePiReconcile(payload) {
+  const insertionId = Number(payload?.insertionId || 0);
+  if (!Number.isInteger(insertionId) || insertionId <= 0) {
+    throw new Error("drive-pi-reconcile exige insertionId positivo.");
+  }
+  const apply = payload?.apply === true;
+  const canonicalPi = String(payload?.canonicalPi || "").trim() || null;
+  const mediaUrl = String(payload?.mediaUrl || "").trim() || null;
+  const selectedDriveFileId = String(payload?.selectedDriveFileId || "").trim() || null;
+  const sourcePreflightJobId = String(payload?.sourcePreflightJobId || "").trim() || null;
+  const confirmationNote = String(payload?.confirmationNote || "").trim() || null;
+  const before = await privateApiGet(`/api/insertions/${insertionId}`);
+  const consistency = await privateApiGet(`/api/insertions/${insertionId}/media-consistency`);
+  const driveFiles = Array.isArray(consistency?.drive?.mediaFiles) ? consistency.drive.mediaFiles : [];
+  let selectedDriveFile = selectedDriveFileId
+    ? driveFiles.find((file) => String(file?.id || "") === selectedDriveFileId) || null
+    : null;
+
+  if (selectedDriveFileId && !selectedDriveFile && sourcePreflightJobId) {
+    const preflightJob = await privateApiGet(`/api/ops/jobs/${encodeURIComponent(sourcePreflightJobId)}`);
+    const execution = preflightJob?.result?.execution;
+    const preflightPayload = preflightJob?.payload || {};
+    const preflightCandidates = Array.isArray(execution?.mediaCandidates) ? execution.mediaCandidates : [];
+    const resolvedFolderId = String(consistency?.drive?.folderId || "").trim();
+    const preflightFolderId = String(execution?.driveFileId || "").trim();
+    if (preflightJob?.kind !== "drive-pi-ingest" || preflightJob?.status !== "completed" || execution?.preflightOnly !== true) {
+      throw new Error(`Job ${sourcePreflightJobId} não é um preflight Drive concluído.`);
+    }
+    if (Number(preflightPayload.expectedInsertionId || 0) !== insertionId
+      || (preflightPayload.expectedCampaignId && Number(preflightPayload.expectedCampaignId) !== Number(before?.campanhaId || before?.campaignId || 0))) {
+      throw new Error(`Preflight ${sourcePreflightJobId} não corresponde à inserção/campanha canônica ${insertionId}.`);
+    }
+    const validatedFolderId = preflightFolderId || resolvedFolderId;
+    if (!validatedFolderId || (resolvedFolderId && preflightFolderId !== resolvedFolderId)) {
+      throw new Error(`Preflight ${sourcePreflightJobId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
+    }
+    selectedDriveFile = preflightCandidates.find((file) => String(file?.driveFileId || "") === selectedDriveFileId) || null;
+  }
+
+  if (selectedDriveFileId && !selectedDriveFile) {
+    throw new Error(`Arquivo Drive ${selectedDriveFileId} não pertence à pasta exata resolvida para a inserção ${insertionId}.`);
+  }
+
+  const proposal = {
+    campaignPatch: canonicalPi && canonicalPi !== before?.piCodigo ? { piCodigo: canonicalPi } : null,
+    insertionPatch: mediaUrl && mediaUrl !== before?.mediaUrl ? { mediaUrl } : null,
+    selectedDriveFile: selectedDriveFile ? {
+      id: selectedDriveFile.id ?? selectedDriveFile.driveFileId,
+      name: selectedDriveFile.name,
+      path: selectedDriveFile.path,
+      sourcePreflightJobId,
+    } : null,
+    requiresDrivePublish: Boolean(selectedDriveFile && !mediaUrl),
+  };
+
+  if (!apply) {
+    return {
+      stage: "preview_ready",
+      mode: "preview",
+      insertionId,
+      consistency,
+      proposal,
+      mutated: false,
+    };
+  }
+  if (!confirmationNote || confirmationNote.length < 8) {
+    throw new Error("Reconciliação apply exige confirmationNote rastreável.");
+  }
+  if (consistency?.issues?.includes("source_pi_conflict") && !canonicalPi) {
+    throw new Error("Conflito de PI exige canonicalPi explícita antes da mutação.");
+  }
+  if (mediaUrl) {
+    const parsed = new URL(mediaUrl);
+    if (parsed.protocol !== "https:" || /(^|\.)drive\.google\.com$/i.test(parsed.hostname) || /(^|\.)docs\.google\.com$/i.test(parsed.hostname)) {
+      throw new Error("mediaUrl deve ser HTTPS pública canônica e não pode ser URL de visualização do Drive.");
+    }
+    const probe = await fetch(mediaUrl, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(30_000) });
+    if (!probe.ok) throw new Error(`mediaUrl canônica não respondeu HTTP válido: ${probe.status}.`);
+  }
+
+  const applied = [];
+  if (proposal.campaignPatch) {
+    await privateApiPatch(`/api/campaigns/${before.campanhaId}`, proposal.campaignPatch);
+    applied.push("campaign.piCodigo");
+  }
+  if (proposal.insertionPatch) {
+    const note = [
+      String(before?.observacoes || "").trim(),
+      `Reconciliação de fontes aplicada em ${new Date().toISOString()}: ${confirmationNote}`,
+    ].filter(Boolean).join("\n");
+    await privateApiPatch(`/api/insertions/${insertionId}`, { ...proposal.insertionPatch, observacoes: note });
+    applied.push("insertion.mediaUrl");
+  }
+
+  return {
+    stage: "completed",
+    mode: "apply",
+    insertionId,
+    consistencyBefore: consistency,
+    proposal,
+    applied,
+    mutated: applied.length > 0,
+    after: await privateApiGet(`/api/insertions/${insertionId}`),
+  };
+}
+
+async function executeOperationalMediaPublish(payload) {
+  if (!["operational_identity", "sheet_drive_composite"].includes(payload?.identityMode)) throw new Error("Preflight operacional exige um modo de identidade suportado.");
+  const insertionId = readPositiveInteger(payload?.expectedInsertionId);
+  const campaignId = readPositiveInteger(payload?.expectedCampaignId);
+  if (!insertionId || !campaignId || !payload?.fingerprint) throw new Error("Preflight operacional sem IDs canônicos ou fingerprint.");
+
+  const pendingDate = payload.expectedPeriodStart > todayInCuiaba() ? payload.expectedPeriodStart : payload?.targetDate || todayInCuiaba();
+  const pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(pendingDate)}`);
+  const liveItem = (pending?.items || []).find((item) => Number(item?.adops?.insertionId) === insertionId);
+  validateCompositePendingGuard(liveItem, payload);
+
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  const campaign = await privateApiGet(`/api/campaigns/${campaignId}`);
+  const siteId = readPositiveInteger(insertion?.siteId ?? insertion?.site?.id);
+  const site = siteId ? await privateApiGet(`/api/sites/${siteId}`) : null;
+  validateOperationalPublicationScope({ campaignId, insertionId, siteSigla: site?.sigla, identityMode: payload?.identityMode });
+  validateOperationalPublicationContract(payload, { insertion, campaign, site });
+  const mediaProfile = await loadOperationalMediaProfile(site?.sigla, insertion.localFormatoNormalizado ?? insertion.localFormato);
+  const approvedMediaProfile = normalizeOperationalMediaProfile(payload?.mediaProfile);
+  if (!approvedMediaProfile || JSON.stringify(mediaProfile) !== JSON.stringify(approvedMediaProfile)) {
+    throw new Error("Perfil de mídia/transformação mudou desde o fingerprint aprovado; nenhuma mutação foi aplicada.");
+  }
+
+  const folderItems = await listDrivePiPackageItems(payload.folderId, payload.folderPath || "");
+  const mediaId = firstNonEmptyString(payload?.media?.id, payload?.media?.driveFileId);
+  const documentId = firstNonEmptyString(payload?.destinationDocument?.id, payload?.destinationDocument?.driveFileId);
+  const pdfId = firstNonEmptyString(payload?.pdfDocument?.id, payload?.pdfDocument?.driveFileId);
+  const mediaItem = folderItems.find((item) => item.driveFileId === mediaId);
+  const destinationItem = documentId ? folderItems.find((item) => item.driveFileId === documentId) : null;
+  const pdfItem = pdfId ? folderItems.find((item) => item.driveFileId === pdfId) : null;
+  if (!mediaItem || (documentId && !destinationItem) || (payload.identityMode === "sheet_drive_composite" && !pdfItem)) throw new Error("Mídia, PDF ou documento exatos não pertencem mais à pasta operacional.");
+  validateOperationalDriveItem(payload.media, mediaItem, "Mídia");
+  if (destinationItem) validateOperationalDriveItem(payload.destinationDocument, destinationItem, "Documento de destino");
+  if (payload.identityMode === "sheet_drive_composite") validateOperationalDriveItem(payload.pdfDocument, pdfItem, "PDF");
+  const mediaCandidates = filterOperationalMediaCandidates(folderItems, mediaProfile.formats, mediaProfile);
+  const pdfCandidates = folderItems.filter((item) => item.mimeType === "application/pdf" || /\.pdf$/i.test(item.name));
+  const textCandidates = folderItems.filter((item) => item.mimeType === "text/plain" || item.mimeType === "application/vnd.google-apps.document" || /\.txt$/i.test(item.name));
+  if (mediaCandidates.length !== 1 || textCandidates.length > 1 || (payload.identityMode === "sheet_drive_composite" && pdfCandidates.length !== 1)) throw new Error("Pasta operacional deixou de conter uma única mídia, um destino opcional inequívoco e o PDF esperado.");
+
+  const observations = destinationItem ? await readDriveTextObservations([destinationItem]) : [];
+  const destination = resolveOptionalOperationalDestination(observations);
+  const destinationUrl = destination.url;
+  if (destinationUrl) await assertPublicOperationalDestination(destinationUrl);
+  if (payload.identityMode === "sheet_drive_composite") {
+    const pdfArchive = await materializeMediaSource({ driveItem: pdfItem, fallbackName: pdfItem.name || "documento.pdf" });
+    const parsedPdf = await parseDrivePiPdfFields(pdfArchive);
+    validateCompositePdfEvidence({ expectedPiCodigo: payload.expectedPiCodigo, expectedDocument: payload.pdfDocument, archive: pdfArchive, parsedPdf });
+  }
+  const materialized = await materializeMediaSource({ driveItem: mediaItem, fallbackName: mediaItem.name || "banner.gif" });
+  if (!payload?.media?.md5Checksum) throw new Error("Snapshot operacional não possui checksum autoritativo da mídia; atualize o inventário antes de publicar.");
+  if (String(materialized.md5 || "").toLowerCase() !== String(payload.media.md5Checksum).toLowerCase()) throw new Error("Checksum do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
+  if (payload?.media?.size && Number(materialized.bytes) !== Number(payload.media.size)) throw new Error("Tamanho do binário baixado diverge do snapshot aprovado; nenhuma mutação foi aplicada.");
+  const deliveryMedia = await prepareOperationalDeliveryMedia(materialized.filePath, mediaProfile);
+  const mediaMetadata = deliveryMedia.metadata;
+  const mediaFormat = String(mediaMetadata.format || "GIF").toUpperCase();
+  const deliveryBuffer = deliveryMedia.transformed ? await readFile(deliveryMedia.filePath) : materialized.buffer;
+  const deliverySha256 = crypto.createHash("sha256").update(deliveryBuffer).digest("hex");
+  const deliveryExtension = {MP4: ".mp4", GIF: ".gif", PNG: ".png", JPEG: ".jpg"}[mediaFormat];
+  if (!deliveryExtension) throw new Error("Formato binário de entrega não suportado.");
+  const deliverySourceName = deliveryMedia.transformed
+    ? `${path.basename(materialized.sourceName || "banner", path.extname(materialized.sourceName || ""))}-${mediaMetadata.width}x${mediaMetadata.height}${deliveryExtension}`
+    : `${path.basename(materialized.sourceName, path.extname(materialized.sourceName))}${deliveryExtension}`;
+  if (!readPositiveInteger(mediaProfile.groupId)) throw new Error("Formato/Perrengue não resolveu um grupo AdRotate válido na configuração vigente.");
+
+  const siteSigla = firstNonEmptyString(site?.sigla, payload?.expectedSiteSigla);
+  const fields = { campaignName: campaign?.nome || liveItem?.campaignName || "RADAR", operationalIdentityKey: `insertion-${insertionId}` };
+  const raw = {
+    siteId,
+    siteSigla,
+    localFormato: insertion.localFormato,
+    localFormatoNormalizado: insertion.localFormatoNormalizado,
+    periodoInicio: insertion.periodoInicio,
+  };
+  const bucket = spacesBucketForSite(siteSigla);
+  const objectKey = buildSpacesImageObjectKey({ siteSigla, fields, raw, sourceName: deliverySourceName, contentHash: deliverySha256 });
+  await uploadBufferToSpaces({ buffer: deliveryBuffer, bucket, objectKey, contentType: contentTypeForMediaName(deliverySourceName) });
+  const stagedUrl = mediaPublicUrl(siteSigla, bucket, objectKey);
+  const stagedReadback = await assertOperationalMediaReadback({
+    mediaUrl: stagedUrl,
+    expectedSha256: deliverySha256,
+    expectedProfile: { ...mediaProfile, width: mediaMetadata.width, height: mediaMetadata.height, format: mediaFormat },
+    archivePath: deliveryMedia.filePath,
+  });
+  const mediaKey = crypto.createHash("sha256").update(["operational_identity", insertionId, deliverySha256].join(":" )).digest("hex");
+  const wordpressImport = String(siteSigla).toUpperCase() === "PERRENGUE"
+    ? await importPerrengueMediaFromUrl({ sourceUrl: stagedUrl, filename: deliverySourceName, mediaKey })
+    : null;
+  const mediaUrl = wordpressImport?.url || stagedUrl;
+  const canonicalReadback = mediaUrl === stagedUrl
+    ? stagedReadback
+    : await assertOperationalMediaReadback({
+        mediaUrl,
+        expectedSha256: deliverySha256,
+        expectedProfile: { ...mediaProfile, width: mediaMetadata.width, height: mediaMetadata.height, format: mediaFormat },
+        archivePath: deliveryMedia.filePath,
+      });
+  const [latestInsertion, latestCampaign] = await Promise.all([
+    privateApiGet(`/api/insertions/${insertionId}`),
+    privateApiGet(`/api/campaigns/${campaignId}`),
+  ]);
+  const latestSiteId = readPositiveInteger(latestInsertion?.siteId ?? latestInsertion?.site?.id);
+  const latestSite = latestSiteId ? await privateApiGet(`/api/sites/${latestSiteId}`) : null;
+  validateOperationalPublicationContract(payload, { insertion: latestInsertion, campaign: latestCampaign, site: latestSite });
+  const latestRowVersion = requireRowVersion(latestInsertion?.rowVersion, "leitura antes da publicação operacional");
+  const externalKey = `ADOPS-${String(siteSigla).toUpperCase()}-${insertionId}`;
+  const adrotateSnapshot = await snapshotSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey });
+  let preview;
+  let published;
+  let insertionPatched = false;
+  let patchedInsertion = null;
+  try {
+    patchedInsertion = await privateApiPatch(`/api/insertions/${insertionId}`, {
+      expectedRowVersion: latestRowVersion,
+      mediaUrl,
+      observacoes: [
+        latestInsertion.observacoes,
+        destinationUrl ? `Link destino informado: ${destinationUrl}` : "Banner informativo publicado sem link de direcionamento.",
+        `Mídia ${mediaFormat} validada por identidade operacional em ${new Date().toISOString()} (Drive ${mediaId}; ${mediaMetadata.width}x${mediaMetadata.height}${mediaMetadata.frames ? `; ${mediaMetadata.frames} frame(s)` : ""}).`,
+        deliveryMedia.transformed
+          ? `Derivação de entrega auditável: original ${deliveryMedia.source.width}x${deliveryMedia.source.height} preservado; canvas ${mediaMetadata.width}x${mediaMetadata.height} por ${deliveryMedia.transform.mode}; SHA-256 origem ${materialized.sha256}; SHA-256 entrega ${deliverySha256}.`
+          : null,
+        payload.identityMode === "operational_identity"
+          ? "PI/PDF autoritativa permanece pendente para faturamento e agrupamento comercial."
+          : `Identidade composta confirmada por planilha, inserção canônica e pasta Drive (PI ${payload.expectedPiCodigo}).`,
+      ].filter(Boolean).join("\n"),
+    });
+    const patchedRowVersion = requireRowVersion(patchedInsertion?.rowVersion, "retorno do PATCH pré-publicação");
+    insertionPatched = true;
+
+    const publicationGuard = {
+      expectedCampaignId: campaignId,
+      expectedInsertionId: insertionId,
+      expectedSiteSigla: siteSigla,
+      expectedFormat: payload.expectedFormat,
+      expectedPeriodStart: payload.expectedPeriodStart,
+      expectedPeriodEnd: payload.expectedPeriodEnd,
+      expectedMediaUrl: mediaUrl,
+      expectedPiCodigo: payload.expectedPiCodigo,
+      identityMode: payload.identityMode,
+      destinationMode: destination.mode,
+      destinationUrl,
+      fingerprint: payload.fingerprint,
+      expectedRowVersion: patchedRowVersion,
+    };
+    const publishBase = { insertionId, identityMode: payload.identityMode, replaceExisting: false, purgeCache: true, generateEvidence: false, date: payload?.targetDate, publicationGuard };
+    preview = await executeAdrotatePublishJob({ ...publishBase, apply: false }, { compositePendingGuardAlreadyValidated: true });
+    published = await executeAdrotatePublishJob({ ...publishBase, apply: true }, { compositePendingGuardAlreadyValidated: true });
+    let historicalSnapshotOk = false;
+    if (String(latestInsertion.periodoFim || "") < todayInCuiaba() && published?.wpCliResult?.ad_id) {
+      const afterSnapshot = await snapshotSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey });
+      historicalSnapshotOk = isAdrotateSnapshotPublicationConfirmed(afterSnapshot, {
+        adId: published.wpCliResult.ad_id,
+        groupId: published.wpCliResult.group_id,
+        scheduleId: published.wpCliResult.schedule_id,
+        insertionId,
+        externalKey,
+        mediaBasename: mediaBasenameFromUrl(mediaUrl),
+      });
+    }
+    if (!published?.wpCliResult?.ad_id || (published?.scheduled !== true && published?.relationOk !== true && published?.historicalRelationOk !== true && historicalSnapshotOk !== true && published?.publicHtmlValidation?.ok !== true)) {
+      const diagnostic = {
+        adId: published?.wpCliResult?.ad_id ?? null,
+        groupId: published?.wpCliResult?.group_id ?? null,
+        scheduleId: published?.wpCliResult?.schedule_id ?? null,
+        relationOk: published?.relationOk === true,
+        historicalRelationOk: published?.historicalRelationOk === true,
+        historicalSnapshotOk,
+        publicHtmlOk: published?.publicHtmlValidation?.ok === true,
+      };
+      throw new Error(`Publicação operacional da inserção ${insertionId} não passou nos gates AdRotate/HTML: ${JSON.stringify(diagnostic)}.`);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    if (insertionPatched) {
+      const rollbackVersion = published?.insertionAfterPublish?.rowVersion || patchedInsertion?.rowVersion;
+      if (!/^\d{1,10}$/.test(String(rollbackVersion ?? ""))) {
+        rollbackErrors.push("insertion:rollback_skipped_missing_row_version");
+      } else {
+        await privateApiPatch(`/api/insertions/${insertionId}`, {
+          expectedRowVersion: String(rollbackVersion),
+          mediaUrl: latestInsertion.mediaUrl ?? null,
+          observacoes: latestInsertion.observacoes ?? null,
+          bannerPublicadoNoSite: latestInsertion.bannerPublicadoNoSite === true,
+          statusNormalizado: latestInsertion.statusNormalizado,
+        }).catch((rollbackError) => rollbackErrors.push(`insertion:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+      }
+    }
+    let adrotateRestored = false;
+    await restoreSiteAdrotate({ site: latestSite, siteSigla, insertionId, externalKey, snapshot: adrotateSnapshot })
+      .then(() => { adrotateRestored = true; })
+      .catch((rollbackError) => rollbackErrors.push(`adrotate:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+    if (adrotateRestored) {
+      const previousAd = selectCanonicalSnapshotAd(adrotateSnapshot);
+      const previousMediaBasename = firstNonEmptyString(previousAd?.adops_media_basename, mediaBasenameFromUrl(previousAd?.image));
+      const rebuildRestoredConsumer = String(siteSigla).toUpperCase() === "PERRENGUE"
+        ? executePerrengueHeadlessRebuild({
+            insertionId,
+            adId: readPositiveInteger(previousAd?.id) || 0,
+            mediaBasename: previousMediaBasename || mediaBasenameFromUrl(mediaUrl),
+            purgeCache: true,
+            operation: "rollback",
+          })
+        : Promise.resolve({ skipped: true, reason: "wordpress_public_consumer" });
+      await rebuildRestoredConsumer.then(async () => {
+        const publicRollback = previousAd
+          ? await validateRestoredAdHtml({ site, insertionId, previousAdId: readPositiveInteger(previousAd.id), previousMediaBasename, rejectedMediaBasename: mediaBasenameFromUrl(mediaUrl) })
+          : await validateMediaAbsentFromPublicHtml({ site, insertionId, mediaBasename: mediaBasenameFromUrl(mediaUrl) });
+        if (publicRollback?.ok !== true) throw new Error("HTML público não confirmou o estado restaurado.");
+      }).catch((rollbackError) => rollbackErrors.push(`public-consumer:${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`));
+    }
+    const suffix = rollbackErrors.length ? ` Rollback incompleto: ${rollbackErrors.join("; ")}` : " Rollback da inserção e AdRotate confirmado; mídia órfã permanece recuperável.";
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${suffix}`);
+  }
+  return {
+    stage: published?.scheduled === true ? "scheduled" : "published",
+    insertionId,
+    campaignId,
+    identityMode: payload.identityMode,
+    commercialIdentityStatus: payload.identityMode === "sheet_drive_composite" ? "confirmed" : "awaiting_authoritative_pi",
+    media: {
+      sourceDriveFileId: mediaId,
+      stagedUrl,
+      mediaUrl,
+      metadata: mediaMetadata,
+      transformed: deliveryMedia.transformed,
+      sourceMetadata: deliveryMedia.source,
+      sourceSha256: materialized.sha256,
+      deliverySha256,
+      stagedReadback,
+      canonicalReadback,
+    },
+    destinationMode: destination.mode,
+    destinationUrl,
+    preview,
+    published,
+  };
+}
+
+async function executeCommercialReconciliation(job) {
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.targetDate || ""))
+    ? String(job.payload.targetDate) : todayInCuiaba();
+  const applyRequested = job?.payload?.mode === "commercial_apply";
+  await progressJob(job.id, { stage: "commercial_source_preview", targetDate, mode: job.payload.mode, percentTotal: 10 });
+  let source;
+  try {
+    source = await privateApiGet(`/api/sync/planilha/preview?scope=commercial&asOf=${encodeURIComponent(targetDate)}`);
+  } catch (error) {
+    return { stage: "incomplete", complete: false, sourceStatus: "source_unavailable", targetDate,
+      reason: error?.code || "source_read_failed", actionsPlanned: null, actionsApplied: 0 };
+  }
+  const plan = planCommercialReconciliation(source);
+  if (!plan.complete) return { stage: "incomplete", targetDate, ...plan, actionsPlanned: null, actionsApplied: 0 };
+  const applied = [];
+  const pendingReview = [...plan.pendingReview];
+  const canApply = applyRequested && ADOPS_COMMERCIAL_RECONCILE_APPLY_ENABLED;
+  for (const action of plan.actions) {
+    try {
+      const preview = await privateApiPatch(`/api/campaigns/${action.campaignId}`, {
+        mode: "fill_missing_only", dryRun: true, sourceRef: action.sourceRef, ...action.fields,
+      });
+      if (preview?.canApply !== true || !preview.expectedUpdatedAt || preview.expectedUpdatedAt !== new Date(action.expectedUpdatedAt).toISOString()) {
+        pendingReview.push({ campaignId: action.campaignId, insertionId: action.insertionId, reason: "commercial_preflight_conflict", conflicts: preview?.conflicts ?? [] });
+        continue;
+      }
+      if (!canApply) continue;
+      const result = await privateApiPatch(`/api/campaigns/${action.campaignId}`, {
+        mode: "fill_missing_only", dryRun: false, sourceRef: action.sourceRef,
+        expectedUpdatedAt: preview.expectedUpdatedAt, ...action.fields,
+      });
+      const readback = await privateApiGet(`/api/campaigns/${action.campaignId}`);
+      const verified = Object.entries(action.fields).every(([field, value]) => String(readback?.[field] ?? "") === String(value));
+      if (!verified) throw new Error(`commercial_readback_mismatch:${action.campaignId}`);
+      applied.push({ campaignId: action.campaignId, insertionId: action.insertionId, changedFields: result?.changedFields ?? Object.keys(action.fields) });
+    } catch (error) {
+      pendingReview.push({ campaignId: action.campaignId, insertionId: action.insertionId,
+        reason: error?.code || "commercial_apply_failed", detail: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { stage: canApply ? "commercial_apply" : "commercial_preflight", complete: true, targetDate,
+    sourceStatus: "verified", sourceSha256: source.sourceSha256, scanned: plan.scanned,
+    actionsPlanned: plan.actions.length, actionsApplied: applied.length, applyEnabled: ADOPS_COMMERCIAL_RECONCILE_APPLY_ENABLED,
+    actions: plan.actions, applied, pendingReview };
+}
+
+async function executeCampaignPublicationReconcile(job) {
+  if (job?.payload?.mode === "commercial_preflight" || job?.payload?.mode === "commercial_apply") {
+    return executeCommercialReconciliation(job);
+  }
+  const cod5_targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(job?.payload?.targetDate || ""))
+    ? String(job.payload.targetDate)
+    : todayInCuiaba();
+  const cod5_source = String(job?.payload?.source || "").trim();
+  const cod5_automaticSource = isAutomaticCampaignReconcileSource(cod5_source);
+  const cod5_requestedMode = job?.payload?.mode === "preflight" ? "preflight" : "apply";
+  const cod5_apply = cod5_requestedMode === "apply" && (!cod5_automaticSource || ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED);
+  const cod5_mode = cod5_apply ? "apply" : "preflight";
+  await progressJob(job.id, {
+    stage: "consultando campanhas pendentes",
+    stageKey: "collecting",
+    targetDate: cod5_targetDate,
+    mode: cod5_mode,
+    automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
+    percentTotal: 10,
+  });
+  let cod5_sheetSync = { skipped: true, reason: "preflight_only" };
+  if (cod5_apply) {
+    await progressJob(job.id, {
+      stage: "sincronizando planilha canônica",
+      stageKey: "syncing_sheet",
+      targetDate: cod5_targetDate,
+      mode: cod5_mode,
+      percentTotal: 15,
+    });
+    cod5_sheetSync = await executeSyncPlanilha({ mode: "campaign-publication-reconcile" });
+  }
+  const cod5_pending = await privateApiGet(`/api/campaign-operations/pending-publication?date=${encodeURIComponent(cod5_targetDate)}`);
+  const cod5_checkedAt = new Date().toISOString();
+  const cod5_requestedInsertionId = readPositiveInteger(job?.payload?.insertionId);
+  const cod5_items = cod5_requestedInsertionId
+    ? (cod5_pending?.items || []).filter((item) => Number(item?.adops?.insertionId) === cod5_requestedInsertionId)
+    : cod5_pending?.items;
+  if (cod5_requestedInsertionId && !cod5_items.length) throw new Error(`Inserção ${cod5_requestedInsertionId} não está na fila de publicação.`);
+  const cod5_plan = planCampaignPublicationReconciliation(cod5_items, cod5_checkedAt, { mode: cod5_mode });
+  if (cod5_automaticSource && !ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED) {
+    cod5_plan.blockers.unshift({
+      insertionId: null,
+      code: "automatic_publication_disabled",
+      reason: "A automação está em observação; ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED ainda não foi habilitada.",
+    });
+  }
+  const cod5_results = [];
+  let cod5_done = 0;
+  if (!cod5_apply) {
+    return {
+      stage: "preflight",
+      targetDate: cod5_targetDate,
+      checkedAt: cod5_checkedAt,
+      mode: cod5_mode,
+      automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
+      sheetSync: cod5_sheetSync,
+      actionsPlanned: cod5_plan.actions.length,
+      actionsCompleted: 0,
+      blockers: cod5_plan.blockers,
+      actions: cod5_plan.actions,
+      nextAction: cod5_plan.actions.length ? "enable_or_request_apply" : "resolve_blockers",
+    };
+  }
+  for (const cod5_action of cod5_plan.actions) {
+    await progressJob(job.id, {
+      stage: "retomando publicações liberadas",
+      stageKey: "processing",
+      targetDate: cod5_targetDate,
+      itemsDone: cod5_done,
+      itemsTotal: cod5_plan.actions.length,
+      blockers: cod5_plan.blockers,
+      percentTotal: 20 + Math.round((cod5_done / Math.max(1, cod5_plan.actions.length)) * 70),
+    });
+    if (cod5_action.type === "drive_pi_publish") {
+      const cod5_driveResult = await executeDrivePiIngest(cod5_action.event);
+      if (cod5_driveResult?.stage === "needs_review") {
+        throw new Error(`drive_pi_publish exige revisão: ${JSON.stringify(cod5_driveResult.reviewReasons ?? [])}`);
+      }
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: cod5_driveResult,
+      });
+    } else if (cod5_action.type === "operational_media_publish") {
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: await executeOperationalMediaPublish({ ...cod5_action.payload, targetDate: cod5_targetDate }),
+      });
+    } else if (cod5_action.type === "adrotate_publish") {
+      cod5_results.push({
+        type: cod5_action.type,
+        insertionId: cod5_action.insertionId,
+        result: await executeAdrotatePublishJob({ ...cod5_action.payload, date: cod5_targetDate }),
+      });
+    }
+    cod5_done += 1;
+  }
+  return {
+    stage: cod5_plan.actions.length ? "completed" : "waiting_sources",
+    targetDate: cod5_targetDate,
+    checkedAt: cod5_checkedAt,
+    mode: cod5_mode,
+    automationEnabled: ADOPS_CAMPAIGN_AUTO_PUBLISH_ENABLED,
+    sheetSync: cod5_sheetSync,
+    actionsPlanned: cod5_plan.actions.length,
+    actionsCompleted: cod5_results.length,
+    blockers: cod5_plan.blockers,
+    results: cod5_results,
+  };
 }
 
 async function sendTelegramPhotoDirect({ chatId, photo, caption }) {
@@ -4742,12 +8706,24 @@ async function executeAnalyticsReport(payload) {
   };
 }
 
+const jobProgressResults = new Map();
+
+function mergeJobProgressResult(jobId, result) {
+  const previous = jobProgressResults.get(jobId);
+  const merged = {
+    ...(previous && typeof previous === "object" ? previous : {}),
+    ...(result && typeof result === "object" ? result : {}),
+  };
+  jobProgressResults.set(jobId, merged);
+  return merged;
+}
+
 async function progressJob(jobId, result) {
   await request(`/api/ops/runner/jobs/${encodeURIComponent(jobId)}/progress`, {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      result,
+      result: mergeJobProgressResult(jobId, result),
     }),
   });
 }
@@ -4923,7 +8899,7 @@ async function captureProofWithRetry(insertionId, targetDate, maxAttempts = 3) {
     : new Error(`Falha ao capturar inserção ${insertionId} em ${targetDate}.`);
 }
 
-async function ensureInsertionCaptureCoverage(insertion) {
+async function ensureInsertionCaptureCoverage(insertion, requiredDatesOverride = null, { allowRecovery = true } = {}) {
   const start = parseIsoDate(insertion.periodoInicio);
   const end = parseIsoDate(insertion.periodoFim);
   const today = parseIsoDate(new Intl.DateTimeFormat("en-CA", {
@@ -4946,10 +8922,23 @@ async function ensureInsertionCaptureCoverage(insertion) {
 
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
-  const firstPassDates = eachIsoDay(start, effectiveEnd);
+  const firstPassDates = Array.isArray(requiredDatesOverride)
+    ? Array.from(new Set(requiredDatesOverride.filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(String(date))))).sort()
+    : eachIsoDay(start, effectiveEnd);
   const firstPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
+  if (!allowRecovery) {
+    const blocked = firstPassStatuses.filter((status) => !isReusableAuditedEvidence(status));
+    if (blocked.length) {
+      throw new Error(`A inserção #${insertion.id} tem ${blocked.length} evidência(s) sem checklist final aprovado; o pacote não regenera provas.`);
+    }
+    return {
+      invalidatedEvidenceIds: [],
+      regeneratedDates: [],
+      finalStatuses: firstPassStatuses,
+    };
+  }
   const hasInvalid = firstPassStatuses.some((item) => item?.status === "invalid_audit" || item?.status === "invalid_url");
-  if (hasInvalid) {
+  if (hasInvalid && !Array.isArray(requiredDatesOverride)) {
     const fixed = await privateApi(`/api/insertions/${insertion.id}/capture-proof/fix-invalid`, {});
     if (Array.isArray(fixed?.deletedEvidenceIds)) {
       invalidatedEvidenceIds.push(...fixed.deletedEvidenceIds);
@@ -4963,13 +8952,8 @@ async function ensureInsertionCaptureCoverage(insertion) {
 
   const secondPassStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
   for (const status of secondPassStatuses) {
-    const proof = status?.audit?.retroContentProof;
-    const strictAuditApproved = status?.status === "audited"
-      && proof?.status === "approved"
-      && proof?.futureCount === 0
-      && typeof proof?.manifestHash === "string"
-      && proof.manifestHash.length === 64;
-    if (strictAuditApproved) continue;
+    if (isReusableAuditedEvidence(status)) continue;
+    if (!["missing", "invalid_audit", "invalid_url"].includes(status?.status)) continue;
     const targetDate = status?.date;
     if (!targetDate) continue;
     const result = await captureProofWithRetry(insertion.id, targetDate);
@@ -4979,16 +8963,9 @@ async function ensureInsertionCaptureCoverage(insertion) {
   }
 
   const finalStatuses = await Promise.all(firstPassDates.map((date) => privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`)));
-  const failed = finalStatuses.filter((item) => {
-    const proof = item?.audit?.retroContentProof;
-    return item?.status !== "audited"
-      || proof?.status !== "approved"
-      || proof?.futureCount !== 0
-      || typeof proof?.manifestHash !== "string"
-      || proof.manifestHash.length !== 64;
-  });
+  const failed = finalStatuses.filter((item) => !isReusableAuditedEvidence(item));
   if (failed.length) {
-    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem prova editorial retroativa aprovada.`);
+    throw new Error(`A inserção #${insertion.id} ainda tem ${failed.length} evidência(s) sem checklist final aprovado.`);
   }
 
   return {
@@ -4998,14 +8975,387 @@ async function ensureInsertionCaptureCoverage(insertion) {
   };
 }
 
+function fulfillmentPlacementKey(value) {
+  const normalized = normalizeSlotKey(value);
+  const home = normalized.match(/\b(?:home|capa)\s*0*([123])\b/);
+  if (home) return `home_${home[1]}`;
+  if (/\b(?:mega\s*)?(?:banner\s*)?topo\b|\btop\s*bar\b/.test(normalized)) return "top";
+  if (/\b(?:materia|noticia|interna|article)\b/.test(normalized)) return "article_internal";
+  return normalized.replace(/\s+/g, "_");
+}
+
+function fulfillmentPiKey(value) {
+  return String(normalizePiDigits(value) || "").replace(/^0+(?=\d)/, "");
+}
+
+class FulfillmentBlockedError extends Error {
+  constructor(message, result = {}) {
+    super(message);
+    this.name = "FulfillmentBlockedError";
+    this.fulfillmentResult = { stage: "blocked", blocked: true, reason: message, ...result };
+  }
+}
+
+class HumanReviewRequiredError extends Error {
+  constructor(message, reviewResult) {
+    super(message);
+    this.name = "HumanReviewRequiredError";
+    this.reviewResult = reviewResult;
+  }
+}
+
+async function fulfillmentAttempt(label, activity, options = {}) {
+  const maxAttempts = Math.max(1, Math.min(5, Number(options.maxAttempts || 3)));
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await activity(attempt);
+    } catch (error) {
+      lastError = error;
+      if (error instanceof FulfillmentBlockedError || error instanceof HumanReviewRequiredError) throw error;
+      if (attempt >= maxAttempts) break;
+      await sleep(Math.min(8000, 750 * (2 ** (attempt - 1))));
+    }
+  }
+  throw new Error(`${label} falhou após ${maxAttempts} tentativa(s): ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+function fulfillmentOperationRows(payload) {
+  const active = Array.isArray(payload?.items) ? payload.items : [];
+  const upcoming = Array.isArray(payload?.upcomingItems) ? payload.upcomingItems : [];
+  return [...active, ...upcoming];
+}
+
+function selectFulfillmentOperations(payload, piCodigo, siteSigla, placement) {
+  const targetPlacement = placement ? fulfillmentPlacementKey(placement) : null;
+  return fulfillmentOperationRows(payload).filter((item) => {
+    if (fulfillmentPiKey(item?.piCodigo) !== fulfillmentPiKey(piCodigo) || String(item?.siteSigla || "").toUpperCase() !== siteSigla) return false;
+    if (!targetPlacement) return true;
+    return targetPlacement === fulfillmentPlacementKey(item?.format?.normalized ?? item?.format?.sheet);
+  });
+}
+
+function fulfillmentEvidenceAsOfDate(operations, fallbackDate, today = todayInCuiaba()) {
+  const dates = operations
+    .map((item) => String(item?.period?.end || ""))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .map((value) => value < today ? value : today)
+    .sort();
+  return dates.at(-1) || fallbackDate;
+}
+
+async function ensureFulfillmentMedia(item) {
+  const insertionId = Number(item?.adops?.insertionId || 0);
+  if (!insertionId) throw new FulfillmentBlockedError(`PI ${item?.piCodigo}/${item?.siteSigla} ainda não possui inserção no AdOps após a sincronização.`);
+  const insertion = await privateApiGet(`/api/insertions/${insertionId}`);
+  if (item?.adops?.mediaUrl || insertion?.mediaUrl) {
+    return { insertion, applied: false, mediaUrl: item?.adops?.mediaUrl || insertion.mediaUrl, source: "existing" };
+  }
+  const selection = selectSingleMediaCandidate(item);
+  if (!selection.ok) throw new FulfillmentBlockedError(`Mídia não pode ser aplicada com segurança na inserção ${insertionId}: ${selection.reason}.`, { insertionId, selectionReason: selection.reason });
+  const mediaPackage = buildMediaMonitorPackage(item, insertion, selection.mediaFile);
+  const resolved = selection.expectedKind === "video"
+    ? await resolveDrivePiVideoMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "campaign-fulfillment" })
+    : await resolveDrivePiImageMedia(mediaPackage.fields, mediaPackage.packageContext, { source: "campaign-fulfillment" });
+  const resolvedInsertion = resolved?.fields?.insertions?.[0];
+  const mediaUrl = readStringRecord(resolvedInsertion, ["mediaUrl", "media_url"]);
+  const issues = resolved?.videoMediaProcessing?.issues || resolved?.imageMediaProcessing?.issues || [];
+  if (!mediaUrl || issues.length) throw new Error(`Processamento da mídia falhou na inserção ${insertionId}: ${issues.join(", ") || "URL ausente"}.`);
+  await privateApiPatch(`/api/insertions/${insertionId}`, {
+    mediaUrl,
+    observacoes: [
+      String(insertion?.observacoes || "").trim(),
+      `Mídia vinculada pelo fulfillment em ${new Date().toISOString()} a partir do Drive ${selection.mediaFile.id}.`,
+    ].filter(Boolean).join("\n"),
+  });
+  const mediaAudit = (resolved?.videoMediaProcessing?.results || resolved?.imageMediaProcessing?.results || [])[0] || {};
+  await privateApi(`/api/insertions/${insertionId}/media-selection`, {
+    driveFileId: selection.mediaFile.id,
+    canonicalUrl: mediaUrl,
+    sha256: mediaAudit.sha256 || null,
+    bytes: mediaAudit.bytes || Number(selection.mediaFile.size || 0) || null,
+    width: mediaAudit.width || null,
+    height: mediaAudit.height || null,
+    reason: "Candidato único validado pelo fulfillment canônico.",
+    selectedBy: "campaign-fulfillment-runner",
+  });
+  return { insertion: { ...insertion, mediaUrl }, applied: true, mediaUrl, driveFileId: selection.mediaFile.id, source: "drive" };
+}
+
+function fulfillmentSourceProofs(operations) {
+  const pdfs = [];
+  const sheetRows = [];
+  for (const item of operations) {
+    for (const file of Array.isArray(item?.drive?.pdfFiles) ? item.drive.pdfFiles : []) {
+      if (file?.webViewLink) pdfs.push({ fileName: file.name, url: file.webViewLink, driveFileId: file.id, kind: "agency_order_pdf" });
+    }
+    sheetRows.push({
+      sheetName: item?.sheetSource?.sheetName ?? null,
+      blockSite: item?.sheetSource?.blockSite ?? item?.siteSigla ?? null,
+      rowNumber: item?.sheetSource?.rowNumber ?? null,
+      piCodigo: item?.piCodigo ?? null,
+      period: item?.period ?? null,
+      format: item?.format ?? null,
+    });
+  }
+  return { agencyOrderPdfs: Array.from(new Map(pdfs.map((item) => [item.driveFileId, item])).values()), sheetRows };
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function drivePdfThumbnailUrl(driveFileId) {
+  const id = String(driveFileId || "").trim();
+  if (!/^[A-Za-z0-9_-]{10,200}$/.test(id)) throw new Error("ID de PDF do Drive inválido para gerar prévia.");
+  return `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w1400`;
+}
+
+async function downloadDrivePdfPreview(pdf) {
+  try {
+    const response = await fetch(drivePdfThumbnailUrl(pdf.driveFileId), { signal: AbortSignal.timeout(30000) });
+    const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0];
+    if (!response.ok || !contentType.startsWith("image/")) throw new Error(`thumbnail HTTP ${response.status} (${contentType || "sem tipo"})`);
+    const preview = Buffer.from(await response.arrayBuffer());
+    if (preview.length < 1000 || preview.length > 10 * 1024 * 1024) throw new Error(`thumbnail com tamanho inválido: ${preview.length}`);
+    return { buffer: preview, contentType, source: "drive_thumbnail" };
+  } catch (thumbnailError) {
+    const archived = await downloadDriveFileToArchive({
+      driveFileId: pdf.driveFileId,
+      name: pdf.fileName,
+      mimeType: "application/pdf",
+    });
+    if (!archived?.filePath) throw new Error(`Não foi possível materializar o PDF da agência ${pdf.fileName}.`);
+    const previewPrefix = `${archived.filePath}-preview`;
+    await execFileAsync("pdftoppm", ["-f", "1", "-singlefile", "-png", "-scale-to", "1400", archived.filePath, previewPrefix], { timeout: 120000, maxBuffer: 1024 * 1024 });
+    return { buffer: await readFile(`${previewPrefix}.png`), contentType: "image/png", source: "authenticated_pdf", thumbnailError: thumbnailError instanceof Error ? thumbnailError.message : String(thumbnailError) };
+  }
+}
+
+async function materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId }) {
+  const source = fulfillmentSourceProofs(operations);
+  const objectPrefix = [ADOPS_EXPORT_BASE_PATH, slugifyPathPart(siteSigla), slugifyPathPart(piCodigo), slugifyPathPart(jobId), "fontes"].join("/");
+  const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
+  const publicUrl = (key) => `${publicBase}/${key.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+  const sheetSnapshots = [];
+  for (const [index, row] of source.sheetRows.entries()) {
+    const fileName = `planilha-${slugifyPathPart(row.sheetName || "aba")}-linha-${row.rowNumber || index + 1}.svg`;
+    const objectKey = `${objectPrefix}/${fileName}`;
+    const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560"><rect width="1280" height="560" fill="#fbfaf6"/><rect x="48" y="44" width="1184" height="472" rx="24" fill="#fff" stroke="#d9dde7" stroke-width="2"/><text x="88" y="105" font-family="Arial,sans-serif" font-size="24" fill="#667085">PLANILHA · ${escapeXml(row.sheetName)} · LINHA ${escapeXml(row.rowNumber)}</text><text x="88" y="185" font-family="Arial,sans-serif" font-size="52" font-weight="700" fill="#14213d">PI ${escapeXml(row.piCodigo)} · ${escapeXml(row.blockSite)}</text><line x1="88" y1="226" x2="1192" y2="226" stroke="#d9dde7"/><text x="88" y="300" font-family="Arial,sans-serif" font-size="24" fill="#667085">PERÍODO</text><text x="88" y="350" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#14213d">${escapeXml(row.period?.start)} → ${escapeXml(row.period?.end)}</text><text x="88" y="420" font-family="Arial,sans-serif" font-size="24" fill="#667085">POSIÇÃO</text><text x="88" y="470" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#176b5b">${escapeXml(row.format?.normalized || row.format?.sheet)}</text></svg>`);
+    await uploadBufferToSpaces({ buffer: svg, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: "image/svg+xml" });
+    sheetSnapshots.push({ fileName, url: publicUrl(objectKey), rowNumber: row.rowNumber, kind: "sheet_snapshot" });
+  }
+  const agencyOrderPreviews = [];
+  for (const pdf of source.agencyOrderPdfs) {
+    const preview = await downloadDrivePdfPreview(pdf);
+    const previewExtension = preview.contentType === "image/jpeg" ? "jpg" : preview.contentType === "image/webp" ? "webp" : "png";
+    const fileName = `${slugifyPathPart(path.basename(pdf.fileName, path.extname(pdf.fileName)))}-pagina-1.${previewExtension}`;
+    const objectKey = `${objectPrefix}/${fileName}`;
+    await uploadBufferToSpaces({ buffer: preview.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey, contentType: preview.contentType });
+    agencyOrderPreviews.push({ fileName, url: publicUrl(objectKey), driveFileId: pdf.driveFileId, sourceUrl: pdf.url, previewSource: preview.source, kind: "agency_order_preview" });
+  }
+  return { ...source, sheetSnapshots, agencyOrderPreviews };
+}
+
+async function executeCampaignFulfillment(job) {
+  const payload = job?.payload || {};
+  const piCodigo = fulfillmentPiKey(payload.piCodigo);
+  const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
+  const placement = String(payload.placement || "").trim() || null;
+  const campaignDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.campaignDate || "")) ? String(payload.campaignDate) : todayInCuiaba();
+  if (!piCodigo || !siteSigla) throw new Error("campaign-fulfillment sem piCodigo/siteSigla válidos.");
+
+  const progress = async (stage, extra = {}) => progressJob(job.id, { stage, piCodigo, siteSigla, placement, ...extra });
+  await progress("source_verified");
+  if (payload.refreshDrive !== false) {
+    const inventory = await privateApiGet("/api/ops/drive-inventory/status");
+    if (inventory?.snapshotStatus !== "fresh") {
+      await progress("refreshing_drive", { snapshotStatus: inventory?.snapshotStatus ?? "missing" });
+      await fulfillmentAttempt("Atualização do inventário do Drive", () => executeDriveInventoryRefresh(job), { maxAttempts: 2 });
+    }
+  }
+
+  await progress("syncing_sheet");
+  const sheetSync = await fulfillmentAttempt("Sincronização da planilha", () => executeSyncPlanilha({ mode: "latest", source: "campaign-fulfillment" }), { maxAttempts: 2 });
+  await progress("deduplicating");
+  let operationsPayload = await fulfillmentAttempt("Leitura das operações de campanha", () => privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(campaignDate)}&includeEvidence=true`));
+  let operations = selectFulfillmentOperations(operationsPayload, piCodigo, siteSigla, placement);
+  if (!operations.length) {
+    throw new FulfillmentBlockedError(`Nenhuma linha inequívoca foi encontrada para PI ${piCodigo}/${siteSigla}${placement ? `/${placement}` : ""} após sincronizar a planilha.`, { piCodigo, siteSigla, placement });
+  }
+  const sourceBlocking = operations.flatMap((item) => Array.isArray(item?.blockingIssues) ? item.blockingIssues : []);
+  if (sourceBlocking.length) throw new FulfillmentBlockedError(`Fulfillment bloqueado por divergência de fonte: ${Array.from(new Set(sourceBlocking)).join("; ")}`, { piCodigo, siteSigla, sourceConflicts: { count: sourceBlocking.length, items: sourceBlocking, summary: sourceBlocking.join("; ") } });
+  const missingInsertions = operations.filter((item) => !Number(item?.adops?.insertionId || 0));
+  if (missingInsertions.length) throw new FulfillmentBlockedError(`Sincronização não criou ${missingInsertions.length} inserção(ões) esperada(s) para PI ${piCodigo}/${siteSigla}.`, { piCodigo, siteSigla, missingInsertions: missingInsertions.length });
+
+  const media = [];
+  await progress("linking_media", { insertionIds: operations.map((item) => item.adops.insertionId) });
+  for (const item of operations) media.push(await fulfillmentAttempt(`Vínculo de mídia da inserção ${item.adops.insertionId}`, () => ensureFulfillmentMedia(item), { maxAttempts: 2 }));
+
+  await progress("publishing");
+  const publications = [];
+  for (const item of operations) {
+    const insertionId = Number(item.adops.insertionId);
+    if (item?.adops?.bannerPublicadoNoSite === true) {
+      publications.push({ insertionId, skipped: true, reason: "already_published", validatedBy: "campaign_operations" });
+    } else {
+      const ended = item?.period?.end && item.period.end < todayInCuiaba();
+      if (ended) throw new FulfillmentBlockedError(`A inserção histórica ${insertionId} não está marcada como publicada; publicação retroativa automática foi bloqueada.`, { insertionId, period: item.period });
+      publications.push(await fulfillmentAttempt(`Publicação da inserção ${insertionId}`, () => executeAdrotatePublishJob({
+        insertionId,
+        apply: true,
+        replaceExisting: true,
+        purgeCache: true,
+        generateEvidence: false,
+        date: campaignDate,
+        source: "campaign-fulfillment",
+      }), { maxAttempts: 2 }));
+    }
+  }
+
+  await progress("capturing_and_auditing");
+  const fulfillmentDeliveryClass = operations.some((item) => item?.period?.end && item.period.end < todayInCuiaba())
+    ? "retroactive"
+    : String(payload.deliveryReason || "standard");
+  const delivery = await fulfillmentAttempt("Auditoria e pacote de entrega", () => executePiSiteExport({
+    id: job.id,
+    payload: {
+      piCodigo,
+      siteSigla,
+      mode: "delivery",
+      variant: "web",
+      sendTelegram: payload.sendTelegram !== false,
+      chatId: payload.chatId || null,
+      source: "campaign-fulfillment",
+      splitZipByPosition: true,
+      deliveryClass: fulfillmentDeliveryClass,
+    },
+  }), { maxAttempts: 2 });
+
+  await progress("materializing_source_proofs");
+  const sourceProofs = await fulfillmentAttempt("Materialização das fontes", () => materializeFulfillmentSourceProofs({ operations, piCodigo, siteSigla, jobId: job.id }), { maxAttempts: 2 });
+
+  const evidenceAsOfDate = fulfillmentEvidenceAsOfDate(operations, campaignDate);
+  operationsPayload = await privateApiGet(`/api/campaign-operations/active?date=${encodeURIComponent(evidenceAsOfDate)}&includeEvidence=true`);
+  operations = selectFulfillmentOperations(operationsPayload, piCodigo, siteSigla, placement);
+  const audited = operations.every((item) => item?.evidence?.status === "approved" || item?.evidence?.status === "missing_or_not_applicable");
+  const published = publications.every((item) => item?.reason === "already_published" || (item?.apply === true && item?.wpCliResult?.ad_id));
+  const pdfs = Array.isArray(delivery?.artifacts?.pdfs) ? delivery.artifacts.pdfs : [];
+  const zips = Array.isArray(delivery?.artifacts?.zips) ? delivery.artifacts.zips : [];
+  const checklist = [
+    { key: "source_identity", label: "PI confirmada nas fontes", ok: operations.every((item) => item?.sourceIdentity?.decision === "confirmed"), details: "Planilha, pasta/PDF do Drive e AdOps reconciliados." },
+    { key: "deduplication", label: "Sem cadastro duplicado", ok: operations.every((item) => Number(item?.adops?.insertionId || 0) > 0), details: `${operations.length} posição(ões) resolvida(s).` },
+    { key: "media", label: "Mídia vinculada", ok: media.every((item) => Boolean(item?.mediaUrl)), details: `${media.length} inserção(ões) com mídia.` },
+    { key: "publication", label: "Publicação validada", ok: published, details: `${publications.length} publicação(ões) processada(s).` },
+    { key: "evidence", label: "Evidências auditadas", ok: audited, details: "Cobertura diária conferida pela API, com backfill quando necessário." },
+    { key: "delivery", label: "ZIP e PDFs por posição", ok: zips.length > 0 && zips.length === pdfs.length, details: `${zips.length} ZIP(s) e ${pdfs.length} PDF(s) separados por posição.` },
+    { key: "telegram", label: "Entrega no Telegram", ok: payload.sendTelegram === false || delivery?.telegram?.ok === true, details: payload.sendTelegram === false ? "Envio desabilitado pelo solicitante." : "ZIP e PDFs enviados pelo fluxo de entrega." },
+    { key: "source_proofs", label: "Planilha e pedido da agência comprovados", ok: sourceProofs.sheetSnapshots.length === operations.length && sourceProofs.agencyOrderPreviews.length > 0, details: `${sourceProofs.sheetSnapshots.length} recorte(s) de planilha e ${sourceProofs.agencyOrderPreviews.length} prévia(s) de PDF.` },
+  ];
+  if (checklist.some((item) => !item.ok)) throw new FulfillmentBlockedError(`Checklist final reprovado: ${checklist.filter((item) => !item.ok).map((item) => item.label).join(", ")}.`, { piCodigo, siteSigla, operation: operations[0], operations, delivery, sourceProofs, checklist });
+  return {
+    stage: "completed",
+    piCodigo,
+    siteSigla,
+    placement,
+    campaignDate,
+    evidenceAsOfDate,
+    operation: operations[0],
+    operations,
+    sheetSync,
+    media,
+    publications,
+    delivery,
+    sourceProofs,
+    sourceConflicts: { count: 0, summary: "Nenhuma divergência pendente; fontes reconciliadas sem sobrescrever silenciosamente a planilha." },
+    sheetCorrection: { status: "not_required", automaticWriteback: false },
+    checklist,
+  };
+}
+
+async function executeCacheMaintenance(job) {
+  const payload=job.payload, timings={};
+  const step=(name,operation)=>maintenanceStep(name,operation,data=>progressJob(job.id,data),timings);
+  const get=(pathname)=>privateApiGet(pathname,{signal:AbortSignal.timeout(110000)});
+  const insertion=await step('read_insertion',()=>get(`/api/insertions/${payload.insertionId}`));
+  const site=await step('read_site',()=>get(`/api/sites/${insertion.siteId}`));
+  const today=todayInCuiaba(), date=today>=insertion.periodoInicio&&today<=insertion.periodoFim?today:insertion.periodoInicio;
+  const checklist=await step('read_checklist',()=>get(`/api/audit-checklists/resolve?insertionId=${insertion.id}&date=${encodeURIComponent(date)}`));
+  const relation=await step('read_relation',()=>get(`/api/integrations/adrotate/insertions/${insertion.id}/relation`));
+  // The legacy SSH relation can contain older ads with the same creative.
+  // Perrengue identity must always come from its current Portainer owner.
+  if (shouldUsePerrenguePortainerAdrotate(site.sigla)) {
+    const snapshot=await step('read_adrotate_snapshot',()=>snapshotPerrengueAdrotate({insertionId:insertion.id,externalKey:`ADOPS-${site.sigla}-${insertion.id}`}));
+    relation.historicalAdminMatches=maintenanceAdMatchesFromSnapshot(snapshot);
+  }
+  const identity=maintenanceScope({insertion,site,checklist,relation,homeUrl:sitePublicHomeUrl(site)});
+  const layers=[...payload.layers].sort();
+  const cfCredentials=layers.includes('cloudflare')?await step('read_cf_credentials',()=>cloudflareCredentials()):null;
+  const cloudflarePreview=cfCredentials?await step('cf_preview',()=>purgeScopedCloudflare(identity,{...cfCredentials,preview:true})):null;
+  const wpPayload={maintenance_only:true,insertion_id:identity.insertionId,campaign_id:identity.campaignId,pi_code:identity.piCodigo,external_key:identity.externalKey,ad_id:identity.adId,group_id:identity.groupId,
+    media_url:identity.mediaUrl,media_basename:mediaBasenameFromUrl(identity.mediaUrl),urls:identity.urls};
+  const wp=async(apply)=>{
+    let result;
+    if(shouldUsePerrenguePortainerAdrotate(site.sigla)) {
+      result=await executePerrenguePortainerWpCliPublish({payloadJson:JSON.stringify(wpPayload),apply});
+    } else {
+      if(!site.sshHost||!site.sshUser||!site.sshPort||!site.wpPath)throw new Error('maintenance_transport_missing');
+      const command=[shellEscape(site.phpBin??'php'),shellEscape(site.wpCliPath??'wp'),'--allow-root',`--path=${shellEscape(site.wpPath)}`,
+        'adops-adrotate-publish',`--payload-json=${shellEscape(JSON.stringify(wpPayload))}`,...(apply?['--apply']:[])].join(' ');
+      const key=sshKeyPathForSite(site.sigla);
+      try{result=await execFileAsync('ssh',['-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new','-o','UserKnownHostsFile=/tmp/adops-known-hosts',...(key?['-i',key]:[]),'-p',String(site.sshPort),`${site.sshUser}@${site.sshHost}`,command],{timeout:180000,maxBuffer:2*1024*1024});}
+      catch(error){throw new Error(classifyMaintenanceTransportError(error));}
+    }
+    const output=parseWpCliJsonObject(result.stdout);
+    if(output?.mode!==(apply?'maintenance':'maintenance_preview')||Number(output.ad_id)!==identity.adId||Number(output.group_id)!==identity.groupId
+      ||(!apply&&output.mutated!==false)||(apply&&output.cache_maintenance_ok!==true))throw new Error('maintenance_plugin_contract_failed');
+    return output;
+  };
+  const deviceProbes=[
+    {deviceType:'desktop',userAgent:'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36'},
+    {deviceType:'mobile',userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'},
+    {deviceType:'tablet',userAgent:'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'},
+  ];
+  const readHeaders=async()=>Promise.all(identity.urls.flatMap(url=>deviceProbes.map(async({deviceType,userAgent})=>{
+    try{const response=await fetch(url,{method:'HEAD',redirect:'manual',headers:{'User-Agent':userAgent},signal:AbortSignal.timeout(15000)});return {url,deviceType,status:response.status,cacheStatus:response.headers.get('cf-cache-status'),age:response.headers.get('age'),date:response.headers.get('date')};}
+    catch{return {url,deviceType,status:null,error:'public_header_read_failed'};}
+  })));
+  const before=await step('headers_before',()=>readHeaders());
+  // Version/contract preflight runs without --apply even for an apply job.
+  const wordpressPreview=layers.includes('wordpress')?await step('wordpress_preview',()=>wp(false)):null;
+  if(!payload.apply)return {mode:'preview',identity,layers,before,wordpressPreview,cloudflarePreview,timings};
+  assertMaintenancePreview(await step('read_preview',()=>get(`/api/ops/jobs/${encodeURIComponent(payload.previewJobId)}`)),identity,layers);
+  await progressJob(job.id,{stage:'maintenance_intent',identity,layers,before});
+  const wordpress=layers.includes('wordpress')?await step('wordpress_apply',()=>wp(true)):null;
+  await progressJob(job.id,{stage:'wordpress_maintenance_checked',identity,layers,before,wordpress});
+  const fastcgiDrainSeconds=wordpress?11:0;
+  if(fastcgiDrainSeconds)await new Promise(resolve=>setTimeout(resolve,fastcgiDrainSeconds*1000));
+  const cloudflare=cfCredentials?await step('cf_apply',()=>purgeScopedCloudflare(identity,cfCredentials)):null;
+  const after=await step('headers_after',()=>readHeaders());
+  const cacheReadback=cfCredentials?await step('cache_readback',()=>assertMaintenanceCacheReadback(before,after)):(wordpress?.maintenance?.readback??{ok:false,skipped:'wordpress_readback_unavailable'});
+  await progressJob(job.id,{stage:'cache_layers_checked',identity,layers,before,after,cacheReadback,wordpress,cloudflare});
+  const active=today>=identity.periodoInicio&&today<=identity.periodoFim;
+  const publicValidation=active?await step('public_validation',()=>validatePublishedAdHtml({site,insertionId:identity.insertionId,adId:identity.adId,mediaBasename:mediaBasenameFromUrl(identity.mediaUrl),mediaUrl:identity.mediaUrl,page:checklist.resolvedRule?.page,slotSelector:checklist.expectedSelectors?.slotSelector})):{ok:true,skipped:'not_due'};
+  if(!publicValidation.ok)throw new Error('maintenance_public_visibility_not_confirmed');
+  return {mode:'maintenance',identity,layers,before,after,cacheReadback,wordpress,cloudflare,fastcgiDrainSeconds,publicValidation,timings};
+}
+
 async function executePiSiteExport(job) {
   const payload = job?.payload || {};
+  const availableEvidence = payload.evidencePolicy === "available";
+  if (availableEvidence && payload.mode !== "full-pdf") throw new Error("available evidence exige mode=full-pdf");
+  const previousExecution = job?.result?.execution || job?.result || {};
+  const existingTelegramReceipts = Array.isArray(previousExecution?.telegramReceipts) ? previousExecution.telegramReceipts : [];
   const piCodigo = normalizePiDigits(payload.piCodigo);
   const siteSigla = String(payload.siteSigla || "").trim().toUpperCase();
-  const mode = ["full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
+  const mode = ["delivery", "full", "prints-only", "pdf", "full-pdf"].includes(String(payload.mode || "").toLowerCase())
     ? String(payload.mode).toLowerCase()
-    : "full";
-  const variant = mode === "pdf" || mode === "full-pdf"
+    : "delivery";
+  const variant = mode === "delivery" || mode === "pdf" || mode === "full-pdf"
     ? "web"
     : String(payload.variant || "").toLowerCase() === "web"
       ? "web"
@@ -5015,6 +9365,12 @@ async function executePiSiteExport(job) {
   const pdfResolution = Math.max(72, Math.min(180, Number.parseInt(String(payload.pdfResolution || "120"), 10) || 120));
   const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
   const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const sendTelegram = availableEvidence ? false : mode === "delivery" ? payload.sendTelegram !== false : payload.sendTelegram === true;
+  const splitZipByPosition = mode === "delivery" ? payload.splitZipByPosition !== false : false;
+  const requestedPositions = Array.isArray(payload.positions) ? payload.positions.map((item) => deliveryPositionSegment(item)).filter(Boolean) : [];
+  const deliveryClass = ["standard", "retroactive", "correction", "rejected_rework"].includes(String(payload.deliveryClass)) ? String(payload.deliveryClass) : "standard";
+  const requestedDateScope = parseRequiredEvidenceDates(payload.requiredDatesByInsertion);
+  const requiredDatesByInsertion = requestedDateScope ?? {};
   if (!piCodigo || !siteSigla) {
     throw new Error("pi-site-export sem piCodigo/siteSigla válidos.");
   }
@@ -5027,7 +9383,18 @@ async function executePiSiteExport(job) {
     throw new Error(`Nenhuma inserção encontrada para PI ${piCodigo} no site ${siteSigla}.`);
   }
 
-  const insertions = await Promise.all(operationalInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
+  const requestedInsertionIds = Object.keys(requiredDatesByInsertion)
+    .map((id) => Number.parseInt(id, 10))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const selectedInsertionIds = requestedInsertionIds.length
+    ? operationalInsertionIds.filter((id) => requestedInsertionIds.includes(Number(id)))
+    : operationalInsertionIds;
+  assertRequiredInsertionScope(requestedDateScope, selectedInsertionIds);
+  if (!selectedInsertionIds.length) {
+    throw new Error(`Nenhuma inserção solicitada pertence à PI ${piCodigo} no site ${siteSigla}.`);
+  }
+
+  const insertions = await Promise.all(selectedInsertionIds.map((id) => privateApiGet(`/api/insertions/${id}`)));
   const invalidatedEvidenceIds = [];
   const regeneratedDates = [];
   const analyticsPiStatus = [];
@@ -5035,7 +9402,7 @@ async function executePiSiteExport(job) {
   const stagePayload = {
     piCodigo,
     siteSigla,
-    insertionIds: operationalInsertionIds,
+    insertionIds: selectedInsertionIds,
     mode,
     variant,
     pdfMaxWidth,
@@ -5043,28 +9410,191 @@ async function executePiSiteExport(job) {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
+    sendTelegram,
+    splitZipByPosition,
+    deliveryClass,
+    evidencePolicy: availableEvidence ? "available" : "approved",
   };
 
-  await progressJob(job.id, { stage: "reauditando evidências", ...stagePayload });
-  for (const insertion of insertions) {
-    const capture = await ensureInsertionCaptureCoverage(insertion);
+  await progressJob(job.id, { stage: availableEvidence ? "exportando evidências disponíveis sem alterar auditoria" : "reauditando evidências", ...stagePayload });
+  for (const insertion of availableEvidence ? [] : insertions) {
+    const requiredDates = Array.isArray(requiredDatesByInsertion[String(insertion.id)])
+      ? requiredDatesByInsertion[String(insertion.id)]
+      : null;
+    const capture = await ensureInsertionCaptureCoverage(insertion, requiredDates, { allowRecovery: false });
     invalidatedEvidenceIds.push(...capture.invalidatedEvidenceIds);
     regeneratedDates.push(...capture.regeneratedDates.map((date) => ({ insertionId: insertion.id, date })));
   }
 
-  await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    await ensureOperationalDocuments(insertion);
+  if (!availableEvidence && mode !== "delivery" && mode !== "prints-only") {
+    await progressJob(job.id, { stage: "garantindo documentos operacionais", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      await ensureOperationalDocuments(insertion);
+    }
+
+    if (payload.skipAnalytics === true) {
+      for (const insertion of insertions) {
+        analyticsPiStatus.push({ insertionId: insertion.id, mode: "pi", status: "skipped", optional: true, reason: "monthly_report_prints_only" });
+        analyticsFullMonthStatus.push({ insertionId: insertion.id, mode: "full_month", status: "skipped", optional: true, reason: "monthly_report_prints_only" });
+      }
+    } else {
+    await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
+    for (const insertion of insertions) {
+      analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
+    }
+
+    await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
+    for (const insertion of insertions) {
+      analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
+    }
+    }
   }
 
-  await progressJob(job.id, { stage: "gerando analytics pi", ...stagePayload, regeneratedDates, invalidatedEvidenceIds });
-  for (const insertion of insertions) {
-    analyticsPiStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "pi")) });
-  }
-
-  await progressJob(job.id, { stage: "gerando analytics full_month", ...stagePayload, regeneratedDates, invalidatedEvidenceIds, analyticsPiStatus });
-  for (const insertion of insertions) {
-    analyticsFullMonthStatus.push({ insertionId: insertion.id, ...(await ensureAnalyticsModeBestEffort(insertion, "full_month")) });
+  if (mode === "delivery") {
+    await progressJob(job.id, {
+      stage: "montando zip de imagens e pdf separado",
+      ...stagePayload,
+      regeneratedDates,
+      invalidatedEvidenceIds,
+    });
+    const commonParams = {
+      piCodigo,
+      siteSigla,
+      download: "1",
+      variant: "web",
+      presentation: "journalist",
+      pdfMaxWidth: String(pdfMaxWidth),
+      pdfQuality: String(pdfQuality),
+      pdfResolution: String(pdfResolution),
+      imageMaxWidth: String(imageMaxWidth),
+      imageQuality: String(imageQuality),
+      deliveryClass,
+    };
+    const exportableInsertionIds = new Set(Array.isArray(descriptor?.exportableInsertionIds)
+      ? descriptor.exportableInsertionIds.map(Number)
+      : operationalInsertionIds.map(Number));
+    let positions = Array.from(new Set(insertions
+      .filter((insertion) => exportableInsertionIds.has(Number(insertion.id)))
+      .map((insertion) => deliveryPositionSegment(firstNonEmptyString(
+      insertion.localFormatoNormalizado,
+      insertion.localFormato,
+      "POSICAO",
+    )))));
+    if (requestedPositions.length > 0) positions = positions.filter((position) => requestedPositions.includes(position));
+    if (positions.length === 0) {
+      throw new Error(`Nenhuma posição exportável encontrada para PI ${piCodigo} no site ${siteSigla}.`);
+    }
+    const selectedInsertionIds = new Set(insertions
+      .filter((insertion) => exportableInsertionIds.has(Number(insertion.id)))
+      .filter((insertion) => positions.includes(deliveryPositionSegment(firstNonEmptyString(
+        insertion.localFormatoNormalizado,
+        insertion.localFormato,
+        "POSICAO",
+      ))))
+      .map((insertion) => Number(insertion.id)));
+    if (deliveryClass !== "standard") {
+      const pendingReviews = [];
+      for (const insertion of insertions.filter((item) => selectedInsertionIds.has(Number(item.id)))) {
+        const dates = clampDateRange(insertion.periodoInicio, insertion.periodoFim);
+        for (const date of dates) {
+          const proof = await privateApiGet(`/api/insertions/${insertion.id}/capture-proof/status?date=${encodeURIComponent(date)}`);
+          const artifactSha256 = proof?.pixelDateProof?.artifactSha256 || null;
+          if (!artifactSha256 || proof?.pixelDateProof?.ok !== true || proof?.review?.approved !== true || proof?.review?.artifactSha256 !== artifactSha256) {
+            pendingReviews.push({ insertionId: insertion.id, date, artifactSha256, status: proof?.status || "missing" });
+          }
+        }
+      }
+      if (pendingReviews.length > 0) {
+        throw new HumanReviewRequiredError("Entrega aguarda aprovação humana vinculada ao hash dos PNGs finais.", {
+          stage: "awaiting_human_review", piCodigo, siteSigla, deliveryClass, pendingReviews,
+          artifacts: { positions: [] }, telegram: { ok: false, skipped: true, reason: "awaiting_human_review" },
+        });
+      }
+    }
+    const positionDownloads = await Promise.all(positions.map(async (position) => {
+        const positionZipParams = new URLSearchParams({ ...commonParams, mode: "prints-only", position });
+        const pdfParams = new URLSearchParams({ ...commonParams, mode: "pdf", position });
+        const [zipArtifact, pdfArtifact] = await Promise.all([
+          privateApiDownload(`/api/pi-site-exports?${positionZipParams.toString()}`),
+          privateApiDownload(`/api/pi-site-exports?${pdfParams.toString()}`),
+        ]);
+        if (zipArtifact.contentType !== "application/zip" || pdfArtifact.contentType !== "application/pdf") {
+          throw new Error(`A API não retornou PDF para a posição ${position}.`);
+        }
+        return { position, zipArtifact, pdfArtifact };
+      }));
+    const neutralBaseName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(siteSigla)}`;
+    const positionArtifacts = positionDownloads.map((item) => ({
+      position: item.position,
+      zipArtifact: { ...item.zipArtifact, fileName: `${neutralBaseName}-${item.position}.zip` },
+      pdfArtifact: { ...item.pdfArtifact, position: item.position, fileName: `${neutralBaseName}-${item.position}.pdf` },
+    }));
+    const objectPrefix = [
+      ADOPS_EXPORT_BASE_PATH,
+      slugifyPathPart(siteSigla),
+      slugifyPathPart(piCodigo),
+      slugifyPathPart(job.id),
+    ].filter(Boolean).join("/");
+    const objectKeys = positionArtifacts.map((item) => ({
+      position: item.position,
+      zip: `${objectPrefix}/${item.zipArtifact.fileName}`,
+      pdf: `${objectPrefix}/${item.pdfArtifact.fileName}`,
+    }));
+    await Promise.all(positionArtifacts.flatMap((item, index) => [
+      uploadBufferToSpaces({ buffer: item.zipArtifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: objectKeys[index].zip, contentType: "application/zip" }),
+      uploadBufferToSpaces({ buffer: item.pdfArtifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: objectKeys[index].pdf, contentType: "application/pdf" }),
+    ]));
+    const publicBase = spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET);
+    const publicUrl = (objectKey) => `${publicBase}/${objectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+    const positionResults = positionArtifacts.map((item, index) => ({
+      position: item.position,
+      zip: { url: publicUrl(objectKeys[index].zip), fileName: item.zipArtifact.fileName, bytes: item.zipArtifact.buffer.length, contentType: "application/zip", sha256: crypto.createHash("sha256").update(item.zipArtifact.buffer).digest("hex") },
+      pdf: { url: publicUrl(objectKeys[index].pdf), fileName: item.pdfArtifact.fileName, bytes: item.pdfArtifact.buffer.length, contentType: "application/pdf", sha256: crypto.createHash("sha256").update(item.pdfArtifact.buffer).digest("hex") },
+    }));
+    const downloadUrl = positionResults.length === 1 ? positionResults[0].zip.url : null;
+    const pdfUrls = positionResults.map((item) => item.pdf.url);
+    const pdfUrl = pdfUrls.length === 1 ? pdfUrls[0] : null;
+    let telegram = { ok: true, skipped: true, reason: "sendTelegram=false" };
+    if (sendTelegram) {
+      await progressJob(job.id, {
+        stage: "enviando zip e pdf no telegram",
+        ...stagePayload,
+        downloadUrl,
+        pdfUrls,
+      });
+      telegram = await sendTelegramPositionDeliveriesDirect({
+        chatId: String(payload.chatId || TELEGRAM_DEFAULT_GROUP_ID || "").trim(),
+        piCodigo,
+        siteSigla,
+        positionArtifacts,
+        jobId: job.id,
+        existingReceipts: existingTelegramReceipts,
+      });
+    }
+    return {
+      stage: "completed",
+      piCodigo,
+      siteSigla,
+      mode,
+      variant,
+      insertionIds: descriptor.insertionIds,
+      invalidatedEvidenceIds,
+      regeneratedDates,
+      downloadUrl,
+      pdfUrl,
+      pdfUrls,
+      artifactBytes: positionResults.reduce((sum, item) => sum + item.zip.bytes + item.pdf.bytes, 0),
+      artifactContentType: "application/zip",
+      artifactFileName: positionResults.length === 1 ? positionResults[0].zip.fileName : null,
+      artifactSha256: positionResults.length === 1 ? positionResults[0].zip.sha256 : null,
+      artifacts: {
+        positions: positionResults,
+        ...(positionResults.length === 1 ? { zip: positionResults[0].zip, pdf: positionResults[0].pdf } : {}),
+        pdfs: positionResults.map((item) => ({ position: item.position, ...item.pdf })),
+        zips: positionResults.map((item) => ({ position: item.position, ...item.zip })),
+      },
+      telegram,
+    };
   }
 
   await progressJob(job.id, {
@@ -5087,6 +9617,9 @@ async function executePiSiteExport(job) {
     imageMaxWidth: String(imageMaxWidth),
     imageQuality: String(imageQuality),
   });
+  downloadParams.set("insertionIds", selectedInsertionIds.join(","));
+  if (availableEvidence) downloadParams.set("evidencePolicy", "available");
+  if (requestedDateScope) downloadParams.set("requiredDatesByInsertion", JSON.stringify(requestedDateScope));
   await progressJob(job.id, {
     stage: "materializando artefato comprimido",
     ...stagePayload,
@@ -5096,6 +9629,7 @@ async function executePiSiteExport(job) {
     analyticsFullMonthStatus,
   });
   const artifact = await privateApiDownload(`/api/pi-site-exports?${downloadParams.toString()}`);
+  if (requestedDateScope && artifact.dateScopeHash !== crypto.createHash("sha256").update(JSON.stringify(requestedDateScope)).digest("hex")) throw new Error("export_date_scope_readback_missing");
   const artifactExtension = artifact.contentType === "application/pdf" ? ".pdf" : ".zip";
   const artifactFileName = [
     `PI-${slugifyPathPart(piCodigo)}`,
@@ -5127,7 +9661,7 @@ async function executePiSiteExport(job) {
     pdfResolution,
     imageMaxWidth,
     imageQuality,
-    insertionIds: descriptor.insertionIds,
+    insertionIds: selectedInsertionIds,
     invalidatedEvidenceIds,
     regeneratedDates,
     analyticsPiStatus,
@@ -5137,25 +9671,125 @@ async function executePiSiteExport(job) {
     artifactContentType: artifact.contentType,
     artifactFileName,
     artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+    requiredDatesByInsertion: requestedDateScope,
+    evidencePolicy: availableEvidence ? "available" : "approved",
+    dateScopeApplied: Boolean(requestedDateScope),
   };
 }
 
-async function handleJob(job) {
+async function executeCampaignEvidenceExport(job) {
+  const payload = job?.payload || {};
+  const piCodigo = normalizePiDigits(payload.piCodigo);
+  const competencia = String(payload.competencia || "").trim().toUpperCase();
+  const asOfDate = /^\d{4}-\d{2}-\d{2}$/.test(String(payload.asOfDate || "")) ? String(payload.asOfDate) : null;
+  const imageMaxWidth = Math.max(800, Math.min(2560, Number.parseInt(String(payload.imageMaxWidth || "1600"), 10) || 1600));
+  const imageQuality = Math.max(45, Math.min(90, Number.parseInt(String(payload.imageQuality || "72"), 10) || 72));
+  const evidenceFingerprint = Array.isArray(payload.evidenceFingerprint) ? payload.evidenceFingerprint : [];
+  const evidenceFingerprintSignature = String(payload.evidenceFingerprintSignature || "");
+  if (!piCodigo || !competencia) throw new Error("campaign-evidence-export sem PI canônica/competência válidas.");
+  if (!evidenceFingerprint.length || !evidenceFingerprintSignature) {
+    throw new Error("campaign-evidence-export sem descritor imutável assinado.");
+  }
+
+  await progressJob(job.id, {
+    stage: "materializando ZIP completo da campanha",
+    piCodigo,
+    competencia,
+    insertionIds: payload.insertionIds || [],
+  });
+  const params = new URLSearchParams({
+    piCodigo,
+    competencia,
+    download: "1",
+    imageMaxWidth: String(imageMaxWidth),
+    imageQuality: String(imageQuality),
+  });
+  if (asOfDate) params.set("asOfDate", asOfDate);
+  const artifact = await privateApiDownload(`/api/internal/campaign-evidence-exports?${params.toString()}`, { evidenceFingerprint, evidenceFingerprintSignature });
+  const artifactFileName = `PI-${slugifyPathPart(piCodigo)}-${slugifyPathPart(competencia)}-todos-os-prints.zip`;
+  const artifactObjectKey = [
+    ADOPS_EXPORT_BASE_PATH,
+    "campanhas",
+    slugifyPathPart(piCodigo),
+    slugifyPathPart(competencia),
+    slugifyPathPart(job.id),
+    artifactFileName,
+  ].join("/");
+  await uploadBufferToSpaces({ buffer: artifact.buffer, bucket: ADOPS_EXPORT_BUCKET, objectKey: artifactObjectKey, contentType: "application/zip" });
+  const downloadUrl = `${spacesPublicBaseForSite("", ADOPS_EXPORT_BUCKET)}/${artifactObjectKey.split("/").map((part) => encodeURIComponent(part)).join("/")}`;
+  return {
+    stage: "completed",
+    piCodigo,
+    competencia,
+    asOfDate,
+    mode: "prints-only",
+    variant: "web",
+    imageMaxWidth,
+    imageQuality,
+    insertionIds: payload.insertionIds || [],
+    siteSiglas: payload.siteSiglas || [],
+    evidenceCount: evidenceFingerprint.length,
+    downloadUrl,
+    artifactBytes: artifact.buffer.length,
+    artifactContentType: "application/zip",
+    artifactFileName,
+    artifactSha256: crypto.createHash("sha256").update(artifact.buffer).digest("hex"),
+  };
+}
+
+async function executeHistoricalCaptureReference(job, assertLease) {
+  const expected = job.payload?.scope;
+  if (job.payload?.readOnly !== true || !expected) throw Error('historical_reference_read_only_required');
+  const insertion = await privateApiGet(`/api/insertions/${Number(expected.insertionId)}`);
+  const scope = historicalReferencePolicy.scopeFor(insertion, expected.date, expected.captureAt, expected);
+  if (Object.entries(scope).some(([key, value]) => expected[key] !== value)) throw Error('historical_reference_stale_scope');
+  assertLease();
+  requirePortainerConfig();
+  const container = await findPortainerContainerByName(ADOPS_PERRENGUE_WP_CONTAINER);
+  const php = historicalReferencePolicy.adminReadPhp(scope);
+  const command = `${shellEscape(ADOPS_PERRENGUE_CONTAINER_PHP_BIN)} -r ${shellEscape(php)}`;
+  const readback = await execPortainerContainerCommand(container.Id, command);
+  if (readback.exitCode != null && readback.exitCode !== 0) throw Error('historical_reference_admin_read_failed');
+  const output = String(readback.stdout || readback.output || '');
+  const marker = 'ADOPS_REFERENCE_JSON:';
+  if (!output.includes(marker)) throw Error('historical_reference_admin_receipt_missing');
+  const rows = JSON.parse(output.slice(output.lastIndexOf(marker) + marker.length).trim());
+  const response = await fetch(scope.mediaUrl, { redirect: 'error', signal: AbortSignal.timeout(30000) });
+  if (!response.ok || !/image\/gif/i.test(response.headers.get('content-type') || '')) throw Error('historical_reference_media_unavailable');
+  const chunks = []; let size = 0;
+  for await (const chunk of response.body) { size += chunk.length; if (size > 5 * 1024 * 1024) throw Error('historical_reference_media_too_large'); chunks.push(chunk); }
+  const sha = crypto.createHash('sha256').update(Buffer.concat(chunks)).digest('hex');
+  assertLease();
+  return { readOnly: true, commercialMutations: 0, wordpressMutations: 0, referencePolicySha: RUNNER_LOADED_REFERENCE_SHA,
+    reference: historicalReferencePolicy.referenceFromRows(scope, rows, sha, job.id) };
+}
+
+async function handleJob(job, assertLease = () => undefined) {
   const payload = job?.payload || {};
   if (!job?.kind) {
     throw new Error("Job sem kind.");
   }
+  if (job.kind === 'historical-capture-reference') return executeHistoricalCaptureReference(job, assertLease);
   if (job.kind === "sync-planilha") {
     return executeSyncPlanilha(payload);
   }
+  if (job.kind === "sheet-correction") {
+    return executeSheetCorrection(payload, {
+      persistedIntent: job?.result?.sheetCorrection,
+      onIntent: async (intent) => progressJob(job.id, {
+        stage: "sheet_correction_intent_durable",
+        sheetCorrection: { state: "intent_durable", ...intent },
+      }),
+    });
+  }
   if (job.kind === "print-batch") {
-    return executePrintBatch(payload);
+    return executePrintBatch(job, assertLease);
   }
   if (job.kind === "print-backfill") {
-    return executePrintBackfill(payload);
+    return executePrintBackfill(job);
   }
   if (job.kind === "print-single") {
-    return executePrintSingle(payload);
+    return executePrintSingle(job);
   }
   if (job.kind === "telegram-send-evidence") {
     return executeTelegramSendEvidence(payload);
@@ -5170,7 +9804,16 @@ async function handleJob(job) {
     return executeAdrotateLinkJob(payload);
   }
   if (job.kind === "adrotate-publish") {
-    return executeAdrotatePublishJob(payload);
+    const sourceJob = payload?.recoveryFromJobId
+      ? await privateApiGet(`/api/ops/jobs/${encodeURIComponent(payload.recoveryFromJobId)}`)
+      : null;
+    const previousCheckpoint = job.result?.publicationCheckpoint
+      ?? job.result?.partialResult?.publicationCheckpoint
+      ?? (sourceJob ? selectPublicationRecoveryCheckpoint(sourceJob, payload.insertionId) : null);
+    return executeAdrotatePublishJob(payload, { jobId: job.id, previousCheckpoint });
+  }
+  if (job.kind === "drive-pi-reconcile") {
+    return executeDrivePiReconcile(payload);
   }
   if (job.kind === "analytics-report") {
     return executeAnalyticsReport(payload);
@@ -5178,9 +9821,22 @@ async function handleJob(job) {
   if (job.kind === "pi-site-export") {
     return executePiSiteExport(job);
   }
+  if (job.kind === "cache-maintenance") return executeCacheMaintenance(job);
+  if (job.kind === "campaign-fulfillment") {
+    return executeCampaignFulfillment(job);
+  }
+  if (job.kind === "campaign-evidence-export") {
+    return executeCampaignEvidenceExport(job);
+  }
+  if (job.kind === "evidence-monthly-report") {
+    return executeEvidenceMonthlyReport(job);
+  }
+  if (job.kind === "campaign-publication-reconcile") {
+    return executeCampaignPublicationReconcile(job);
+  }
   if (job.kind === "drive-pi-ingest") {
     try {
-      return await executeDrivePiIngest(payload);
+      return await executeDrivePiIngest(payload, job.id);
     } catch (error) {
       await updateDrivePiState(payload, "failed", {
         parseRun: {
@@ -5199,12 +9855,12 @@ async function handleJob(job) {
   throw new Error(`Kind não suportado pelo runner: ${job.kind}`);
 }
 
-async function claimNext() {
+async function claimNext(poolKinds = kinds) {
   const payload = await request("/api/ops/runner/claim-next", {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      kinds,
+      kinds: poolKinds,
     }),
   });
   return payload?.job || null;
@@ -5215,9 +9871,10 @@ async function completeJob(jobId, result) {
     method: "POST",
     body: JSON.stringify({
       runnerId: RUNNER_ID,
-      result,
+      result: mergeJobProgressResult(jobId, { ...(result && typeof result === "object" ? result : {}), runnerVersion: RUNNER_REPORT_VERSION, runnerSourceSha: RUNNER_LOADED_SOURCE_SHA, runnerMediaSourceSha: RUNNER_LOADED_MEDIA_SHA }),
     }),
   });
+  jobProgressResults.delete(jobId);
 }
 
 async function failJob(jobId, error, result = null) {
@@ -5226,9 +9883,10 @@ async function failJob(jobId, error, result = null) {
     body: JSON.stringify({
       runnerId: RUNNER_ID,
       error: String(error),
-      result,
+      result: mergeJobProgressResult(jobId, { ...(result && typeof result === "object" ? result : {}), runnerVersion: RUNNER_REPORT_VERSION, runnerSourceSha: RUNNER_LOADED_SOURCE_SHA, runnerMediaSourceSha: RUNNER_LOADED_MEDIA_SHA }),
     }),
   });
+  jobProgressResults.delete(jobId);
 }
 
 async function runWatchdogIfDue(force = false) {
@@ -5252,32 +9910,132 @@ async function runWatchdogIfDue(force = false) {
   return payload;
 }
 
-async function runOnce() {
-  const job = await claimNext();
+async function runSchedulerTrigger(provider, requester = (path, body) => privateApi(path, body)) {
+  if (provider !== "macmini") return null;
+  return requester("/api/ops/schedules/reconcile", {});
+}
+
+function isAutomaticCampaignReconcileSource(source) {
+  return ["google-drive-monitor", "cloudflare-cron-campaign-publication-reconcile", "macmini-canonical-scheduler"].includes(source);
+}
+
+async function runSchedulerIfDue(force = false) {
+  if (schedulingOwnedByN8n("calendar")) return null;
+  const now = Date.now();
+  if (!force && now - lastSchedulerAt < SCHEDULER_INTERVAL_MS) return null;
+  lastSchedulerAt = now;
+  return runSchedulerTrigger(CONTROL_PLANE_PROVIDER);
+}
+
+async function persistPrintBatchTerminal(jobId, desiredStatus, write, read = () => request(`/api/ops/jobs/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(10_000) }), wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))) {
+  let primaryError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { await write(); return { status: desiredStatus, confirmedBy: 'callback', attempts: attempt + 1 }; }
+    catch (error) {
+      primaryError ||= error;
+      let observed;
+      try { const payload = await read(); observed = payload?.job || payload; }
+      catch { const unknown = new Error('terminal_receipt_unknown'); unknown.cause = primaryError; unknown.terminalDeliveryUnknown = true; throw unknown; }
+      if (String(observed?.id || observed?.jobId) !== String(jobId)) {
+        const unknown = new Error('terminal_readback_identity_mismatch'); unknown.terminalDeliveryUnknown = true; throw unknown;
+      }
+      if (['completed','failed'].includes(observed.status)) {
+        if (observed.status === desiredStatus) return { status: observed.status, confirmedBy: 'readback', attempts: attempt + 1 };
+        const conflict = new Error('terminal_status_conflict:' + observed.status); conflict.terminalStatusConflict = observed.status; throw conflict;
+      }
+      if (observed.status !== 'running' || observed.runnerId !== RUNNER_ID || attempt === 2) {
+        const unknown = new Error(attempt === 2 ? 'terminal_callback_retry_limit' : 'terminal_owner_or_status_changed');
+        unknown.cause = primaryError; unknown.terminalDeliveryUnknown = true; throw unknown;
+      }
+      await wait(attempt === 0 ? 1000 : 3000);
+    }
+  }
+}
+
+async function runOnce(poolKinds = kinds, cod5_reservar = () => claimNext(poolKinds)) {
+  const job = await cod5_reservar();
   if (!job) {
     console.log(`[runner] nenhum job pronto para ${RUNNER_ID}`);
     return false;
   }
   console.log(`[runner] job recebido`, job.id, job.kind);
+  const requiresTerminalReadback=['print-batch','drive-inventory-refresh','pi-site-export','evidence-monthly-report'].includes(job.kind);
+  if (job.result && typeof job.result === "object") jobProgressResults.set(job.id, job.result);
   try {
-    const result = await handleJob(job);
-    await completeJob(job.id, {
+    const result = await runWithJobHeartbeat(
+      job.id,
+      (assertLease) => handleJob(job, assertLease),
+      (jobId) => progressJob(jobId, { stage: "heartbeat", heartbeatAt: new Date().toISOString() }),
+      Math.max(5_000, Math.floor(RUNNER_HEARTBEAT_INTERVAL_MS / 2)),
+    );
+    const completion = {
       ok: true,
       runnerId: RUNNER_ID,
       completedAt: new Date().toISOString(),
       execution: result,
-    });
+    };
+    if (requiresTerminalReadback) {
+      await persistPrintBatchTerminal(job.id, 'completed', () => completeJob(job.id, completion));
+      jobProgressResults.delete(job.id);
+    } else await completeJob(job.id, completion);
     console.log(`[runner] job concluído`, job.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await failJob(job.id, message, {
+    if (requiresTerminalReadback && (error?.terminalDeliveryUnknown || error?.terminalStatusConflict)) {
+      console.error('[runner] estado terminal preservado ou não confirmado', job.id, message);
+      return true;
+    }
+    const failure = {
       ok: false,
       runnerId: RUNNER_ID,
       failedAt: new Date().toISOString(),
-    });
+      execution: jobResultFromError(error),
+      ...(error instanceof FulfillmentBlockedError ? error.fulfillmentResult : {}),
+    };
+    if (requiresTerminalReadback) {
+      try { await persistPrintBatchTerminal(job.id, 'failed', () => failJob(job.id, message, failure)); jobProgressResults.delete(job.id); }
+      catch (terminalError) { console.error('[runner] falha terminal não confirmada; sem reenvio operacional', job.id, String(terminalError?.message || terminalError)); return true; }
+    } else await failJob(job.id, message, failure);
     console.error(`[runner] job falhou`, job.id, message);
   }
   return true;
+}
+
+async function runPool(pool, workerIndex, cod5_reservar) {
+  const poolLabel = `${pool.kinds.join("+")}:${workerIndex + 1}/${pool.concurrency}`;
+  for (;;) {
+    try {
+      if (pool.maintenance && workerIndex === 0) {
+        await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
+        await runWatchdogIfDue(false);
+      }
+      const handled = await runOnce(pool.kinds, cod5_reservar);
+      runnerLastCycleError = null;
+      runnerLastSuccessAt = new Date().toISOString();
+      if (!handled) await sleep(POLL_INTERVAL_MS);
+    } catch (error) {
+      runnerLastCycleError = error instanceof Error ? error.message : String(error);
+      await sendRunnerHeartbeat(true).catch(() => null);
+      console.error(`[runner] pool ${poolLabel} com erro`, runnerLastCycleError);
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+}
+
+async function runSchedulerLoop() {
+  for (;;) {
+    await runSchedulerIfDue(false).catch((error) => console.warn("[runner] scheduler falhou", error instanceof Error ? error.message : String(error)));
+    await sleep(Math.min(SCHEDULER_INTERVAL_MS, 30_000));
+  }
+}
+
+async function runDrivePiMonitorLoop() {
+  for (;;) {
+    await runDrivePiMonitorOnce().catch((error) => {
+      console.warn("[runner] monitor Drive PI falhou; tentará novamente sem bloquear a fila", error instanceof Error ? error.message : String(error));
+    });
+    await sleep(POLL_INTERVAL_MS);
+  }
 }
 
 async function main() {
@@ -5301,42 +10059,125 @@ async function main() {
   console.log(`[runner] ops=${OPS_API_BASE_URL}`);
   console.log(`[runner] privateApi=${PRIVATE_ADOPS_API_BASE_URL}`);
   console.log(`[runner] kinds=${kinds.join(",")}`);
+  const pools = buildRunnerPools(kinds, OPS_CAMPAIGN_EXPORT_CONCURRENCY);
+  console.log(`[runner] pools=${JSON.stringify(pools)}`);
   console.log(`[runner] drivePiMonitor=${DRIVE_PI_MONITOR_ENABLED ? "enabled" : "disabled"}`);
   startRunnerHealthServer();
   await sendRunnerHeartbeat(true).catch((error) => console.warn("[runner] heartbeat inicial falhou", error instanceof Error ? error.message : String(error)));
 
-  while (true) {
-    try {
-      await sendRunnerHeartbeat(false).catch((error) => console.warn("[runner] heartbeat falhou", error instanceof Error ? error.message : String(error)));
-      await runWatchdogIfDue(false);
-      await runDrivePiMonitorOnce();
-      const handled = await runOnce();
-      runnerLastCycleError = null;
-      runnerLastSuccessAt = new Date().toISOString();
-      if (!handled) {
-        await sleep(POLL_INTERVAL_MS);
-      }
-    } catch (error) {
-      runnerLastCycleError = error instanceof Error ? error.message : String(error);
-      await sendRunnerHeartbeat(true).catch(() => null);
-      console.error("[runner] ciclo com erro", runnerLastCycleError);
-      await sleep(POLL_INTERVAL_MS);
-    }
-  }
+  const workers = pools.flatMap((pool) => {
+    const cod5_reservar = cod5_coordenar_reservas(() => claimNext(pool.kinds), { cod5_intervalo: POLL_INTERVAL_MS });
+    return Array.from({ length: pool.concurrency }, (_, workerIndex) => runPool(pool, workerIndex, cod5_reservar));
+  });
+  if (CONTROL_PLANE_PROVIDER === "macmini" && !schedulingOwnedByN8n("calendar")) workers.push(runSchedulerLoop());
+  if (DRIVE_PI_MONITOR_ENABLED && !schedulingOwnedByN8n("drive")) workers.push(runDrivePiMonitorLoop());
+  await Promise.all(workers);
 }
 
 export {
+  loadOperationalMediaProfile,
+  validateRequestedSiteIdentity,
+  validateExpectedSheetScope,
+  agencyAliasCandidates,
+  resolveClientIdFromCatalog,
+  assertOperationalMediaReadback,
+  buildSpacesImageObjectKey,
+  buildRestrictedAdrotateSnapshotSql,
+  buildDrivePiFolderIdentityText,
+  buildPerrengueRebuildTriggerReason,
+  classifyGoogleDriveDownloadFailure,
+  buildAdrotatePublishPayload,
+  buildPerrengueAdrotateRestorePhp,
+  buildPerrengueAdrotateSnapshotPhp,
+  buildDrivePiPdfInsertions,
+  clientAliasCandidates,
+  extractPdfCommercialLabels,
+  extractPdfCompetencia,
+  extractPdfVehicleName,
+  extractSameOriginArticleCandidates,
+  validatePublishedAdHtml,
+  shouldSkipPrintSingle,
+  publicationCheckpointMatches,
+  selectPublicationRecoveryCheckpoint,
   extractUrlsFromText,
   extractMediaLinksFromText,
+  evaluateRestoredAdHtml,
+  evaluatePerrengueRebuildHealth,
   filterSiteInsertions,
   isSocialInsertion,
+  isCacheMaintenanceDegraded,
+  isAdrotatePublicationConfirmed,
+  isAdrotateSnapshotPublicationConfirmed,
+  isAutomaticCampaignReconcileSource,
+  jobResultFromError,
+  isDiscardableDraftCampaign,
   mediaKindFromUrl,
+  hasHttpsDrivePiDestination,
+  httpDownloadBuffer,
+  mergeExpectedDrivePiContext,
+  hydrateRecoveryTarget,
+  recoveryTargetKey,
+  inspectOperationalImage,
+  isRestrictedKvm8GatewaySite,
+  parseRestrictedDbRows,
+  parseRestrictedAdrotateBaseTable,
+  parseRestrictedAdrotateSnapshotOutput,
+  prepareOperationalDeliveryImage,
+  prepareOperationalDeliveryMedia,
+  restrictedReplaceSql,
+  normalizePerrengueAdrotateSnapshot,
+  normalizePerrengueRebuildHealthPayload,
   mergeDrivePiFields,
+  extendSitePeriodForSocialDelivery,
+  parsePeriodoFromBboxText,
+  parsePeriodoFromLayoutText,
+  parseDrivePiPdfFields,
   resolveDrivePiClickUrl,
+  resolveOperationalDestination,
+  resolveOptionalOperationalDestination,
+  runWithJobHeartbeat,
+  runSchedulerTrigger,
   selectDriveImageForInsertion,
   selectDriveVideoForInsertion,
+  selectCanonicalSnapshotAd,
   selectObservedMediaLink,
+  fulfillmentPlacementKey,
+  drivePdfThumbnailUrl,
+  selectFulfillmentOperations,
+  fulfillmentEvidenceAsOfDate,
+  fulfillmentSourceProofs,
   validateDrivePiPackageReadiness,
+  validateOptionalDrivePiDestination,
+  validateExpectedDrivePiCommercialContext,
+  validateExpectedDrivePiIdentity,
+  validateDrivePiApplyFields,
+  validateDrivePiClientlessSourceProof,
+  getDrivePiClientlessProofSource,
+  validateDrivePiDedupeSafety,
+  getDrivePiReadiness,
+  requireRowVersion,
+  extractExplicitPiFromPdfText,
+  extractExplicitPisFromPdfText,
+  selectSingleExplicitPiCandidate,
+  validateCompositePdfEvidence,
+  validateCompositePendingGuard,
+  validateAdrotatePublicationGuard,
+  validateOperationalPublicationContract,
+  validateOperationalPublicationScope,
+  validateOperationalDriveItem,
+  localImportAssetIdentity,
+  assertLocalImportProfile,
+  executeRetroactiveTarget,
+  retroactiveFailureFromLog,
+  buildRunnerCaptureIdempotencyKey,
+  isRetryableRetroactiveError,
+  privateApiGet,
+  shouldUseAdopsVideoSourceUrl,
+  assertLargeAdopsVideoDriveMd5,
+  buildAdopsVideoSourceIdempotencyKey,
+  buildAdopsVideoSourceUrl,
+  identifyAdopsVideoSource,
+  COD5_VIDEO_COMPRESSOR_ADOPS_SOURCE_MAX_BYTES,
 };
 
 if (process.env.ADOPS_RUNNER_TEST_MODE !== "1") {

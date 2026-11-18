@@ -63,6 +63,12 @@ print(json.dumps({
 export type EvidenceExportMode = "full" | "prints-only" | "pdf" | "full-pdf";
 export type EvidenceImageVariant = "original" | "web";
 
+export type IndividualEvidenceDownloadOptions = {
+  variant: "web";
+  imageMaxWidth: number;
+  imageQuality: number;
+};
+
 export class EvidenceExportInputError extends Error {
   constructor(
     message: string,
@@ -117,6 +123,94 @@ export function parseEvidenceExportOptions(query: Record<string, unknown>) {
     mode: mode as EvidenceExportMode,
     variant: variant as EvidenceImageVariant,
   };
+}
+
+export function parseIndividualEvidenceDownloadOptions(query: Record<string, unknown>): IndividualEvidenceDownloadOptions {
+  const cod5_variant = String(query.variant ?? "web").trim().toLowerCase();
+  const cod5_imageMaxWidth = Number.parseInt(String(query.imageMaxWidth ?? "1600"), 10);
+  const cod5_imageQuality = Number.parseInt(String(query.imageQuality ?? "72"), 10);
+  if (cod5_variant !== "web") throw new EvidenceExportInputError("O download individual exige variant=web.");
+  if (![[800, 60], [1600, 72]].some(([width, quality]) => cod5_imageMaxWidth === width && cod5_imageQuality === quality)) {
+    throw new EvidenceExportInputError("Use o preset de miniatura 800x60 ou de download 1600x72.");
+  }
+  return { variant: "web", imageMaxWidth: cod5_imageMaxWidth, imageQuality: cod5_imageQuality };
+}
+
+export function buildIndividualEvidenceDownloadName(insertion: EvidenceDeliveryInsertion, dateKey: string) {
+  return buildDeliveryPrintFileName(insertion, dateKey, undefined, ".jpg");
+}
+
+export function isApprovedEvidenceDownload(status: {
+  status?: string | null;
+  isReachable?: boolean | null;
+  checklistValidation?: { approved?: boolean | null } | null;
+}) {
+  return (status.status === "ok" || status.status === "ok_best_effort")
+    && status.isReachable === true
+    && status.checklistValidation?.approved === true;
+}
+
+type ExportAuditProvenance = {
+  captureClass?: string | null;
+  targetDate?: string | null;
+  capturedAt?: string | null;
+  sourceJobId?: string | null;
+  auditPolicyVersion?: string | null;
+  retroContentProof?: { status?: string; futureCount?: number; manifestHash?: string | null; reconstructed?: boolean; sourceMode?: string | null } | null;
+} | null | undefined;
+
+export function hasExportReconstructionProvenance(audit: ExportAuditProvenance, rawMetadata?: unknown) {
+  const metadata = rawMetadata && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)
+    ? rawMetadata as Record<string, unknown>
+    : {};
+  const manifest = metadata.retroContentManifest && typeof metadata.retroContentManifest === "object" && !Array.isArray(metadata.retroContentManifest)
+    ? metadata.retroContentManifest as Record<string, unknown>
+    : {};
+  const metadataProof = metadata.retroContentProof && typeof metadata.retroContentProof === "object" && !Array.isArray(metadata.retroContentProof)
+    ? metadata.retroContentProof as Record<string, unknown>
+    : {};
+  const proof = audit?.retroContentProof;
+  return metadata.reconstructed === true
+    || manifest.reconstructed === true
+    || manifest.sourceMode === "audited_reconstruction"
+    || metadataProof.reconstructed === true
+    || metadataProof.sourceMode === "audited_reconstruction"
+    || proof?.reconstructed === true
+    || proof?.sourceMode === "audited_reconstruction";
+}
+
+// Only explicit reconstruction signals can prevent a scheduled same-day capture from being misclassified.
+export function resolveExportAuditBasis(status: {
+  status?: string;
+  audit?: {
+    ok?: boolean;
+    captureClass?: string | null;
+    targetDate?: string | null;
+    capturedAt?: string | null;
+    sourceJobId?: string | null;
+    auditPolicyVersion?: string | null;
+    retroContentProof?: { status?: string; futureCount?: number; manifestHash?: string | null; reconstructed?: boolean; sourceMode?: string | null } | null;
+  } | null;
+}, date: string, rawMetadata?: unknown): "same_day_capture" | "editorial_proof" | null {
+  const audit = status.audit;
+  if (status.status !== "ok" || audit?.ok !== true) return null;
+  const reconstructed = hasExportReconstructionProvenance(audit, rawMetadata);
+  const capturedAt = new Date(audit.capturedAt ?? "");
+  const normalizedCaptureClass = audit.captureClass?.trim() ?? "";
+  const hasTrustedReconstructionCapture = ["scheduled", "same_day_retry", "historical_recovery"].includes(normalizedCaptureClass)
+    && Boolean(audit.sourceJobId?.trim())
+    && Number.isFinite(capturedAt.getTime())
+    && audit.auditPolicyVersion?.trim() === "audit-policy-v1";
+  if (reconstructed && !hasTrustedReconstructionCapture) return null;
+  if (!reconstructed && (audit.captureClass === "scheduled" || audit.captureClass === "same_day_retry")
+    && audit.targetDate === date && audit.sourceJobId?.trim()
+    && audit.auditPolicyVersion === "audit-policy-v1" && Number.isFinite(capturedAt.getTime())
+    && new Intl.DateTimeFormat("en-CA", { timeZone: "America/Cuiaba", year: "numeric", month: "2-digit", day: "2-digit" }).format(capturedAt) === date) {
+    return "same_day_capture";
+  }
+  const proof = audit.retroContentProof;
+  return proof?.status === "approved" && proof.futureCount === 0 && proof.manifestHash?.trim()
+    ? "editorial_proof" : null;
 }
 
 export function deliverySegment(
@@ -224,6 +318,21 @@ export function selectCanonicalEvidencePerDate<T extends CanonicalEvidenceCandid
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, row]) => row)
     .concat(undated.sort((left, right) => left.id - right.id));
+}
+
+export function selectApprovedCanonicalEvidenceRows<T extends CanonicalEvidenceCandidate>(
+  rows: T[],
+  resolveDate: (row: T) => string | null,
+  statusesByDate: Map<string, {
+    status?: string | null;
+    isReachable?: boolean | null;
+    checklistValidation?: { approved?: boolean | null } | null;
+  }>,
+) {
+  return selectCanonicalEvidencePerDate(rows, resolveDate).filter((row) => {
+    const cod5_date = resolveDate(row);
+    return Boolean(cod5_date && isApprovedEvidenceDownload(statusesByDate.get(cod5_date) || {}));
+  });
 }
 
 export function isPngBuffer(value: Buffer) {

@@ -19,7 +19,8 @@ import {
   WidthType,
   type ISectionOptions,
 } from "docx";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
+import { withPlaywrightPermit } from "./playwright-budget";
 
 export type OperationalDocumentKind = "declaracao-execucao" | "anexo-v";
 export type OperationalDocumentFormat = "docx" | "pdf";
@@ -39,6 +40,7 @@ type InsertionLike = {
   periodoFim: string | null;
   periodoOriginal?: string | null;
   competencia: string | null;
+  executionVerified?: boolean;
 };
 
 type TextChunk = {
@@ -54,6 +56,7 @@ type OperationalDocumentContext = {
   issueDateIso: string;
   issueDateShort: string;
   issueDateLong: string;
+  executionDeclarationPending: boolean;
   periodStart: string;
   periodEnd: string;
   periodStartCompact: string;
@@ -128,7 +131,6 @@ const DOCUMENT_TITLES: Record<OperationalDocumentKind, string> = {
 };
 
 const logoBufferPromises = new Map<string, Promise<Buffer | null>>();
-let browserPromise: Promise<Browser> | null = null;
 
 function getLogoBuffer(siteSigla: string) {
   const key = siteSigla.toUpperCase();
@@ -138,16 +140,6 @@ function getLogoBuffer(siteSigla: string) {
   const created = readFile(targetPath).catch(() => null);
   logoBufferPromises.set(key, created);
   return created;
-}
-
-async function getPdfBrowser() {
-  if (!browserPromise) {
-    browserPromise = chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-  }
-  return browserPromise;
 }
 
 function sanitizeFileNamePart(value: string) {
@@ -199,13 +191,12 @@ function makePlaceholder(label: string) {
   return `[PREENCHER ${label.toUpperCase()}]`;
 }
 
-function resolveIssueDate(insertion: InsertionLike) {
+function resolveIssueDate(insertion: InsertionLike, now = new Date()) {
   const end = parseDateOnly(insertion.periodoFim);
-  const today = new Date();
-  if (!end) return today;
+  if (!end) return now;
   const endPlusOne = new Date(end.getTime());
   endPlusOne.setDate(endPlusOne.getDate() + 1);
-  return endPlusOne > today ? today : endPlusOne;
+  return endPlusOne > now ? now : endPlusOne;
 }
 
 function renderChunkHtml(chunk: TextChunk) {
@@ -271,10 +262,13 @@ function operationalFooter() {
   });
 }
 
-function buildContext(insertion: InsertionLike): OperationalDocumentContext {
-  const issueDate = resolveIssueDate(insertion);
+function buildContext(insertion: InsertionLike, now = new Date()): OperationalDocumentContext {
+  const issueDate = resolveIssueDate(insertion, now);
   const periodStartDate = parseDateOnly(insertion.periodoInicio);
   const periodEndDate = parseDateOnly(insertion.periodoFim);
+  const todayInCuiaba = now.toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" });
+  const executionDeclarationPending = insertion.executionVerified !== true
+    || !insertion.periodoFim || insertion.periodoFim >= todayInCuiaba;
   const placeholders: string[] = [];
   const clientDocument = insertion.clienteCnpj?.trim() || makePlaceholder("CNPJ/CPF do órgão favorecido");
   if (!insertion.clienteCnpj?.trim()) placeholders.push("CNPJ/CPF do órgão favorecido");
@@ -315,6 +309,7 @@ function buildContext(insertion: InsertionLike): OperationalDocumentContext {
     issueDateIso: formatIsoDate(issueDate),
     issueDateShort: formatDateShort(issueDate),
     issueDateLong: formatDateLong(issueDate),
+    executionDeclarationPending,
     periodStart: periodStartCompact,
     periodEnd: periodEndCompact,
     periodStartCompact,
@@ -334,7 +329,7 @@ function buildContext(insertion: InsertionLike): OperationalDocumentContext {
     company: COMPANY,
     outputFiles: {
       "declaracao-execucao": {
-        baseName: `${baseOperationalSlug}_DEC_EXECUCAO`,
+        baseName: `${baseOperationalSlug}_DEC_EXECUCAO${executionDeclarationPending ? "_PENDENTE" : ""}`,
       },
       "anexo-v": {
         baseName: `${baseOperationalSlug}_ANEXO_V`,
@@ -347,8 +342,12 @@ function descriptorFor(kind: OperationalDocumentKind, context: OperationalDocume
   const baseName = context.outputFiles[kind].baseName;
   return {
     kind,
-    title: DOCUMENT_TITLES[kind],
-    description: kind === "declaracao-execucao"
+    title: kind === "declaracao-execucao" && context.executionDeclarationPending
+      ? "Minuta pendente de declaração de execução"
+      : DOCUMENT_TITLES[kind],
+    description: kind === "declaracao-execucao" && context.executionDeclarationPending
+      ? "Período em andamento ou sem data final; esta minuta não atesta execução integral."
+      : kind === "declaracao-execucao"
       ? "Declaração de execução preenchida com os dados da PI e espaço para completar órgão favorecido e assinatura."
       : "Anexo V em modelo Simples Nacional com base na PI e campos finais preservados para ajuste manual.",
     docxFileName: `${baseName}.docx`,
@@ -358,6 +357,34 @@ function descriptorFor(kind: OperationalDocumentKind, context: OperationalDocume
 }
 
 function buildDeclaracaoParagraphs(context: OperationalDocumentContext) {
+  if (context.executionDeclarationPending) {
+    const pendingText = `Período previsto: ${context.periodStartCompact} a ${context.periodEndCompact}. Esta minuta não declara veiculação integral. A declaração final depende do encerramento do período e da conferência das evidências.`;
+    return {
+      pdfBody: [
+        '<p class="declaration centered title">MINUTA PENDENTE</p>',
+        `<p class="declaration body">${pendingText}</p>`,
+        `<p class="city-date">Cuiabá/MT, ${context.issueDateLong}.</p>`,
+      ],
+      docxBody: [
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 360, after: 420 },
+          children: [new TextRun({ text: "MINUTA PENDENTE", bold: true, size: 32 })],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 220 },
+          children: [new TextRun({ text: pendingText, size: 28 })],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          spacing: { before: 300, after: 620 },
+          children: [new TextRun({ text: `Cuiabá/MT, ${context.issueDateLong}.`, size: 28 })],
+        }),
+      ],
+    };
+  }
   const clientDocValue = context.clientDocument;
   return {
     pdfBody: [
@@ -682,18 +709,28 @@ async function renderDocumentHtml(kind: OperationalDocumentKind, context: Operat
 }
 
 async function renderPdf(html: string) {
-  const browser = await getPdfBrowser();
-  const page = await browser.newPage();
-  try {
-    await page.setContent(html, { waitUntil: "networkidle" });
-    return Buffer.from(await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
-    }));
-  } finally {
-    await page.close();
-  }
+  return withPlaywrightPermit("operational-document-pdf", async () => {
+    let browser: Browser | null = null;
+    let page: Page | null = null;
+    try {
+      browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+      page = await browser.newPage();
+      await page.setContent(html, { waitUntil: "networkidle" });
+      return Buffer.from(await page.pdf({
+        format: "A4",
+        printBackground: true,
+        margin: { top: "8mm", right: "8mm", bottom: "8mm", left: "8mm" },
+      }));
+    } finally {
+      await Promise.allSettled([
+        page ? page.close() : Promise.resolve(),
+        browser ? browser.close() : Promise.resolve(),
+      ]);
+    }
+  });
 }
 
 async function renderDocx(kind: OperationalDocumentKind, context: OperationalDocumentContext) {
@@ -754,8 +791,9 @@ async function renderDocx(kind: OperationalDocumentKind, context: OperationalDoc
 export async function generateOperationalDocument(
   insertion: InsertionLike,
   kind: OperationalDocumentKind,
+  now = new Date(),
 ): Promise<GeneratedOperationalDocument> {
-  const context = buildContext(insertion);
+  const context = buildContext(insertion, now);
   const descriptor = descriptorFor(kind, context);
   const html = await renderDocumentHtml(kind, context);
   const [docx, pdf] = await Promise.all([
@@ -766,8 +804,8 @@ export async function generateOperationalDocument(
   return { descriptor, docx, pdf };
 }
 
-export async function listOperationalDocuments(insertion: InsertionLike): Promise<OperationalDocumentDescriptor[]> {
-  const context = buildContext(insertion);
+export async function listOperationalDocuments(insertion: InsertionLike, now = new Date()): Promise<OperationalDocumentDescriptor[]> {
+  const context = buildContext(insertion, now);
   return [
     descriptorFor("declaracao-execucao", context),
     descriptorFor("anexo-v", context),

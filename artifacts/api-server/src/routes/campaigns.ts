@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { eq, sql } from "drizzle-orm";
-import { db, campaignsTable, clientsTable, agenciesTable, insertionsTable, evidencesTable } from "@workspace/db";
+import { randomUUID } from "node:crypto";
+import { db, pool, campaignsTable, clientsTable, agenciesTable, insertionsTable, evidencesTable } from "@workspace/db";
+import { CAMPAIGN_COMMERCIAL_FILL_FIELDS, planCampaignCommercialFill, type CampaignCommercialFillValues } from "../lib/campaign-commercial-fill";
 import {
   CreateCampaignBody,
   GetCampaignParams,
@@ -10,6 +12,86 @@ import {
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+const commercialDbColumns = {
+  piCodigo: "pi_codigo",
+  clienteId: "cliente_id",
+  agenciaId: "agencia_id",
+  competencia: "competencia",
+  valorLiquido: "valor_liquido",
+  planilhaRef: "planilha_ref",
+} as const;
+
+function readCommercialValues(row: Record<string, unknown>): CampaignCommercialFillValues {
+  return {
+    piCodigo: row.pi_codigo as string | null,
+    clienteId: row.cliente_id as number | null,
+    agenciaId: row.agencia_id as number | null,
+    competencia: row.competencia as string | null,
+    valorLiquido: row.valor_liquido == null ? null : Number(row.valor_liquido),
+    planilhaRef: row.planilha_ref as string | null,
+  };
+}
+
+function parseCommercialFillRequest(value: unknown):
+  | { success: true; fields: CampaignCommercialFillValues; sourceRef: string; dryRun: boolean; expectedUpdatedAt: string | null }
+  | { success: false; details: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { success: false, details: "O corpo precisa ser um objeto." };
+  const input = value as Record<string, unknown>;
+  const allowedKeys = new Set(["mode", "dryRun", "sourceRef", "expectedUpdatedAt", ...CAMPAIGN_COMMERCIAL_FILL_FIELDS]);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) return { success: false, details: "Preenchimento comercial aceita somente PI, cliente, agência, competência, valor e referência de planilha." };
+  if (input.mode !== "fill_missing_only" || typeof input.dryRun !== "boolean") return { success: false, details: "Informe mode=fill_missing_only e dryRun explícito." };
+  const sourceRef = typeof input.sourceRef === "string" ? input.sourceRef.trim() : "";
+  if (sourceRef.length < 3 || sourceRef.length > 512 || /[\u0000-\u001f\u007f]/.test(sourceRef)) {
+    return { success: false, details: "sourceRef rastreável é obrigatório (3 a 512 caracteres, sem controles)." };
+  }
+  const expectedUpdatedAt = typeof input.expectedUpdatedAt === "string" ? input.expectedUpdatedAt.trim() : null;
+  if (!input.dryRun && (!expectedUpdatedAt || Number.isNaN(Date.parse(expectedUpdatedAt)))) {
+    return { success: false, details: "Apply exige expectedUpdatedAt retornado pelo preflight." };
+  }
+  const parsed = UpdateCampaignBody.safeParse(input);
+  if (!parsed.success) return { success: false, details: parsed.error.message };
+  const fields: CampaignCommercialFillValues = {};
+  for (const field of CAMPAIGN_COMMERCIAL_FILL_FIELDS) {
+    if (!(field in input)) continue;
+    const requested = parsed.data[field];
+    if (requested == null || (typeof requested === "string" && !requested.trim())) {
+      fields[field] = requested as null;
+      continue;
+    }
+    if ((field === "clienteId" || field === "agenciaId") && (typeof requested !== "number" || !Number.isInteger(requested) || requested <= 0)) {
+      return { success: false, details: `${field} precisa ser um inteiro positivo.` };
+    }
+    if (field === "valorLiquido" && (typeof requested !== "number" || !Number.isFinite(requested) || requested < 0)) {
+      return { success: false, details: "valorLiquido deve ser um número finito não negativo." };
+    }
+    fields[field] = requested as never;
+  }
+  if (!Object.keys(fields).length) return { success: false, details: "Informe pelo menos um campo comercial com valor da fonte." };
+  return { success: true, fields, sourceRef, dryRun: input.dryRun, expectedUpdatedAt };
+}
+
+async function readCampaignCommercialFill(id: number) {
+  const result = await pool.query(
+    `SELECT id, pi_codigo, cliente_id, agencia_id, competencia, valor_liquido, planilha_ref, updated_at
+     FROM campaigns WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  return result.rows[0] as Record<string, unknown> | undefined;
+}
+
+async function findCommercialReferenceConflicts(query: (text: string, values?: unknown[]) => Promise<any>, fields: CampaignCommercialFillValues) {
+  const conflicts: Array<{ field: "clienteId" | "agenciaId"; code: "missing_reference"; requested: number }> = [];
+  if (typeof fields.clienteId === "number") {
+    const result = await query("SELECT id FROM clients WHERE id = $1 LIMIT 1", [fields.clienteId]);
+    if (!result.rows[0]) conflicts.push({ field: "clienteId", code: "missing_reference", requested: fields.clienteId });
+  }
+  if (typeof fields.agenciaId === "number") {
+    const result = await query("SELECT id FROM agencies WHERE id = $1 LIMIT 1", [fields.agenciaId]);
+    if (!result.rows[0]) conflicts.push({ field: "agenciaId", code: "missing_reference", requested: fields.agenciaId });
+  }
+  return conflicts;
+}
 
 async function getCampaignDeletionGuard(id: number) {
   const insertions = await db.select().from(insertionsTable).where(eq(insertionsTable.campanhaId, id));
@@ -198,9 +280,136 @@ router.patch("/campaigns/:id", async (req, res): Promise<void> => {
     res.status(400).json({ error: params.error.message });
     return;
   }
+  if (req.body && typeof req.body === "object" && Object.hasOwn(req.body, "mode")) {
+    if (req.body.mode !== "fill_missing_only") {
+      res.status(400).json({ error: "unsupported_campaign_update_mode" });
+      return;
+    }
+    const request = parseCommercialFillRequest(req.body);
+    if (!request.success) {
+      res.status(400).json({ error: "invalid_commercial_fill", details: request.details });
+      return;
+    }
+    const campaignId = params.data.id;
+    if (request.dryRun) {
+      const current = await readCampaignCommercialFill(campaignId);
+      if (!current) {
+        res.status(404).json({ error: "campaign_not_found" });
+        return;
+      }
+      const plan = planCampaignCommercialFill(readCommercialValues(current), request.fields);
+      const conflicts = [...plan.conflicts, ...await findCommercialReferenceConflicts(pool.query.bind(pool), request.fields)];
+      res.status(200).json({
+        ok: conflicts.length === 0,
+        mode: "fill_missing_only",
+        dryRun: true,
+        canApply: conflicts.length === 0,
+        campaignId,
+        sourceRef: request.sourceRef,
+        expectedUpdatedAt: current.updated_at instanceof Date ? current.updated_at.toISOString() : new Date(String(current.updated_at)).toISOString(),
+        before: plan.before,
+        proposed: plan.proposed,
+        changedFields: plan.changedFields,
+        conflicts,
+      });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query(
+        `SELECT id, pi_codigo, cliente_id, agencia_id, competencia, valor_liquido, planilha_ref, updated_at
+         FROM campaigns WHERE id = $1 FOR UPDATE`,
+        [campaignId],
+      );
+      const current = locked.rows[0] as Record<string, unknown> | undefined;
+      if (!current) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ error: "campaign_not_found" });
+        return;
+      }
+      const currentUpdatedAt = current.updated_at instanceof Date ? current.updated_at.toISOString() : new Date(String(current.updated_at)).toISOString();
+      const expectedUpdatedAt = new Date(request.expectedUpdatedAt!).toISOString();
+      if (expectedUpdatedAt !== currentUpdatedAt) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "campaign_changed_since_preflight", campaignId, expectedUpdatedAt, currentUpdatedAt });
+        return;
+      }
+      const before = readCommercialValues(current);
+      const plan = planCampaignCommercialFill(before, request.fields);
+      const conflicts = [...plan.conflicts, ...await findCommercialReferenceConflicts(client.query.bind(client), request.fields)];
+      if (conflicts.length) {
+        await client.query("ROLLBACK");
+        res.status(409).json({ error: "commercial_fill_conflict", mode: "fill_missing_only", campaignId, sourceRef: request.sourceRef, before: plan.before, proposed: plan.proposed, conflicts });
+        return;
+      }
+      if (!plan.changedFields.length) {
+        await client.query("COMMIT");
+        res.status(200).json({ ok: true, mode: "fill_missing_only", dryRun: false, applied: false, campaignId, sourceRef: request.sourceRef, changedFields: [], before: plan.before, proposed: plan.proposed, conflicts: [] });
+        return;
+      }
+
+      const values: unknown[] = [campaignId];
+      const assignments = plan.changedFields.map((field) => {
+        values.push(field === "valorLiquido" ? String(plan.proposed[field]) : plan.proposed[field]);
+        return `${commercialDbColumns[field]} = $${values.length}`;
+      });
+      const updated = await client.query(
+        `UPDATE campaigns SET ${assignments.join(", ")}, updated_at = NOW()
+         WHERE id = $1 RETURNING id, updated_at`,
+        values,
+      );
+      const jobId = randomUUID();
+      const now = new Date().toISOString();
+      const auditPayload = {
+        campaignId,
+        mode: "fill_missing_only",
+        sourceRef: request.sourceRef,
+        expectedUpdatedAt,
+        fields: request.fields,
+        before: plan.before,
+        after: plan.proposed,
+        changedFields: plan.changedFields,
+      };
+      await client.query(
+        `INSERT INTO ops_jobs (id, kind, status, payload_json, result_json, error_text, requested_by, runner_id, created_at, updated_at)
+         VALUES ($1, 'campaign-commercial-fill', 'completed', $2, $3, NULL, 'campaign-api', NULL, $4, $4)`,
+        [jobId, JSON.stringify(auditPayload), JSON.stringify({ ok: true, campaignId, changedFields: plan.changedFields, sourceRef: request.sourceRef }), now],
+      );
+      await client.query("COMMIT");
+      const campaign = await buildCampaignWithMeta(campaignId);
+      res.status(200).json({
+        ok: true,
+        mode: "fill_missing_only",
+        dryRun: false,
+        applied: true,
+        campaignId,
+        jobId,
+        sourceRef: request.sourceRef,
+        expectedUpdatedAt,
+        updatedAt: updated.rows[0]?.updated_at,
+        before: plan.before,
+        proposed: plan.proposed,
+        changedFields: plan.changedFields,
+        conflicts: [],
+        campaign,
+      });
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return;
+  }
   const parsed = UpdateCampaignBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if ("mode" in parsed.data) {
+    res.status(400).json({ error: "invalid_campaign_update_mode" });
     return;
   }
 

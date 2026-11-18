@@ -1,0 +1,1106 @@
+{
+  "id": "hHNPwZhND1LdDwoo",
+  "name": "ADOPS — Manter cache e confirmar publicação",
+  "active": true,
+  "versionId": "7a046e0d-6d91-4b9e-ac47-f8eaf1a0854f",
+  "nodes": [
+    {
+      "id": "60bfb8ac-4451-436f-abeb-9cc69c763b47",
+      "name": "Iniciar manutenção controlada",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        176
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "0e12a85f-775d-420d-a740-55c64ac92f29",
+      "name": "Definir inserção vazia segura",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        176
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": 0
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4e5a1a61-e4bf-4ad2-9fb7-010a697cbeea",
+      "name": "Normalizar alvo de cache",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        272
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($json.insertionId || 0) }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "829a94ad-93bb-475f-9941-5abb2c16e33d",
+      "name": "Inserção está no manifesto permitido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        272
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [3055,3090,3087,3103,3112,3113,3047,3063,3082,3091,3092,3083,3105,3084,3115,3116,3093,3094,3106,3107,3108,3097,3099,3100,3109].includes(Number($json.insertionId)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e0d35f55-3b3a-4a4c-88d6-d8e4b54087a2",
+      "name": "Consultar período da inserção",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        896,
+        176
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo de cache\").first().json.insertionId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "266945a0-8bb6-4837-9e7b-5c91f56e7b9e",
+      "name": "Campanha ainda não começou?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        176
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Boolean($json.periodoInicio && $json.periodoInicio > $now.setZone(\"America/Cuiaba\").toISODate()) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c338dde8-9ee1-44ce-ba79-22bd2774e9ce",
+      "name": "Retornar campanha programada sem cache",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        80
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo de cache\").first().json.insertionId) }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "future_unverified"
+            },
+            {
+              "id": "proof",
+              "name": "proof",
+              "type": "string",
+              "value": "A campanha ainda não começou; nenhuma manutenção ou confirmação de mídia foi executada."
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "46fb6efa-1c95-4b03-8cb8-8ffdbdfd2656",
+      "name": "Consultar jobs ativos de cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1344,
+        272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=cache-maintenance&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "8170c5a3-2a60-4318-9049-18913f980303",
+      "name": "Já existe job de cache para esta inserção?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1568,
+        272
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.items || []).some(j => j.kind === \"cache-maintenance\" && [\"queued\",\"ready_for_runner\",\"running\"].includes(j.status) && Number(j.payload?.insertionId ?? j.identity?.insertionId) === Number($(\"Normalizar alvo de cache\").first().json.insertionId)) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "8b486b1d-beca-4939-98b9-318597811470",
+      "name": "Selecionar job ativo existente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1792,
+        48
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "jobId",
+              "name": "jobId",
+              "type": "string",
+              "value": "={{ String((($(\"Consultar jobs ativos de cache\").first().json.items || []).find(j => j.kind === \"cache-maintenance\" && [\"queued\",\"ready_for_runner\",\"running\"].includes(j.status) && Number(j.payload?.insertionId ?? j.identity?.insertionId) === Number($(\"Normalizar alvo de cache\").first().json.insertionId)) || {}).id || \"\") }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2735ecef-40f4-4f03-96e1-432671fbe584",
+      "name": "Ler job ativo existente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        2016,
+        48
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Selecionar job ativo existente\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "8e1a7307-9cab-4fef-b82a-0fb626c97ac1",
+      "name": "Job existente segue ativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"ready_for_runner\", \"running\"].includes($(\"Ler job ativo existente\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "ee47c8cd-8d50-4734-bcf5-86d0e2c79b69",
+      "name": "Aguardar job existente sem reenviar",
+      "webhookId": "bca90384-48ad-40b8-a3df-c65d219a375d",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        48
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "2f3af4e7-ce50-4c25-8e76-d666d4dee7b3",
+      "name": "Ler relação após job existente",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        2464,
+        240
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/integrations/adrotate/insertions/\" + encodeURIComponent($(\"Normalizar alvo de cache\").first().json.insertionId) + \"/relation\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "d881ef39-6b75-4e8a-bc80-612a5d7e0710",
+      "name": "Retornar estado real do job existente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2688,
+        240
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo de cache\").first().json.insertionId) }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Ler job ativo existente\").item.json }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Ler relação após job existente\").item.json }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ (() => { const j=$(\"Ler job ativo existente\").item.json; const r=$(\"Ler relação após job existente\").item.json; if (j.status === \"failed\") return \"failed\"; return j.status === \"completed\" && j.result?.execution?.cacheReadback?.ok === true && j.result?.execution?.publicValidation?.ok === true && r.rotation?.expectedMediaObserved === true ? \"confirmed\" : String(j.status || \"unknown\"); })() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "355a8e01-3106-4314-bf87-5ef1fd28837e",
+      "name": "Criar preview de cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs/cache-maintenance",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-cache:\" + String($(\"Normalizar alvo de cache\").first().json.insertionId) + \":\" + $now.setZone(\"America/Cuiaba\").toISODate() + \":\" + String($(\"Consultar período da inserção\").first().json.rowVersion) + \":preview:v6\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {insertionId:Number($(\"Normalizar alvo de cache\").first().json.insertionId),apply:false,layers:[\"wordpress\",\"cloudflare\"]} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "d4b0d089-e6ce-4aae-a1c1-817f6b8ebc68",
+      "name": "Ler preview de cache",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        2016,
+        480
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Criar preview de cache\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "705243c5-64ed-4413-9add-f84b38bdefd2",
+      "name": "Preview de cache ainda roda?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"ready_for_runner\", \"running\"].includes($(\"Ler preview de cache\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a941d858-f2c2-497c-b8fe-ccfdc320ea81",
+      "name": "Aguardar preview sem reenviar",
+      "webhookId": "7fec65a6-b3b7-46fa-b6d5-62923273be8b",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        480
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "ff778241-e89d-40fa-ba37-5eb8e3b01396",
+      "name": "Preview concluído para a mesma inserção?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        672
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Ler preview de cache\").item.json.status === \"completed\" && $(\"Ler preview de cache\").item.json.kind === \"cache-maintenance\" && $(\"Ler preview de cache\").item.json.payload?.apply === false && Number($(\"Ler preview de cache\").item.json.identity?.insertionId ?? $(\"Ler preview de cache\").item.json.payload?.insertionId) === Number($(\"Normalizar alvo de cache\").first().json.insertionId) && $(\"Ler preview de cache\").item.json.result?.execution?.mode === \"preview\" }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "9ab51488-9096-46c5-bdef-698ec29f213a",
+      "name": "Aplicar cache após preview",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2688,
+        576
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs/cache-maintenance",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-cache:\" + String($(\"Normalizar alvo de cache\").first().json.insertionId) + \":\" + String($(\"Criar preview de cache\").first().json.jobId) + \":apply:v3\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {insertionId:Number($(\"Normalizar alvo de cache\").first().json.insertionId),apply:true,previewJobId:String($(\"Criar preview de cache\").first().json.jobId),layers:[\"wordpress\",\"cloudflare\"]} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "c583bc51-72d2-4178-ab33-1c6ee832c2d5",
+      "name": "Ler job de manutenção aplicado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        2912,
+        576
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Aplicar cache após preview\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "dfe573d6-df84-4eb8-a0ba-bdf037768784",
+      "name": "Manutenção aplicada ainda roda?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3136,
+        512
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"ready_for_runner\", \"running\"].includes($(\"Ler job de manutenção aplicado\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f5362613-3853-4011-85e9-371eab0cac78",
+      "name": "Aguardar manutenção sem reenviar",
+      "webhookId": "ef316b83-b851-4626-8db6-7f126a48e07c",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        576
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "051b7783-8cff-4288-aa16-a41333be6f16",
+      "name": "Confirmar relação AdRotate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        3360,
+        768
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/integrations/adrotate/insertions/\" + encodeURIComponent($(\"Normalizar alvo de cache\").first().json.insertionId) + \"/relation\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "53cddb6a-4fef-4476-bb6f-22a26910cf04",
+      "name": "Retornar job e confirmação de mídia",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3584,
+        768
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo de cache\").first().json.insertionId) }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Ler job de manutenção aplicado\").item.json }}"
+            },
+            {
+              "id": "relation",
+              "name": "relation",
+              "type": "object",
+              "value": "={{ $(\"Confirmar relação AdRotate\").item.json }}"
+            },
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ (() => { const j=$(\"Ler job de manutenção aplicado\").item.json; const r=$(\"Confirmar relação AdRotate\").item.json; if (j.status !== \"completed\") return j.status === \"failed\" ? \"failed\" : String(j.status || \"unknown\"); return j.result?.execution?.cacheReadback?.ok === true && j.result?.execution?.publicValidation?.ok === true && r.rotation?.expectedMediaObserved === true ? \"confirmed\" : \"cache_or_public_readback_unconfirmed\"; })() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0187bae3-d1b2-47eb-bee4-808136549eff",
+      "name": "Preservar preview inválido",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        768
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Preview de cache não concluiu com identidade e execution.mode=preview válidos; apply não foi solicitado."
+      }
+    },
+    {
+      "id": "388f8031-91bf-406e-a1ef-78e7cfd408c1",
+      "name": "Bloquear ID fora do manifesto",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        896,
+        368
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Manutenção bloqueada: insertionId ausente ou fora do manifesto autorizado."
+      }
+    },
+    {
+      "id": "211156af-39c0-4d11-b833-deb5194ea1c0",
+      "name": "Receber insertionId",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        368
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "insertionId",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Iniciar manutenção controlada": {
+      "main": [
+        [
+          {
+            "node": "Definir inserção vazia segura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir inserção vazia segura": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar alvo de cache": {
+      "main": [
+        [
+          {
+            "node": "Inserção está no manifesto permitido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserção está no manifesto permitido?": {
+      "main": [
+        [
+          {
+            "node": "Consultar período da inserção",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear ID fora do manifesto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar período da inserção": {
+      "main": [
+        [
+          {
+            "node": "Campanha ainda não começou?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Campanha ainda não começou?": {
+      "main": [
+        [
+          {
+            "node": "Retornar campanha programada sem cache",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar jobs ativos de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar jobs ativos de cache": {
+      "main": [
+        [
+          {
+            "node": "Já existe job de cache para esta inserção?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já existe job de cache para esta inserção?": {
+      "main": [
+        [
+          {
+            "node": "Selecionar job ativo existente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Criar preview de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Selecionar job ativo existente": {
+      "main": [
+        [
+          {
+            "node": "Ler job ativo existente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler job ativo existente": {
+      "main": [
+        [
+          {
+            "node": "Job existente segue ativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job existente segue ativo?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar job existente sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler relação após job existente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar job existente sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Ler job ativo existente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler relação após job existente": {
+      "main": [
+        [
+          {
+            "node": "Retornar estado real do job existente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criar preview de cache": {
+      "main": [
+        [
+          {
+            "node": "Ler preview de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler preview de cache": {
+      "main": [
+        [
+          {
+            "node": "Preview de cache ainda roda?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview de cache ainda roda?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar preview sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preview concluído para a mesma inserção?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar preview sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Ler preview de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview concluído para a mesma inserção?": {
+      "main": [
+        [
+          {
+            "node": "Aplicar cache após preview",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar preview inválido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar cache após preview": {
+      "main": [
+        [
+          {
+            "node": "Ler job de manutenção aplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler job de manutenção aplicado": {
+      "main": [
+        [
+          {
+            "node": "Manutenção aplicada ainda roda?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manutenção aplicada ainda roda?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar manutenção sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirmar relação AdRotate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar manutenção sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Ler job de manutenção aplicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar relação AdRotate": {
+      "main": [
+        [
+          {
+            "node": "Retornar job e confirmação de mídia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber insertionId": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo de cache",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

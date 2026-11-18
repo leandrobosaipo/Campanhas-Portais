@@ -1,0 +1,494 @@
+{
+  "id": "vRKxLmmNNuNfDOVy",
+  "name": "ADOPS — Enviar ZIPs Sanear 3294 e 3292 somente a Leandro — 29/10/2026",
+  "active": false,
+  "versionId": "18a06f8b-53b9-4fb8-8850-a3d876f49e1e",
+  "nodes": [
+    {
+      "id": "8875007a-b148-4180-a982-237f7028bf1a",
+      "name": "Enviar PDF OMT autorizado uma vez",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "retryOnFail": false,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0,30 9 18 29 10 *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0,30 10 18 29 10 *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0539d2b4-51df-43e5-8cac-217c0f1a8b2d",
+      "name": "Reservar envio unico",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        224,
+        224
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "WITH candidate AS (SELECT job_id FROM public.adops_sanear_outbox_20261029\n WHERE job_id='sanear-3292-1581747049efe702-upload-retry1' AND campaign='adops-sanear-personal-20261029' AND destination='5565999822022'\n AND approved AND status='scheduled' AND attempts=0 AND scheduled_at<=now() AND expires_at>now()\n FOR UPDATE SKIP LOCKED LIMIT 1)\n UPDATE public.adops_sanear_outbox_20261029 j SET status='claimed',attempts=1,execution_id=$1,claimed_at=now(),updated_at=now()\n FROM candidate c WHERE j.job_id=c.job_id RETURNING j.job_id,j.destination,j.payload,j.sha256,j.execution_id;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$execution.id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "0e20f942-7f0c-4bc7-80a5-2437db7b6a25",
+      "name": "Conferir conexao",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "onError": "continueErrorOutput",
+      "position": [
+        448,
+        224
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://evolution:8080/instance/connectionState/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 12000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TrhdyTwid2VgHGRu",
+          "name": "Evolution Distribuidor - monitor leitura"
+        }
+      }
+    },
+    {
+      "id": "d3f4be0b-375a-4916-8ed8-ec2db834e794",
+      "name": "Conexao aberta",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "retryOnFail": false,
+      "position": [
+        672,
+        144
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Conferir conexao').item.json.statusCode === 200 && $('Conferir conexao').item.json.body?.instance?.state === 'open' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "28425ea9-519f-4444-a83c-d484602d225f",
+      "name": "Marcar inicio do envio",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "UPDATE public.adops_sanear_outbox_20261029 SET status='sending',updated_at=now() WHERE job_id=$1 AND status='claimed' AND attempts=1 RETURNING job_id,payload;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$('Reservar envio unico').item.json.job_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "73d21c44-bb6d-423b-849a-ab3261521d59",
+      "name": "Enviar anexo uma vez",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "onError": "continueErrorOutput",
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://evolution:8080/message/sendMedia/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Marcar inicio do envio').item.json.payload) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TrhdyTwid2VgHGRu",
+          "name": "Evolution Distribuidor - monitor leitura"
+        }
+      }
+    },
+    {
+      "id": "33fc24e1-5bb7-49da-9635-8f77c75ccb02",
+      "name": "Registrar recibo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "UPDATE public.adops_sanear_outbox_20261029 SET status=$1::jsonb->>'status',provider_message_id=$1::jsonb->>'provider_message_id',provider_http=($1::jsonb->>'http')::integer,error_code=$1::jsonb->>'error_code',accepted_at=CASE WHEN $1::jsonb->>'status'='accepted' THEN now() ELSE NULL END,updated_at=now() WHERE job_id=$1::jsonb->>'job_id' AND status='sending' RETURNING job_id,status,provider_message_id,provider_http,accepted_at,attempts;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [JSON.stringify((() => {\n const job=$('Reservar envio unico').item.json;\n const response=$('Enviar anexo uma vez').item.json;\n const body=response.body || {};\n const norm=x=>{const n=String(x||'').split('@')[0];return n.length===13&&n.startsWith('55')&&n[4]==='9'?n.slice(0,4)+n.slice(5):n;};\n const ok=response.statusCode>=200&&response.statusCode<300&&Boolean(body.key?.id)&&body.key?.fromMe===true&&norm(body.key?.remoteJid)===norm(job.destination);\n const rejected=response.statusCode>=400&&response.statusCode<500;\n return {job_id:job.job_id,status:ok?'accepted':rejected?'rejected':'uncertain',provider_message_id:body.key?.id||null,http:response.statusCode||null,error_code:ok?null:rejected?'provider_rejected':'provider_result_requires_reconciliation'};\n})())] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "278595f6-e9e1-47d9-aa94-92e2c19fdc4d",
+      "name": "Registrar conexao bloqueada",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        896,
+        320
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "UPDATE public.adops_sanear_outbox_20261029 SET status='blocked',error_code='connection_not_confirmed_open',updated_at=now() WHERE job_id=$1 AND status='claimed' RETURNING job_id,status,error_code,attempts;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$('Reservar envio unico').item.json.job_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "b1b1838c-0466-4a04-b1de-309b6332c749",
+      "name": "Registrar resultado incerto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "UPDATE public.adops_sanear_outbox_20261029 SET status='uncertain',error_code='transport_result_unknown_do_not_repeat',updated_at=now() WHERE job_id=$1 AND status IN ('claimed','sending') RETURNING job_id,status,error_code,attempts;",
+        "options": {
+          "queryBatching": "single",
+          "queryReplacement": "={{ [$('Reservar envio unico').item.json.job_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "08759ab0-c67b-4bef-bd26-09d045f7aae4",
+      "name": "Preparar somente os dois anexos autorizados",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "retryOnFail": false,
+      "position": [
+        240,
+        -160
+      ],
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "UPDATE public.adops_sanear_outbox_20261029 SET status='not_sent_upload_failed',error_code='media_upload_failed_before_relay_verified',updated_at=now()\n WHERE job_id='sanear-3292-1581747049efe702' AND status='uncertain' AND attempts=1 AND provider_message_id IS NULL AND provider_http=500;\nINSERT INTO public.adops_sanear_outbox_20261029 (job_id,campaign,destination,payload,sha256,approved,status,attempts,scheduled_at,expires_at)\n SELECT 'sanear-3292-1581747049efe702-upload-retry1',campaign,destination,'{\"number\":\"5565999822022\",\"mediatype\":\"document\",\"mimetype\":\"application/zip\",\"media\":\"https://cod5.nyc3.digitaloceanspaces.com/adops-exports/roo/3292/14c1e41e-64ed-4b71-a228-3e5d6489a085/PI-3292-roo-prints-only.zip\",\"fileName\":\"PI-3292-SANEAR-ROO-prints-only.zip\",\"caption\":\"PI 3292 — SANEAR — ROO. ZIP com 8 prints, período 21 a 28/10/2026. Inclui reconstruções históricas auditadas, que não comprovam exibição original.\"}'::jsonb,sha256,true,'scheduled',0,now(),'2026-10-30T00:00:00Z'::timestamptz\n FROM public.adops_sanear_outbox_20261029 WHERE job_id='sanear-3292-1581747049efe702' AND status='not_sent_upload_failed' AND provider_message_id IS NULL\n ON CONFLICT(job_id) DO NOTHING;\nSELECT job_id,status FROM public.adops_sanear_outbox_20261029 WHERE job_id='sanear-3292-1581747049efe702-upload-retry1';",
+        "options": {
+          "queryBatching": "single"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "EfFxWD8rkP5MPga5",
+          "name": "Notificações - PostgreSQL isolado"
+        }
+      }
+    },
+    {
+      "id": "5e7e49e5-b19c-4c53-b125-44c848252783",
+      "name": "Há identificador aceito para consultar",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "retryOnFail": false,
+      "position": [
+        1450,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Registrar recibo').item.json.status === 'accepted' && Boolean($('Registrar recibo').item.json.provider_message_id) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "938292e5-0f35-4a15-8d9c-725eac5769d5",
+      "name": "Consultar somente o mesmo anexo enviado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "position": [
+        1700,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://evolution:8080/chat/findMessages/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ where: { key: { id: $(\"Registrar recibo\").item.json.provider_message_id } }, page: 1, offset: 10 }) }}",
+        "options": {
+          "timeout": 12000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "TrhdyTwid2VgHGRu",
+          "name": "Evolution Distribuidor - monitor leitura"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Enviar PDF OMT autorizado uma vez": {
+      "main": [
+        [
+          {
+            "node": "Preparar somente os dois anexos autorizados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar envio unico": {
+      "main": [
+        [
+          {
+            "node": "Conferir conexao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conferir conexao": {
+      "main": [
+        [
+          {
+            "node": "Conexao aberta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar conexao bloqueada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conexao aberta": {
+      "main": [
+        [
+          {
+            "node": "Marcar inicio do envio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar conexao bloqueada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar inicio do envio": {
+      "main": [
+        [
+          {
+            "node": "Enviar anexo uma vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar anexo uma vez": {
+      "main": [
+        [
+          {
+            "node": "Registrar recibo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar resultado incerto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar somente os dois anexos autorizados": {
+      "main": [
+        [
+          {
+            "node": "Reservar envio unico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar recibo": {
+      "main": [
+        [
+          {
+            "node": "Há identificador aceito para consultar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Há identificador aceito para consultar": {
+      "main": [
+        [
+          {
+            "node": "Consultar somente o mesmo anexo enviado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 100,
+    "timezone": "America/Cuiaba",
+    "executionOrder": "v1"
+  }
+}

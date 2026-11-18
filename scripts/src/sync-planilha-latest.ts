@@ -1,4 +1,6 @@
+import { readCampaignSheetBlocks } from "./lib/campaign-sheet-blocks.mjs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import * as XLSX from "xlsx";
@@ -13,6 +15,10 @@ import {
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { inferClientProfileFromPiReference, type InferredClientProfile } from "./lib/pi-client-cnpj";
+import {
+  buildCampaignInsertionIdentity,
+  normalizeCampaignPiIdentity,
+} from "../../artifacts/api-server/src/lib/campaign-operations-matching";
 
 type RawRow = {
   sourceSheet: string;
@@ -31,6 +37,8 @@ type RawRow = {
   inicio: string | null;
   fim: string | null;
 };
+
+const sheetCoverage: Array<Record<string, unknown>> = [];
 
 const EXPORT_URL =
   process.env.PLANILHA_XLSX_URL ??
@@ -265,6 +273,7 @@ function normalizeFormato(value: string): string {
     "PRIMEIRA DOBRA": "PRIMEIRA DOBRA",
     "SEGUNDA DOBRA": "SEGUNDA DOBRA",
     "LATERAL": "LATERAL",
+    "LATERAL 02 — SIDEBAR — 300X250": "LATERAL 02",
     "LATERAL PRIMEIRA DOBRA": "LATERAL PRIMEIRA DOBRA",
     "TOPO LATERAL": "TOPO LATERAL",
     "HOME 1": "HOME 1",
@@ -358,61 +367,13 @@ function normalizeStatus(
 }
 
 function buildRowsFromSheetCsv(csv: string, sheetName: string, competenciaSheet: string): RawRow[] {
-  const lines = parseCsv(csv).filter((row) => row.some((cell) => isMeaningful(cell)));
-  const rows: RawRow[] = [];
-  let siteRowCells: string[] | null = null;
-  let blockStarts: number[] = [];
-  let blockSites: string[] = [];
-
-  for (const cells of lines) {
-    const headerStarts = cells
-      .map((cell, index) => (normalizeForMatch(cell).startsWith("PECA") ? index : -1))
-      .filter((index) => index >= 0);
-    if (headerStarts.length > 0) {
-      blockStarts = headerStarts;
-      blockSites = headerStarts.map((start, index) => {
-        const nextStart = headerStarts[index + 1] ?? cells.length;
-        const search = (siteRowCells ?? []).slice(start, nextStart + 1);
-        return search.find((cell) => cell in SITE_NAMES) ?? "";
-      });
-      continue;
-    }
-
-    if (cells.some((cell) => cell in SITE_NAMES)) {
-      siteRowCells = cells;
-      continue;
-    }
-
-    if (blockStarts.length === 0) continue;
-
-    blockStarts.forEach((start, index) => {
-      const nextStart = blockStarts[index + 1] ?? cells.length;
-      const slice = cells.slice(start, nextStart);
-      const [peca = "", agenciaValor = "", campanha = "", periodo = "", local = "", status = "", processoRealizado = "", processoEnviado = "", extra = ""] = slice;
-      if (!isMeaningful(campanha) && !isMeaningful(local) && !isMeaningful(periodo)) return;
-      const { inicio, fim } = parsePeriodo(periodo, competenciaSheet);
-      const competenciaResolved = deriveCompetenciaFromPeriodo(competenciaSheet, inicio, fim);
-      rows.push({
-        sourceSheet: sheetName,
-        competenciaSheet,
-        competenciaResolved,
-        siteSigla: blockSites[index] ?? "",
-        peca,
-        agenciaValor,
-        campanha,
-        periodo,
-        local,
-        status,
-        processoRealizado,
-        processoEnviado,
-        extra,
-        inicio,
-        fim,
-      });
-    });
-  }
-
-  return rows.filter((row) => row.siteSigla && (isMeaningful(row.campanha) || isMeaningful(row.local)));
+  const parsed = readCampaignSheetBlocks(parseCsv(csv));
+  sheetCoverage.push({ sheetName, ...parsed.coverage });
+  return parsed.rows.map((row: Record<string, any>) => {
+    const { inicio, fim } = parsePeriodo(row.periodo, competenciaSheet);
+    return { ...row, sourceSheet: sheetName, competenciaSheet,
+      competenciaResolved: deriveCompetenciaFromPeriodo(competenciaSheet, inicio, fim), inicio, fim } as RawRow;
+  });
 }
 
 function computeAtrasado(ins: { periodoFim?: string | null; processoEnviadoAgencia: boolean; statusNormalizado: string }): boolean {
@@ -439,9 +400,16 @@ async function loadRawRows() {
 
   for (const sheetName of workbook.SheetNames) {
     const competenciaSheet = normalizeSheetCompetencia(sheetName);
+    const previewOnly = process.argv.includes("--commercial-preview") || process.argv.includes("--dry-run") || process.env.SYNC_DRY_RUN === "1";
+    if (previewOnly && competenciaSheet) {
+      const anchor = new Date(`${process.env.ADOPS_SHEET_AS_OF || new Date().toLocaleDateString("sv-SE", {timeZone:"America/Cuiaba"})}T12:00:00Z`);
+      const labels = [0, 15, 30, 45].map(days => new Date(anchor.getTime() + days * 86400000)).map(date =>
+        normalizeForMatch(new Intl.DateTimeFormat("pt-BR", {month:"long",year:"numeric",timeZone:"UTC"}).format(date).replace(" de ", "/")));
+      if (!labels.includes(normalizeForMatch(competenciaSheet))) continue;
+    }
     const worksheet = workbook.Sheets[sheetName];
     if (!competenciaSheet || !worksheet || !worksheet["!ref"]) continue;
-    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: ",", RS: "\n", blankrows: false });
+    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: ",", RS: "\n", blankrows: true });
     rows.push(...buildRowsFromSheetCsv(csv, sheetName, competenciaSheet));
   }
 
@@ -501,6 +469,28 @@ async function ensureByName(
 async function main() {
   const dryRun = process.argv.includes("--dry-run") || process.env.SYNC_DRY_RUN === "1";
   const rawRows = await loadRawRows();
+  if (dryRun || process.argv.includes("--commercial-preview")) {
+    const sourceSha256 = createHash("sha256").update(await readFile(TMP_FILE)).digest("hex");
+    console.log(JSON.stringify({
+      scope: "commercial",
+      complete: true,
+      coverage: sheetCoverage,
+      mutations: 0,
+      source: "planilha_xlsx",
+      sourceSha256,
+      checkedAt: new Date().toISOString(),
+      rowCount: rawRows.length,
+      rows: rawRows.map((row) => ({
+        ...row,
+        piCodigo: normalizePi(row.peca, row.agenciaValor),
+        localFormatoNormalizado: normalizeFormato(row.local),
+        clientNameHint: inferClientName(row.peca, row.campanha),
+        agencyNameHint: splitAgencyValue(row.agenciaValor).agencyName,
+        valorLiquidoHint: splitAgencyValue(row.agenciaValor).valorLiquido,
+      })),
+    }));
+    return;
+  }
   const warnings: string[] = [];
   const processedInsertionKeys = new Set<string>();
   let createdCampaigns = 0;
@@ -508,6 +498,9 @@ async function main() {
   let createdInsertions = 0;
   let updatedInsertions = 0;
   const changes: Array<Record<string, unknown>> = [];
+  const knownSitesById = new Map((await db.select().from(sitesTable)).map((site) => [site.id, site]));
+  const knownCampaignsById = new Map((await db.select().from(campaignsTable)).map((campaign) => [campaign.id, campaign]));
+  const knownInsertions = await db.select().from(insertionsTable);
 
   for (const row of rawRows) {
     if (isSocialOnlyFormato(row.local)) {
@@ -517,12 +510,51 @@ async function main() {
     const agencyInfo = splitAgencyValue(row.agenciaValor);
     const clientName = inferClientName(row.peca, row.campanha);
     const piCodigo = normalizePi(row.peca, row.agenciaValor);
+    if (!normalizeCampaignPiIdentity(row.peca)) {
+      warnings.push(`${row.sourceSheet}: PI pendente em ${row.siteSigla} / ${row.campanha}; corrigir fonte antes de sincronizar.`);
+      changes.push({ type: "blocked_invalid_pi", siteSigla: row.siteSigla, campaignName: row.campanha });
+      continue;
+    }
+    const normalizedCampaignName = normalizeSpaces(row.campanha);
+    const localFormatoNormalizado = normalizeFormato(row.local);
+    const insertionIdentity = buildCampaignInsertionIdentity({
+      piCodigo,
+      siteSigla: row.siteSigla,
+      localFormato: localFormatoNormalizado,
+      periodoInicio: row.inicio,
+      periodoFim: row.fim,
+    });
+    const canonicalInsertionCandidates = insertionIdentity
+      ? knownInsertions.filter((item) => {
+          const candidateCampaign = knownCampaignsById.get(item.campanhaId);
+          const candidateSite = item.siteId ? knownSitesById.get(item.siteId) : null;
+          return buildCampaignInsertionIdentity({
+            piCodigo: candidateCampaign?.piCodigo,
+            siteSigla: candidateSite?.sigla,
+            localFormato: item.localFormatoNormalizado ?? item.localFormato,
+            periodoInicio: item.periodoInicio,
+            periodoFim: item.periodoFim,
+          }) === insertionIdentity;
+        })
+      : [];
+
+    if (canonicalInsertionCandidates.length > 1) {
+      changes.push({
+        type: "duplicate_identity",
+        identity: insertionIdentity,
+        insertionIds: canonicalInsertionCandidates.map((item) => item.id),
+        campaignIds: [...new Set(canonicalInsertionCandidates.map((item) => item.campanhaId))],
+      });
+      warnings.push(
+        `${row.sourceSheet}: identidade canônica duplicada para ${piCodigo ?? "sem-pi"} / ${row.siteSigla} / ${localFormatoNormalizado} (${row.inicio} a ${row.fim}). Nenhuma inserção foi criada.`,
+      );
+      continue;
+    }
+
     const siteId = await ensureSite(row.siteSigla);
     const clientProfile = await inferClientProfileFromPiReference(piCodigo, clientName);
     const clientId = await ensureByName(clientsTable, clientName, { profile: clientProfile });
     const agencyId = await ensureByName(agenciesTable, agencyInfo.agencyName);
-    const normalizedCampaignName = normalizeSpaces(row.campanha);
-    const normalizedPiCode = piCodigo ?? "";
 
     if (row.competenciaResolved !== row.competenciaSheet) {
       warnings.push(
@@ -533,22 +565,23 @@ async function main() {
     const matchingCampaigns = (await db.select().from(campaignsTable)).sort((a, b) => a.id - b.id);
     const exactCampaignCandidates = matchingCampaigns.filter((item) =>
       item.nome === normalizedCampaignName &&
-      (item.piCodigo ?? "") === normalizedPiCode &&
+      normalizeCampaignPiIdentity(item.piCodigo) === normalizeCampaignPiIdentity(piCodigo) &&
       item.agenciaId === agencyId &&
       item.competencia === row.competenciaResolved,
     );
-    let campaign = exactCampaignCandidates[0] ?? null;
+    let campaign = exactCampaignCandidates[0] ?? matchingCampaigns.find((item) => item.id === canonicalInsertionCandidates[0]?.campanhaId) ?? null;
 
     if (exactCampaignCandidates.length > 1) {
       warnings.push(
         `${row.sourceSheet}: campanha duplicada detectada para ${normalizedCampaignName} / ${piCodigo ?? "sem-pi"} / ${row.siteSigla}. Mantendo campanha ${exactCampaignCandidates[0]!.id} como canônica para não criar novo duplicado.`,
       );
+      if (canonicalInsertionCandidates.length !== 1) continue;
     }
 
     if (!campaign) {
       const sameIdentityCandidates = matchingCampaigns.filter((item) =>
         item.nome === normalizedCampaignName &&
-        (item.piCodigo ?? "") === normalizedPiCode &&
+        normalizeCampaignPiIdentity(item.piCodigo) === normalizeCampaignPiIdentity(piCodigo) &&
         item.agenciaId === agencyId,
       );
       const sameIdentity = sameIdentityCandidates[0] ?? null;
@@ -556,6 +589,7 @@ async function main() {
         warnings.push(
           `${row.sourceSheet}: identidade repetida em múltiplas campanhas para ${normalizedCampaignName} / ${piCodigo ?? "sem-pi"} / ${row.siteSigla}. Reaproveitando campanha ${sameIdentity?.id ?? "desconhecida"} em vez de criar outra.`,
         );
+        continue;
       }
       if (sameIdentity) {
         if (dryRun) {
@@ -634,7 +668,6 @@ async function main() {
       createdCampaigns += 1;
     }
 
-    const localFormatoNormalizado = normalizeFormato(row.local);
     const insertionIdentityInBatch = `${campaign.id}|${siteId}|${localFormatoNormalizado}|${row.inicio}|${row.fim}`;
     if (processedInsertionKeys.has(insertionIdentityInBatch)) {
       warnings.push(
@@ -656,7 +689,7 @@ async function main() {
           ? eq(insertionsTable.campanhaId, candidateCampaignIds[0]!)
           : inArray(insertionsTable.campanhaId, candidateCampaignIds),
       );
-    const existing = existingInsertions.find((item) =>
+    const existing = canonicalInsertionCandidates[0] ?? existingInsertions.find((item) =>
       item.siteId === siteId &&
       normalizeFormato(item.localFormatoNormalizado ?? item.localFormato ?? "") === localFormatoNormalizado &&
       item.periodoInicio === row.inicio &&

@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { db, campaignsTable, insertionsTable } from "@workspace/db";
+import { db, pool, campaignsTable, insertionsTable } from "@workspace/db";
 
 const router: IRouter = Router();
 const execFileAsync = promisify(execFile);
@@ -51,28 +51,66 @@ router.post("/sync/planilha/latest", async (_req, res): Promise<void> => {
   }
 });
 
-router.get("/sync/planilha/preview", async (_req, res): Promise<void> => {
+router.get("/sync/planilha/preview", async (req, res): Promise<void> => {
   try {
+    const commercial = req.query.scope == null || req.query.scope === "commercial";
+    if (req.query.scope && !commercial) {
+      res.status(400).json({ error: "invalid_preview_scope" });
+      return;
+    }
+    const asOf = commercial
+      ? (typeof req.query.asOf === "string" ? req.query.asOf : new Date().toLocaleDateString("sv-SE", { timeZone: "America/Cuiaba" }))
+      : null;
+    if (asOf && (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || Number.isNaN(Date.parse(`${asOf}T00:00:00Z`)) || new Date(`${asOf}T00:00:00Z`).toISOString().slice(0, 10) !== asOf)) {
+      res.status(400).json({ error: "invalid_as_of_date" });
+      return;
+    }
     const { stdout } = await execFileAsync(
       TSX_BIN,
-      ["./scripts/src/sync-planilha-latest.ts", "--dry-run"],
+      ["./scripts/src/sync-planilha-latest.ts", commercial ? "--commercial-preview" : "--dry-run"],
       {
         cwd: PROJECT_ROOT,
         env: {
           ...process.env,
           DATABASE_URL: process.env.DATABASE_URL ?? "postgresql:///campanhas_portais_local",
           SYNC_DRY_RUN: "1",
+          ADOPS_SHEET_AS_OF: asOf || "",
         },
-        maxBuffer: 20 * 1024 * 1024,
+        maxBuffer: 32 * 1024 * 1024,
+        timeout: commercial ? 90_000 : undefined,
       },
     );
     const jsonStart = stdout.indexOf("{");
     const jsonEnd = stdout.lastIndexOf("}");
     const payload = jsonStart >= 0 && jsonEnd > jsonStart ? stdout.slice(jsonStart, jsonEnd + 1) : stdout;
-    res.json(JSON.parse(payload));
+    const parsed = JSON.parse(payload);
+    if (!commercial) {
+      res.json(parsed);
+      return;
+    }
+    const inventory = await pool.query(
+      `SELECT i.id AS "insertionId", i.campanha_id AS "campaignId", i.periodo_inicio AS "periodoInicio", i.periodo_fim AS "periodoFim",
+              i.local_formato AS "localFormato", i.local_formato_normalizado AS "localFormatoNormalizado", i.media_url AS "mediaUrl",
+              i.status_normalizado AS "statusNormalizado", s.sigla AS "siteSigla", c.nome AS "campaignName", c.origem AS "origem",
+              c.pi_codigo AS "piCodigo", c.cliente_id AS "clienteId", c.agencia_id AS "agenciaId", c.competencia,
+              c.valor_liquido AS "valorLiquido", c.planilha_ref AS "planilhaRef", c.updated_at AS "updatedAt",
+              cl.nome AS "clienteNome", ag.nome AS "agenciaNome"
+         FROM insertions i JOIN campaigns c ON c.id = i.campanha_id
+         LEFT JOIN sites s ON s.id = i.site_id
+         LEFT JOIN clients cl ON cl.id = c.cliente_id
+         LEFT JOIN agencies ag ON ag.id = c.agencia_id
+        WHERE i.archived_at IS NULL AND i.superseded_by_insertion_id IS NULL
+          AND ((i.periodo_inicio <= ($1::date + interval '30 days')::text AND i.periodo_fim >= ($1::date - interval '30 days')::text)
+            OR (c.pi_codigo IS NULL OR c.cliente_id IS NULL OR c.agencia_id IS NULL OR c.competencia IS NULL OR c.planilha_ref IS NULL))
+        ORDER BY i.id DESC LIMIT 2001`,
+      [asOf],
+    );
+    const agencies = await pool.query("SELECT id, nome FROM agencies ORDER BY id");
+    const complete = inventory.rows.length <= 2000;
+    res.json({ ...parsed, asOf, inventoryComplete: complete, inventoryCount: inventory.rows.length, insertions: inventory.rows.slice(0, 2000), agencies: agencies.rows });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    res.status(500).json({ error: "Falha ao gerar preview da sincronização.", details: message });
+    res.status(req.query.scope === "commercial" ? 503 : 500).json({ error: req.query.scope === "commercial" ? "source_unavailable" : "Falha ao gerar preview da sincronização.", complete: false, details: message });
   }
 });
 

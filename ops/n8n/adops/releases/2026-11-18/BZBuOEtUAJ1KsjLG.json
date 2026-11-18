@@ -1,0 +1,67 @@
+{
+  "id": "BZBuOEtUAJ1KsjLG",
+  "name": "ADOPS — Conferir checklist",
+  "active": false,
+  "versionId": "df473b14-6f76-41b1-86e8-120391b3e408",
+  "nodes": [
+    {
+      "id": "7a01f03c-6380-4723-bc0b-30e037074304",
+      "name": "Conferir checklists",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "54395984-8d53-482b-8083-67c47db65f3d",
+      "name": "Consultar checklists e pendências",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/monitoring/checklists",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Conferir checklists": {
+      "main": [
+        [
+          {
+            "node": "Consultar checklists e pendências",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "executionTimeout": 180
+  }
+}

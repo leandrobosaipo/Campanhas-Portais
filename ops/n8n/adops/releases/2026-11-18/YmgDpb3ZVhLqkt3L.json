@@ -1,0 +1,258 @@
+{
+  "id": "YmgDpb3ZVhLqkt3L",
+  "name": "ADOPS — Operação controlada API",
+  "active": true,
+  "versionId": "2a3a144c-bb40-40a0-921f-3a0ecc28caf2",
+  "nodes": [
+    {
+      "id": "16414902-4986-4a33-9da1-64e48ff36f6c",
+      "name": "Executar operação manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "07189aac-4929-4fc4-b59f-66e0beb9cac0",
+      "name": "É uma mutação POST ou PATCH?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"POST\", \"PATCH\"].includes(String($json.method || \"\").toUpperCase()) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e343e8a9-e40e-455c-8cf4-dd0b7c7b3f13",
+      "name": "Receber operação do workflow pai",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "path",
+              "type": "string"
+            },
+            {
+              "name": "method",
+              "type": "string"
+            },
+            {
+              "name": "bodyJson",
+              "type": "string"
+            },
+            {
+              "name": "idempotencyKey",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4392029c-93da-45f7-8d93-09a18b810d00",
+      "name": "Alterar API AdOps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "={{ [\"POST\", \"PATCH\"].includes(String($json.method || \"\").toUpperCase()) ? String($json.method).toUpperCase() : \"POST\" }}",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api\" + (([\"/pi-site-exports/\",\"/ops/\",\"/insertions\",\"/integrations/\",\"/audit-checklists/\",\"/monitoring/\",\"/sync/\",\"/campaigns\",\"/capture-rules\",\"/sites\",\"/clients\",\"/agencies\"].some(p => String($json.path || \"\").startsWith(p)) || /^\\/internal\\/insertions\\/[1-9]\\d*\\/capture-proof\\/candidates$/.test(String($json.path || \"\")) || /^\\/internal\\/capture-proof-candidates\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\/(audit|promote)$/.test(String($json.path || \"\"))) && !String($json.path).includes(\"..\") ? String($json.path) : \"/ops/runtime-readiness\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ String($json.idempotencyKey || (\"adops-controlled:\" + $execution.id)) }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.bodyJson ?? '{}') }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "f1466671-2e9a-4016-8085-da032b0c5018",
+      "name": "Consultar API AdOps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "method": "={{ [\"GET\", \"HEAD\"].includes(String($json.method || \"GET\").toUpperCase()) ? String($json.method || \"GET\").toUpperCase() : \"GET\" }}",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api\" + (([\"/pi-site-exports/\",\"/ops/\",\"/insertions\",\"/integrations/\",\"/audit-checklists/\",\"/monitoring/\",\"/sync/\",\"/campaigns\",\"/capture-rules\",\"/sites\",\"/clients\",\"/agencies\"].some(p => String($json.path || \"\").startsWith(p)) || /^\\/internal\\/capture-proof-candidates\\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String($json.path || \"\"))) && !String($json.path).includes(\"..\") ? String($json.path) : \"/ops/runtime-readiness\") }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ String($json.idempotencyKey || (\"adops-controlled:\" + $execution.id)) }}"
+            }
+          ]
+        },
+        "sendBody": false,
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "8a0af31d-0ff9-40e0-b164-d41c15f9cda9",
+      "name": "Operação manual aprovada",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        -160
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "path",
+              "name": "path",
+              "type": "string",
+              "value": "/ops/runtime-readiness"
+            },
+            {
+              "id": "method",
+              "name": "method",
+              "type": "string",
+              "value": "GET"
+            },
+            {
+              "id": "bodyJson",
+              "name": "bodyJson",
+              "type": "string",
+              "value": "{}"
+            },
+            {
+              "id": "idempotencyKey",
+              "name": "idempotencyKey",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "É uma mutação POST ou PATCH?": {
+      "main": [
+        [
+          {
+            "node": "Alterar API AdOps",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consultar API AdOps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber operação do workflow pai": {
+      "main": [
+        [
+          {
+            "node": "É uma mutação POST ou PATCH?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executar operação manual": {
+      "main": [
+        [
+          {
+            "node": "Operação manual aprovada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operação manual aprovada": {
+      "main": [
+        [
+          {
+            "node": "É uma mutação POST ou PATCH?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 240,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

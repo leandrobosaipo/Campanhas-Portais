@@ -1,0 +1,376 @@
+{
+  "id": "McaBaIBdwxN7icfv",
+  "name": "ADOPS — Tratar falhas",
+  "active": true,
+  "versionId": "ddc332e2-9e08-45a3-96bc-ec730809ffee",
+  "nodes": [
+    {
+      "id": "9b80b4a2-98d6-4971-b204-d1667cc71ed3",
+      "name": "Falha em rotina AdOps",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ce501916-06a0-45ae-8c71-45aff17be0d2",
+      "name": "Registrar orientação para revisão",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "needs_technical_review"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "type": "string",
+              "value": "Uma rotina AdOps falhou. Confira a execução de origem; não reenviar publicação nem captura sem consultar o mesmo trabalho."
+            },
+            {
+              "id": "execution",
+              "name": "executionId",
+              "type": "string",
+              "value": "={{ $json.execution?.id || \"\" }}"
+            },
+            {
+              "id": "workflow",
+              "name": "workflowId",
+              "type": "string",
+              "value": "={{ $json.workflow?.id || \"\" }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "607e49b0-2cf4-41f6-bea2-e0174c22016b",
+      "name": "Identificar fluxo e etapa sem expor segredos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const x=$input.first().json;const manual=!x.workflow&&!x.execution;const workflow_id=String(x.workflow?.id||'adops-alert-validation');const execution_id=String(x.execution?.id||'validation-20261117-v1');const stage=String(x.execution?.lastNodeExecuted||x.trigger?.error?.node?.name||'Validação do aviso').replace(/[\\r\\n]/g,' ').slice(0,120);const raw=String(x.execution?.error?.message||x.trigger?.error?.message||'');const reason=manual?'Teste controlado da notificação de falhas.':/timeout|timed out|ETIMEDOUT/i.test(raw)?'O serviço não respondeu dentro do prazo.':/ECONNREFUSED|unavailable|503|502/i.test(raw)?'Serviço indisponível ou conexão recusada.':/memory|heap|ENOMEM/i.test(raw)?'Falha relacionada à memória; conferir o servidor.':/401|403|unauthorized/i.test(raw)?'Acesso recusado pelo serviço; conferir a credencial.':'A etapa registrou uma falha técnica. O diagnóstico completo foi preservado na execução.';const workflow=String(x.workflow?.name||'AdOps — tratamento de erros').replace(/[\\r\\n]/g,' ').slice(0,120);const incident_key=manual?'adops-alert-validation-20261117-v1':[workflow_id,stage,Math.floor(Date.now()/1800000)].join(':');return [{json:{incident_key,workflow_id,execution_id,stage,status:'delivery_unknown',provider_id:'',message:[manual?'*Teste do alerta AdOps*':'*Rotina AdOps interrompida*','Fluxo: '+workflow,'Etapa: '+stage,'Motivo: '+reason,'Execução: '+execution_id,'Próximo passo: consultar esta execução e o mesmo trabalho antes de repetir publicação ou envio. As retentativas técnicas têm limite; uma tentativa de envio sem recibo não será reenviada automaticamente.','Este alerta funciona pelo n8n mesmo quando a API AdOps está indisponível.'].join('\\n')}}];"
+      }
+    },
+    {
+      "id": "38ca6124-807a-416f-8951-9251ec5fb63d",
+      "name": "Evitar aviso repetido por 30 minutos",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3Pb0IzQ4aXFQECs8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "incident_key",
+              "condition": "eq",
+              "keyValue": "={{ $json.incident_key }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0c90dbcc-ff25-4558-8c7b-afe359d87a33",
+      "name": "Reservar tentativa antes de enviar",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3Pb0IzQ4aXFQECs8"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "incident_key": "={{ $json.incident_key }}",
+            "workflow_id": "={{ $json.workflow_id }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "stage": "={{ $json.stage }}",
+            "message": "={{ $json.message }}",
+            "status": "={{ $json.status }}",
+            "provider_id": "={{ $json.provider_id }}"
+          },
+          "schema": [
+            {
+              "id": "incident_key",
+              "displayName": "incident_key",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "bd8fdbc5-99cf-4559-b71a-120f6a2ebfaf",
+      "name": "Avisar falha no grupo ADOPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://cod5-evolution-evolution-1:8080/message/sendText/cod5-pmt-pilot",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {number: \"120363431261379098@g.us\", text: $(\"Identificar fluxo e etapa sem expor segredos\").first().json.message, linkPreview:false} }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0drzuZepRg98eWBU",
+          "name": "AdOps — Evolution"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": false
+    },
+    {
+      "id": "de0a5194-ac99-4885-be3f-64012a3ed850",
+      "name": "Preservar recibo sem reenviar",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "3Pb0IzQ4aXFQECs8"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $(\"Reservar tentativa antes de enviar\").first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "provider_id": "={{ $json.key?.id || $json.data?.key?.id || '' }}",
+            "status": "={{ ($json.key?.id || $json.data?.key?.id) ? 'provider_accepted' : 'delivery_unknown' }}"
+          },
+          "schema": [
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "type": "string",
+              "required": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4bcc2f06-a9fc-42cc-9633-efc43c82cceb",
+      "name": "Validar aviso de falha uma vez",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Falha em rotina AdOps": {
+      "main": [
+        [
+          {
+            "node": "Identificar fluxo e etapa sem expor segredos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar aviso de falha uma vez": {
+      "main": [
+        [
+          {
+            "node": "Identificar fluxo e etapa sem expor segredos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identificar fluxo e etapa sem expor segredos": {
+      "main": [
+        [
+          {
+            "node": "Evitar aviso repetido por 30 minutos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evitar aviso repetido por 30 minutos": {
+      "main": [
+        [
+          {
+            "node": "Reservar tentativa antes de enviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservar tentativa antes de enviar": {
+      "main": [
+        [
+          {
+            "node": "Avisar falha no grupo ADOPS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avisar falha no grupo ADOPS": {
+      "main": [
+        [
+          {
+            "node": "Preservar recibo sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preservar recibo sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Registrar orientação para revisão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "executionTimeout": 120
+  }
+}

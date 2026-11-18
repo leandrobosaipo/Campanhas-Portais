@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "cutover": "2026-11-04T19:46:28.540Z",
+  "approvers": [
+    "138585743306775@lid"
+  ],
+  "identities": [
+    "PERRENGUE:42348",
+    "PERRENGUE:25208256",
+    "PERRENGUE:25208280"
+  ],
+  "allowPendingPi": true,
+  "allowAllActiveCampaigns": true,
+  "allActiveCampaignsCutover": "2026-11-17T23:37:34.071Z",
+  "pendingPiJobIds": [
+    "9a806b21-4542-4148-85c1-2a9c60e4da84",
+    "678d185e-1821-43ae-b29e-55ccc895439b",
+    "764af67a-1998-48a8-98bb-fe6fcb38842f"
+  ],
+  "pendingPiPolicySource": "codex:user:20261117:publish-complete-data-pi-later"
+}

@@ -3,9 +3,10 @@ import { dirname, resolve } from 'node:path';
 
 const API_BASE = process.env.ADOPS_API_BASE_URL ?? 'http://127.0.0.1:4011';
 const OUT_PATH = process.env.ADOPS_SNAPSHOT_OUT ?? resolve('/Users/leandrobosaipo/Projetos/AdOps/ops/cloudflare-public-api/data/snapshot.ts');
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.ADOPS_SNAPSHOT_REQUEST_TIMEOUT_MS ?? '120000', 10);
 
 async function fetchJson(path) {
-  const response = await fetch(`${API_BASE}${path}`, { signal: AbortSignal.timeout(15000) });
+  const response = await fetch(`${API_BASE}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   const text = await response.text();
   if (!response.ok) throw new Error(`Failed ${path}: ${response.status} ${text.slice(0, 200)}`);
   return JSON.parse(text);

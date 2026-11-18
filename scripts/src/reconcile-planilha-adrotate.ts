@@ -1,3 +1,4 @@
+import { readCampaignSheetBlocks } from "./lib/campaign-sheet-blocks.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -5,6 +6,10 @@ import path from "node:path";
 import * as XLSX from "xlsx";
 import { eq, and } from "drizzle-orm";
 import { db, campaignsTable, insertionsTable, sitesTable } from "@workspace/db";
+import {
+  buildCampaignInsertionIdentity,
+  normalizeCampaignPiIdentity,
+} from "../../artifacts/api-server/src/lib/campaign-operations-matching";
 
 type RawRow = {
   sourceSheet: string;
@@ -32,6 +37,8 @@ type RemoteAd = {
   image: string | null;
   bannercode: string;
 };
+
+const sheetCoverage: Array<Record<string, unknown>> = [];
 
 const EXPORT_URL =
   process.env.PLANILHA_XLSX_URL ??
@@ -373,57 +380,13 @@ function normalizePi(value: string, fallback = ""): string | null {
 }
 
 function buildRowsFromSheetCsv(csv: string, sheetName: string, competenciaSheet: string): RawRow[] {
-  const lines = parseCsv(csv).filter((row) => row.some((cell) => isMeaningful(cell)));
-  const rows: RawRow[] = [];
-  let siteRowCells: string[] | null = null;
-  let blockStarts: number[] = [];
-  let blockSites: string[] = [];
-
-  for (const cells of lines) {
-    const headerStarts = cells
-      .map((cell, index) => (normalizeForMatch(cell).startsWith("PECA") ? index : -1))
-      .filter((index) => index >= 0);
-    if (headerStarts.length > 0) {
-      blockStarts = headerStarts;
-      blockSites = headerStarts.map((start, index) => {
-        const nextStart = headerStarts[index + 1] ?? cells.length;
-        const search = (siteRowCells ?? []).slice(start, nextStart + 1);
-        return search.find((cell) => cell in SITE_NAMES) ?? "";
-      });
-      continue;
-    }
-    if (cells.some((cell) => cell in SITE_NAMES)) {
-      siteRowCells = cells;
-      continue;
-    }
-    if (blockStarts.length === 0) continue;
-    blockStarts.forEach((start, index) => {
-      const nextStart = blockStarts[index + 1] ?? cells.length;
-      const slice = cells.slice(start, nextStart);
-      const [peca = "", agenciaValor = "", campanha = "", periodo = "", local = "", status = "", processoRealizado = "", processoEnviado = "", extra = ""] = slice;
-      if (!isMeaningful(campanha) && !isMeaningful(local) && !isMeaningful(periodo)) return;
-      const { inicio, fim } = parsePeriodo(periodo, competenciaSheet);
-      const competenciaResolved = deriveCompetenciaFromPeriodo(competenciaSheet, inicio, fim);
-      rows.push({
-        sourceSheet: sheetName,
-        competenciaSheet,
-        competenciaResolved,
-        siteSigla: blockSites[index] ?? "",
-        peca,
-        agenciaValor,
-        campanha,
-        periodo,
-        local,
-        status,
-        processoRealizado,
-        processoEnviado,
-        extra,
-        inicio,
-        fim,
-      });
-    });
-  }
-  return rows.filter((row) => row.siteSigla && (isMeaningful(row.campanha) || isMeaningful(row.local)));
+  const parsed = readCampaignSheetBlocks(parseCsv(csv));
+  sheetCoverage.push({ sheetName, ...parsed.coverage });
+  return parsed.rows.map((row: Record<string, any>) => {
+    const { inicio, fim } = parsePeriodo(row.periodo, competenciaSheet);
+    return { ...row, sourceSheet: sheetName, competenciaSheet,
+      competenciaResolved: deriveCompetenciaFromPeriodo(competenciaSheet, inicio, fim), inicio, fim } as RawRow;
+  });
 }
 
 async function downloadLatestXlsx() {
@@ -442,7 +405,7 @@ async function loadRawRows() {
     const competenciaSheet = normalizeSheetCompetencia(sheetName);
     const worksheet = workbook.Sheets[sheetName];
     if (!competenciaSheet || !worksheet || !worksheet["!ref"]) continue;
-    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: ",", RS: "\n", blankrows: false });
+    const csv = XLSX.utils.sheet_to_csv(worksheet, { FS: ",", RS: "\n", blankrows: true });
     rows.push(...buildRowsFromSheetCsv(csv, sheetName, competenciaSheet));
   }
   return rows;
@@ -518,7 +481,8 @@ async function ensureSite(sigla: string) {
 }
 
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
+  const apply = process.argv.includes("--apply");
+  const dryRun = !apply;
   const rawRows = await loadRawRows();
   const allSites = await db.select().from(sitesTable);
   const allCampaigns = await db.select().from(campaignsTable);
@@ -530,7 +494,7 @@ async function main() {
     const key = [
       row.siteSigla,
       normalizeTextKey(row.campanha),
-      normalizeTextKey(normalizePi(row.peca, row.agenciaValor)),
+      normalizeCampaignPiIdentity(normalizePi(row.peca, row.agenciaValor)) ?? "",
       normalizeTextKey(normalizeFormato(row.local)),
       row.competenciaResolved,
     ].join("|");
@@ -541,13 +505,29 @@ async function main() {
 
   const periodUpdates: Array<Record<string, unknown>> = [];
   const periodSkipped: Array<Record<string, unknown>> = [];
+  const insertionIdsByIdentity = new Map<string, number[]>();
+  for (const insertion of allInsertions) {
+    const campaign = allCampaigns.find((item) => item.id === insertion.campanhaId);
+    const site = insertion.siteId ? siteById.get(insertion.siteId) : null;
+    const identity = buildCampaignInsertionIdentity({
+      piCodigo: campaign?.piCodigo,
+      siteSigla: site?.sigla,
+      localFormato: insertion.localFormatoNormalizado ?? insertion.localFormato,
+      periodoInicio: insertion.periodoInicio,
+      periodoFim: insertion.periodoFim,
+    });
+    if (identity) insertionIdsByIdentity.set(identity, [...(insertionIdsByIdentity.get(identity) ?? []), insertion.id]);
+  }
+  const duplicateIdentities = [...insertionIdsByIdentity]
+    .filter(([, insertionIds]) => insertionIds.length > 1)
+    .map(([identity, insertionIds]) => ({ identity, insertionIds }));
 
   for (const campaign of allCampaigns) {
     const campaignInsertions = allInsertions.filter((item) => item.campanhaId === campaign.id);
     if (!campaignInsertions.length) continue;
     const sampleInsertion = campaignInsertions[0]!;
     const site = sampleInsertion.siteId ? siteById.get(sampleInsertion.siteId) : null;
-    const piKey = normalizeTextKey(campaign.piCodigo);
+    const piKey = normalizeCampaignPiIdentity(campaign.piCodigo) ?? "";
     const sameCompetenciaKeys = [...groupedRows.keys()].filter((key) => {
       const [siteSigla, campaignNameKey, piCodeKey, , competenciaResolved] = key.split("|");
       return (
@@ -696,6 +676,7 @@ async function main() {
     periodSkipped,
     mediaUpdates,
     mediaSkipped,
+    duplicateIdentities,
     manualReview,
   };
 

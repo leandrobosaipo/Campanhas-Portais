@@ -1,0 +1,1076 @@
+{
+  "id": "zxGSxncVTG3YX9W1",
+  "name": "ADOPS — Capturar evidência autorizada",
+  "active": true,
+  "versionId": "913ea4d0-f144-4d4e-b2e5-21a47b724e04",
+  "nodes": [
+    {
+      "id": "241d0e83-34b7-422f-86e8-25b4b07acd1d",
+      "name": "Iniciar conferência de evidência",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        368
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b73b3e43-f581-478a-b653-38d9b2aaeab8",
+      "name": "Definir alvo vazio seguro",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        368
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": ""
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "8cd45a67-35bf-49b4-9ca6-3eb8a61135c7",
+      "name": "Normalizar alvo",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        464
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($json.insertionId || 0) }}"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ String($json.date || \"\") }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4995dd47-a312-4c6c-9371-c9dceae07e55",
+      "name": "Receber alvo autorizado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        560
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "insertionId",
+              "type": "number"
+            },
+            {
+              "name": "date",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c63e8672-4e59-4d8c-a9f2-759a2ceb03d9",
+      "name": "ID permitido e somente data de hoje?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        464
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [3055,3090,3087,3103,3112,3047,3063,3082,3091,3083,3105,3084,3115,3093,3094,3106,3107,3097,3100].includes(Number($json.insertionId)) && /^\\d{4}-\\d{2}-\\d{2}$/.test(String($json.date)) && String($json.date) === $now.setZone(\"America/Cuiaba\").toISODate() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "13b5e0d5-18d9-4041-855a-b4d5bc8abd19",
+      "name": "Consultar evidência e auditoria por data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        368
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/status?date=\" + encodeURIComponent($(\"Normalizar alvo\").first().json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "f582b10b-fe23-438a-bd48-4d11af985e4b",
+      "name": "Evidência aprovada estritamente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        368
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar evidência e auditoria por data\").item.json.status === \"audited\" && $(\"Consultar evidência e auditoria por data\").item.json.checklistValidation?.approved === true && $(\"Consultar evidência e auditoria por data\").item.json.audit?.ok === true && Array.isArray($(\"Consultar evidência e auditoria por data\").item.json.audit?.issues) && $(\"Consultar evidência e auditoria por data\").item.json.audit.issues.length === 0 && $(\"Consultar evidência e auditoria por data\").item.json.isReachable === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "477faf51-5be7-46d2-affe-3e5940839730",
+      "name": "Retornar evidência preservada",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        272
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "preserved"
+            },
+            {
+              "id": "status",
+              "name": "status",
+              "type": "string",
+              "value": "={{ $(\"Consultar evidência e auditoria por data\").item.json.status }}"
+            },
+            {
+              "id": "insertionId",
+              "name": "insertionId",
+              "type": "number",
+              "value": "={{ Number($(\"Normalizar alvo\").first().json.insertionId) }}"
+            },
+            {
+              "id": "date",
+              "name": "date",
+              "type": "string",
+              "value": "={{ $(\"Normalizar alvo\").first().json.date }}"
+            },
+            {
+              "id": "proof",
+              "name": "proof",
+              "type": "object",
+              "value": "={{ $(\"Consultar evidência e auditoria por data\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c58ba6ff-b576-4cfb-abd5-33c8389e9379",
+      "name": "Falta confirmada, em período e com mídia?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        464
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Consultar evidência e auditoria por data\").item.json.status === \"missing\" && $(\"Consultar evidência e auditoria por data\").item.json.inPeriod === true && $(\"Consultar evidência e auditoria por data\").item.json.hasMedia === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "708e75f2-ddf9-4cf3-8af6-486052b3a671",
+      "name": "Consultar jobs ativos print-single",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1568,
+        368
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-single&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "30e41d1e-be71-4b46-8f6d-2a434e5ff754",
+      "name": "Consultar jobs ativos print-batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        368
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-batch&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "de5cfd33-49ca-4b41-96b0-345721a9d091",
+      "name": "Consultar jobs ativos print-backfill",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        368
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://adops-api.codigo5.com.br/api/ops/jobs?kind=print-backfill&status=queued,ready_for_runner,running&limit=100",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "271f5431-cce4-427d-a69f-9a36465d37c1",
+      "name": "Há job ativo para esta inserção e data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2240,
+        368
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ (() => { const id = Number($(\"Normalizar alvo\").first().json.insertionId); const date = String($(\"Normalizar alvo\").first().json.date); const all = [...($(\"Consultar jobs ativos print-single\").first().json.items || []), ...($(\"Consultar jobs ativos print-batch\").first().json.items || []), ...($(\"Consultar jobs ativos print-backfill\").first().json.items || [])]; return all.some(j => { const p = j.payload || {}; if (![\"queued\", \"ready_for_runner\", \"running\"].includes(j.status)) return false; if (j.kind === \"print-single\") return Number(p.insertionId) === id && String(p.date || \"\") === date; if (j.kind === \"print-backfill\") return Number(p.insertionId) === id && (!p.fromDate || String(p.fromDate) <= date) && (!p.toDate || String(p.toDate) >= date); if (j.kind === \"print-batch\") return String(p.date || p.targetDate || \"\") === date && (!Array.isArray(p.insertionIds) || p.insertionIds.map(Number).includes(id)); return false; }); })() }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "61d4457e-84a5-4245-bc12-dbfc4376ba7f",
+      "name": "Selecionar job ativo correspondente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2464,
+        80
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "jobId",
+              "name": "jobId",
+              "type": "string",
+              "value": "={{ (() => { const id = Number($(\"Normalizar alvo\").first().json.insertionId); const date = String($(\"Normalizar alvo\").first().json.date); const all = [...($(\"Consultar jobs ativos print-single\").first().json.items || []), ...($(\"Consultar jobs ativos print-batch\").first().json.items || []), ...($(\"Consultar jobs ativos print-backfill\").first().json.items || [])]; const j = all.find(j => { const p = j.payload || {}; if (![\"queued\", \"ready_for_runner\", \"running\"].includes(j.status)) return false; if (j.kind === \"print-single\") return Number(p.insertionId) === id && String(p.date || \"\") === date; if (j.kind === \"print-backfill\") return Number(p.insertionId) === id && (!p.fromDate || String(p.fromDate) <= date) && (!p.toDate || String(p.toDate) >= date); if (j.kind === \"print-batch\") return String(p.date || p.targetDate || \"\") === date && (!Array.isArray(p.insertionIds) || p.insertionIds.map(Number).includes(id)); return false; }); return j ? String(j.id) : \"\"; })() }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6dd1a200-6407-4a88-bfe0-b2d666b20369",
+      "name": "Acompanhar o mesmo job de captura",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2688,
+        80
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/ops/jobs/\" + encodeURIComponent($(\"Selecionar job ativo correspondente\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "64b8d24e-8404-49af-aa05-f27d799d9ffd",
+      "name": "Mesmo job de captura segue ativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2912,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"ready_for_runner\", \"running\"].includes($(\"Acompanhar o mesmo job de captura\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "86600135-f922-48f3-bef3-727c781b7cf0",
+      "name": "Aguardar job existente sem novo envio",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        0
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "webhookId": "31103e51-cd08-482a-9acf-6cc834032e8e"
+    },
+    {
+      "id": "5ab35efa-283d-4ddb-a479-186a85851902",
+      "name": "Ler prova após job existente terminal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3136,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/status?date=\" + encodeURIComponent($(\"Normalizar alvo\").first().json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "5691c7a8-6398-43d6-9ff7-33d6e04ca7f3",
+      "name": "Retornar job existente e status final",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3360,
+        192
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $(\"Ler prova após job existente terminal\").item.json.status === \"audited\" && $(\"Ler prova após job existente terminal\").item.json.checklistValidation?.approved === true && $(\"Ler prova após job existente terminal\").item.json.audit?.ok === true && Array.isArray($(\"Ler prova após job existente terminal\").item.json.audit?.issues) && $(\"Ler prova após job existente terminal\").item.json.audit.issues.length === 0 && $(\"Ler prova após job existente terminal\").item.json.isReachable === true ? \"verified\" : \"terminal_job_proof_not_verified\" }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Acompanhar o mesmo job de captura\").item.json }}"
+            },
+            {
+              "id": "proof",
+              "name": "proof",
+              "type": "object",
+              "value": "={{ $(\"Ler prova após job existente terminal\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "24b31f4f-d4dc-45c3-96ce-678a142b221d",
+      "name": "Data ainda é hoje antes da captura?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        576
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ String($(\"Normalizar alvo\").first().json.date) === $now.setZone(\"America/Cuiaba\").toISODate() && $now.setZone(\"America/Cuiaba\").hour >= 18 && $now.setZone(\"America/Cuiaba\").hour < 22 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "c79418cd-6977-4d8f-ac33-86055e13af98",
+      "name": "Solicitar captura ausente sem substituir",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2688,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/jobs\" }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ \"n8n-proof:\" + String($(\"Normalizar alvo\").first().json.insertionId) + \":\" + String($(\"Normalizar alvo\").first().json.date) + \":v1\" }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {date:String($(\"Normalizar alvo\").first().json.date),replace:false,force:false,candidate:false,promote:false} }}",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "34c779c1-7f90-4af2-9bae-d3be488410c1",
+      "name": "Consultar o mesmo job solicitado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2912,
+        480
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/jobs/\" + encodeURIComponent($(\"Solicitar captura ausente sem substituir\").first().json.jobId) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "257d3ad9-8d87-424a-a6ba-11c0eb17cb59",
+      "name": "Mesmo job solicitado segue ativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3136,
+        416
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ [\"queued\", \"running\"].includes($(\"Consultar o mesmo job solicitado\").item.json.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "2dad68ce-8cc9-4b4a-91b2-c645ed5a0f1c",
+      "name": "Aguardar mesmo job sem reenviar",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        480
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "webhookId": "0937cd98-f6f5-466d-9091-74b9fe923464"
+    },
+    {
+      "id": "103e59ed-ef0f-4108-8419-ddf262aa060e",
+      "name": "Ler status final da evidência",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3360,
+        672
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://adops-api.codigo5.com.br/api/insertions/\" + encodeURIComponent($(\"Normalizar alvo\").first().json.insertionId) + \"/capture-proof/status?date=\" + encodeURIComponent($(\"Normalizar alvo\").first().json.date) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 110000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "KSYggVRoWMHwHC3w",
+          "name": "AdOps — API"
+        }
+      }
+    },
+    {
+      "id": "57c7c041-6797-43eb-bd98-065402992dc2",
+      "name": "Retornar job e evidência sem afirmar aprovação",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3584,
+        672
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "state",
+              "name": "state",
+              "type": "string",
+              "value": "={{ $(\"Ler status final da evidência\").item.json.status === \"audited\" && $(\"Ler status final da evidência\").item.json.checklistValidation?.approved === true && $(\"Ler status final da evidência\").item.json.audit?.ok === true && Array.isArray($(\"Ler status final da evidência\").item.json.audit?.issues) && $(\"Ler status final da evidência\").item.json.audit.issues.length === 0 && $(\"Ler status final da evidência\").item.json.isReachable === true ? \"verified\" : \"terminal_job_proof_not_verified\" }}"
+            },
+            {
+              "id": "job",
+              "name": "job",
+              "type": "object",
+              "value": "={{ $(\"Consultar o mesmo job solicitado\").item.json }}"
+            },
+            {
+              "id": "proof",
+              "name": "proof",
+              "type": "object",
+              "value": "={{ $(\"Ler status final da evidência\").item.json }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "aac0f911-e097-46f5-a576-f11fc7310daa",
+      "name": "Bloquear captura após virada do dia",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2688,
+        672
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Captura bloqueada: auditoria exige data atual e janela18h até antes22h de Cuiabá. Aceite da API não comprova aprovação."
+      }
+    },
+    {
+      "id": "715873da-aac3-41b2-a112-4b2cbc1ffd96",
+      "name": "Preservar estado que exige revisão",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        560
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ \"Nenhuma captura solicitada. O status da evidência é \" + String($(\"Consultar evidência e auditoria por data\").item.json.status) + \"; confira mídia, período e auditoria.\" }}"
+      }
+    },
+    {
+      "id": "55e07cf7-56ab-47a5-b23b-f520b11e7e1e",
+      "name": "Bloquear alvo fora do escopo",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        896,
+        560
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "Captura bloqueada: use um dos 19 IDs autorizados e somente a data de hoje em America/Cuiaba. Data histórica, inclusive após a virada local, pertence ao fluxo retroativo."
+      }
+    }
+  ],
+  "connections": {
+    "Iniciar conferência de evidência": {
+      "main": [
+        [
+          {
+            "node": "Definir alvo vazio seguro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Definir alvo vazio seguro": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar alvo": {
+      "main": [
+        [
+          {
+            "node": "ID permitido e somente data de hoje?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber alvo autorizado": {
+      "main": [
+        [
+          {
+            "node": "Normalizar alvo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ID permitido e somente data de hoje?": {
+      "main": [
+        [
+          {
+            "node": "Consultar evidência e auditoria por data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear alvo fora do escopo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar evidência e auditoria por data": {
+      "main": [
+        [
+          {
+            "node": "Evidência aprovada estritamente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evidência aprovada estritamente?": {
+      "main": [
+        [
+          {
+            "node": "Retornar evidência preservada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Falta confirmada, em período e com mídia?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falta confirmada, em período e com mídia?": {
+      "main": [
+        [
+          {
+            "node": "Consultar jobs ativos print-single",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preservar estado que exige revisão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar jobs ativos print-single": {
+      "main": [
+        [
+          {
+            "node": "Consultar jobs ativos print-batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar jobs ativos print-batch": {
+      "main": [
+        [
+          {
+            "node": "Consultar jobs ativos print-backfill",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar jobs ativos print-backfill": {
+      "main": [
+        [
+          {
+            "node": "Há job ativo para esta inserção e data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Há job ativo para esta inserção e data?": {
+      "main": [
+        [
+          {
+            "node": "Selecionar job ativo correspondente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Data ainda é hoje antes da captura?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Selecionar job ativo correspondente": {
+      "main": [
+        [
+          {
+            "node": "Acompanhar o mesmo job de captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acompanhar o mesmo job de captura": {
+      "main": [
+        [
+          {
+            "node": "Mesmo job de captura segue ativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo job de captura segue ativo?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar job existente sem novo envio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler prova após job existente terminal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar job existente sem novo envio": {
+      "main": [
+        [
+          {
+            "node": "Acompanhar o mesmo job de captura",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler prova após job existente terminal": {
+      "main": [
+        [
+          {
+            "node": "Retornar job existente e status final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data ainda é hoje antes da captura?": {
+      "main": [
+        [
+          {
+            "node": "Solicitar captura ausente sem substituir",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bloquear captura após virada do dia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Solicitar captura ausente sem substituir": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job solicitado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar o mesmo job solicitado": {
+      "main": [
+        [
+          {
+            "node": "Mesmo job solicitado segue ativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mesmo job solicitado segue ativo?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar mesmo job sem reenviar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler status final da evidência",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar mesmo job sem reenviar": {
+      "main": [
+        [
+          {
+            "node": "Consultar o mesmo job solicitado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler status final da evidência": {
+      "main": [
+        [
+          {
+            "node": "Retornar job e evidência sem afirmar aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "errorWorkflow": "McaBaIBdwxN7icfv",
+    "timezone": "America/Cuiaba",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 1800,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
