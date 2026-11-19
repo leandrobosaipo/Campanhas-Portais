@@ -321,6 +321,15 @@ function buildRequiredGates(localFormato: string | null | undefined, auditConfig
   };
 }
 
+export type AuditChecklistReadContext = Map<string, Promise<unknown>>;
+
+async function auditReadOnce<T>(context: AuditChecklistReadContext | undefined, key: string, load: () => Promise<T>): Promise<T> {
+  if (!context) return load();
+  let value = context.get(key) as Promise<T> | undefined;
+  if (!value) { value = load(); context.set(key, value); }
+  return value;
+}
+
 async function loadInsertionBundle(insertionId: number) {
   const [insertion] = await db.select().from(insertionsTable).where(eq(insertionsTable.id, insertionId)).limit(1);
   if (!insertion) return null;
@@ -345,79 +354,62 @@ async function resolvePublishedRule(siteSigla: string, groupId: number) {
   return rule ?? null;
 }
 
-export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string) {
+export async function loadAuditChecklistMetadata(insertionId: number, targetDate: string, readContext?: AuditChecklistReadContext) {
   const dateKey = normalizeDateKey(targetDate);
-  const logs = await db.select({
-    id: captureProofLogsTable.id,
-    uploadedUrl: captureProofLogsTable.uploadedUrl,
-  }).from(captureProofLogsTable).where(
-    and(
+  const references = await auditReadOnce(readContext, 'audit:refs:' + insertionId, async () => {
+    const query = db.select({ id: captureProofLogsTable.id, targetDate: captureProofLogsTable.targetDate,
+      uploadedUrl: captureProofLogsTable.uploadedUrl, createdAt: captureProofLogsTable.createdAt,
+    }).from(captureProofLogsTable).where(and(
       eq(captureProofLogsTable.insertionId, insertionId),
-      eq(captureProofLogsTable.targetDate, dateKey),
+      ...(readContext ? [] : [eq(captureProofLogsTable.targetDate, dateKey)]),
       inArray(captureProofLogsTable.status, ["ok", "pending_audit"]),
-    ),
-  ).orderBy(desc(captureProofLogsTable.createdAt)).limit(50);
-  const evidenceRows = await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId));
-  const evidenceUrl = selectCanonicalEvidencePerDate(evidenceRows, (row) => getEvidenceDateKey(row.titulo))
-    .find((row) => getEvidenceDateKey(row.titulo) === dateKey)?.arquivoUrl ?? null;
+    )).orderBy(desc(captureProofLogsTable.createdAt));
+    return readContext ? await query : await query.limit(50);
+  });
+  const logs = references.filter(row => row.targetDate === dateKey).slice(0, 50);
+  const evidenceRows = await auditReadOnce(readContext, 'audit:evidences:' + insertionId,
+    async () => db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertionId)));
+  const evidenceUrl = selectCanonicalEvidencePerDate(evidenceRows, row => getEvidenceDateKey(row.titulo))
+    .find(row => getEvidenceDateKey(row.titulo) === dateKey)?.arquivoUrl ?? null;
   if (evidenceUrl) {
-    const promotions = await db.select().from(captureProofCandidatePromotionsTable).where(and(
+    const allPromotions = await auditReadOnce(readContext, 'audit:promotions:' + insertionId, async () => db.select().from(captureProofCandidatePromotionsTable).where(and(
       eq(captureProofCandidatePromotionsTable.insertionId, insertionId),
-      eq(captureProofCandidatePromotionsTable.targetDate, dateKey),
+      ...(readContext ? [] : [eq(captureProofCandidatePromotionsTable.targetDate, dateKey)]),
       eq(captureProofCandidatePromotionsTable.status, "approved"),
-    )).orderBy(desc(captureProofCandidatePromotionsTable.receivedAt));
+    )).orderBy(desc(captureProofCandidatePromotionsTable.receivedAt)));
+    const promotions = allPromotions.filter(row => row.targetDate === dateKey);
     for (const promotion of promotions) {
       if (!promotion.finalLogId) continue;
-      const candidatePromise = db.select().from(captureProofCandidatesTable)
-        .where(eq(captureProofCandidatesTable.id, promotion.candidateId)).limit(1);
-      const logPromise = db.select().from(captureProofLogsTable)
-        .where(eq(captureProofLogsTable.id, promotion.finalLogId)).limit(1);
+      const candidatePromise = auditReadOnce(readContext, 'audit:candidate:' + promotion.candidateId,
+        async () => db.select().from(captureProofCandidatesTable).where(eq(captureProofCandidatesTable.id, promotion.candidateId)).limit(1));
+      const logPromise = auditReadOnce(readContext, 'audit:log:' + promotion.finalLogId,
+        async () => db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, promotion.finalLogId)).limit(1));
       const [[candidate], [finalLog]] = await Promise.all([candidatePromise, logPromise]);
-      const promotedMetadata = resolvePromotedCaptureProofMetadata({
-        promotion,
-        candidate,
-        finalLog,
-        canonicalEvidenceUrl: evidenceUrl,
-      });
+      const promotedMetadata = resolvePromotedCaptureProofMetadata({ promotion, candidate, finalLog, canonicalEvidenceUrl: evidenceUrl });
       if (promotedMetadata && finalLog) {
-        const provenance = correlateCaptureLogProvenance({
-          targetDate: finalLog.targetDate,
-          jobId: finalLog.jobId,
-          runnerJobId: finalLog.runnerJobId,
-          createdAt: finalLog.createdAt,
-          uploadedUrl: finalLog.uploadedUrl,
-          status: finalLog.status,
-          metadata: promotedMetadata,
-          evidenceUrl,
-        });
+        const provenance = correlateCaptureLogProvenance({ targetDate: finalLog.targetDate, jobId: finalLog.jobId,
+          runnerJobId: finalLog.runnerJobId, createdAt: finalLog.createdAt, uploadedUrl: finalLog.uploadedUrl,
+          status: finalLog.status, metadata: promotedMetadata, evidenceUrl });
         if (provenance) return attachServerCaptureProvenance(promotedMetadata, provenance);
       }
     }
   }
-  const latestRef = logs.find((row) => row.uploadedUrl === evidenceUrl) ?? null;
-  const [latestLog] = latestRef
-    ? await db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, latestRef.id)).limit(1)
-    : [];
+  const latestRef = logs.find(row => row.uploadedUrl === evidenceUrl) ?? null;
+  const [latestLog] = latestRef ? await auditReadOnce(readContext, 'audit:log:' + latestRef.id,
+    async () => db.select().from(captureProofLogsTable).where(eq(captureProofLogsTable.id, latestRef.id)).limit(1)) : [];
   if (!latestLog || !isPlainObject(latestLog.metadata)) return null;
   const metadata = { ...latestLog.metadata };
-  const provenance = correlateCaptureLogProvenance({
-    targetDate: latestLog.targetDate,
-    jobId: latestLog.jobId,
-    runnerJobId: latestLog.runnerJobId,
-    createdAt: latestLog.createdAt,
-    uploadedUrl: latestLog.uploadedUrl,
-    status: latestLog.status,
-    metadata,
-    evidenceUrl,
-  });
+  const provenance = correlateCaptureLogProvenance({ targetDate: latestLog.targetDate, jobId: latestLog.jobId,
+    runnerJobId: latestLog.runnerJobId, createdAt: latestLog.createdAt, uploadedUrl: latestLog.uploadedUrl,
+    status: latestLog.status, metadata, evidenceUrl });
   return provenance ? attachServerCaptureProvenance(metadata, provenance) : metadata;
 }
 
-export async function resolveAuditChecklist(input: { insertionId: number; date: string }): Promise<AuditChecklistContract> {
+export async function resolveAuditChecklist(input: { insertionId: number; date: string; readContext?: AuditChecklistReadContext }): Promise<AuditChecklistContract> {
   const targetDate = normalizeDateKey(input.date);
   const blockingIssues: AuditChecklistIssue[] = [];
   const warnings: AuditChecklistIssue[] = [];
-  const bundle = await loadInsertionBundle(input.insertionId);
+  const bundle = await auditReadOnce(input.readContext, 'audit:bundle:' + input.insertionId, () => loadInsertionBundle(input.insertionId));
   if (!bundle) {
     return {
       ok: false,
@@ -475,7 +467,7 @@ export async function resolveAuditChecklist(input: { insertionId: number; date: 
     };
   }
 
-  const publishedRule = await resolvePublishedRule(siteSigla, groupId);
+  const publishedRule = await auditReadOnce(input.readContext, 'audit:rule:' + siteSigla + ':' + groupId, () => resolvePublishedRule(siteSigla, groupId));
   const configMapping = getSiteFormatMapping(siteSigla, localFormato);
   if (!publishedRule && !configMapping) {
     return {
@@ -683,6 +675,7 @@ export function requiresHistoricalEditorialChecklist(input: {
 }
 
 export async function validateAuditChecklist(input: {
+  readContext?: AuditChecklistReadContext;
   insertionId: number;
   date: string;
   metadata?: unknown;
@@ -692,11 +685,11 @@ export async function validateAuditChecklist(input: {
   preUploadUntrustedMetadata?: unknown;
 }): Promise<AuditChecklistValidation> {
   const date = normalizeDateKey(input.date);
-  const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date });
+  const contract = await resolveAuditChecklist({ insertionId: input.insertionId, date, readContext: input.readContext });
   const warnings = [...contract.warnings];
   const blockingIssues: AuditChecklistIssue[] = contract.ok ? [] : [...contract.blockingIssues];
   const loadedMetadata = input.metadata === undefined
-    ? await loadAuditChecklistMetadata(input.insertionId, date)
+    ? await loadAuditChecklistMetadata(input.insertionId, date, input.readContext)
     : input.metadata;
   const metadata = isPlainObject(loadedMetadata) ? loadedMetadata : null;
   const finalPageClockRequired = input.candidateFinalPageClock === true && contract.ok && contract.requiredGates.requireVisiblePageDate;

@@ -60,6 +60,7 @@ import {
 } from "../lib/capture-audit";
 import {
   loadAuditChecklistMetadata,
+  type AuditChecklistReadContext,
   resolveAuditChecklist,
   validateAuditChecklist,
 } from "../lib/audit-checklist";
@@ -383,13 +384,15 @@ function buildPrintRunnerPayload(
   };
 }
 
-async function approvedPublicationAcceptance(insertionIds: number[], start: string, end: string) {
+async function approvedPublicationAcceptance(insertionIds: number[], start: string, end: string, dailyPairs?: ReadonlySet<string>) {
   if (!insertionIds.length) return [];
-  const candidates = await db.select().from(captureProofCandidatesTable).where(and(
+  const rows = await db.select().from(captureProofCandidatesTable).where(and(
     inArray(captureProofCandidatesTable.insertionId, insertionIds),
     gte(captureProofCandidatesTable.targetDate, start), lte(captureProofCandidatesTable.targetDate, end),
     sql`${captureProofCandidatesTable.metadata}->>'capturePurpose' = 'publication_acceptance'`,
   )).orderBy(desc(captureProofCandidatesTable.receivedAt));
+  // The monthly view can display an acceptance only when the daily row is absent.
+  const candidates = dailyPairs ? rows.filter(row => !dailyPairs.has(row.insertionId + ':' + row.targetDate)) : rows;
   if (!candidates.length) return [];
   const reviews = await db.select().from(captureProofCandidateReviewsTable).where(inArray(captureProofCandidateReviewsTable.candidateId, candidates.map((candidate) => candidate.id))).orderBy(desc(captureProofCandidateReviewsTable.evaluatedAt));
   const approved: Array<{ candidate: typeof captureProofCandidatesTable.$inferSelect; review: typeof captureProofCandidateReviewsTable.$inferSelect }> = [];
@@ -1036,16 +1039,17 @@ async function resolveEvidenceAuditStatus(
   insertion: Awaited<ReturnType<typeof enrichInsertion>>,
   targetDate: string,
   evidences?: Array<typeof evidencesTable.$inferSelect>,
-  options: { checkReachability?: boolean } = {},
+  options: { checkReachability?: boolean; readContext?: AuditChecklistReadContext } = {},
 ) {
   const evidenceRows = evidences ?? await db.select().from(evidencesTable).where(eq(evidencesTable.insercaoId, insertion.id));
   const evidence = evidenceRows.find((row) => getEvidenceDateKey(row.titulo) === targetDate) ?? null;
   const arquivoUrl = evidence?.arquivoUrl ?? null;
-  const metadata = await loadCaptureMetadataForAudit(insertion.id, targetDate);
+  const metadata = await loadAuditChecklistMetadata(insertion.id, targetDate, options.readContext);
   const checklistValidation = await validateAuditChecklist({
     insertionId: insertion.id,
     date: targetDate,
     metadata,
+    readContext: options.readContext,
   });
   const audit = checklistValidation.audit;
   let urlStatus: number | null = null;
@@ -1824,14 +1828,16 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
   try {
     // This view is period-based. Competencia is commercial metadata and must
     // not suppress a live insertion whose dates overlap the requested month.
-    const monthlyCampaigns = await db.select().from(campaignsTable);
-    const rawInsertions = monthlyCampaigns.length
-      ? await db.select().from(insertionsTable).where(and(
-        inArray(insertionsTable.campanhaId, monthlyCampaigns.map((campaign) => campaign.id)),
-        lte(insertionsTable.periodoInicio, bounds.end),
-        gte(insertionsTable.periodoFim, bounds.start),
-      )).orderBy(insertionsTable.createdAt)
+    const periodInsertions = await db.select().from(insertionsTable).where(and(
+      lte(insertionsTable.periodoInicio, bounds.end),
+      gte(insertionsTable.periodoFim, bounds.start),
+    )).orderBy(insertionsTable.createdAt);
+    const periodCampaignIds = [...new Set(periodInsertions.map(row => row.campanhaId))];
+    const monthlyCampaigns = periodCampaignIds.length
+      ? await db.select().from(campaignsTable).where(inArray(campaignsTable.id, periodCampaignIds))
       : [];
+    const presentCampaigns = new Set(monthlyCampaigns.map(row => row.id));
+    const rawInsertions = periodInsertions.filter(row => presentCampaigns.has(row.campanhaId));
     const enriched = await enrichMonthlyReportInsertions(excludeSupersededMonthlyInsertions(rawInsertions), monthlyCampaigns);
     const monthlyCandidates = enriched.filter((item) => {
       return monthlyReportInsertionMatches(item, bounds)
@@ -1892,6 +1898,8 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           uploadedUrl: captureProofLogsTable.uploadedUrl,
           cacheBustedUrl: captureProofLogsTable.cacheBustedUrl,
           updatedAt: captureProofLogsTable.updatedAt,
+          createdAt: captureProofLogsTable.createdAt,
+          status: captureProofLogsTable.status,
         }).from(captureProofLogsTable).where(and(
           inArray(captureProofLogsTable.insertionId, pageInsertionIds),
           gte(captureProofLogsTable.targetDate, bounds.start),
@@ -1904,7 +1912,8 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
           eq(captureProofCandidatePromotionsTable.status, "approved"),
         ))
       : [];
-    const approvedAcceptance = await approvedPublicationAcceptance(pageInsertionIds, bounds.start, bounds.evidenceEnd);
+    const dailyPairs = new Set(pageEvidenceRows.map(row => row.insercaoId + ':' + getEvidenceDateKey(row.titulo)));
+    const approvedAcceptance = await approvedPublicationAcceptance(pageInsertionIds, bounds.start, bounds.evidenceEnd, dailyPairs);
     const canonicalProofIds = new Set<string>();
     const refsByPair = new Map<string, typeof pageProofRefs>();
     for (const row of pageProofRefs) {
@@ -1949,6 +1958,18 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
       rows.push(row);
       proofByInsertionDate.set(key, rows);
     }
+    // This context belongs to one report request. Reuse its already-loaded
+    // evidence inventory while still evaluating every date's current gates.
+    const auditReadContext: AuditChecklistReadContext = new Map();
+    for (const id of pageInsertionIds) {
+      auditReadContext.set('audit:evidences:' + id, Promise.resolve(evidenceRowsByInsertion.get(id) ?? []));
+      auditReadContext.set('audit:refs:' + id, Promise.resolve(pageProofRefs.filter(row => row.insertionId === id && ['ok', 'pending_audit'].includes(row.status))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())));
+      auditReadContext.set('audit:promotions:' + id, Promise.resolve(pagePromotionRows.filter(row => row.insertionId === id)
+        .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())));
+    }
+    for (const row of pageProofRows) auditReadContext.set('audit:log:' + row.id, Promise.resolve([row]));
+    for (const row of pageCandidateRows) auditReadContext.set('audit:candidate:' + row.id, Promise.resolve([row]));
     const evaluated: Array<Record<string, unknown>> = [];
     for (let offset = 0; offset < pageSource.length; offset += 4) {
       const batch = await Promise.all(pageSource.slice(offset, offset + 4).map(async ({ item }) => {
@@ -1997,7 +2018,7 @@ router.get("/reports/evidences/monthly", async (req, res): Promise<void> => {
                   ? "audited"
                   : "audited_best_effort";
           const currentAudit = evidence && proof && !proofFailed
-            ? await resolveEvidenceAuditStatus(item, date, evidenceRows, { checkReachability: false })
+            ? await resolveEvidenceAuditStatus(item, date, evidenceRows, { checkReachability: false, readContext: auditReadContext })
             : null;
           const status = resolveMonthlyTechnicalStatus(persistedStatus, currentAudit?.status ?? null);
           const correlation = proof ? correlateCaptureLogProvenance({ ...proof, evidenceUrl: evidence?.arquivoUrl ?? null }) : null;
