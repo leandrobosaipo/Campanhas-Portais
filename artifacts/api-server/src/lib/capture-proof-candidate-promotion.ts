@@ -279,11 +279,13 @@ export async function promoteApprovedCaptureCandidate(candidateId: string, servi
         auditCaptureClass: canonicalAudit.audit?.captureClass ?? null,
         canonicalUrl: original?.arquivoUrl ?? null,
         provenanceVersion: Number(originalReconstruction?.provenanceVersion),
+        presentation: originalReconstruction,
         frameTemplateVersion: typeof originalMetadata.frameTemplateVersion === "string" ? originalMetadata.frameTemplateVersion : undefined,
       } : null,
       candidate: {
         captureClass: String(candidate.metadata.captureClass ?? ""),
         provenanceVersion: Number(candidateReconstruction?.provenanceVersion),
+        presentation: candidateReconstruction,
         frameTemplateVersion: String(candidate.metadata.frameTemplateVersion ?? ""),
         historicalDisplayConfirmed: candidateReconstruction?.historicalDisplayConfirmed,
       },

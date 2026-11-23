@@ -15,6 +15,7 @@ A referência administrativa por agenda exige pedido expresso e identificação 
 1. Confirme PI, portal, posição, período, data e peça. Em correção de período, concilie a fonte da PI e delimite as datas afetadas.
 2. Crie o candidato para revisão com `candidate=true` e `promote=false`. Confira a prova editorial e o PNG inteiro, inclusive o rodapé. Se houver texto sobreposto pelo AdOps ou a origem estiver ausente, retenha a entrega.
 3. Promova os mesmos bytes aprovados na auditoria persistida. Preserve o original e confira a identidade da inserção, da data e do arquivo.
+   Se o print já estiver aprovado e o registro antigo identificar o rodapé gravado, use a substituição de apresentação da API com ID, URL, tamanho e SHA-256 do original. A API arquiva o original e exige que o candidato da mesma data tenha passado pela auditoria com apresentação limpa. A captura original do dia e a referência administrativa por agenda continuam protegidas.
 4. Confira o que o destinatário abre no relatório e baixa. No ZIP oficial por PI e portal, verifique os JPEGs, as páginas do PDF, a auditoria e os checksums. Um teste de relógio, espaço livre ou HTTP 200 isolado não aprova a imagem.
 
 **Exemplo fictício.** Para o pedido “corrija o início da campanha e gere os retroativos auditados”, gere candidatos para as datas confirmadas. A data real de geração acompanha a entrega. Escrever “Reconstrução histórica” no rodapé reprova o print mesmo com o anúncio e os horários corretos.

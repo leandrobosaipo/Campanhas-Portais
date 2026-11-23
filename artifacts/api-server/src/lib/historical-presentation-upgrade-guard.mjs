@@ -1,4 +1,5 @@
 const FRAME_V5 = "windows11-chrome-light-similar-v5";
+const LEGACY_FOOTER = /^Reconstrução histórica gerada em \d{2}\/\d{2}\/\d{4}\. Referência: \d{2}\/\d{2}\/\d{4}\. Não comprova exibição original\.$/u;
 
 export function parsePromotionRequestBody(rawBody) {
   if (rawBody === undefined) return { ok: true, expectation: undefined };
@@ -33,13 +34,19 @@ export function decideHistoricalPresentationUpgrade({ request, original, candida
     || !Number.isSafeInteger(request.bytes) || request.bytes < 1) {
     return { ok: false, code: "historical_presentation_expectation_invalid" };
   }
+  const old = original?.presentation;
+  const next = candidate?.presentation;
+  const replacesRecordedFooter = old?.sourceKind == null && old?.presentationMode == null
+    && old?.historicalDisplayConfirmed === false && typeof old.presentationLabel === "string"
+    && LEGACY_FOOTER.test(old.presentationLabel) && next?.presentationMode === "clean_portal"
+    && next.sourceKind == null && !next.presentationLabel;
   if (!original || original.id !== request.evidenceId || original.arquivoUrl !== request.arquivoUrl
     || original.sha256 !== request.sha256 || original.bytes !== request.bytes
     || original.captureClass !== "historical_recovery"
     || original.auditCaptureClass !== "historical_recovery"
     || original.canonicalUrl !== request.arquivoUrl
     || original.auditApproved !== true
-    || (original.provenanceVersion === 4 && original.frameTemplateVersion === FRAME_V5)) {
+    || (original.provenanceVersion === 4 && original.frameTemplateVersion === FRAME_V5 && !replacesRecordedFooter)) {
     return { ok: false, code: "historical_original_identity_or_legacy_proof_required" };
   }
   if (!reviewApproved || !candidate || candidate.captureClass !== "historical_recovery"
