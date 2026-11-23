@@ -1,5 +1,7 @@
 # Prints Retroativos
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../ops/fastapi-docs/apresentacao-retroativos.md).
+
 ## Mídia efetivamente visível — 07/10/2026
 
 O preparo de mídia deve usar interseção positiva com o viewport real: largura e altura positivas, bottom>0, top<altura, right>0 e left<largura. Não contar os120px abaixo da imagem como viewport. Esse predicado atende imagens, fundos e vídeos; a validação própria da mídia do slot continua obrigatória. Um vídeo com1px visível entra na auditoria e deve estar carregado. Não alterar playback/load para contornar o gate.

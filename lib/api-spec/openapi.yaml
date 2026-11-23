@@ -1,4 +1,7 @@
 openapi: 3.1.0
+externalDocs:
+  description: Regra e contra-regra dos prints retroativos de campanha
+  url: https://github.com/leandrobosaipo/Campanhas-Portais/blob/main/ops/fastapi-docs/apresentacao-retroativos.md
 info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api

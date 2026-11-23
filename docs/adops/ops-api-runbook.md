@@ -1,5 +1,7 @@
 # Referência — API operacional AdOps
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 > Estado: vigente
 > Público: equipe operacional e agentes
 > Última validação: 2026-08-24

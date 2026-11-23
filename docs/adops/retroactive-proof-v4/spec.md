@@ -1,5 +1,7 @@
 # SPEC — Reconstrução retroativa v4
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 ## Interseção de mídia com o viewport — 07/10/2026
 
 `waitForViewportVisuals/isInsideFirstFold` usa a mesma interseção real positiva para imagens, backgrounds e vídeos, no loop e na leitura final: rect.width>0, rect.height>0, rect.bottom>0, rect.top<innerHeight, rect.right>0 e rect.left<innerWidth. Remover a margem+120 desse predicado; não modificar validação própria de slotImages nem os gates de auditoria total===loaded. Contato apenas na borda não é interseção;1px efetivamente visível exige carregamento.

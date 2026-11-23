@@ -2290,15 +2290,15 @@ export function buildOpsApiCatalog() {
     {
       id: "evidence-generation",
       title: "Geração de Prints e Retroativos",
-      description: "Cria jobs para o runner oficial. Não escreve direto no banco e não pula checklist.",
+      description: "Consulte a regra e a contra-regra de apresentação em " + retroPolicyUrl,
       endpoints: [
       {
         id: "print-single",
         method: "POST",
         path: "/api/ops/jobs/print-single",
-        purpose: "Gerar ou regerar uma evidência de uma inserção em uma data específica pela fila operacional.",
+        purpose: "Enfileirar um print. Para corrigir um retroativo, use o fluxo de candidato revisado no contrato de apresentação.",
         authRequired: true,
-        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-single -d '{"insertionId":1663,"date":"2026-07-01","replace":true}'`,
+        curl: `curl -fsSL -X POST ${auth} ${base}/api/ops/jobs/print-single -d '{"insertionId":1663,"date":"2026-07-01","replace":false}'`,
       },
       {
         id: "print-backfill",
@@ -2486,6 +2486,8 @@ export function buildOpsApiCatalog() {
   };
 }
 
+const retroPolicyUrl = "https://github.com/leandrobosaipo/Campanhas-Portais/blob/main/ops/fastapi-docs/apresentacao-retroativos.md";
+
 function buildOpsQuickstart() {
   const catalog = buildOpsApiCatalog();
   const base = "${ADOPS_API_BASE_URL:-https://adops-api.codigo5.com.br}";
@@ -2495,21 +2497,21 @@ function buildOpsQuickstart() {
   const workflows = [
     {
       id: "gerar-print-data-especifica",
-      title: "Gerar print retroativo de uma data",
-      when: "Use quando a inserção já existe no AdOps e você precisa corrigir ou gerar uma data específica.",
+      title: "Gerar e conferir um retroativo por inserção e data",
+      when: "Confirme a PI, a posição e a data. Regra e contra-regra em " + retroPolicyUrl,
       steps: [
         { label: "Resolver checklist antes da captura", command: command("resolve-audit-checklist") },
-        { label: "Criar job de print", command: command("print-single") },
-        { label: "Acompanhar progresso", command: `curl -fsSL ${base}/api/ops/jobs/JOB_ID/progress` },
-        { label: "Validar evidência final", command: command("validate-proof") },
-        { label: "Enviar no Telegram depois de aprovado", command: command("telegram-send-evidence") },
+        { label: "Gerar candidato para revisão", command: `curl -fsSL -X POST ${auth} -H "Idempotency-Key: \${IDEMPOTENCY_KEY:?defina uma chave estável}" ${base}/api/insertions/INSERCAO_ID/capture-proof/jobs -d '{"date":"AAAA-MM-DD","candidate":true,"promote":false}'` },
+        { label: "Consultar o candidato gerado pelo job", command: `curl -fsSL ${base}/api/insertions/INSERCAO_ID/capture-proof/jobs/JOB_ID` },
+        { label: "Auditar o candidato e conferir o PNG inteiro antes da promoção", command: null },
+        { label: "Promover o mesmo arquivo aprovado e conferir JPEG e PDF de entrega", command: null },
       ],
-      acceptance: ["validate-proof.approved=true", "blockingIssues=[]", "status final audited"],
+      acceptance: ["Origem e datas registradas", "Imagem de campanha sem carimbo", "Candidato auditado e entrega conferida"],
     },
     {
       id: "gerar-retroativos-campanha",
       title: "Gerar retroativos de uma campanha ou PI/site",
-      when: "Use quando precisa cobrir um intervalo, uma PI inteira ou uma campanha já cadastrada.",
+      when: "Use para datas pendentes no período confirmado. Para corrigir arquivo existente, revise cada candidato. Siga " + retroPolicyUrl,
       steps: [
         { label: "Conferir fila e runner", command: command("queue-overview") },
         { label: "Criar backfill controlado", command: command("print-backfill") },
@@ -2694,6 +2696,7 @@ export function buildOpsOpenApiDocument() {
     servers: [
       { url: "https://adops-api.codigo5.com.br", description: "Produção Mac Mini" },
     ],
+    externalDocs: { description: "Regra e contra-regra dos prints retroativos", url: retroPolicyUrl },
     tags: catalog.sections.map((section) => ({
       name: section.title,
       description: section.description,
@@ -2895,7 +2898,7 @@ router.get("/ops/quickstart.html", (_req, res): void => {
       ${workflow.steps.map((step, index) => `
         <div class="step">
           <strong>${index + 1}. ${escapeHtml(step.label)}</strong>
-          ${step.command ? `<pre><code>${escapeHtml(step.command)}</code></pre>` : "<p>Comando indisponível no catálogo.</p>"}
+          ${step.command ? `<pre><code>${escapeHtml(step.command)}</code></pre>` : workflow.id === "gerar-print-data-especifica" ? "" : "<p>Comando indisponível no catálogo.</p>"}
         </div>
       `).join("\n")}
       <h3>Aceite</h3>

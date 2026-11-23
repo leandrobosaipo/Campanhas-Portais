@@ -1,5 +1,7 @@
 # Harness de recuperação retroativa
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 O harness executa uma fatia explícita de uma inserção. Ele não agenda automação e não cria retry de job: depois de um único `POST /api/ops/jobs/print-backfill`, acompanha o mesmo `jobId` até `completed`, `failed` ou o timeout finito (máximo de 45 minutos). Ao chegar no estado terminal, consulta uma vez o job completo e grava o resultado por inserção/data.
 
 Para AFL, a reconstrução auditada cobre `home` e `article`. As duas usam os posts do WordPress anteriores ao horário contratado; `article` exige título, link e data absolutos visíveis do mesmo post reconstruído. Sem essa confirmação, a promoção continua bloqueada por `retro_content_unverified` ou `content_time_mismatch`. Nunca afrouxe esses gates para concluir um backfill.
