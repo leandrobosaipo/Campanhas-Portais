@@ -29,10 +29,22 @@ test("daily and same-day retry captures cannot use the explicit bypass", () => {
     assert.equal(run({ candidate: { ...candidate, captureClass } }).code, "approved_v4_frame_v5_candidate_required");
   }
 });
-test("original with both v4 and frame-v5 is never eligible, partial pairs remain eligible", () => {
+test("approved v4/frame-v5 stays protected without a verified footer correction", () => {
   assert.equal(run({ original: { ...original, provenanceVersion: 4, frameTemplateVersion: candidate.frameTemplateVersion } }).code, "historical_original_identity_or_legacy_proof_required");
   assert.equal(run({ original: { ...original, provenanceVersion: 4, frameTemplateVersion: "windows11-chrome-light-similar-v4" } }).ok, true);
   assert.equal(run({ original: { ...original, provenanceVersion: 3, frameTemplateVersion: candidate.frameTemplateVersion } }).ok, true);
+});
+test("a recorded ordinary campaign footer can be replaced by a clean reviewed candidate", () => {
+  const presentation = { historicalDisplayConfirmed: false, presentationLabel: "Reconstrução histórica gerada em 20/11/2026. Referência: 19/11/2026. Não comprova exibição original." };
+  const old = { ...original, provenanceVersion: 4, frameTemplateVersion: candidate.frameTemplateVersion, presentation };
+  const next = { ...candidate, presentation: { presentationMode: "clean_portal" } };
+  assert.equal(run({ original: old, candidate: next }).ok, true);
+  for (const edit of [{ sourceKind: "registered_adrotate_schedule" }, { presentationLabel: "Outro texto" }, { historicalDisplayConfirmed: true }]) {
+    assert.equal(run({ original: { ...old, presentation: { ...presentation, ...edit } }, candidate: next }).ok, false);
+  }
+  for (const edit of [{}, { presentationMode: "clean_portal", presentationLabel: "Rodapé" }, { presentationMode: "clean_portal", sourceKind: "registered_adrotate_schedule" }]) {
+    assert.equal(run({ original: old, candidate: { ...next, presentation: edit } }).ok, false);
+  }
 });
 test("approved v4/frame-v5 candidate can upgrade only the exact legacy presentation", () => {
   assert.equal(run().ok, true);
