@@ -2,6 +2,12 @@
 
 Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](ops/fastapi-docs/apresentacao-retroativos.md).
 
+Para comparar as regras locais com a documentação pública, execute na raiz do repositório com as dependências de `ops/fastapi-docs/requirements.txt` instaladas. A conferência faz apenas consultas de leitura.
+
+```bash
+ADOPS_DOCS_PUBLIC_CHECK=1 python3 ops/fastapi-docs/test_apresentacao_retroativos.py
+```
+
 Projeto Codex oficial:
 
 ```bash
