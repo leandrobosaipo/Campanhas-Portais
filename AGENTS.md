@@ -1,5 +1,7 @@
 # AdOps — Instruções do Projeto Codex
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](ops/fastapi-docs/apresentacao-retroativos.md).
+
 Este projeto é a fonte operacional do AdOps fora do OpenClaw.
 
 Raiz oficial:

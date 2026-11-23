@@ -30,6 +30,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Verificar contrato dos prints retroativos
+        run: |
+          python3 -m venv "$RUNNER_TEMP/adops-docs"
+          "$RUNNER_TEMP/adops-docs/bin/pip" install -r ops/fastapi-docs/requirements.txt
+          "$RUNNER_TEMP/adops-docs/bin/python" ops/fastapi-docs/test_apresentacao_retroativos.py
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

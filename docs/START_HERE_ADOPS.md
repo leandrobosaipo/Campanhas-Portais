@@ -1,5 +1,7 @@
 # AdOps — Comece aqui
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../ops/fastapi-docs/apresentacao-retroativos.md).
+
 Relatório dinâmico de evidências: [`docs/adops/relatorio-dinamico-evidencias.md`](adops/relatorio-dinamico-evidencias.md).
 
 Reconstruções retroativas: [contrato v4](adops/retroactive-proof-v4/spec.md), [validação](adops/retroactive-proof-v4/harness.md) e [plano de correção](superpowers/plans/2026-10-06-correcao-retroativos-api-auditoria-moldura.md). Conferência de07/10, checkpoint38: release839c publicada e verificada, cache API/relatório no-store confirmado. Há38/237 pares confirmados;199 restantes=162 não vídeo liberados+1 técnico2278/27Aug+27 vídeos+9 identidades1944. Novo candidato2645/24Aug ficou retido porque o relógio do site não apareceu no PNG, sem promoção. A correção local exige prova final de pixels e viewport real mais alto;22 cenários passaram, mas publicação e novo canário continuam pendentes. WordPress2278 tem correção local testada; arquivos instalados/backup ainda dependem de acesso autorizado. Consulte o [status detalhado](status-do-projeto.md) e o runtime antes de operar; os registros abaixo são históricos.

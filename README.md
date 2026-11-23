@@ -1,5 +1,7 @@
 # AdOps / Campanhas Portais
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](ops/fastapi-docs/apresentacao-retroativos.md).
+
 Projeto Codex oficial:
 
 ```bash

@@ -503,11 +503,11 @@ def build_openapi_document() -> dict[str, Any]:
                 "application/json": {
                     "schema": {"$ref": "#/components/schemas/CaptureProofJobRequest"},
                     "examples": {
-                        "retroativo_auditado": {
+                        "candidato_para_revisao": {
                             "value": {
                                 "date": "2026-07-24",
                                 "captureAt": "2026-07-24T20:00:00",
-                                "candidate": False,
+                                "candidate": True,
                                 "promote": False,
                             }
                         }
@@ -515,6 +515,22 @@ def build_openapi_document() -> dict[str, Any]:
                 }
             },
         }
+
+    retro_policy_url = "https://github.com/leandrobosaipo/Campanhas-Portais/blob/main/ops/fastapi-docs/apresentacao-retroativos.md"
+    retro_policy = (Path(__file__).parent / "apresentacao-retroativos.md").read_text(encoding="utf-8")
+    retro_docs = {"description": "Regra e contra-regra dos prints retroativos", "url": retro_policy_url}
+    for route in (
+        "/api/insertions/{id}/capture-proof/jobs",
+        "/api/internal/capture-proof-candidates/{candidateId}/audit",
+        "/api/internal/capture-proof-candidates/{candidateId}/promote",
+        "/api/pi-site-exports/jobs",
+        "/api/ops/jobs/print-single",
+        "/api/ops/jobs/print-backfill",
+        "/api/ops/jobs/historical-capture-reference",
+    ):
+        operation = paths.get(route, {}).get("post")
+        if operation is not None:
+            operation["externalDocs"] = retro_docs
 
     paths["/api/docs"] = {
         "get": {
@@ -548,9 +564,10 @@ def build_openapi_document() -> dict[str, Any]:
             "version": discover_catalog_version(),
             "description": (
                 "Swagger completo gerado pelo FastAPI a partir das rotas Express "
-                "publicadas. A execução continua no backend AdOps existente."
+                "publicadas. A execução continua no backend AdOps existente." + "\n\n" + retro_policy
             ),
         },
+        "externalDocs": retro_docs,
         "servers": [{"url": PUBLIC_BASE_URL, "description": "Produção"}],
         "tags": [
             {"name": source.replace(".ts", "").replace("-", " ").title()}

@@ -1,5 +1,7 @@
 # Evidencias de campanha: captura, auditoria, entrega e Telegram
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 ## Objetivo
 
 Este documento e o contrato operacional para gerar provas de veiculacao por API,

@@ -1,5 +1,7 @@
 # HARNESS — Reconstrução retroativa v4
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 ## Gate do viewport real — 07/10/2026
 
 Antes da publicação, validar o predicado extraído da fonte: vídeo y1277/viewport1200 excluído; y1200 excluído; y1199 incluído e vídeo descarregado bloqueado; largura/altura zero e mídia fora das bordas horizontais excluídas; imagens e backgrounds visíveis ainda contados. Complementar com vídeo H.264 realmente decodificado dentro do viewport, mantendo total===loaded e sem relaxar auditoria. O teste não recupera o job antigo.

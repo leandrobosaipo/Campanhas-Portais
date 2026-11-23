@@ -1,5 +1,7 @@
 # Reconstrução histórica — aceitação técnica do relatório
 
+Para gerar, corrigir ou auditar prints retroativos, siga o [contrato de apresentação dos retroativos](../../ops/fastapi-docs/apresentacao-retroativos.md).
+
 Política technical-audit-v1: reconstrução com auditoria canônica aprovada e proveniência correlacionada pode completar o relatório sem aceite documental separado. Isso não declara aceite externo nem comprova sozinho veiculação passada.
 
 ## Compatibilidade
